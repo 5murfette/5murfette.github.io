@@ -1,0 +1,23 @@
+<!-- saved from url=(0016)http://localhost -->
+<html>
+
+<script>
+function run(swf)
+{
+	var vars = 'input=http://localhost:8000/flashobject.html';
+	//document.write(vars);
+
+	document.write(
+	 '<object type="application/x-shockwave-flash" data="'+swf+'" width="1200" height="800">'
+	+'    <param name="movie" value="'+swf+'" />'
+	+'    <param name="flashvars" value="'+vars+'" />'
+	+'    <embed src="'+swf+'" width="1200" height="800" type="application/x-shockwave-flash" flashvars="'+vars+'"/>'
+	+'</object>'
+	); //*/
+}
+
+
+run("link_protocol_test.swf");
+</script>
+
+</html>
