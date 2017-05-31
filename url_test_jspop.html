@@ -2,9 +2,15 @@
 <html>
 
 <script>
+function pop()
+{
+	window.open("http://localhost:8000/", "_blank", "scrollbars=0,resizable=0,width=410,height=350,left=0, top=0");
+}
+
+
 function run(swf)
 {
-	var vars = 'input=javascript:window.open("http://localhost:8000/", "_blank", "scrollbars=0,resizable=0,width=410,height=350,left=0, top=0");';
+	var vars = 'input=javascript:pop();';
 	//document.write(vars);
 
 	document.write(
