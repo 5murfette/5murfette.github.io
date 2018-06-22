@@ -6,7 +6,6 @@ self.addEventListener('install', function(e) {
        '/a2hs/index.html',
        '/a2hs/index.js',
        '/a2hs/style.css',
-       '/a2hs/images/fox1.jpg',
        '/a2hs/jquery-3.2.1.slim.min.js',
        '/a2hs/GPUFluid-1.3.js'
      ]);
