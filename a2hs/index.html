@@ -17,9 +17,6 @@
 	    NUMBER OF TIMES TO LOOP:
 	  </p>
 
-	  <p id="outputHolder2">
-
-	  </p>
 
 	</div>
 
@@ -42,20 +39,10 @@
 
 
 
-		// I may need to convert prompt output to a number
-		var loopCountMax = parseInt(prompt("loopCount = "));
 
 		var loopCount = 0;
+		setInterval(function(){ loopCount++; document.getElementById("outputHolder1").innerHTML += "Current loop: "+loopCount; }, 1);
 
-		while (loopCount < loopCountMax) {
-		  // I want text to print out on screen "x" times, 
-		  // where x is equal to the numerical value of loopCount
-		  document.getElementById("outputHolder1").innerHTML += "Current loop: "+loopCount+" / "+loopCountMax;
-		  loopCount++;
-		}
-
-		// this isn't outputting to outputHolder1 after loop
-		//document.getElementById("outputHolder1").innerHTML = loopCount;
 
 
 
