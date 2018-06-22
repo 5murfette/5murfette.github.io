@@ -21,11 +21,12 @@ var update = function (request) {
 }
 
 self.addEventListener('fetch', function(e) {
-  console.log(e.request.url);
+  console.log("req url: "+e.request.url);
+  e.waitUntil(update(e.request));
   e.respondWith(
     caches.match(e.request).then(function(response) {
       return response || fetch(e.request);
     })
    );
-  e.waitUntil(update(e.request));
+  
 });
