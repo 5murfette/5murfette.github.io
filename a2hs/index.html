@@ -20,7 +20,7 @@
 
 	</div>
 
-	<button hidden>Show Prompt</button>
+	<button type="button" id="button">Show Prompt</button>
 
 	</body>
 
@@ -33,16 +33,36 @@
 		           .register('/a2hs/sw.js')
 		           .then(function() { console.log('[Service Worker] Registered'); });
 
+			window.addEventListener('appinstalled', (evt) => {
+			  console.log('[APP] Installed!');
+			});  
 
-	        window.addEventListener('beforeinstallprompt', event => {
-	          event.preventDefault();
-	          var button = document.querySelector('button');
-	          button.removeAttribute('hidden');
-	          button.addEventListener('click', () => {
-	            event.prompt();
-	            button.setAttribute('disabled', true);
-	          });
-            });
+
+			let deferredPrompt;
+
+			window.addEventListener('beforeinstallprompt', (e) => {
+			  e.preventDefault();
+			  deferredPrompt = e;
+			  // Update UI notify the user they can add to home screen
+			  btnAdd.style.display = 'block';
+			});
+
+			btnAdd.addEventListener('click', (e) => {
+			  // hide our user interface that shows our A2HS button
+			  btnAdd.style.display = 'none';
+			  // Show the prompt
+			  deferredPrompt.prompt();
+			  // Wait for the user to respond to the prompt
+			  deferredPrompt.userChoice
+			    .then((choiceResult) => {
+			      if (choiceResult.outcome === 'accepted') {
+			        console.log('User accepted the A2HS prompt');
+			      } else {
+			        console.log('User dismissed the A2HS prompt');
+			      }
+			      deferredPrompt = null;
+			    });
+			});
 		}
 
 		$(document).ready(function() {
