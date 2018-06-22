@@ -12,11 +12,20 @@ self.addEventListener('install', function(e) {
  );
 });
 
+var update = function (request) {
+  return caches.open('video-store').then(function (cache) {
+    return fetch(request).then(function (response) {
+      return cache.put(request, response);
+    });
+  });
+}
+
 self.addEventListener('fetch', function(e) {
   console.log(e.request.url);
   e.respondWith(
     caches.match(e.request).then(function(response) {
       return response || fetch(e.request);
     })
-  );
+   );
+  e.waitUntil(update(e.request));
 });
