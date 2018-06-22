@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <title>A2HS demo</title>
     <link href="style.css" rel="stylesheet">
-    <script src="index.js" defer></script>
     <link rel="manifest" href="manifest.webmanifest">
 
 
@@ -12,12 +11,20 @@
 	<script type="text/javascript" src="GPUFluid-1.3.js"></script>
 
 	<script>
+
+		// Register service worker to control making site work offline
+		if('serviceWorker' in navigator) {
+		  navigator.serviceWorker
+		           .register('/a2hs/sw.js')
+		           .then(function() { console.log('Service Worker Registered'); });
+		}
+
 		$(document).ready(function() {
 			IOHP2();
 		});
 	</script>
 
-    
+
   </head>
   <body>
     <img src="images/fox1.jpg" alt="a fox picture">
