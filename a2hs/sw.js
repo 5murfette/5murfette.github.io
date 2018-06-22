@@ -1,6 +1,8 @@
+var cacheStoreName = "video-store";
+
 self.addEventListener('install', function(e) {
  e.waitUntil(
-   caches.open('video-store').then(function(cache) {
+   caches.open(cacheStoreName).then(function(cache) {
      return cache.addAll([
        '/a2hs/',
        '/a2hs/index.html',
@@ -12,21 +14,18 @@ self.addEventListener('install', function(e) {
  );
 });
 
-var update = function (request) {
-  return caches.open('video-store').then(function (cache) {
-    return fetch(request).then(function (response) {
-      return cache.put(request, response);
-    });
-  });
-}
-
+// Fetching content using Service Worker
 self.addEventListener('fetch', function(e) {
-  console.log("req url: "+e.request.url);
-  e.waitUntil(update(e.request));
   e.respondWith(
-    caches.match(e.request).then(function(response) {
-      return response || fetch(e.request);
+    caches.match(e.request).then(function(r) {
+      console.log('[Service Worker] Fetching resource: '+e.request.url);
+      return r || fetch(e.request).then(function(response) {
+        return caches.open(cacheStoreName).then(function(cache) {
+          console.log('[Service Worker] Caching new resource: '+e.request.url);
+          cache.put(e.request, response.clone());
+          return response;
+        });
+      });
     })
-   );
-  
+  );
 });
