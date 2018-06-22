@@ -20,6 +20,8 @@
 
 	</div>
 
+	<button hidden>Show Prompt</button>
+
 	</body>
 
 
@@ -29,7 +31,17 @@
 		if('serviceWorker' in navigator) {
 		  navigator.serviceWorker
 		           .register('/a2hs/sw.js')
-		           .then(function() { console.log('Service Worker Registered'); });
+		           .then(function() { console.log('[Service Worker] Registered'); });
+
+
+	        window.addEventListener('beforeinstallprompt', event => {
+	          event.preventDefault();
+	          var button = document.querySelector('button');
+	          button.removeAttribute('hidden');
+	          button.addEventListener('click', () => {
+	            event.prompt();
+	            button.setAttribute('disabled', true);
+	          });
 		}
 
 		$(document).ready(function() {

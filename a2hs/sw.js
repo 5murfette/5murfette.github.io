@@ -29,3 +29,7 @@ self.addEventListener('fetch', function(e) {
     })
   );
 });
+
+
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', () => self.clients.claim());
