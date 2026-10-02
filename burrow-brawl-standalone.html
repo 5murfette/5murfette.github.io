@@ -236,6 +236,47 @@ details summary{cursor:pointer;font-weight:700;color:var(--text);margin-top:16px
     <div class="row"><button class="btn" id="bAgain">Rematch</button><button class="btn ghost" id="bSetup">Change setup</button></div>
   </div>
 </div>
+<script>
+/* problems are reported on screen, with what to do about them, never swallowed */
+(function () {
+  function overlay(title, html) {
+    if (document.getElementById('bbProblem')) return;
+    var menu = document.getElementById('menu'); if (menu) menu.hidden = true;
+    var o = document.createElement('div'); o.className = 'overlay'; o.id = 'bbProblem'; o.style.zIndex = 60;
+    o.innerHTML = '<div class="card" style="width:min(560px,100%)"><h2 class="title" style="font-size:32px"></h2><div class="bbBody" style="display:grid;gap:8px;margin:10px 0 14px"></div><button class="btn" onclick="location.reload()">Reload</button></div>';
+    o.querySelector('h2').textContent = title; o.querySelector('.bbBody').innerHTML = html;
+    document.body.appendChild(o);
+  }
+  window.__bbProblem = overlay;
+  // import maps arrived in Chrome 89, Firefox 108 and Safari 16.4; without them the game cannot even start
+  if (!(window.HTMLScriptElement && HTMLScriptElement.supports && HTMLScriptElement.supports('importmap'))) {
+    overlay('This browser is too old', '<p>The game needs a browser from 2023 or later: Chrome or Edge 89+, Firefox 108+, or Safari 16.4+ (iOS 16.4+). Please update the browser, or open the page in another one.</p>');
+    return;
+  }
+  // the 3D engine is fetched from cdn.jsdelivr.net; if it never arrives, say why that usually happens
+  setTimeout(function () {
+    if (window.__bbBoot || document.getElementById('bbProblem')) return;
+    overlay('The game engine did not load', '<p>The 3D engine could not be downloaded from <code>cdn.jsdelivr.net</code>.</p><ul style="margin:0 0 0 18px;display:grid;gap:6px"><li>Check the internet connection.</li><li>An ad-blocker, privacy extension or school/company network filter may be blocking <code>cdn.jsdelivr.net</code>; allow it, or try another network.</li><li>Then reload the page.</li></ul>');
+  }, 15000);
+  // anything that breaks while playing shows up as a banner instead of a silent freeze
+  var shown = 0;
+  function banner(msg) {
+    if (/ResizeObserver loop/.test(msg) || /WebGL is unavailable/.test(msg)) return;
+    shown++;
+    var b = document.getElementById('bbErr');
+    if (!b) {
+      b = document.createElement('div'); b.id = 'bbErr';
+      b.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:70;max-width:min(640px,calc(100% - 24px));background:#3a1414;color:#ffe2dc;border:1px solid #a33;border-radius:10px;padding:10px 14px;font:600 14px/1.35 system-ui,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.5);display:flex;gap:10px;align-items:flex-start';
+      b.innerHTML = '<div style="flex:1"><div>Something went wrong, and the game may misbehave. Reloading usually fixes it.</div><div class="m" style="font-weight:400;opacity:.85;margin-top:4px;word-break:break-word"></div></div><button style="background:#ffe2dc;color:#3a1414;border:0;border-radius:6px;padding:6px 10px;font-weight:700;cursor:pointer" onclick="location.reload()">Reload</button><button aria-label="Dismiss" style="background:none;border:0;color:#ffe2dc;font-size:18px;cursor:pointer" onclick="this.parentNode.remove()">&times;</button>';
+      document.body.appendChild(b);
+    }
+    b.querySelector('.m').textContent = msg + (shown > 1 ? '  (+' + (shown - 1) + ' more)' : '');
+  }
+  window.addEventListener('error', function (e) { if (e && e.message) banner(e.message); });
+  window.addEventListener('unhandledrejection', function (e) { var r = e && e.reason; banner(r && (r.message || String(r)) || 'Unknown error'); });
+})();
+</script>
+
 <script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js';
 
@@ -817,12 +858,45 @@ function stampGirder(cx, cy, ang) {
 const coarse = matchMedia('(pointer: coarse)').matches;
 const Q = { level: coarse ? 'low' : 'high', shadows: !coarse, bloom: !coarse, grass: coarse ? 0.4 : 1, pr: coarse ? 1.25 : 2 };
 const stage = document.getElementById('stage');
-const renderer = new THREE.WebGLRenderer({ antialias: !coarse, powerPreference: 'high-performance' });
+// some machines refuse a full-featured context (blocklisted GPU, power saving): step down before giving up
+let glReduced = false;
+function makeRenderer() {
+  const tries = [
+    { antialias: !coarse, powerPreference: 'high-performance' },
+    { antialias: false, powerPreference: 'default' },
+    { antialias: false, powerPreference: 'low-power', precision: 'mediump', stencil: false },
+  ];
+  for (let i = 0; i < tries.length; i++) {
+    try { const r = new THREE.WebGLRenderer(tries[i]); if (i > 0) { glReduced = true; const gs = document.getElementById('cGfx'); if (gs) gs.value = 'low'; Q.level = 'low'; Q.shadows = false; Q.bloom = false; Q.grass = 0.35; Q.pr = 1; } return r; }
+    catch (e) { console.warn('WebGL attempt ' + (i + 1) + ' failed', e && e.message); }
+  }
+  return null;
+}
+// with 3D graphics switched off in the browser there is nothing to draw with: say so, and how to fix it
+function showNoGL() {
+  const mn = document.getElementById('menu'); if (mn) mn.hidden = true;
+  const o = document.createElement('div'); o.className = 'overlay'; o.id = 'bbProblem'; o.style.zIndex = 60;
+  o.innerHTML = `<div class="card" style="width:min(560px,100%)">
+    <h2 class="title" style="font-size:34px">3D graphics are switched off</h2>
+    <p style="margin:10px 0">This browser could not start WebGL, which the game needs to draw anything. Usually hardware acceleration is turned off, or the graphics driver is blocked.</p>
+    <ul style="margin:0 0 12px 18px;display:grid;gap:6px">
+      <li><b>Chrome or Edge:</b> Settings &rarr; System &rarr; turn on <i>Use graphics acceleration when available</i>, then Relaunch. Open <code>chrome://gpu</code> to check that WebGL says <i>Hardware accelerated</i>.</li>
+      <li><b>Firefox:</b> Settings &rarr; General &rarr; Performance &rarr; untick <i>Use recommended performance settings</i>, tick <i>Use hardware acceleration when available</i>, restart. In <code>about:config</code>, <code>webgl.disabled</code> must be false.</li>
+      <li>Update the graphics driver, or try another browser. Remote desktops and some virtual machines have no GPU at all.</li>
+    </ul>
+    <button class="btn" onclick="location.reload()">Try again</button>
+  </div>`;
+  document.body.appendChild(o);
+  const ld = document.getElementById('loadTxt'); if (ld) ld.textContent = '';
+}
+const renderer = makeRenderer();
+if (!renderer) { showNoGL(); throw new Error('WebGL is unavailable in this browser'); }
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, Q.pr));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = Q.shadows; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
 stage.appendChild(renderer.domElement);
+renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); showMsg && showMsg('Graphics reset', 'Recovering…', 2); });
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xbcd6e6, 1500, 9000);
 const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 5, 16000);
@@ -845,7 +919,7 @@ function setQuality(level) {
   Q.level = level;
   Q.shadows = level !== 'low'; Q.bloom = level !== 'low'; Q.grass = level === 'high' ? 1 : level === 'medium' ? 0.6 : 0.35; Q.pr = level === 'high' ? 2 : level === 'medium' ? 1.5 : 1;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, Q.pr));
-  setTerrainEdges(level !== 'low');
+  setTerrainEdges(level !== 'low'); setWallDetail(true);
   sun.shadow.mapSize.set(level === 'high' ? 2048 : 1024, level === 'high' ? 2048 : 1024);
   if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
   if (renderer.shadowMap.enabled !== Q.shadows) { renderer.shadowMap.enabled = Q.shadows; sun.castShadow = Q.shadows; scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); }); }
@@ -935,10 +1009,98 @@ setTerrainEdges(!coarse);
 const front = new THREE.Mesh(flipV(new THREE.PlaneGeometry(W, H)), frontMat);
 front.position.set(W / 2, -H / 2, D / 2); front.receiveShadow = true; scene.add(front);
 const wallMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
+// the walls are the 3D ground the worms walk on. Instead of stretching the edge colour across the depth,
+// paint each surface class procedurally in object space (so a falling slab keeps its pattern) and bump the
+// lighting from the same height field: grass blades and flowers, rippled sand, cracked rock, glinting snow,
+// pebbly dirt, and banded strata on the steep sides
+wallMat.onBeforeCompile = (sh) => {
+  sh.vertexShader = 'attribute float surf;\nvarying float vSurf;\nvarying vec3 vOP;\nvarying vec3 vON;\n' + sh.vertexShader
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vSurf = surf; vOP = position; vON = normal;');
+  sh.fragmentShader = `varying float vSurf;
+varying vec3 vOP;
+varying vec3 vON;
+float tH = 0.0;
+float h12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float vn(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h12(i), h12(i + vec2(1.0, 0.0)), u.x), mix(h12(i + vec2(0.0, 1.0)), h12(i + vec2(1.0, 1.0)), u.x), u.y); }
+float fbm(vec2 p) { return vn(p) * 0.55 + vn(p * 2.03 + 7.1) * 0.3 + vn(p * 4.1 + 3.7) * 0.15; }
+` + sh.fragmentShader
+    .replace('#include <color_fragment>', `#include <color_fragment>
+#ifdef WALL_DETAIL
+  {
+    vec3 P = vOP; vec3 c = diffuseColor.rgb;
+    float up = smoothstep(0.3, 0.8, vON.y);
+    float fw = max(fwidth(P.x), fwidth(P.z)) + 1e-4;
+    float hiF = clamp(1.4 - fw * 2.2, 0.0, 1.0);          // fade the finest detail out when zoomed far, so it never shimmers
+    vec2 q = P.xz; int s = int(vSurf + 0.5);
+    vec3 tc = c; float th = 0.0;
+    float big = fbm(q * 0.07);
+    if (s == 1) {
+      float bl = vn(q * vec2(2.3, 1.6)); bl = mix(0.5, bl * bl * 1.6, hiF);
+      vec3 g1 = c * 0.6, g2 = c * 1.28 + vec3(0.015, 0.035, 0.0);
+      tc = mix(g1, g2, bl) * (0.82 + 0.36 * big);
+      float lum = dot(c, vec3(0.3, 0.6, 0.1));
+      tc = mix(tc, vec3(0.5, 0.42, 0.18) * lum * 2.2, smoothstep(0.64, 0.82, big) * 0.45);   // dry, sunburnt patches
+      vec2 fc = floor(q * 0.42); float fh = h12(fc);
+      if (fh > 0.955) { vec2 f = fract(q * 0.42) - 0.5 + (vec2(h12(fc + 3.1), h12(fc + 5.7)) - 0.5) * 0.5; float fd = length(f);
+        vec3 fcol = fh > 0.985 ? vec3(0.95, 0.85, 0.2) : fh > 0.97 ? vec3(0.95, 0.95, 0.98) : vec3(0.85, 0.35, 0.6);
+        tc = mix(tc, fcol, smoothstep(0.17, 0.08, fd) * hiF); }
+      th = bl * 0.7 + big * 0.5;
+    } else if (s == 2) {
+      float wv = fbm(q * 0.04); float rp = sin(P.x * (0.35 + 0.25 * wv) + P.z * 0.18 * (wv - 0.5) + fbm(q * 0.06) * 9.0); rp = pow(rp * 0.5 + 0.5, 1.6) * (0.4 + 0.6 * fbm(q * 0.11));
+      float gr = vn(q * 2.6) * hiF;
+      tc = c * (0.88 + 0.12 * rp + 0.1 * (gr - 0.5)) * (0.94 + 0.12 * big);
+      th = rp * 0.6 + gr * 0.15;
+    } else if (s == 3) {
+      float f1 = fbm(q * 0.13), ck = 1.0 - smoothstep(0.0, 0.045, abs(f1 - 0.5));
+      float sp = vn(q * 1.8) * hiF;
+      tc = c * (0.82 + 0.3 * fbm(q * 0.45)) * (1.0 - ck * 0.5) * (0.95 + 0.1 * sp);
+      th = f1 * 1.2 - ck * 0.8;
+    } else if (s == 4) {
+      float f1 = fbm(q * 0.09);
+      tc = c * (0.93 + 0.08 * f1) + vec3(0.6) * step(0.993, h12(floor(q * 4.0))) * hiF;
+      th = f1 * 0.6;
+    } else if (s == 5) {
+      tc = c * (0.92 + 0.1 * vn(q * 0.6)); th = vn(q * 0.6) * 0.2;
+    } else {
+      float pb = h12(floor(q * 0.8)), pf = length(fract(q * 0.8) - 0.5);
+      float peb = step(0.8, pb) * smoothstep(0.32, 0.18, pf) * hiF;
+      tc = c * (0.8 + 0.35 * fbm(q * 0.3)) * (1.0 + peb * (pb > 0.9 ? 0.3 : -0.25));
+      th = fbm(q * 0.3) * 0.6 + peb * 0.6;
+    }
+    // steep sides: banded strata running along the outline, with fine grain
+    float st = fbm(vec2(P.x * 0.03 + P.z * 0.05, P.y * 0.16));
+    vec3 sc = c * (0.78 + 0.38 * st) * (0.96 + 0.08 * vn(P.xy * 1.3 + P.z * 0.7) * hiF);
+    float sh2 = st * 0.9;
+    diffuseColor.rgb = mix(sc, tc, up);
+    tH = mix(sh2, th, up);
+  }
+#endif`)
+    .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+#ifdef WALL_DETAIL
+  {
+    vec3 dpx = dFdx(-vViewPosition), dpy = dFdy(-vViewPosition);
+    float dhx = dFdx(tH), dhy = dFdy(tH);
+    vec3 r1 = cross(dpy, normal), r2 = cross(normal, dpx); float det = dot(dpx, r1);
+    vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
+    normal = normalize(abs(det) * normal - grad * 1.1);
+  }
+#endif`);
+};
+function setWallDetail(on) { wallMat.defines = on ? { WALL_DETAIL: '' } : {}; wallMat.needsUpdate = true; }
+setWallDetail(true);
 const tiles = new Array(TX * TY).fill(null);
 
-function buildWallGeo(x0, y0, w, h, S, C) {
-  const pos = [], nor = [], cl = [];
+// surface class of a wall segment, from the material and colour just inside it; the wall shader paints each class differently
+function surfClass(c, m) {
+  if (m === SAND) return 2; if (m === ROCK || m === BED) return 3; if (m === ICE) return 4; if (m === STEEL || m === BRICK) return 5;
+  const r = cR(c), g = cG(c), b = cB(c);
+  if (r + g + b > 600 && Math.abs(r - b) < 34) return 4;
+  if (g > r + 6 && g > b + 6) return 1;
+  return 0;
+}
+function buildWallGeo(x0, y0, w, h, S, C, M) {
+  const pos = [], nor = [], cl = [], sf = [];
   const nx = Math.ceil(w / CELL), ny = Math.ceil(h / CELL), gw = nx + 1;
   const g = new Float32Array(gw * (ny + 1));
   for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
@@ -948,24 +1110,29 @@ function buildWallGeo(x0, y0, w, h, S, C) {
   }
   const ip = (a, b) => a === b ? 0.5 : clamp((0.5 - a) / (b - a), 0.08, 0.92);
   const zf = D / 2, zm = 0, zb = -D / 2;
+  // segments are collected first so each endpoint can take the average normal of the segments meeting
+  // there; flat per-segment normals made the ground look like planks
+  const segs = [], nacc = new Map();
+  const key = (x, y) => Math.round(x * 64) * 131071 + Math.round(y * 64);
+  const cacc = new Map();
+  const addC = (k, r, g, b, w) => { const v = cacc.get(k); if (v) { v[0] += r; v[1] += g; v[2] += b; v[3] += w; } else cacc.set(k, [r, g, b, w]); };
+  const addN = (k, x, y) => { const v = nacc.get(k); if (v) { v[0] += x; v[1] += y; } else nacc.set(k, [x, y]); };
   const emit = (ax, ay, bx, by) => {
     const dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy);
+    if (l < 1e-4) return;
     let px = dy / l, py = -dx / l;
     const mx = (ax + bx) / 2, my = (ay + by) / 2;
     if (S(mx + px * 2.2, my + py * 2.2)) { px = -px; py = -py; }
-    const c = C(mx - px * 2.5, my - py * 2.5);
-    const up = py < -0.55 ? 1.12 : 1;
-    const r = SRGB2LIN[cR(c)] * up, gg = SRGB2LIN[cG(c)] * up, b = SRGB2LIN[cB(c)] * up;
+    // sample just inside the edge and a little deeper: a thin grass skin must win over the soil beneath it
+    const m2 = M ? M(mx - px * 2.5, my - py * 2.5) : DIRT, c1 = C(mx - px * 1.2, my - py * 1.2), c2 = C(mx - px * 2.5, my - py * 2.5);
+    const s1 = surfClass(c1, m2), s2 = surfClass(c2, m2);
+    const c = s1 === 1 && s2 !== 1 ? c1 : c2, sc = s1 === 1 ? 1 : s2;
     if (dy * px - dx * py < 0) { let t = ax; ax = bx; bx = t; t = ay; ay = by; by = t; }
-    // two bands so the wall darkens with depth (cheap occlusion) and catches a little jitter
-    const jit = (hash2(mx * 3, my * 3) - 0.5) * 1.2;
-    const bands = [[zf, 1, zm, 0.72], [zm, 0.72, zb, 0.4]];
-    for (const [za, ka, zc, kc] of bands) {
-      const ox = za === zm ? px * jit : 0, oy = za === zm ? py * jit : 0, ox2 = zc === zm ? px * jit : 0, oy2 = zc === zm ? py * jit : 0;
-      pos.push(ax + ox, -(ay + oy), za, bx + ox, -(by + oy), za, bx + ox2, -(by + oy2), zc, ax + ox, -(ay + oy), za, bx + ox2, -(by + oy2), zc, ax + ox2, -(ay + oy2), zc);
-      for (let k = 0; k < 6; k++) nor.push(px, -py, 0);
-      cl.push(r * ka, gg * ka, b * ka, r * ka, gg * ka, b * ka, r * kc, gg * kc, b * kc, r * ka, gg * ka, b * ka, r * kc, gg * kc, b * kc, r * kc, gg * kc, b * kc);
-    }
+    const ka = key(ax, ay), kb = key(bx, by);
+    addN(ka, px * l, py * l); addN(kb, px * l, py * l);
+    const lr = SRGB2LIN[cR(c)] * l, lg = SRGB2LIN[cG(c)] * l, lb2 = SRGB2LIN[cB(c)] * l;
+    addC(ka, lr, lg, lb2, l); addC(kb, lr, lg, lb2, l);
+    segs.push([ax, ay, bx, by, px, py, mx, my, c, sc, ka, kb]);
   };
   const hc = CELL / 2;
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
@@ -985,10 +1152,30 @@ function buildWallGeo(x0, y0, w, h, S, C) {
       case 10: emit(Lx, Ly, Tx, Ty); emit(Bx, By, Rx, Ry); break;
     }
   }
+  for (const [ax, ay, bx, by, px, py, mx, my, c, sc, ka, kb] of segs) {
+    // colours are averaged at shared endpoints too, so neighbouring segments blend instead of striping
+    const up = py < -0.55 ? 1.12 : 1, CA = cacc.get(ka), CB = cacc.get(kb);
+    const ra = CA[0] / CA[3] * up, ga = CA[1] / CA[3] * up, ba = CA[2] / CA[3] * up, rb = CB[0] / CB[3] * up, gb = CB[1] / CB[3] * up, bb = CB[2] / CB[3] * up;
+    let [nax, nay] = nacc.get(ka), [nbx, nby] = nacc.get(kb);
+    let la = Math.hypot(nax, nay) || 1, lb = Math.hypot(nbx, nby) || 1; nax /= la; nay /= la; nbx /= lb; nby /= lb;
+    // a sharp corner keeps its crease instead of being smeared round
+    if (nax * px + nay * py < 0.6) { nax = px; nay = py; } if (nbx * px + nby * py < 0.6) { nbx = px; nby = py; }
+    // two bands so the wall darkens with depth (cheap occlusion) and catches a little jitter
+    const jit = (hash2(mx * 3, my * 3) - 0.5) * 1.2;
+    const bands = [[zf, 1, zm, 0.72], [zm, 0.72, zb, 0.4]];
+    for (const [za, ka2, zc, kc] of bands) {
+      const ox = za === zm ? px * jit : 0, oy = za === zm ? py * jit : 0, ox2 = zc === zm ? px * jit : 0, oy2 = zc === zm ? py * jit : 0;
+      pos.push(ax + ox, -(ay + oy), za, bx + ox, -(by + oy), za, bx + ox2, -(by + oy2), zc, ax + ox, -(ay + oy), za, bx + ox2, -(by + oy2), zc, ax + ox2, -(ay + oy2), zc);
+      nor.push(nax, -nay, 0, nbx, -nby, 0, nbx, -nby, 0, nax, -nay, 0, nbx, -nby, 0, nax, -nay, 0);
+      for (let k = 0; k < 6; k++) sf.push(sc);
+      cl.push(ra * ka2, ga * ka2, ba * ka2, rb * ka2, gb * ka2, bb * ka2, rb * kc, gb * kc, bb * kc, ra * ka2, ga * ka2, ba * ka2, rb * kc, gb * kc, bb * kc, ra * kc, ga * kc, ba * kc);
+    }
+  }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(cl, 3));
+  geo.setAttribute('surf', new THREE.Float32BufferAttribute(sf, 1));
   geo.computeBoundingSphere();
   return geo;
 }
@@ -996,7 +1183,7 @@ const solidPix = (x, y) => { x = Math.floor(x); y = Math.floor(y); return x >= 0
 const colAt = (x, y) => col[clamp(Math.floor(y), 0, H - 1) * W + clamp(Math.floor(x), 0, W - 1)];
 function rebuildTile(k) {
   const tx = k % TX, ty = (k / TX) | 0;
-  const geo = buildWallGeo(tx * TS, ty * TS, TS, TS, solidPix, colAt);
+  const geo = buildWallGeo(tx * TS, ty * TS, TS, TS, solidPix, colAt, matAt);
   let m = tiles[k];
   if (!m) { m = new THREE.Mesh(geo, wallMat); m.castShadow = true; m.receiveShadow = true; scene.add(m); tiles[k] = m; }
   else { m.geometry.dispose(); m.geometry = geo; }
@@ -1018,7 +1205,8 @@ function buildMaskMesh(m, c, w, h) {
   pm.position.set(w / 2, -h / 2, D / 2); pm.receiveShadow = true;
   const S = (x, y) => { x = Math.floor(x); y = Math.floor(y); return x >= 0 && y >= 0 && x < w && y < h && m[y * w + x] !== 0; };
   const C = (x, y) => c[clamp(Math.floor(y), 0, h - 1) * w + clamp(Math.floor(x), 0, w - 1)];
-  const wm = new THREE.Mesh(buildWallGeo(-CELL, -CELL, w + CELL * 2, h + CELL * 2, S, C), wallMat);
+  const Mt = (x, y) => m[clamp(Math.floor(y), 0, h - 1) * w + clamp(Math.floor(x), 0, w - 1)];
+  const wm = new THREE.Mesh(buildWallGeo(-CELL, -CELL, w + CELL * 2, h + CELL * 2, S, C, Mt), wallMat);
   wm.castShadow = true; wm.receiveShadow = true;
   g.add(pm, wm);
   g.userData.dispose = () => { t.dispose(); pm.material.dispose(); pm.geometry.dispose(); wm.geometry.dispose(); };
@@ -1069,10 +1257,24 @@ for (let i = 0; i < 18; i++) {
   const s = new THREE.Sprite(m); const sc = vrnd(600, 1400); s.scale.set(sc, sc * 0.5, 1);
   s.position.set(vrnd(-2500, W + 2500), vrnd(-150, 650), vrnd(-3000, -600)); scene.add(s); clouds.push(s);
 }
+// low fog is a field of drifting puffs, each with its own velocity and density, so a blast can shove
+// the fog out of the way and thin it with heat; the hole then refills as wind and diffusion carry fog back
 const fogBanks = [];
-for (let i = 0; i < 14; i++) {
+for (let i = 0; i < 90; i++) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudTex, transparent: true, depthWrite: false, opacity: 0, fog: false }));
-  const sc = vrnd(500, 900); s.scale.set(sc, sc * 0.35, 1); s.position.set(vrnd(-500, W + 500), -vrnd(350, 850), vrnd(40, 220)); s.renderOrder = 5; scene.add(s); fogBanks.push(s);
+  const sc = vrnd(200, 360); s.scale.set(sc, sc * 0.42, 1);
+  s.position.set(vrnd(-500, W + 500), -vrnd(380, 860), vrnd(40, 220)); s.renderOrder = 5; scene.add(s);
+  fogBanks.push({ s, vx: 0, vy: 0, dens: 1, home: -s.position.y, sc });
+}
+function fogBlast(x, y, R) {
+  const reach = R * 7 + 120;
+  for (const f of fogBanks) {
+    const dx = f.s.position.x - x, dy = -f.s.position.y - y, d = Math.hypot(dx, dy * 1.6);
+    if (d > reach) continue;
+    const k = 1 - d / reach, imp = (R * 9 + 80) * k * k, l = d || 1;
+    f.vx += dx / l * imp; f.vy += (dy / l - 0.25) * imp;          // shock pushes outward, hot air lifts a little
+    f.dens = Math.max(0.05, f.dens - k * k * (0.35 + R / 90));    // heat burns the fog off near the blast
+  }
 }
 let mountains = [];
 function buildMountains(th, seed) {
@@ -1101,7 +1303,7 @@ const waterGeo = new THREE.PlaneGeometry(W + 9000, 3200, 150, 24); waterGeo.rota
 const waterBase = waterGeo.attributes.position.array.slice();
 const waterMat = new THREE.MeshPhysicalMaterial({ color: 0x2f78a8, transparent: true, opacity: 0.82, roughness: 0.06, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.1, emissive: 0x000000 });
 const water = new THREE.Mesh(waterGeo, waterMat); water.receiveShadow = true; scene.add(water);
-const curtainGeo = new THREE.PlaneGeometry(W + 9000, 2200, 1, 6); curtainGeo.translate(W / 2, -1100, D / 2 + 70);
+const curtainGeo = new THREE.PlaneGeometry(W + 9000, 2200, 150, 6); curtainGeo.translate(W / 2, -1100, D / 2 + 70);
 { const c = new Float32Array(curtainGeo.attributes.position.count * 3); curtainGeo.setAttribute('color', new THREE.BufferAttribute(c, 3)); }
 const curtainMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.62, depthWrite: false });
 const curtain = new THREE.Mesh(curtainGeo, curtainMat); scene.add(curtain);
@@ -1114,10 +1316,19 @@ function setLiquid(th) {
   for (let i = 0; i < pa.count; i++) { const t = clamp(-pa.getY(i) / 2200, 0, 1); const c = top.clone().lerp(bot, Math.pow(t, 0.5)); ca.setXYZ(i, c.r, c.g, c.b); }
   ca.needsUpdate = true; curtainMat.opacity = lava ? 0.9 : 0.62;
 }
-function animateWater(t, wy) {
+// wave phases are integrated rather than computed as time x speed: when the wind changes, the speed
+// changes smoothly instead of the whole accumulated phase lurching forward
+const wph = [0, 0, 0];
+const waveY = (x, z, storm) => (Math.sin(x * 0.018 + wph[0]) * 2.6 + Math.sin(x * 0.0063 - wph[1] + z * 0.012) * 4 + Math.sin(z * 0.03 + wph[2]) * 1.5) * storm;
+const curtainTop = curtainGeo.attributes.position.array, CURTAIN_Z = D / 2 + 70;
+function animateWater(dt, wy) {
   const p = waterGeo.attributes.position.array, wind = game.windNow * 0.004, storm = 1 + game.wxNow.rain * 0.6;
-  for (let i = 0; i < p.length; i += 3) { const x = waterBase[i], z = waterBase[i + 2]; p[i + 1] = (Math.sin(x * 0.018 + t * (1.7 + wind)) * 2.6 + Math.sin(x * 0.0063 - t * 0.9 + z * 0.012) * 4 + Math.sin(z * 0.03 + t * 1.3) * 1.5) * storm; }
+  wph[0] += dt * (1.7 + wind); wph[1] += dt * 0.9; wph[2] += dt * 1.3;
+  for (let i = 0; i < p.length; i += 3) p[i + 1] = waveY(waterBase[i], waterBase[i + 2], storm);
   waterGeo.attributes.position.needsUpdate = true; waterGeo.computeVertexNormals();
+  // the front face of the water body follows the surface's front edge exactly, so no gap opens between them
+  for (let k = 0; k <= 150; k++) curtainTop[k * 3 + 1] = waveY(curtainTop[k * 3], CURTAIN_Z, storm) - 0.4;
+  curtainGeo.attributes.position.needsUpdate = true;
   water.position.y = -wy; curtain.position.y = -wy;
 }
 /* image-based lighting from the current sky, so metal, water and worms pick up the weather */
@@ -1436,10 +1647,16 @@ function updateWeatherFx(dt, t, wx, cx, cy) {
     c.material.opacity = 0.25 + wx.cloud * 0.7;
     const g = (1 - wx.dark * 0.65) * (1 - night * 0.6); c.material.color.setRGB(g, g, g * 1.02);
   }
+  const fogA = (wx.fog * 0.2 + wx.rain * 0.03) * 0.8, g = (1 - night * 0.7) * (1 - wx.dark * 0.4);
   for (const f of fogBanks) {
-    f.position.x += (game.windNow * 0.15 + 6) * dt; if (f.position.x > W + 700) f.position.x = -700;
-    f.material.opacity = wx.fog * 0.2 + wx.rain * 0.03;
-    const g = (1 - night * 0.7) * (1 - wx.dark * 0.4); f.material.color.setRGB(g, g, g);
+    const p = f.s.position, drift = game.windNow * 0.15 + 6;
+    f.vx += (drift - f.vx) * Math.min(1, dt * 0.6); f.vy += ((-p.y - f.home) * -0.15 - f.vy) * Math.min(1, dt * 0.8);   // air drag toward the wind, settle back to its layer
+    p.x += f.vx * dt; p.y -= f.vy * dt;
+    if (p.x > W + 700) p.x = -700; else if (p.x < -800) p.x = W + 600;
+    f.dens = Math.min(1, f.dens + dt * 0.07);
+    f.s.material.opacity = fogA * f.dens;
+    const grow = 1 + (1 - f.dens) * 0.5; f.s.scale.set(f.sc * grow, f.sc * 0.42 * grow, 1);    // thinned fog spreads out
+    f.s.material.color.setRGB(g, g, g);
   }
 }
 
@@ -2207,6 +2424,7 @@ function makeProjMesh(kind) {
   const add = (m, x = 0, y = 0, z = 0) => { m.position.set(x, y, z); g.add(m); return m; };
   const cyl = (r0, r1, h, mat, seg = 12) => new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, h, seg), mat);
   const sph = (r, mat, seg = 14) => new THREE.Mesh(new THREE.SphereGeometry(r, seg, Math.max(6, seg * 0.7 | 0)), mat);
+  if (kind === 'fuel') { add(sph(1.7, new THREE.MeshBasicMaterial({ color: 0xff8a2a }), 8)); add(sph(2.8, new THREE.MeshBasicMaterial({ color: 0xff5a10, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false }), 8)); return g; }
   if (kind === 'rocket' || kind === 'homing' || kind === 'missile' || kind === 'napalm') {
     const bodyMat = kind === 'homing' ? MAT.blue : kind === 'missile' ? MAT.steel : kind === 'napalm' ? MAT.orange : MAT.olive;
     add(cyl(1.7, 1.7, 9, bodyMat)).rotation.z = -PI / 2;
@@ -2247,6 +2465,11 @@ function makeHeldMesh(id) {
     add(cyl(1.35, 1.35, 15, m), 3); add(cyl(1.9, 1.5, 2.6, MAT.olive2), 10.8); add(cyl(1.6, 1.9, 2, MAT.olive2), -4.8);
     add(box(1.4, 2.6, 1.2, MAT.dark), 2, -2.2); add(box(2.4, 1.2, 1, MAT.dark), 4, 1.9); add(box(0.6, 1.2, 0.6, MAT.dark), 4.8, 2.9);
     for (const x of [-1, 6]) add(cyl(1.42, 1.42, 0.7, MAT.dark), x);
+  } else if (id === 'bat') {
+    // a tapered ash bat with a taped grip and a knob, held up over the shoulder
+    const bat = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 0.42, 16, 12), new THREE.MeshStandardMaterial({ color: 0xc89a5a, roughness: 0.55 }));
+    bat.rotation.z = -PI / 2; add(bat, 7);
+    add(cyl(0.55, 0.55, 3.2, MAT.dark), 0.4); add(new THREE.Mesh(new THREE.SphereGeometry(0.75, 8, 6), MAT.dark), -1.3);
   } else if (id === 'shotgun') {
     add(cyl(0.65, 0.65, 15, MAT.dark), 5.5, 0.7); add(cyl(0.65, 0.65, 13, MAT.dark), 4.5, -0.5);
     add(box(4, 1.6, 1.5, MAT.wood), 6, -1.3); add(box(6, 2.4, 1.4, MAT.wood), -3, -0.6).rotation.z = -0.25;
@@ -2423,7 +2646,7 @@ function explode(x, y, R, dmg, o = {}) {
   return res;
 }
 function explosionFx(x, y, R, res) {
-  noteBoom(x, y, R);
+  noteBoom(x, y, R); fogBlast(x, y, R);
   fxFireball(x, y, R);
   lightFlash(x, y, Math.min(480, R * 6), 0xffa050, 0.25 + R / 300);
   addHeat(x, y, R * 0.95, R + 6);
@@ -2711,6 +2934,8 @@ const PROJ = {
   homing: { r: 2, impact: true, wind: 1, R: 44, dmg: 50, smoke: 1, homing: true },
   missile: { r: 2, impact: true, wind: 0.6, R: 34, dmg: 30, smoke: 1 },
   napalm: { r: 2.5, impact: true, wind: 0.4, R: 18, dmg: 12, smoke: 1, fire: 18 },
+  // burning fuel from a crate blown open in mid-air: light droplets with air drag, so they drift with the wind like rain
+  fuel: { r: 1.6, impact: true, wind: 1.8, drag: 1.25, R: 9, dmg: 6, fire: 3, arm: 0.12 },
   clusterlet: { r: 2, impact: true, wind: 0, R: 22, dmg: 18, arm: 0.08 },
   bananalet: { r: 2.5, impact: true, wind: 0, R: 42, dmg: 42, arm: 0.12, spin: 1 },
   grenade: { r: 3.5, bounce: 0.45, fric: 0.8, R: 44, dmg: 50, fuseT: 3, spin: 1 },
@@ -2722,6 +2947,7 @@ const PROJ = {
   blackhole: { r: 4, bounce: 0.35, fric: 0.75, R: 0, dmg: 0, fuseT: 2.5, spin: 1, hole: true },
 };
 const IC = {
+  bat: '<path d="M4 19l2 2 13-12c1.6-1.5 2-3.6.8-4.8S16.5 4 15 5.6z" fill="currentColor"/><circle cx="4.2" cy="20" r="1.6" fill="currentColor"/>',
   bazooka: '<path d="M2 14h15l3-2v-1l-3-2H2z" fill="currentColor"/><path d="M7 14v4M11 14v3" stroke="currentColor" stroke-width="2"/>',
   grenade: '<circle cx="12" cy="14" r="6.5" fill="currentColor"/><path d="M10 7h4v3h-4zM14 8l4-3" stroke="currentColor" stroke-width="2" fill="none"/>',
   cluster: '<circle cx="12" cy="12" r="7" fill="currentColor"/><circle cx="9" cy="10" r="1.6" fill="#151d23"/><circle cx="15" cy="11" r="1.6" fill="#151d23"/><circle cx="12" cy="15.5" r="1.6" fill="#151d23"/>',
@@ -2749,6 +2975,7 @@ const WEAPONS = [
   { id: 'grenade', name: 'Grenade', key: '2', ammo: Infinity, kind: 'charge', proj: 'grenade', speed: 720, fuse: true, info: 'Bounces. F sets the fuse.' },
   { id: 'cluster', name: 'Cluster', key: '3', ammo: 3, kind: 'charge', proj: 'cluster', speed: 720, fuse: true, info: 'Bursts into five bomblets.' },
   { id: 'shotgun', name: 'Shotgun', key: '4', ammo: Infinity, kind: 'hitscan', info: 'Two shots a turn. Knocks worms back.' },
+  { id: 'bat', name: 'Baseball Bat', key: 'Z', ammo: 2, kind: 'melee', info: 'Stand next to a worm and swing. It flies off along your aim.' },
   { id: 'homing', name: 'Homing', key: '5', ammo: 2, kind: 'charge', proj: 'homing', speed: 760, target: true, info: 'Pick a target, then fire.' },
   { id: 'dynamite', name: 'Dynamite', key: '6', ammo: 2, kind: 'drop', proj: 'dynamite', info: 'Drop it and run. Five-second fuse.' },
   { id: 'banana', name: 'Banana', key: '7', ammo: 1, kind: 'charge', proj: 'banana', speed: 720, fuse: true, info: 'Very bouncy. Splits into five.' },
@@ -2782,6 +3009,7 @@ function stepProj(p, dt) {
       const sp = Math.min(560, Math.hypot(p.vx, p.vy) + 500 * dt);
       p.vx = Math.cos(cur) * sp; p.vy = Math.sin(cur) * sp;
     } else { p.vy += G * dt; p.vx += windA * (d.wind || 0) * dt; }
+    if (d.drag) { const k = Math.max(0, 1 - d.drag * dt); p.vx *= k; p.vy *= k; }
     const sp = Math.hypot(p.vx, p.vy), n = Math.max(1, Math.ceil(sp * dt / 1.5)), h = dt / n;
     for (let i = 0; i < n; i++) {
       p.x += p.vx * h; p.y += p.vy * h;
@@ -2790,6 +3018,7 @@ function stepProj(p, dt) {
         p.x -= p.vx * h; p.y -= p.vy * h; p.vy *= -0.4; p.vx *= 0.7; break;
       }
       for (const w of worms) { if (!alive(w) || (w === p.owner && p.age < 0.3)) continue; const dx = w.x - p.x, dy = w.y - p.y; if (dx * dx + dy * dy < (w.r + p.r) * (w.r + p.r)) return 'explode'; }
+      if (!p.sim && p.kind === 'missile') for (const o of objs) { if (o.kind !== 'crate' || !o.alive || o.rest) continue; const dx = o.x - p.x, dy = o.y - p.y; if (dx * dx + dy * dy < (o.r + p.r + 2) ** 2) { p.hitCrate = o; return 'crate'; } }
       if (!p.sim) { for (const o of objs) { if (o.kind !== 'mine') continue; const dx = o.x - p.x, dy = o.y - p.y; if (dx * dx + dy * dy < (o.r + p.r) * (o.r + p.r)) return 'explode'; } if (awakeBodyAt(p.x, p.y)) return 'explode'; }
       if (p.y > waterY) return 'sink';
     }
@@ -2833,10 +3062,23 @@ function updateProjs(dt) {
   for (const p of [...projs]) {
     const res = stepProj(p, dt);
     if (res === 'explode') { detonate(p); continue; }
+    if (res === 'crate') { napalmCrate(p.hitCrate, p); removeProj(p); continue; }
     if (res === 'sink') { splash(p.x, 0.5); NET.ev('spl', [p.x | 0, 0.5]); removeProj(p); continue; }
     if (res === 'gone') { removeProj(p); continue; }
     if (p.kind === 'holy' && !p.sang && p.fuse < 1.15) { p.sang = true; sfx.hallelujah(); NET.ev('snd', ['hallelujah']); }
   }
+}
+// an air-strike missile that catches a falling crate splits it open: the fuel inside goes up in a burning
+// cloud and comes down as napalm rain, carried downwind, setting fire to wherever it lands
+function napalmCrate(o, p) {
+  removeObj(o); NET.ev('xo', o.id);
+  explode(o.x, o.y, 16, 10, { noSlow: true });
+  for (let i = 0; i < 26; i++) {
+    const a = -PI * vrnd(0.05, 0.95), v = vrnd(60, 260);
+    spawnProj('fuel', o.x + vrnd(-4, 4), o.y + vrnd(-4, 4), Math.cos(a) * v + p.vx * 0.15, Math.sin(a) * v, { owner: null });
+  }
+  for (let i = 0; i < 12; i++) spawnP(glowSys, { x: o.x + vrnd(-8, 8), y: o.y + vrnd(-8, 8), vx: vrnd(-90, 90), vy: vrnd(-120, 20), life: vrnd(0.4, 0.9), size: vrnd(14, 26), size1: 4, fire: true });
+  sfx.whoosh(); showMsg('Napalm crate!', 'Burning fuel is raining down', 1.6); NET.ev('snd', ['whoosh']);
 }
 function projFx(dt) {
   for (const p of projs) {
@@ -2845,6 +3087,7 @@ function projFx(dt) {
     if (d.smoke && p.trailT <= 0) { p.trailT = 0.016; spawnP(smokeSys, { x: p.x - p.vx * 0.012, y: p.y - p.vy * 0.012, vx: vrnd(-12, 12), vy: vrnd(-12, 12), life: vrnd(0.8, 1.4), size: 4, size1: 16, col: [0.82, 0.8, 0.77], a: 0.42, wind: 0.25, grav: -20, ease: true }); spawnP(glowSys, { x: p.x - p.vx * 0.01, y: p.y - p.vy * 0.01, life: 0.09, size: 10, size1: 3, fire: true, frame: 6, a: 1 }); }
     if (p.kind === 'dynamite' && p.trailT <= 0) { p.trailT = 0.03; spawnSpark(p.x + vrnd(-1, 1), p.y - 9, vrnd(-80, 80), vrnd(-140, -30), vrnd(0.15, 0.35), [1, 0.8, 0.3], G * 0.6); }
     if (p.kind === 'holy' && p.trailT <= 0) { p.trailT = 0.06; spawnP(glowSys, { x: p.x + vrnd(-6, 6), y: p.y + vrnd(-6, 6), vx: 0, vy: -20, life: 0.6, size: 4, size1: 1, col: [1, 0.9, 0.6], a: 0.9, frame: 15 }); }
+    if ((p.kind === 'fuel' || p.kind === 'napalm') && Math.random() < 0.7) spawnP(glowSys, { x: p.x + vrnd(-1.5, 1.5), y: p.y + vrnd(-1.5, 1.5), vx: vrnd(-10, 10), vy: vrnd(-30, -5), life: vrnd(0.2, 0.45), size: vrnd(5, 9), size1: 1.5, fire: true });
     if (p.kind === 'blackhole' && Math.random() < 0.4) spawnP(glowSys, { x: p.x, y: p.y, life: 0.4, size: 8, size1: 2, col: [0.7, 0.3, 1], a: 0.8 });
   }
 }
@@ -2866,6 +3109,7 @@ function makeWorm(team, name, x, y) {
 function hurt(w, amt, small) {
   if (!alive(w) || amt <= 0 || !NET.auth()) return;
   amt = Math.round(amt); w.hp -= amt; w.dmgFlash = 0.35;
+  if (w.air) w.slide = true;   // a worm knocked flying may skid when it lands; one that merely jumped may not
   floatText(w.x, w.y - 20, '-' + amt, w.team.css);
   if (amt >= 3) bloodBurst(w.x, w.y - 2, Math.min(40, amt * 1.4), 120 + amt * 4, Math.atan2(w.vy, w.vx), 1.2);
   if (gore() && w.hp <= 0) { killNow(w); return; }
@@ -2893,8 +3137,10 @@ function drown(w) {
   if (w === game.active && (game.phase === 'turn' || game.phase === 'retreat')) game.activeHurt = true;
   hudDirty = true;
 }
+const FALL_HURT = 470;   // landing speed above which a fall hurts (a back-salto onto flat ground stays just under it)
 function onGround(w) { const y = w.y + w.r + 1.5; return solid(w.x, y) || solid(w.x - 3, y - 0.5) || solid(w.x + 3, y - 0.5); }
-function land(w) { if (w.air && Math.abs(w.vy) > 150) w.squash = 1; w.hop = false; w.air = false; w.vx = 0; w.vy = 0; w.still = 0; w.flip = 0; let k = 0; while (k < 4 && !bodyHits(w.x, w.y + 1, w.r)) { w.y += 1; k++; } }
+function land(w) { if (w.air && Math.abs(w.vy) > 150) w.squash = 1; w.hop = false; w.slide = false; w.air = false; w.vx = 0; w.vy = 0; w.still = 0; w.flip = 0; let k = 0; while (k < 4 && !bodyHits(w.x, w.y + 1, w.r)) { w.y += 1; k++; } }
+function debrisPuff(x, y) { for (let i = 0; i < 8; i++) spawnP(smokeSys, { x: x + vrnd(-6, 6), y, vx: vrnd(-50, 50), vy: vrnd(-40, -5), life: vrnd(0.5, 1), size: vrnd(5, 9), size1: 16, col: [0.55, 0.48, 0.4], a: 0.5 }); }
 function updateWorm(w, dt) {
   if (w.dead) return;
   if (w.drowning) {
@@ -2911,11 +3157,24 @@ function updateWorm(w, dt) {
     else return;
   }
   w.vy += G * dt;
+  const vx0 = w.vx, vy0 = w.vy;
   const hit = integrateBody(w, dt, 0.3, 0.72);
   const sp = Math.hypot(w.vx, w.vy);
   if (hit) {
-    if (hit.impact > 430 && hit.ny < -0.2) { hurt(w, Math.min(40, Math.round((hit.impact - 430) / 7))); sfx.thud(0.4); }
-    if (hit.ny < -0.55 && sp < 55) land(w);
+    const imp = hit.impact;
+    if (imp > FALL_HURT && hit.ny < -0.2) {
+      // a damaging landing. Coming in square to the ground (within ~10 degrees of the normal), the worm
+      // slams in and bounces back up, and that hurts more; a glancing one skids along the surface instead
+      const v0 = Math.hypot(vx0, vy0) || 1, along = Math.abs(vx0 * -hit.ny + vy0 * hit.nx) / v0;
+      if (along < 0.18) {
+        hurt(w, Math.min(55, Math.round((imp - FALL_HURT) / 5) + 6));
+        const up = Math.min(330, imp * 0.42);
+        w.vx = hit.nx * up + w.facing * 18; w.vy = hit.ny * up; w.squash = 1.6; w.flip = 0; w.dizzy = 1.8;
+        sfx.thud(0.9); shake(4); debrisPuff(w.x, w.y + w.r);
+      } else hurt(w, Math.min(40, Math.round((imp - FALL_HURT) / 7)));
+      w.slide = true; sfx.thud(0.45);
+    } else if (!w.slide && (hit.ny < -0.5 || (hit.ny < -0.15 && onGround(w)))) land(w);   // a firm landing stays put
+    else if (hit.ny < -0.55 && sp < 55) land(w);
   }
   if (sp < 20) { w.still += dt; if (w.still > 0.45 && contact(w.x, w.y, w.r + 1.5)) land(w); } else w.still = 0;
 }
@@ -2924,11 +3183,12 @@ function walkWorm(w, dir, dt) {
   while (w.walkAcc >= 1) {
     w.walkAcc -= 1;
     const nx = w.x + dir; let ny = null;
-    for (let up = 0; up <= 5; up++) if (!bodyHits(nx, w.y - up, w.r)) { ny = w.y - up; break; }
+    // step over bumps up to about a worm-height and a half; only a real wall stops the walk
+    for (let up = 0; up <= 10; up++) if (!bodyHits(nx, w.y - up, w.r)) { ny = w.y - up; break; }
     if (ny === null) { w.walkAcc = 0; break; }
-    let d = 0; while (d < 8 && !bodyHits(nx, ny + 1, w.r)) { ny++; d++; }
+    let d = 0; while (d < 10 && !bodyHits(nx, ny + 1, w.r)) { ny++; d++; }
     w.x = nx; w.y = ny;
-    if (d >= 8) { w.air = true; w.vx = dir * 40; w.vy = 0; break; }
+    if (d >= 10) { w.air = true; w.vx = dir * 40; w.vy = 0; break; }
   }
 }
 function jump(w, back) {
@@ -2936,7 +3196,7 @@ function jump(w, back) {
   if (w.drill > 0) return;
   if (back && w.air && w.hop && tAll - (w.hopAt || 0) < 0.5 && w.vy < 60) {
     // second press while the back-hop is still rising: turn it into a high back salto
-    w.vy = Math.min(w.vy, -150) - 260; w.vx = -w.facing * 70; w.flip = 1; w.hop = false; sfx.jump(); cam.free = false; return;
+    w.vy = Math.min(w.vy, -150) - 190; w.vx = -w.facing * 70; w.flip = 1; w.hop = false; sfx.jump(); cam.free = false; return;
   }
   if (w.air) return;
   w.air = true; w.still = 0; w.y -= 1; w.squash = 0.6; cam.free = false;
@@ -3128,11 +3388,36 @@ function shootShotgun(w) {
   const ex = hitP ? hitP[0] : x, ey = hitP ? hitP[1] : y;
   tracerFx(w.x + d.x * 14, w.y + d.y * 14, ex, ey);
   NET.ev('tr', [w.x + d.x * 14 | 0, w.y + d.y * 14 | 0, ex | 0, ey | 0]);
-  if (hitW) { hurt(hitW, 25); hitW.vx += d.x * 240; hitW.vy += d.y * 240 - 90; hitW.air = true; hitW.rope = null; }
+  if (hitW) { hurt(hitW, 25); hitW.slide = true; hitW.vx += d.x * 240; hitW.vy += d.y * 240 - 90; hitW.air = true; hitW.rope = null; }
   if (hitB) { wakeBody(hitB); applyImpulse(hitB, d.x * 220 * Math.min(hitB.mass, 300), d.y * 220 * Math.min(hitB.mass, 300), ex, ey); hitB.hp -= 20 * hitB.dmgMul; if (hitB.hp <= 0 && !hitB.lit) { hitB.lit = true; later(0.05, () => breakBody(hitB)); } if (hitB.kind === 'car') sfx.carAlarm(); }
   if (hitP) explode(hitP[0], hitP[1], 12, 0, { noSlow: true, quiet: true });
   game.shots++;
   if (game.shots >= 2) used(w, 'shotgun', 5); else hudDirty = true;
+}
+// the bat: a short arc in front of the worm. Whatever it connects with leaves along the aim line,
+// and the heavier the thing, the less speed it gets
+function swingBat(w) {
+  const d = aimDir(w), cx = w.x + d.x * 11, cy = w.y + d.y * 11;
+  w.swing = 0.4; NET.ev('bat', worms.indexOf(w));
+  let hit = false;
+  for (const o of worms) {
+    if (o === w || !alive(o) || Math.hypot(o.x - cx, o.y - cy) > o.r + 11) continue;
+    hurt(o, 30); o.air = true; o.rope = null; o.slide = true; o.vx = d.x * 640; o.vy = d.y * 640 - 60; o.y -= 1;
+    sparkle(o.x, o.y); hit = true;
+  }
+  for (const b of bodies) {
+    if (b.dead || Math.hypot(b.x - cx, b.y - cy) > b.r + 10) continue;
+    wakeBody(b); const m = Math.min(b.mass, 900), sp = 520 * clamp(120 / Math.sqrt(m * 4), 0.15, 1.2);
+    applyImpulse(b, d.x * sp * b.mass, (d.y * sp - 40) * b.mass, cx, cy); b.hp -= 12 * b.dmgMul; hit = true;
+    if (b.kind === 'car') sfx.carAlarm();
+  }
+  for (const ob of objs) if (Math.hypot(ob.x - cx, ob.y - cy) < (ob.r || 4) + 10) { ob.vx = d.x * 500; ob.vy = d.y * 500 - 60; ob.rest = false; hit = true; }
+  batFx(w, hit);
+  used(w, 'bat', 3);
+}
+function batFx(w, hit) {
+  if (hit) { sfx.bat(); shake(3); const d = aimDir(w); spawnP(glowSys, { x: w.x + d.x * 14, y: w.y + d.y * 14, life: 0.12, size: 22, size1: 6, col: [1, 0.95, 0.8], a: 1 }); }
+  else sfx.whoosh();
 }
 function tracerFx(ax, ay, ex, ey) {
   const L = Math.hypot(ex - ax, ey - ay) || 1;
@@ -3195,6 +3480,7 @@ function beginFire() {
     if (id === 'sheep') sfx.baa(); else if (id === 'dynamite') sfx.fuse();
     used(w, id, id === 'sheep' ? 10 : id === 'drill' ? 4 : 5);
   } else if (wp.kind === 'hitscan') shootShotgun(w);
+  else if (wp.kind === 'melee') swingBat(w);
   else if (wp.kind === 'target') showMsg(coarse ? 'Tap a target' : 'Click a target', '', 1);
 }
 function releaseFire() {
@@ -3365,6 +3651,8 @@ const sfx = (() => {
     jump() { voice(380, 0.14, [6, 8], [[700, 4], [1100, 5]], 0.12, 0, 520); },
     thwip() { tone('sine', 900, 200, 0.16, 0.25); noise(0.12, 'highpass', 3000, 0.7, 0.2); },
     clink() { tone('triangle', 1800, 1200, 0.08, 0.2); },
+    bat() { noise(0.09, 'bandpass', 1800, 2.5, 0.7, 900); tone('triangle', 520, 180, 0.12, 0.35); tone('sine', 120, 60, 0.18, 0.4); },
+    whoosh() { noise(0.25, 'bandpass', 700, 1.2, 0.25, 2200); },
     clank() { tone('square', 180, 120, 0.25, 0.25); tone('triangle', 1200, 900, 0.3, 0.12); },
     beep() { tone('square', 1400, 1400, 0.08, 0.12); tone('square', 1400, 1400, 0.08, 0.12, 0.005, 0.14); },
     pickup() { [523, 659, 784, 1046].forEach((f, i) => tone('triangle', f, f, 0.12, 0.18, 0.005, i * 0.07)); },
@@ -3961,6 +4249,10 @@ function* aiPlanGen(w) {
     const dx = e.x - w.x, dd = Math.hypot(dx, e.y - w.y);
     if (dd < 420 && clearLine(w.x, w.y, e.x, e.y, 10, e.r + 1)) { const s = (Math.min(e.hp, 50) + (e.hp <= 50 ? 30 : 0)) * 0.9; if (s > best.score) best = { score: s, weapon: 'shotgun', facing: dx >= 0 ? 1 : -1, aim: Math.atan2(-(e.y - w.y), Math.abs(dx)), power: 1 }; }
   }
+  if (hasAmmo(w.team, 'bat')) for (const e of enemies) {
+    const dx = e.x - w.x, dy = e.y - w.y;
+    if (Math.hypot(dx, dy) < 20) { const s = Math.min(e.hp, 30) + 25 + (e.y < waterY - 120 ? 10 : 0); if (s > best.score) best = { score: s, weapon: 'bat', facing: dx >= 0 ? 1 : -1, aim: 0.6, power: 1 }; }
+  }
   for (const id of ['airstrike', 'tesla', 'moai']) if (hasAmmo(w.team, id)) for (const e of enemies) { const s = evalBoom(e.x, e.y, id === 'tesla' ? 60 : 46, id === 'tesla' ? 30 : 55) * 0.85; if (s > 35 && s > best.score * 1.25) best = { score: s, weapon: id, tx: e.x, ty: e.y, facing: w.facing, aim: w.aim, power: 1 }; }
   if (hasAmmo(w.team, 'homing') && best.score < 25) { const e = enemies.reduce((a, b) => (Math.hypot(a.x - w.x, a.y - w.y) < Math.hypot(b.x - w.x, b.y - w.y) ? a : b)); best = { score: 24, weapon: 'homing', target: { x: e.x, y: e.y }, facing: e.x >= w.x ? 1 : -1, aim: 0.75, power: 0.55 }; }
   const err = [[0.1, 0.12], [0.04, 0.045], [0.01, 0.012]][game.cfg.skill];
@@ -4010,21 +4302,26 @@ function aiStep(dt) {
       if (wp.kind === 'charge') { if (!game.charging) beginFire(); else if (game.power >= ai.plan.power) { releaseFire(); ai.stage = 'done'; } }
       else if (wp.kind === 'target') { useTarget(ai.plan.tx, ai.plan.ty); ai.stage = 'done'; }
       else if (wp.kind === 'hitscan') { beginFire(); ai.stage = 'shot2'; ai.t = 0.9; }
+      else if (wp.kind === 'melee') { beginFire(); ai.stage = 'done'; }
       else ai.stage = 'done';
       break;
     }
     case 'shot2': if (ai.t <= 0) { beginFire(); ai.stage = 'done'; } break;
   }
 }
-
 /* =====================================================================
-   online play over the artifact's live room.
+   online play, peer to peer.
    The device whose team is up runs the physics and streams state; the
    other device mirrors it. Terrain edits travel as small events that
    both sides apply identically, so the worlds stay in step.
+   Transport: a WebRTC data channel. PeerJS's public broker is only used
+   to find the other phone by room code and swap the connection offer;
+   STUN (Google, Cloudflare) finds a direct route, and a public TURN relay
+   covers networks that block direct links. Inside Claude, if the broker
+   is unreachable, the artifact's live room is used instead.
    ===================================================================== */
 const NET = {
-  mode: 'off', role: 'host', room: null, gr: null, code: '', friend: null, friendName: '', friendAck: 0,
+  mode: 'off', role: 'host', room: null, gr: null, via: '', code: '', friend: null, friendName: '', friendAck: 0,
   seq: 0, out: [], lastIn: 0, sendT: 0, loadedSeed: 0, friendReady: 0, available: null, lastAckSent: -1,
   auth() { return this.mode === 'off' || game.phase === 'menu' || game.authRole === this.role; },
   mine() { return this.auth(); },
@@ -4035,14 +4332,83 @@ async function netRoom() {
   try { NET.room = window.claude && window.claude.use ? await window.claude.use('room') : null; } catch (e) { NET.room = null; }
   NET.available = !!NET.room; return NET.room;
 }
+const PEER_SRC = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
+const ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+];
+let peerLib = null;
+function loadPeerLib() {
+  if (window.Peer) return Promise.resolve(window.Peer);
+  if (!peerLib) peerLib = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = PEER_SRC; sc.async = true;
+    sc.onload = () => window.Peer ? res(window.Peer) : rej(new Error('peerjs missing'));
+    sc.onerror = () => { peerLib = null; rej(new Error('peerjs blocked')); };
+    document.head.appendChild(sc);
+  });
+  return peerLib;
+}
+// a room with the same small surface as the artifact room: presence(patch) merges into this side's
+// shared state, onPeers reports the friend's merged state, leave() hangs up
+async function rtcRoom(code, role) {
+  const Peer = await loadPeerLib();
+  const opts = Object.assign({ config: { iceServers: ICE_SERVERS }, debug: 0 }, window.__peerOpts || {});
+  const hostId = 'burrowbrawl-v2-' + code.toLowerCase();
+  const peer = role === 'host' ? new Peer(hostId, opts) : new Peer(opts);
+  const local = {}; let conn = null, remote = {}, cb = null, lost = null, closed = false, retry = null;
+  const live = () => conn && conn.open;
+  const emit = (left) => { if (cb) cb({ peers: live() ? [{ peer: conn.peer, isMe: false, presence: remote }] : [], left: left ? [{ peer: left }] : [] }); };
+  const send = (m) => { if (live()) try { conn.send(JSON.stringify(m)); } catch (e) { } };
+  // exactly one connection is current; anything else that opens is hung up, and stale ones are ignored
+  const attach = (c) => {
+    if (live()) { c.on('open', () => c.close()); return; }
+    if (conn && conn !== c) try { conn.close(); } catch (e) { }
+    conn = c; c.startedAt = Date.now();
+    c.on('open', () => { if (conn !== c) { c.close(); return; } c.wasOpen = true; remote = {}; send({ full: local }); emit(); });
+    c.on('data', (d) => { if (conn !== c) return; let m; try { m = typeof d === 'string' ? JSON.parse(d) : d; } catch (e) { return; } if (!m) return; if (m.full) remote = m.full; else if (m.p) Object.assign(remote, m.p); emit(); });
+    c.on('close', () => { if (conn !== c) return; const was = !!c.wasOpen; conn = null; remote = {}; emit(c.peer); if (!closed && lost && role === 'guest' && was && NET.friend) lost(); });
+    c.on('error', () => { if (conn === c && !c.open) conn = null; });
+  };
+  await new Promise((res, rej) => {
+    const to = setTimeout(() => { rej(Object.assign(new Error('timeout'), { type: 'timeout' })); try { peer.destroy(); } catch (e) { } }, 9000);
+    peer.on('open', () => { clearTimeout(to); res(); });
+    peer.on('error', (e) => { if (!peer.open) { clearTimeout(to); rej(e); try { peer.destroy(); } catch (er) { } } });
+  });
+  peer.on('connection', attach);
+  peer.on('disconnected', () => { if (!closed) try { peer.reconnect(); } catch (e) { } });   // the broker dropping does not touch an open data channel
+  if (role === 'guest') {
+    // the host may not be there yet: keep knocking, one attempt at a time, until it answers
+    peer.on('error', (e) => { if (e && e.type === 'peer-unavailable' && conn && !conn.open) conn = null; });
+    const knock = () => {
+      if (closed || peer.destroyed || live()) return;
+      if (conn && Date.now() - conn.startedAt < 15000) return;
+      if (conn) { try { conn.close(); } catch (e) { } conn = null; }
+      attach(peer.connect(hostId, { reliable: true, serialization: 'raw' }));
+    };
+    knock(); retry = setInterval(knock, 2000);
+  }
+  return {
+    presence(patch) { Object.assign(local, patch); send({ p: patch }); return Promise.resolve(); },
+    onPeers(f, onLost) { cb = f; lost = onLost; emit(); },
+    leave() { closed = true; if (retry) clearInterval(retry); try { if (conn) conn.close(); peer.destroy(); } catch (e) { } return Promise.resolve(); },
+  };
+}
 function lobbyStatus(t) { $('lobbyStatus').textContent = t; }
 async function netJoin(code, role) {
-  const room = await netRoom();
-  if (!room) { lobbyStatus('Online play needs this page opened inside Claude, signed in. It is not available in this view.'); return false; }
-  try { NET.gr = await room.join('bb-' + code.toLowerCase()); } catch (e) { lobbyStatus('Could not open the game room (' + (e && e.code || 'error') + '). Try again.'); return false; }
+  lobbyStatus(role === 'host' ? 'Opening a game…' : 'Looking for the game…');
+  let gr = null, via = 'rtc';
+  try { gr = await rtcRoom(code, role); }
+  catch (e) {
+    if (role === 'host' && e && e.type === 'unavailable-id') return 'taken';
+    const room = await netRoom();
+    if (room) { try { gr = await room.join('bb-' + code.toLowerCase()); via = 'room'; } catch (e2) { gr = null; } }
+    if (!gr) { lobbyStatus('Could not reach the matchmaking server (' + (e && (e.type || e.message) || 'error') + '). Check the connection and try again.'); return false; }
+  }
+  NET.gr = gr; NET.via = via;
   NET.mode = role; NET.role = role; NET.code = code; NET.seq = 0; NET.out = []; NET.lastIn = 0; NET.friend = null; NET.friendReady = 0; NET.loadedSeed = 0;
   NET.gr.presence({ r: role, nm: role === 'host' ? $('tName0').value || TEAM_DEF[0].name : ($('joinName').value || TEAM_DEF[1].name), ack: 0, v: 2 });
-  NET.gr.onPeers(onPeersChange, () => lobbyStatus('The connection to the room was lost.'));
+  NET.gr.onPeers(onPeersChange, () => lobbyStatus('The connection to your friend was lost.'));
   return true;
 }
 function onPeersChange(ch) {
@@ -4059,7 +4425,7 @@ function lobbyRender() {
   const has = !!NET.friend;
   $('lobbyPeer').textContent = has ? `${NET.friendName} is here` : 'Waiting for your friend…';
   $('bLobbyStart').disabled = !(NET.mode === 'host' && has);
-  if (NET.mode === 'guest') lobbyStatus(has ? 'Connected. The host starts the match.' : 'Looking for the host…');
+  if (NET.mode === 'guest') lobbyStatus(has ? `Connected${NET.via === 'rtc' ? ' directly' : ''}. The host starts the match.` : 'Looking for the host…');
 }
 function friendLeft() {
   NET.friend = null; lobbyRender();
@@ -4188,6 +4554,7 @@ const EV = {
   kill: (i) => { const w = worms[i]; if (w) { w.dead = true; w.mesh.visible = false; w.label.el.hidden = true; } },
   go: (i) => gameOver(i >= 0 ? game.teams[i] : null),
   cl: (d) => { for (let k = 0; k + 4 < d.length; k += 5) stampClod(d[k], d[k + 1], { r: d[k + 2], c: d[k + 3] }, d[k + 4]); },
+  bat: (i) => { const w = worms[i]; if (w) { w.swing = 0.4; batFx(w, true); } },
   gib: ([i, x, y]) => { const w = worms[i]; if (w) { w.dead = true; w.mesh.visible = false; w.label.el.hidden = true; } gibFx(x, y); },
 };
 function applyEvent(t, d) { const f = EV[t]; if (f) f(d); }
@@ -4302,20 +4669,26 @@ function syncWorms(dt) {
     const m = w.mesh, u = m.userData;
     if (w.dead) { m.visible = false; if (w.label) w.label.el.hidden = true; continue; }
     m.visible = true;
-    m.position.set(w.x, -w.y, 0);
+    // stepping over a bump moves the worm several pixels in one tick; ease the body up so it glides over instead of snapping
+    if (!w.air && !w.rope && w.visY !== undefined && Math.abs(w.visY - w.y) < 14) w.visY = lerp(w.visY, w.y, Math.min(1, dt * 16)); else w.visY = w.y;
+    m.position.set(w.x, -w.visY, 0);
+    if (w.dizzy > 0) { w.dizzy -= dt; const a = tAll * 9; spawnP(glowSys, { x: w.x + Math.cos(a) * 7, y: w.visY - 15 + Math.sin(a) * 2, life: 0.22, size: 3.5, size1: 1, col: [1, 0.9, 0.3], a: 1, frame: 15 }); }
     m.scale.x = w.facing; m.rotation.y = w.facing * 0.3;
     if (w.flip && w.air) { w.flipAng = (w.flipAng || 0) + dt * 13; m.rotation.z = w.facing * w.flipAng; } else { w.flipAng = 0; m.rotation.z = w.air && !w.rope ? clamp(-w.vx * 0.0015, -0.4, 0.4) * w.facing : 0; }
     if (!w.air && !w.rope) { const c = contact(w.x, w.y + 2, w.r + 1); if (c) u.spine.rotation.z = lerp(u.spine.rotation.z, clamp(Math.atan2(c.nx, -c.ny) * -w.facing, -0.45, 0.45), Math.min(1, dt * 10)); } else u.spine.rotation.z *= 0.9;
     animateWorm(w, dt, tAll);
     const act = w === game.active && (game.phase === 'turn' || game.phase === 'retreat') && !w.drowning;
     const wp = WMAP[game.weapon];
-    const showGun = act && game.phase === 'turn' && wp && wp.kind !== 'skip' || (act && w.drill > 0);
-    const gid = w.drill > 0 ? 'drill' : game.weapon;
+    if (w.swing > 0) w.swing = Math.max(0, w.swing - dt);
+    const showGun = act && game.phase === 'turn' && wp && wp.kind !== 'skip' || (act && w.drill > 0) || w.swing > 0;
+    const gid = w.swing > 0 ? 'bat' : w.drill > 0 ? 'drill' : game.weapon;
     if (showGun) {
       if (u.heldId !== gid) { if (u.held) u.gun.remove(u.held); u.held = makeHeldMesh(gid); u.gun.add(u.held); u.heldId = gid; }
       u.gun.visible = true;
       const hp = u.head.position; u.gun.position.set(hp.x + 1.5, hp.y - 3.2, 4.4);
       u.gun.rotation.z = (wp && (wp.kind === 'charge' || wp.kind === 'hitscan' || wp.kind === 'rope')) ? w.aim : gid === 'drill' ? -PI / 2 + Math.sin(tAll * 60) * 0.05 : 0.2;
+      if (w.swing > 0) { const k = 1 - w.swing / 0.4, e = 1 - Math.pow(1 - Math.min(1, k * 2.5), 3); u.gun.rotation.z = w.aim + 1.3 - e * 2.4; }   // the swing whips through the aim line
+      else if (wp && wp.kind === 'melee') u.gun.rotation.z = w.aim + 1.3;   // bat cocked back over the shoulder
       if (game.charging) u.gun.position.x += vrnd(-0.3, 0.3);
     } else u.gun.visible = false;
     const [sx, sy, sz] = toScreen(w.x, w.y - 16);
@@ -4375,7 +4748,7 @@ function syncAimUI() {
   const w = game.active, cross = $('cross'), pw = $('powerWrap'), tg = $('target');
   const wp = WMAP[game.weapon];
   const mineTurn = w && alive(w) && !w.team.cpu && NET.mine();
-  const show = mineTurn && game.phase === 'turn' && wp && (wp.kind === 'charge' || wp.kind === 'hitscan' || wp.kind === 'rope');
+  const show = mineTurn && game.phase === 'turn' && wp && (wp.kind === 'charge' || wp.kind === 'hitscan' || wp.kind === 'rope' || wp.kind === 'melee');
   cross.style.display = show ? 'block' : 'none';
   if (show) { const d = aimDir(w); const [sx, sy] = toScreen(w.x + d.x * 46, w.y + d.y * 46); cross.style.left = sx + 'px'; cross.style.top = sy + 'px'; }
   const charging = w && game.charging;
@@ -4431,8 +4804,9 @@ function syncLighting(dt) {
   sunSprite.position.set(T.sunDir[0] * 2800, 600 + T.sunDir[1] * 1500, -8000);
   sunSprite.scale.setScalar(game.timeKey === 'night' ? 1300 : 2600);
   const fc = new THREE.Color(T.fog); fc.lerp(new THREE.Color(0x6b7178), wn.dark * 0.6); scene.fog.color.copy(fc);
-  const haze = clamp(wn.fog + wn.rain * 0.25, 0, 1.4);
-  scene.fog.near = cam.dist * (1.05 - haze * 0.45) + 150; scene.fog.far = cam.dist + 9500 / (1 + haze * 5);
+  // haze is kept about a fifth lighter than full strength so the battlefield reads through it
+  const haze = clamp(wn.fog + wn.rain * 0.25, 0, 1.4) * 0.8;
+  scene.fog.near = cam.dist * (1.05 - haze * 0.45) + 150; scene.fog.far = (cam.dist + 9500 / (1 + haze * 5)) * 1.2;
   const amb = clamp((T.hemiI + T.sunI * 0.25) * (1 - wn.dark * 0.45), 0.25, 1.3);
   smokeTint.setRGB(amb, amb, amb * 1.02); smokeSys.mat.uniforms.tint.value.copy(smokeTint);
   updateEnv(game.timeKey + ':' + Math.round(wn.dark * 4) + ':' + game.theme.name);
@@ -4485,22 +4859,31 @@ $('bQuit').addEventListener('click', toMenu);
 $('bSetup').addEventListener('click', toMenu);
 $('bAgain').addEventListener('click', () => { $('over').hidden = true; if (NET.mode === 'host') { $('lobby').hidden = false; hostStart(); } else launchGame(game.cfg); });
 $('bOnline').addEventListener('click', async () => {
-  sfx.init(); $('menu').hidden = true; $('lobby').hidden = false; lobbyStatus('Checking the connection…');
+  sfx.init(); $('menu').hidden = true; $('lobby').hidden = false;
   $('lobbyHost').hidden = false; $('lobbyJoin').hidden = false; $('lobbyCode').textContent = '— — — —'; $('lobbyPeer').textContent = ''; $('bLobbyStart').disabled = true;
-  const room = await netRoom();
-  lobbyStatus(room ? 'Create a game and send the code to your friend, or enter their code.' : 'Online play needs this page opened inside Claude by signed-in people who both have access to it. It is not available in this view.');
-  $('bHost').disabled = $('bJoin').disabled = !room;
+  $('bHost').disabled = $('bJoin').disabled = false;
+  lobbyStatus('Create a game and send the code to your friend, or enter their code. Phones connect directly to each other.');
+  loadPeerLib().catch(() => { });
 });
 $('bHost').addEventListener('click', async () => {
-  const code = Array.from({ length: 4 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 31)]).join('');
-  if (!(await netJoin(code, 'host'))) return;
+  $('bHost').disabled = true;
+  let code = '', r = 'taken';
+  for (let k = 0; k < 4 && r === 'taken'; k++) {
+    code = Array.from({ length: 4 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 31)]).join('');
+    r = await netJoin(code, 'host');
+  }
+  $('bHost').disabled = false;
+  if (r !== true) { if (r === 'taken') lobbyStatus('Could not get a free code. Try again.'); return; }
   $('lobbyCode').textContent = code; $('lobbyJoin').hidden = true;
   lobbyStatus('Send this code to your friend. Your setup from the main menu is used; you play team 1, your friend team 2, any extra teams are CPU.');
   lobbyRender();
 });
 $('bJoin').addEventListener('click', async () => {
   const code = $('joinCode').value.trim().toUpperCase(); if (!/^[A-Z0-9]{4}$/.test(code)) { lobbyStatus('Codes are four letters or digits.'); return; }
-  if (!(await netJoin(code, 'guest'))) return;
+  $('bJoin').disabled = true;
+  const r = await netJoin(code, 'guest');
+  $('bJoin').disabled = false;
+  if (r !== true) return;
   $('lobbyHost').hidden = true; $('lobbyCode').textContent = code; lobbyRender();
 });
 $('bLobbyStart').addEventListener('click', () => { if (NET.mode === 'host' && NET.friend) hostStart(); });
@@ -4556,7 +4939,7 @@ function frame(now) {
   syncWorms(dt); syncProjs(dt); syncObjs(tAll); syncBodies(tAll); syncRope();
   projFx(dt); fireFx(dt); updateBlood(dt); drawClods();
   updatePoints(smokeSys, dt); updatePoints(glowSys, dt); updateSparks(dt); updateDebris(dt); updateFx(dt); updateHeat(dt);
-  animateWater(tAll, waterY);
+  animateWater(dt, waterY);
   updateCamera(rdt);
   updateWeatherFx(dt, tAll, game.wxNow, cam.x, cam.y);
   flushTerrain();
@@ -4572,6 +4955,13 @@ function frame(now) {
   genTerrain('hills', th, seed); buildMountains(th, seed); setLiquid(th); flushTerrain(true); buildSurfaceLife(th, seed);
   cam.x = W / 2; cam.y = 560; cam.dist = 1150; cam.tdist = 1150;
   requestAnimationFrame(t => { last = t; frame(t); });
+  window.__bbBoot = true;
+  if (glReduced) {
+    // say plainly that the full graphics were refused, and how to get them back
+    const n = document.createElement('p'); n.className = 'lbl'; n.style.cssText = 'color:var(--warn,#ffb347);margin-top:10px;text-transform:none;letter-spacing:0';
+    n.textContent = 'Reduced graphics: this browser refused full 3D acceleration, so shadows and effects are off. For the full look, turn on hardware acceleration in the browser settings (Chrome/Edge: Settings, System, "Use graphics acceleration when available") and relaunch.';
+    const card = document.querySelector('#menu .card') || $('menu'); card.appendChild(n);
+  }
 })();
 </script>
 
