@@ -3138,7 +3138,15 @@ function drown(w) {
   hudDirty = true;
 }
 const FALL_HURT = 470;   // landing speed above which a fall hurts (a back-salto onto flat ground stays just under it)
-function onGround(w) { const y = w.y + w.r + 1.5; return solid(w.x, y) || solid(w.x - 3, y - 0.5) || solid(w.x + 3, y - 0.5); }
+// standing = terrain just beyond the lower half of the body outline. Probing only straight down lost
+// contact at the foot of a steep slope or on a bump's corner, which dropped the worm into falling mode
+// and stopped it walking; this holds on slopes up to ~85 degrees and lets go only against a wall
+function onGround(w) {
+  const R = w.r + 2.5;
+  if (solid(w.x, w.y + R)) return true;
+  for (let k = 0; k < CN; k++) if (SIN[k] > 0.5 && solid(w.x + COS[k] * R, w.y + SIN[k] * R)) return true;
+  return false;
+}
 function land(w) { if (w.air && Math.abs(w.vy) > 150) w.squash = 1; w.hop = false; w.slide = false; w.air = false; w.vx = 0; w.vy = 0; w.still = 0; w.flip = 0; let k = 0; while (k < 4 && !bodyHits(w.x, w.y + 1, w.r)) { w.y += 1; k++; } }
 function debrisPuff(x, y) { for (let i = 0; i < 8; i++) spawnP(smokeSys, { x: x + vrnd(-6, 6), y, vx: vrnd(-50, 50), vy: vrnd(-40, -5), life: vrnd(0.5, 1), size: vrnd(5, 9), size1: 16, col: [0.55, 0.48, 0.4], a: 0.5 }); }
 function updateWorm(w, dt) {
@@ -3173,7 +3181,7 @@ function updateWorm(w, dt) {
         sfx.thud(0.9); shake(4); debrisPuff(w.x, w.y + w.r);
       } else hurt(w, Math.min(40, Math.round((imp - FALL_HURT) / 7)));
       w.slide = true; sfx.thud(0.45);
-    } else if (!w.slide && (hit.ny < -0.5 || (hit.ny < -0.15 && onGround(w)))) land(w);   // a firm landing stays put
+    } else if (!w.slide && (hit.ny < -0.34 || onGround(w))) land(w);   // a firm landing (slope up to ~70 degrees, or standing support) stays put
     else if (hit.ny < -0.55 && sp < 55) land(w);
   }
   if (sp < 20) { w.still += dt; if (w.still > 0.45 && contact(w.x, w.y, w.r + 1.5)) land(w); } else w.still = 0;
@@ -3183,8 +3191,9 @@ function walkWorm(w, dir, dt) {
   while (w.walkAcc >= 1) {
     w.walkAcc -= 1;
     const nx = w.x + dir; let ny = null;
+    const buried = bodyHits(w.x, w.y, w.r);   // soil or a girder landed on it: let it climb out
     // step over bumps up to about a worm-height and a half; only a real wall stops the walk
-    for (let up = 0; up <= 10; up++) if (!bodyHits(nx, w.y - up, w.r)) { ny = w.y - up; break; }
+    for (let up = 0, top = buried ? 18 : 10; up <= top; up++) if (!bodyHits(nx, w.y - up, w.r)) { ny = w.y - up; break; }
     if (ny === null) { w.walkAcc = 0; break; }
     let d = 0; while (d < 10 && !bodyHits(nx, ny + 1, w.r)) { ny++; d++; }
     w.x = nx; w.y = ny;
@@ -3196,12 +3205,13 @@ function jump(w, back) {
   if (w.drill > 0) return;
   if (back && w.air && w.hop && tAll - (w.hopAt || 0) < 0.5 && w.vy < 60) {
     // second press while the back-hop is still rising: turn it into a high back salto
-    w.vy = Math.min(w.vy, -150) - 190; w.vx = -w.facing * 70; w.flip = 1; w.hop = false; sfx.jump(); cam.free = false; return;
+    w.vy = Math.min(w.vy, -100) - 150; w.vx = -w.facing * 70; w.flip = 1; w.hop = false; sfx.jump(); cam.free = false; return;
   }
   if (w.air) return;
   w.air = true; w.still = 0; w.y -= 1; w.squash = 0.6; cam.free = false;
-  if (back) { w.vx = -w.facing * 34; w.vy = -275; w.hop = true; w.hopAt = tAll; w.flip = 0; }
-  else { w.vx = w.facing * 150; w.vy = -235; w.hop = false; }
+  // heights: forward ~27 px, back hop ~36 px, back salto ~90 px in total (half of what they were)
+  if (back) { w.vx = -w.facing * 34; w.vy = -194; w.hop = true; w.hopAt = tAll; w.flip = 0; }
+  else { w.vx = w.facing * 200; w.vy = -166; w.hop = false; }   // flatter, but still about as far
   sfx.jump();
 }
 function drillStep(w, dt) {
@@ -4011,6 +4021,7 @@ function applyTurnStart(ts, local) {
   if (game.sudden && !wasSudden) showMsg('Sudden death', game.theme.liquid === 'lava' ? 'The lava rises after every turn' : 'The water rises after every turn', 2.6);
   else showMsg(t.name, `${w.name}${t.cpu ? ' (CPU)' : t.remote ? ' (friend)' : ''} is up`, 1.6);
   cam.free = false; director.cur = null; hudDirty = true; weaponsDirty = true;
+  mouse.kbLock = { x: mouse.sx, y: mouse.sy };   // a resting cursor must not grab the new worm's aim
   if (NET.auth()) {
     say(w, pick(START));
     if (game.wx.lightning && Math.random() < 0.6) timers.push({ t: vrnd(4, Math.max(6, game.turnTime * 0.8)), fn: () => lightningStrike(), ambient: true });
@@ -4104,6 +4115,7 @@ function controlStep(dt) {
   } else w.walking = false;
   if ((w.walking || game.charging) && cam.free && !w.team.cpu) cam.free = false;
   if (game.weapon !== 'girder') {
+    if ((inp.up || inp.down) && !w.team.cpu) mouse.kbLock = { x: mouse.sx, y: mouse.sy };   // keyboard aim holds until the mouse clearly moves
     if (inp.up) w.aim = Math.min(PI / 2, w.aim + 1.5 * dt);
     if (inp.down) w.aim = Math.max(-PI / 2, w.aim - 1.5 * dt);
   }
@@ -4132,7 +4144,7 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.code] = false; if (e.code === 'Space' && humanTurn()) releaseFire(); });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; for (const k in touchKeys) touchKeys[k] = false; });
-const mouse = { sx: 0, sy: 0, in: false, firing: false, isMouse: false };
+const mouse = { sx: 0, sy: 0, in: false, firing: false, isMouse: false, kbLock: null };
 const cvs = renderer.domElement;
 function aimAt(sx, sy) {
   const w = game.active; if (!humanTurn() || !w || game.weapon === 'girder') return;
@@ -4174,7 +4186,16 @@ cvs.addEventListener('pointermove', e => {
     return;
   }
   if (e.pointerType === 'touch' && tapInfo) { if (Math.hypot(e.clientX - tapInfo.x, e.clientY - tapInfo.y) > 10) tapInfo.moved = true; const wp = WMAP[game.weapon]; if (wp.kind !== 'target' && !(wp.target && !game.target)) aimAt(e.clientX, e.clientY); return; }
-  if (e.pointerType === 'mouse') aimAt(e.clientX, e.clientY);
+  if (e.pointerType === 'mouse') {
+    // the mouse aims only when it is really being used for it: not while a keyboard shot is charging,
+    // not for small nudges after aiming with the arrow keys, and not while parked at a screen edge to scroll
+    if (game.charging && !mouse.firing) return;
+    if (mouse.kbLock && Math.hypot(e.clientX - mouse.kbLock.x, e.clientY - mouse.kbLock.y) < 40) return;
+    mouse.kbLock = null;
+    const ex = innerWidth * 0.1, ey = innerHeight * 0.1;
+    if (e.clientX < ex || e.clientX > innerWidth - ex || e.clientY < ey || e.clientY > innerHeight - ey) return;
+    aimAt(e.clientX, e.clientY);
+  }
 });
 function ptrUp(e) {
   ptrs.delete(e.pointerId);
