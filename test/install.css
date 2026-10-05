@@ -1,0 +1,17 @@
+#installButton{position:fixed;z-index:35;right:env(safe-area-inset-right,0px);top:50%;transform:translateY(-50%);display:grid;gap:3px;justify-items:center;padding:10px 9px;border:1px solid #ffb02e77;border-right:0;border-radius:12px 0 0 12px;background:#151d23ed;color:#efe9da;box-shadow:0 3px 20px #0005;cursor:pointer;font:700 12px var(--f-ui,system-ui);min-width:58px}
+#installButton svg{width:24px;height:24px;color:#ffb02e}
+#installButton.ready::after{content:'';position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:#79d98b}
+#installButton:focus-visible,#installDialog button:focus-visible{outline:3px solid #79d98b;outline-offset:3px}
+#installDialog{box-sizing:border-box;max-width:min(440px,calc(100vw - 32px));max-height:calc(100dvh - 40px);overflow:auto;background:#151d23;color:#efe9da;border:1px solid #ffb02e66;border-radius:20px;padding:24px;box-shadow:0 20px 100px #000a;font:500 17px/1.4 var(--f-ui,system-ui);user-select:text;-webkit-user-select:text}
+#installDialog::backdrop{background:#050b12bb;backdrop-filter:blur(5px)}
+#installDialog header{display:flex;align-items:center;gap:16px;margin-right:16px}
+#installDialog img{width:72px;height:72px;border-radius:17px}
+#installDialog h2{font:22px/1.2 var(--f-display,system-ui);margin:0 0 5px}
+#installDialog p{margin:12px 0}
+#installClose{position:absolute;right:8px;top:7px;font-size:26px;background:none;color:#efe9da;border:0;cursor:pointer;padding:4px 10px}
+#offlineStatus{padding:12px;border-radius:10px;background:#0d1216;border:1px solid #ffffff19;color:#b6c5cb}
+#offlineStatus.ready{color:#79d98b;border-color:#79d98b44}
+#installDialog ol{padding-left:23px}#installDialog li{padding:4px 0}
+#installDialog .installNote{color:#a8b6ba;font-size:14px}
+#installDialog .installActions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+@media(max-height:450px){#installDialog{padding:16px}#installDialog img{width:50px;height:50px}#installDialog ol{margin:5px 0}#installDialog li{padding:1px 0}}
