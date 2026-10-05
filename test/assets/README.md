@@ -11,7 +11,7 @@ Generated for Burrow Brawl using Azure Foundry `gpt-image-2.5-flare` on 5 Octobe
 
 Original PNG generations are retained as `logo-source.png`, `terrain-atlas.png` and `tool-icons-source.png`.
 Four additional six-cell generations (`arsenal-a-source.png` through `arsenal-d-source.png`) cover the remaining arsenal. Rows map to weapon IDs in `prepare-art.py`; the build reports 28 distinct icons.
-`weapon-revisions-source.png` overrides Thunder Strike with a lightning bolt and the former Snipper slot with a scoped Sniper Rifle. Internal IDs `tesla` and `snipper` remain stable for inventory/network compatibility.
+`weapon-revisions-source.png` provides the Thunder Strike lightning bolt and the scoped Sniper Rifle icon. Their internal IDs are `tesla` and `sniper`.
 
 ## Art direction and source briefs
 
@@ -44,3 +44,6 @@ This crops all five icon sheets, removes edge-connected navy backgrounds, resize
 ## Verification
 
 Chromium checks cover logo/icon loading, WebGL shader compilation, match startup, weapon controls, artwork switching without material-mask changes, and the preceding physics-tool behavior checks. Artwork is an experimental visual direction, not final production art.
+# Additional original materials and tools
+
+`liquid-surfaces-source.png` and `torch-breaker-source.png` were generated with Azure GPT Image **2.5 Flare**. The liquid sheet provides water, incandescent lava, rain-cooled lava and porous tuff tiles. `tools/prepare-surfaces.py` produces WebP tiles and embedded `surface-data.js`. `prepare-art.py` prepares the torch and pneumatic concrete-breaker icons, replacing the old power-drill artwork. Keep the source PNGs for future edits.

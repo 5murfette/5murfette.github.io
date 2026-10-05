@@ -7,14 +7,26 @@
   dialog.innerHTML = `<button id="installClose" aria-label="Close install instructions">×</button>
     <header><img src="assets/app/icon-192.png" alt="Pink worm wearing copper goggles"><div><h2 id="installTitle">Burrow Brawl</h2><span>Take the burrow with you.</span></div></header>
     <p id="offlineStatus" role="status">Downloading the complete game for offline play…</p>
-    <div id="installSteps"></div><p class="installNote">CPU and same-device multiplayer work offline. Playing a friend online needs an internet connection.</p>
+    <div id="installSteps"></div><p><input id="installURL" readonly aria-label="Game URL" style="width:100%;box-sizing:border-box"><button class="btn ghost" id="installCopy">Copy game link</button></p><p class="installNote">CPU and same-device multiplayer work offline. Playing a friend online needs an internet connection.</p>
     <div class="installActions"><button class="btn" id="installNative" hidden>Install game</button><button class="btn ghost" id="installRetry" hidden>Retry download</button></div>`;
   document.body.append(button, dialog);
   const $ = id => document.getElementById(id);
   let prompt = null, ready = false, registration = null, error = '', updateWaiting = false;
   const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
-  const safari = /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg|Android/.test(navigator.userAgent);
+  const safari = /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPiOS|Android/.test(navigator.userAgent);
+  const mac = /Mac/.test(navigator.platform) && !ios;
+  const embedded = /FBAN|FBAV|Instagram|Line\/|GSA\//.test(navigator.userAgent);
+  $('installURL').value = new URL('./burrow-brawl.html', location.href).href;
+  $('installCopy').addEventListener('click', async () => {try {await navigator.clipboard.writeText($('installURL').value);$('installCopy').textContent='Copied';} catch {$('installURL').focus();$('installURL').select();}});
+  function menuVisibility() {
+    const menu = document.getElementById('menu');
+    button.hidden = !menu || menu.hidden;
+    if(button.hidden && dialog.open) dialog.close();
+  }
+  const menu = document.getElementById('menu');
+  if(menu) new MutationObserver(menuVisibility).observe(menu,{attributes:true,attributeFilter:['hidden']});
+  menuVisibility();
   const supported = location.protocol !== 'file:' && window.isSecureContext && 'serviceWorker' in navigator;
   function render() {
     const status = $('offlineStatus'); status.classList.toggle('ready', ready); button.classList.toggle('ready', ready);
@@ -25,9 +37,10 @@
     let steps;
     if (!supported) steps = '<p>Open this game from an <b>HTTPS website</b> to install it. A local file can be played directly, but browsers cannot install it as an offline app. For desktop testing, localhost also works.</p>';
     else if (standalone()) steps = '<p>The game is installed. Launch it from its icon whenever you want to play.</p>';
-    else if (ios) steps = '<ol><li>Open this page in <b>Safari</b>.</li><li>Tap <b>Share</b>, then <b>Add to Home Screen</b>.</li><li>Keep <b>Open as Web App</b> enabled if shown, then tap <b>Add</b>.</li><li>Open the new icon once while online and wait for <b>Offline ready</b>.</li></ol>';
+    else if (ios && (!safari || embedded)) steps = '<p>For the most reliable installation, copy the link below, open the <b>Safari app</b> and paste it into its address bar. An in-app browser may omit the installation action.</p>';
+    else if (ios) steps = '<ol><li>Exit full-screen mode if needed to reveal Safari’s toolbar.</li><li>Tap <b>Share</b> (square with an upward arrow). In compact Safari layouts, open the <b>… / More</b> menu first, then Share.</li><li>Scroll down the <b>action list</b> below the app icons and choose <b>Add to Home Screen</b>. If missing, scroll to <b>Edit Actions</b> and add it if available.</li><li>Keep <b>Open as Web App</b> enabled if shown, then tap <b>Add</b>.</li><li>Launch the new icon online once and wait for <b>Offline ready</b>.</li></ol><p>This action belongs to Safari; the game cannot open Apple’s install dialog itself.</p>';
     else if (prompt) steps = '<p>When the download is ready, choose <b>Install game</b> below. The new icon launches the complete game in its own window.</p>';
-    else if (safari && /Mac/.test(navigator.platform)) steps = '<ol><li>Choose <b>File → Add to Dock</b> in Safari (macOS Sonoma or newer).</li><li>Open the new icon once while online and wait for <b>Offline ready</b>.</li></ol>';
+    else if (safari && mac) steps = '<ol><li>In the <b>macOS menu bar at the top of the screen</b>, choose Safari’s <b>File → Add to Dock…</b>. It is also available from Safari’s Share menu on supported versions.</li><li>Choose Add, then launch the icon online once and wait for <b>Offline ready</b>.</li></ol><p><b>Add to Dock requires macOS Sonoma 14 or newer.</b> Older Safari/macOS versions do not have this feature. On those systems, open the copied link in an up-to-date Chrome or Edge and use its Install app option.</p>';
     else if (/Android/.test(navigator.userAgent)) steps = '<ol><li>Open the browser menu <b>⋮</b>.</li><li>Choose <b>Install app</b> or <b>Add to Home screen</b>.</li><li>If neither is offered, open this HTTPS page in Chrome.</li></ol>';
     else steps = '<p>In Chrome or Edge, use the <b>install icon in the address bar</b>, or the browser menu’s <b>Install / Apps</b> option. The native button appears here when the browser offers installation.</p>';
     $('installSteps').innerHTML = steps;

@@ -23,11 +23,11 @@ Each worm arrives in a teleport beam. **Its physics and vulnerability begin imme
 
 Host the **entire `PoC` directory on HTTPS**, keeping relative paths intact, then open it in the browser. A static host is sufficient; no game server or build step is needed for local play.
 
-1. Click the **Install** button on the right edge.
+1. From the **main menu**, click the **Install** button on the right edge. It is hidden during matches and in the lobby.
 2. Wait for **Offline ready**. The complete runtime download is approximately **3 MB**.
 3. Chrome/Edge: use **Install game** when offered, or the browser's install/address-bar option.
-4. iPhone/iPad: open in Safari, choose **Share → Add to Home Screen**, and enable **Open as Web App** if shown.
-5. Supported macOS Safari: choose **File → Add to Dock**.
+4. iPhone/iPad: open the link in the **Safari app**. Tap Share (square/up arrow), sometimes inside **… / More**, scroll down the actions below the app icons, and choose **Add to Home Screen**. Check **Edit Actions** if it is missing. Enable **Open as Web App** if shown.
+5. macOS Safari on **Sonoma 14 or newer**: use **File → Add to Dock…** in the macOS menu bar. Older macOS Safari does not offer web-app installation; use an up-to-date Chrome/Edge. The install panel includes a copyable game link for switching browsers.
 
 For Apple launchers, open the new icon once while online and check **Offline ready**, since the installed app may have its own storage. CPU and same-device multiplayer then work offline. Online friend matches use internet signalling and peer connectivity.
 
@@ -45,12 +45,22 @@ Open **http://localhost:8000/** on the same computer. Browsers allow service wor
 
 ### Offline downloads and updates
 
-- The service worker precaches all 18 runtime files, including artwork/font bundles and the complete rendering dependency bundle.
+- The service worker precaches all 22 runtime files, including feature scripts, artwork/font bundles and the complete rendering dependency bundle.
 - An incomplete first download is rejected and never marked ready. The install panel provides **Retry download**, including repair after cached files are missing.
 - Updates download in the background and activate after all existing game windows close, avoiding a forced reload during a match.
 - Clearing site/app data removes the downloaded content; reconnect and wait for **Offline ready** to download it again.
 
 ## Maintain the bundle
+
+The HTML contains the interface and bootstrap. `game.js` holds the game simulation and orchestration; `features-ballistics.js` contains shared ballistic/aiming and homing steering math; `features-surfaces.js` handles material loading and procedural prop detail; `install.js` handles installation. All scripts are local classic scripts, preserving direct-file launch. `assets/surface-data.js` embeds the GPT Image 2.5 material tiles.
+
+Recent physics refinements:
+- Low-bounce carved Moai heads shatter after at most two hard impacts, on settling, or after 3.5 seconds. Rock debris is cosmetic and cannot trap units.
+- Sleeping prop overlaps recover the entire worm silhouette to nearby free space; persistent supported contact settles so walking and weapon use recover.
+- Sniper bullets travel at 3600 px/s with 260 px/s² gravity, a 2100px range, distance-sensitive arrow-key aim, and a total 7px penetration budget. Penetration reduces velocity and damage. Steel/bedrock stop shots.
+- Homing missiles retain launch direction before progressively turning, maintain speed, travel through water and burn out in lava.
+- Foam can make water-supported islands; lava consumes the shell with fire/smoke. Rain raises water at 0.018px/s per rain-intensity unit.
+- Trees lose foliage and char under fire; rain cools/darkens lava with steam; lava emits light at night and bubbles.
 
 No build is needed to play. To regenerate dependency bundles:
 
@@ -78,6 +88,8 @@ PLAYWRIGHT_MODULE="/absolute/path/to/node_modules/playwright" node tests/placeme
 ```
 
 Set `CHECK_OUTPUT` to an existing directory to save screenshots. `CHECK_PWA_ONLY=1` runs just the offline/install checks.
+
+Run `tests/physics-refinements.cjs` with the same `PLAYWRIGHT_MODULE` setting for heavy-prop recovery, final Moai breakup, sniper flight/drop/penetration, smooth homing, foam/liquid behavior, burning foliage and rain/lava regressions.
 
 Verified in headless Chromium with software WebGL:
 

@@ -38,6 +38,7 @@ async function build() {
     fs.writeFileSync(path.join(root, 'vendor/fonts.css'), css);
   }
   const files = ['index.html', 'burrow-brawl.html', 'install.js', 'install.css', 'manifest.webmanifest',
+    'game.js', 'features-ballistics.js', 'features-surfaces.js', 'assets/surface-data.js',
     'vendor/engine.js', 'vendor/peerjs.min.js', 'vendor/fonts.css', 'vendor/LICENSE.three.txt', 'vendor/LICENSE.peerjs.txt',
     'vendor/LICENSE.bungee.txt', 'vendor/LICENSE.barlow-semi-condensed.txt', 'assets/art-data.js',
     'assets/app/icon-192.png', 'assets/app/icon-512.png', 'assets/app/icon-maskable-512.png',

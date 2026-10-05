@@ -7,7 +7,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(__dirname, '..');
 const output = process.env.CHECK_OUTPUT;
 const entry = '/burrow-brawl.html';
-const source = fs.readFileSync(path.join(root, decodeURIComponent(entry)), 'utf8');
+const source = fs.readFileSync(path.join(root, decodeURIComponent(entry)), 'utf8').replace('<script src="game.js" defer></script>', '<script>' + fs.readFileSync(path.join(root,'game.js'),'utf8') + '</script>');
 const injected = source.replace('/* backdrop for the menu:', `window.testGame = {
   game, NET, alive, startGame, readCfg, phaseStep, step, syncHUD, syncWorms, updateCamera, camera, cam,
   beginPlacement, nextPlacement, placementPoint, autoPlacementPoint, commitPlacement, requestPlacement, receivePlacementRequest,
@@ -189,7 +189,7 @@ const results = {};
     await app.click('#installNative'); assert(await app.evaluate(() => window.promptCalled));
     await app.click('#installClose');
     const cached = await app.evaluate(async () => { const k = (await caches.keys()).find(k => k.startsWith('burrow-brawl:')); return {key:k,count:(await (await caches.open(k)).keys()).length}; });
-    assert.equal(cached.count, 18);
+    assert.equal(cached.count, 22);
     // Missing file detection and repair, including a failed offline repair.
     await app.evaluate(async key => { await (await caches.open(key)).delete(new URL('vendor/engine.js', location.href)); navigator.serviceWorker.controller.postMessage({type:'BB_OFFLINE_STATUS'}); }, cached.key);
     await app.waitForFunction(() => !BB_INSTALL.ready);
@@ -202,6 +202,7 @@ const results = {};
     await app.waitForFunction(() => window.__bbBoot && window.BB_INSTALL?.ready, {timeout:60000});
     await app.selectOption('#cGfx', 'low'); await app.selectOption('#cWeather','clear'); await app.click('#bStart');
     await app.waitForFunction(() => document.body.classList.contains('ingame') && document.getElementById('timer').textContent !== '–', {timeout:60000});
+    assert.equal(await app.locator('#installButton').isVisible(), false, 'Install button must be hidden during battle');
     assert.deepEqual(requests.slice(requestCount).filter(p => !['/sw.js','/offline-assets.js'].includes(p)), [], 'Offline runtime missed its cache');
     assert(await app.evaluate(() => document.getElementById('gameLogo').naturalWidth > 0 && [...document.querySelectorAll('.artIcon')].every(i => i.naturalWidth > 0)), 'Offline artwork missing');
     results.offline = { files:cached.count, coldPageLaunch:true, queryStringLaunch:true, battleStarted:true, artwork:true, repairedEviction:true, installabilityErrors:[] };
