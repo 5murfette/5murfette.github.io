@@ -1,0 +1,42 @@
+PROPRIETARY LICENSE - ALL RIGHTS RESERVED
+
+Copyright (c) 2026 the owner of this repository (github.com/5murfette).
+All rights reserved.
+
+This directory (test2/) contains private, proprietary, unpublished software:
+the source code, shaders, game logic, artwork, textures, icons, sounds, logos and
+documentation (together, the "Software").
+
+The Software is NOT open source. It is visible here only because it is hosted for
+private testing. Being able to view or download it does not grant you any license
+or right of any kind.
+
+Without the prior written permission of the copyright holder, you may NOT:
+  - copy, reproduce or mirror the Software, in whole or in part;
+  - use, run, host or deploy the Software, except by playing it in a web browser
+    at the location where the copyright holder publishes it;
+  - modify, translate, adapt or create derivative works from the Software;
+  - distribute, publish, sublicense, sell, rent, lend or otherwise make the
+    Software available to anyone;
+  - decompile, reverse engineer or extract any part of the Software (including its
+    source code, algorithms, assets or data) for use elsewhere;
+  - use the Software, or any part of it, to train or evaluate machine-learning or
+    AI models.
+
+Any use not expressly permitted above is prohibited, and all rights not expressly
+granted are reserved. Any unauthorized use terminates any permission you may have
+had and may result in civil and criminal liability.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+Third-party components
+----------------------
+The following bundled third-party files are NOT covered by this license. They
+remain under their own licenses, whose texts are included next to them:
+  - vendor/three.min.js           three.js, MIT License (vendor/LICENSE.three.txt)
+  - vendor/peerjs.min.js          PeerJS, MIT License (vendor/LICENSE.peerjs.txt)
+  - vendor/fonts.css (embedded)   Bungee and Barlow Semi Condensed fonts, SIL Open
+                                  Font License 1.1 (vendor/LICENSE.bungee.txt,
+                                  vendor/LICENSE.barlow-semi-condensed.txt)
