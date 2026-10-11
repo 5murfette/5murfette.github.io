@@ -177,10 +177,49 @@
     disc.rotation.x = -Math.PI / 2.4; g.add(disc); g.userData.disc = disc;
     return g;
   }
+  /* P69: the baked plane's propeller blades are frozen in the mesh: clip them and spin a motion-blurred disc instead.
+   * Measured on the baked mesh (nose at +X): spinner tip x 2.6, spinner radius <= 0.19 over the front 0.13 m, the blades
+   * 0.14..0.26 m back at radius up to 0.96, the cowling starts 0.27 m back; hub y 0.16. Clip = the blade slab outside the
+   * spinner radius (the cowling behind it is untouched). */
+  const PROP = { X0: 2.355, Y: 0.16, R: 0.98, SPIN: 0.21, DX: 2.40 };
+  let propMats = null;
+  function propBlur() {                                              // a faint disc + three soft blade smears (wedges), plain transparent colours
+    if (!propMats) {
+      propMats = [new T.MeshBasicMaterial({ color: 0x15140f, transparent: true, opacity: 0.13, depthWrite: false, side: T.DoubleSide }),
+        new T.MeshBasicMaterial({ color: 0x23211b, transparent: true, opacity: 0.13, depthWrite: false, side: T.DoubleSide })];
+      for (const m of propMats) if (SS.section) SS.section.exempt(m, 'air-strike plane propeller (P69)');
+    }
+    const g = new T.Group();
+    const disc = new T.Mesh(new T.RingGeometry(PROP.SPIN * 0.9, PROP.R, 40), propMats[0]); disc.renderOrder = 8; g.add(disc);             // after the sea (water.js 6, outline 7): transparent sorting by render order first
+    for (let b = 0; b < 3; b++) for (const [wd, r] of [[0.9, 0.97], [0.55, 0.95], [0.25, 0.92]]) {   // nested smears: soft-edged blur, densest at the blade
+      const a0 = b * 2 * Math.PI / 3 - wd / 2;
+      const w = new T.Mesh(new T.RingGeometry(PROP.SPIN * 0.9, PROP.R * r, 12, 1, a0, wd), propMats[1]);
+      w.renderOrder = 8.1; g.add(w);
+    }
+    return g;
+  }
+  function propRotor(g) {
+    g.traverse(o => {
+      if (!o.isMesh || !o.material || o.userData.propClip) return;
+      o.userData.propClip = true;
+      o.material = o.material.clone();
+      o.material.onBeforeCompile = sh => {
+        sh.vertexShader = 'varying vec3 vPropP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vPropP = position;');
+        sh.fragmentShader = 'varying vec3 vPropP;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>',
+          `#include <clipping_planes_fragment>\n if (vPropP.x > ${PROP.X0.toFixed(2)} && length(vPropP.yz - vec2(${PROP.Y.toFixed(2)}, 0.0)) > ${PROP.SPIN.toFixed(2)}) discard;`);
+      };
+      o.material.customProgramCacheKey = () => 'planeprop';
+      if (SS.section) SS.section.exempt(o.material, 'air-strike plane: flies above the battlefield across the section plane (P69)');
+    });
+    const disc = propBlur();
+    const hub = new T.Group(); hub.position.set(PROP.DX, PROP.Y, 0); hub.rotation.y = Math.PI / 2; hub.add(disc); g.add(hub);
+    g.userData.propDisc = disc; g.userData.props = [];
+    return g;
+  }
   // ASSET: strike_plane (models/strike_plane.glb)
   function planeMesh() {
     const baked = SS.models && SS.models.mesh('strike_plane');          // baked model (assets/models.js) when present
-    if (baked) return baked;
+    if (baked) return propRotor(baked);
     const g = new T.Group();
     add(g, G.cyl(0.35, 0.25, 5.2, 12), M.plane, 0, 0, 0, 0, 0, Math.PI / 2);
     add(g, G.box(1.2, 0.08, 7.5), M.plane, 0.3, 0, 0); add(g, G.box(0.6, 0.06, 2.6), M.plane, -2.4, 0.1, 0); add(g, G.box(0.6, 1.1, 0.06), M.plane, -2.4, 0.55, 0);
@@ -341,8 +380,13 @@
       if (m.userData.core) m.userData.core.visible = !SS.lens;
     });
     sync(live.strikes, S.strikes || [], () => planeMesh(), (st, m) => {
-      const p = P.to_world(S, st.s, st.y); m.position.set(p.x, p.y, p.z); m.rotation.y = -Math.atan2(d.z * st.dir, d.x * st.dir);
+      const p = P.to_world(S, st.s, st.y), ph = st.s * 0.21 + (st.id | 0) * 1.7;
+      m.position.set(p.x, p.y + 0.35 * Math.sin(ph * 0.9), p.z);                  // P69: flies level, nose first, riding light turbulence
+      m.rotation.order = 'YXZ'; m.rotation.y = -Math.atan2(d.z * st.dir, d.x * st.dir);
+      m.rotation.x = 0.07 * Math.sin(ph * 0.63) + 0.03 * Math.sin(ph * 1.9);           // roll about the nose
+      m.rotation.z = 0.035 * Math.sin(ph * 0.9 + 1.2);                                   // pitch with the bob
       for (const pr of m.userData.props) pr.rotation.x = t * 40;
+      if (m.userData.propDisc) m.userData.propDisc.rotation.z = t * 23.0;
     });
     sync(live.crates, S.crates || [], c => crateMesh(c), (c, m) => {
       m.position.set(c.pos.x, c.pos.y, c.pos.z); m.rotation.y = c.id * 0.7;

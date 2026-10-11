@@ -10,7 +10,8 @@
  *  3. Margin: default 0.5 m in front of slice zero (worms / props standing ON the plane keep their volume); terrain-like materials set
  *     userData.sectionMargin = 0 (the cut face is at t = 0). The slab-behind rule (t < -uBack) stays in the terrain-like shaders.
  *  4. Opt-out: material.userData.sectionExempt = 'reason' (SS.section.exempt(mat, why)). Allowed: sky dome / sky LUT / clouds / far land (the
- *     landscape beyond the world), full-screen post quads. Everything else follows the rule.
+ *     landscape beyond the world), full-screen post quads, the air-strike plane + its propeller (P69: it flies above the battlefield across
+ *     the plane; cut in half it read as a broken model). Everything else follows the rule.
  *  5. Inspection (view.insp > 0.05) switches the rule off (the whole 3D world is shown by design).
  *  6. Front ghost (user setting 0..100 %): when > 0 the part the rule removes is drawn by a second pass (planes inverted, offscreen target)
  *     and composited over the frame at that opacity (desaturated, blue tinted, outlined). 0 % costs nothing.
