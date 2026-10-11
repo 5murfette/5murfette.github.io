@@ -41,6 +41,13 @@
     return r;
   }
 
+  function posDecode(p, nv) {
+    if (p.type !== 'u16n') return f32(p.b64);
+    const q = u16(p.b64), r = new Float32Array(nv * 3);
+    for (let i = 0; i < nv; i++) for (let k = 0; k < 3; k++) r[i * 3 + k] = p.min[k] + q[i * 3 + k] / 65535 * p.range[k];
+    return r;
+  }
+
   MD.has = id => !!(SS.MODELS && SS.MODELS[id]);
   MD.hasChunks = id => !!(SS.MODELS && SS.MODELS[id] && SS.MODELS[id].chunks && SS.MODELS[id].chunks.length);
 
@@ -50,7 +57,7 @@
     const eo = i16(m.nrm.b64), nrm = new Float32Array(m.nv * 3);
     for (let i = 0; i < m.nv; i++) octDecode(eo, i * 2, nrm, i * 3);
     const idx = m.idx.type === 'u32' ? u32(m.idx.b64) : u16(m.idx.b64);
-    return (m._dec = { pos: f32(m.pos.b64), nrm: nrm, uv: uvDecode(m.uv, m.nv), uv2: m.uv2 ? uvDecode(m.uv2, m.nv) : null, idx: idx });
+    return (m._dec = { pos: posDecode(m.pos, m.nv), nrm: nrm, uv: uvDecode(m.uv, m.nv), uv2: m.uv2 ? uvDecode(m.uv2, m.nv) : null, idx: idx });
   };
 
   function texture(uri, srgb) {
@@ -100,10 +107,27 @@
     return geo;
   }
 
+  /* P65g: glass = an alpha-blended standard material (tint + optional RGBA dirt texture), no depth write, drawn after the opaque parts; the
+   * alpha is pushed towards 1 at grazing angles (a cheap fresnel: panes read as glass on bright and dark backgrounds, the env map shows
+   * in the reflection). One compiled program for every glass in the game (customProgramCacheKey). */
+  function glassMaterial(gm, boost) {
+    const c = gm.color, o = { color: new T.Color(c[0], c[1], c[2]), roughness: gm.roughness === undefined ? 0.06 : gm.roughness, metalness: 0.0, transparent: true, opacity: c[3], depthWrite: false, side: T.DoubleSide, envMap: envTex(), envMapIntensity: 1.6 };
+    if (gm.tex && gm.tex.basecolor) o.map = texture(gm.tex.basecolor, true);
+    const mat = new T.MeshStandardMaterial(o);
+    mat.onBeforeCompile = sh => {
+      sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', '#include <opaque_fragment>\n  { float fr = pow(1.0 - clamp(abs(dot(normalize(normal), normalize(vViewPosition))), 0.0, 1.0), 3.0); gl_FragColor.a = clamp(gl_FragColor.a + fr * 0.65 + ' + (boost || 0).toFixed(2) + ', 0.0, 1.0); }');
+    };
+    mat.customProgramCacheKey = () => 'ssglass1' + (boost || 0);
+    mat.userData.shared = true;
+    return mat;
+  }
+
   function build(id) {
     const m = SS.MODELS[id], side = m.double ? T.DoubleSide : T.FrontSide, tm = m.texmeta || {};
     const pbr = m.pbr || {}, outer = material(m.tex || {}, m.color === undefined ? 0xffffff : m.color, pbr.roughness === undefined ? 0.7 : pbr.roughness, pbr.metalness || 0.0, side, !!m.uv2 && tm.aoUv === 'uv2');
     const b = { geo: geometry(m), mat: outer, inner: null, parts: null };
+    if (m.glass || m.shards) { b.glass = glassMaterial(m.glassmat, 0); b.shard = glassMaterial(m.glassmat, 0.3); }
+    if (m.glass) b.glassGeo = geometry(m.glass);
     if (m.inner) b.inner = material(m.inner.tex || {}, m.inner.color, m.inner.roughness, m.inner.metalness, T.DoubleSide, false);
     return (built[id] = b);
   }
@@ -116,6 +140,7 @@
     const g = new T.Group(), mesh = new T.Mesh(b.geo, mats(b));
     mesh.castShadow = true; mesh.receiveShadow = true;
     g.add(mesh); g.userData.model = id; g.userData.props = [];
+    if (b.glassGeo) { const gm = new T.Mesh(b.glassGeo, b.glass); gm.renderOrder = 3; gm.castShadow = false; gm.receiveShadow = false; g.add(gm); }
     return g;
   };
 
@@ -125,6 +150,7 @@
     if (b.parts) return b.parts;
     const m = SS.MODELS[id], r = [];
     for (const c of (m.chunks || [])) r.push({ geo: geometry(c), origin: c.origin, radius: c.radius, chunk: true });
+    for (const c of (m.shards || [])) r.push({ geo: geometry(c), origin: c.origin, radius: c.radius, chunk: true, glass: true });
     for (const c of (m.interior || [])) {
       const geo = geometry(c), bb = geo.boundingBox;
       r.push({ geo: geo, origin: c.origin || [0, 0, 0], radius: c.radius || 0.3, chunk: false, half: Math.max(0.01, (bb.max.y - bb.min.y) / 2) });
@@ -153,7 +179,7 @@
     grp.visible = false;
     for (const c of ps) {
       if (debris.length >= MAXD) { const o = debris.shift(); if (o.g.parent) o.g.parent.remove(o.g); }
-      const me = new T.Mesh(c.geo, mats(b)); me.castShadow = true;
+      const me = new T.Mesh(c.geo, c.glass ? b.shard : mats(b)); me.castShadow = !c.glass; if (c.glass) me.renderOrder = 3;
       const g = new T.Group(); g.add(me);
       const o = new T.Vector3(c.origin[0], c.origin[1], c.origin[2]), out = o.clone().applyQuaternion(q);
       g.position.copy(p).add(out); g.quaternion.copy(q);
