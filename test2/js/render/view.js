@@ -6,7 +6,7 @@
   'use strict';
   const T = window.THREE, C = SS.CFG, M = SS.math, P = SS.plane;
   const V = SS.view = {};
-  let renderer, scene, camera, tx, Q, sun, hemi, fill, sky, skyMat, water, heightTex, surfTex, scyTex, blankTex, outline, outlineMat, motes, lamp, stars = null;
+  let headSpot, renderer, scene, camera, tx, Q, sun, hemi, fill, sky, skyMat, water, heightTex, surfTex, scyTex, blankTex, outline, outlineMat, motes, lamp, stars = null;
   const view = {
     camT: null, camZ: 0, dir: { cur: null, since: 0 }, zoom: 19, time: 0, heightVer: 0, heightFor: -1, heightT: -99, heightmap: null, secWV: -1, secT: -99, edgeA: 0,
     pan: { s: 0, y: 0 }, orbit: { yaw: 0, tilt: 0 }, look: null, activeId: -1, surf: null, surfN: 0
@@ -96,6 +96,9 @@
 
     // U: the worm's lamp underground (a warm point light on the active worm; off on the surface)
     lamp = new T.PointLight(0xffd9a8, 0, 26, 1.6); scene.add(lamp);
+    /* P65i: the night headlamp is a real spot (worn on the head, aimed ahead and a little down, inverse-square), not a point light hanging
+     * next to the worm: the worm itself is outside the cone (lit by the moon, not blown out) and a pool of light lies on the ground ahead */
+    headSpot = new T.SpotLight(0xffd9a8, 0, 26, 0.62, 0.9, 2); scene.add(headSpot); scene.add(headSpot.target);
     // night sky: stars on the upper dome (procedural points; the glow sprite), shown at night (faintly at dusk)
     { const n = 1600, p = new Float32Array(n * 3), c = new Float32Array(n * 3);
       for (let i = 0; i < n; i++) { const u = Math.random() * 0.97 + 0.03, a = Math.random() * 6.283, r = Math.sqrt(1 - u * u), k = 0.55 + Math.random() * 0.45, warm = Math.random();
@@ -774,8 +777,20 @@
       // night: the active worm's lamp lights its surroundings (as in the caves, a little weaker)
       /* P65c: the lamp hangs 1.1 m in front of the worm (toward the camera) and 0.9 m up, not inside its head: at 0.3 m the 1/d^1.6 falloff
        * burned the worm white (and left the cut face at a grazing angle) */
-      const a = S.active; lamp.intensity = view.tod === 'night' && a && !a.dead ? 11 : 0;
-      if (a) { const n = SS.plane.nrm(S); lamp.position.set(a.pos.x + n.x * 1.1, a.pos.y + 0.9, a.pos.z + n.z * 1.1); }
+      const a = S.active, on = view.tod === 'night' && a && !a.dead;
+      lamp.intensity = 0; headSpot.intensity = on ? 44 / Math.max(0.6, renderer.toneMappingExposure) : 0;      // candela, scaled to the exposure so the pool keeps its brightness against the moonlit scene
+      if (a) {
+        const n = SS.plane.nrm(S), d = SS.plane.dir(S), f = a.facing || 1;
+        headSpot.position.set(a.pos.x + d.x * f * 0.3 + n.x * 0.45, a.pos.y + 0.8, a.pos.z + d.z * f * 0.3 + n.z * 0.45);
+        headSpot.target.position.set(a.pos.x + d.x * f * 3.6 + n.x * 0.1, a.pos.y - 0.5, a.pos.z + d.z * f * 3.6 + n.z * 0.1);
+        headSpot.target.updateMatrixWorld();
+      }
+    }
+    {                                    // P65i: ambient bounce inside caves. The eye adapts to a cave's gloom, so the level is nearly constant (about 1.1 / pi irradiance); only its tint follows the light that comes in (sky + sun / moon)
+      const cs = hemi.color, cg = hemi.groundColor, sc = sun.color, hi = hemi.intensity, si = sun.intensity * 0.4;
+      const lr = (cs.r * 0.65 + cg.r * 0.35) * hi + sc.r * si, lg = (cs.g * 0.65 + cg.g * 0.35) * hi + sc.g * si, lb = (cs.b * 0.65 + cg.b * 0.35) * hi + sc.b * si;
+      const lum = Math.max(1e-3, 0.2126 * lr + 0.7152 * lg + 0.0722 * lb), k = SS.world.under ? 0 : 1.3 * (0.5 + 0.5 * M.clamp(lum / 2.5, 0, 1)) / Math.PI / lum;
+      SS.terrain.uniforms.uCaveAmb.value.setRGB(lr * k, lg * k, lb * k);
     }
     if (SS.prewarm) SS.prewarm.tick();
     if (stars) { stars.position.copy(camera.position); stars.visible = !SS.world.under && stars.material.opacity > 0; }

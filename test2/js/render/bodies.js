@@ -66,6 +66,7 @@
         if (b.wreck) { m.color.setRGB(0.24, 0.14, 0.1); m.roughness = 0.95; m.metalness = 0; }
         else if (b.paint % 6 !== 0) m.color.setHex(CAR_TINT[(b.paint | 0) % 6]);
       }
+      if (b.wreck) for (let k = 1; k < bk.children.length; k++) bk.children[k].visible = false;      // P65i: the glass panes are gone
       bk.scale.set(K0.L / sz[0], K0.H / sz[1], K0.W / sz[2]); bk.position.y = -0.075;
       g.add(bk); return;
     }
@@ -266,7 +267,10 @@
     for (const b of S.bodies || []) {
       seen.add(b.id);
       let it = items.get(b.id);
-      if (it && b.prop === 'car' && it.wreck !== !!b.wreck) { drop(b.id, it); it = null; }   // a car blew up: the wreck look
+      if (it && b.prop === 'car' && it.wreck !== !!b.wreck) {   // a car blew up: the wreck look; its glass, bonnet, doors and the insides fly out of the fireball (P65i: baked chunks of prop_car_sedan, chunk order = models.json panels)
+        if (b.wreck && SS.models && SS.models.has('prop_car_sedan')) SS.models.shatter('prop_car_sedan', it.g, b.id, (i, c) => c.glass || !c.chunk || i === 1 || (i >= 4 && i <= 7));
+        drop(b.id, it); it = null;
+      }
       if (!it) { it = build(b); if (!it) continue; it.wreck = !!b.wreck; items.set(b.id, it); }
       it.g.position.set(b.pos.x, b.pos.y, b.pos.z); it.g.quaternion.set(b.q.x, b.q.y, b.q.z, b.q.w);
       for (const m of it.ctx) m.visible = ctx;

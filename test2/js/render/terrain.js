@@ -115,6 +115,33 @@
    *     stand in for an environment map (shiny, flat: no relief);
    *   - the other faces: plain frame steel;
    *   - the cut through it (cap): the profile of a bridge girder: flanges top and bottom, a web with ribs, bolts. */
+  const TUFF_GLSL = /* glsl */`
+    /* P65i: the ruined town of the volcanic island is dressed stone, not pale concrete: courses of dark basalt and brown tuff ashlar (rows 0.28 m on walls, 0.6 m
+     * flagstones on roads / floors), recessed joints, pitted faces, lava-orange stains running down from the wall tops, soot, thermal-crack lines.
+     * a = along the wall (or x), b = up (or z); returns the albedo, k = 1 on the stone / 0 in the joint */
+    vec3 tuffMasonry(vec2 fq, bool horiz, float up, out float k) {
+      float rowH = horiz ? 0.6 : 0.28, row = floor(fq.y / rowH);
+      float r1 = texture(tNoise, vec2(row * 0.137, 0.31)).r;
+      float a2 = fq.x + r1 * 7.0, bl = (horiz ? 0.9 : 0.55) + 0.4 * texture(tNoise, vec2(row * 0.211, 0.67)).g;
+      float cell = floor(a2 / bl), fa = a2 / bl - cell, fb = fq.y / rowH - row;
+      float dj = min(min(fa, 1.0 - fa) * bl, min(fb, 1.0 - fb) * rowH);
+      float cr = texture(tNoise, vec2(cell * 0.0731 + row * 0.1301, row * 0.0937 + cell * 0.0413)).b;
+      float tint = texture(tNoise, vec2(cell * 0.173 + 0.11, row * 0.239 + 0.37)).r;
+      vec3 basalt = vec3(0.045, 0.044, 0.048), tuff = vec3(0.105, 0.09, 0.078), rust = vec3(0.3, 0.12, 0.045);
+      vec3 c = mix(basalt, tuff, smoothstep(0.35, 0.7, tint)) * (0.75 + 0.5 * cr);
+      float pit = texture(tNoise, fq * 7.3 + 0.2).r, pit2 = texture(tNoise, fq * 2.1 + 0.5).g;
+      c *= 0.8 + 0.35 * pit2 - 0.25 * smoothstep(0.7, 0.9, pit);                                                        // vesicular pits
+      float st = smoothstep(0.62, 0.92, texture(tNoise, vec2(fq.x * 1.9, fq.y * 0.06)).b);                           // runs of lava stain
+      c = mix(c, rust * (0.6 + 0.8 * pit), st * 0.55 * (horiz ? 0.0 : 1.0));
+      float sooty = smoothstep(0.35, 0.75, texture(tNoise, fq * 0.43 + 0.77).g);
+      c *= 1.0 - 0.45 * sooty * (horiz ? 0.4 : 1.0);
+      float rc = 1.0 - abs(2.0 * texture(tNoise, fq * 0.62 + 0.13).r - 1.0);
+      c *= 1.0 - 0.7 * smoothstep(0.955, 0.985, rc);                                                                 // thermal cracks
+      k = smoothstep(0.008, 0.03, dj);
+      c *= mix(0.3, 1.0, k);                                                                                        // the joint: a shadowed recess
+      return c;
+    }
+`;
   const PLATE_GLSL = /* glsl */`
     uniform vec4 uPlA[24]; uniform vec4 uPlB[24]; uniform vec4 uPlC[24]; uniform int uNPl;
     int plateIdx(vec3 P) {
@@ -173,12 +200,15 @@
     float gMetal = 0.0;
     float fakeEnvK = 0.0;
     uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tScY; uniform sampler2D tWater; uniform sampler2D tCover; uniform float uPlayR; uniform highp sampler2D tLavaS; uniform float uLavaOn;
-    uniform vec3 uO, uN, uHaze, uGrassTint, uDryTint, uSunDir; uniform vec4 uCloudSh;
+    uniform vec3 uO, uN, uHaze, uGrassTint, uDryTint, uSunDir, uCaveAmb; uniform vec4 uCloudSh; uniform float uVolc;
+    vec3 gCaveEm = vec3(0.0);
     // P65c: drifting cloud shadows (xy = how far the wind aloft has carried them, z = cover, w = strength): patches of the land lie in shade, the sun-lit rest keeps its colour
     float cloudShade(vec2 p){
       float n = texture(tNoise, (p - uCloudSh.xy) * 0.0055).a;
       return 1.0 - uCloudSh.w * smoothstep(0.62 - 0.26 * uCloudSh.z, 0.8 - 0.26 * uCloudSh.z, n);
     }
+
+    ${TUFF_GLSL}
     uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze;
     // the landscape behind the slab (mode 1, ad = m beyond its back face): the old ghost haze while it fades
     // (uCtxSolid 0); drawn solid (CX1) it still recedes into the haze with the slice-view setting (P29j, uCtxHaze)
@@ -400,8 +430,10 @@
         float streak = smoothstep(0.55, 0.9, texture(tNoise, vec2(dot(vT.xz, vec2(0.83, 0.56)) * 1.7, vT.y * 0.08)).b);
         vec3 conc = vec3(0.245, 0.24, 0.225) * (0.82 + 0.3 * mot) * (0.93 + 0.12 * agg);   // weathered grey (albedo ~0.24: in this sun 0.4 read near-white)
         conc *= 1.0 - 0.13 * lift - 0.22 * streak * (1.0 - smoothstep(-0.3, 0.6, up));
+        float kj = 1.0;
+        if (uVolc > 0.5) { bool hz = abs(nW.y) > 0.62; vec2 tq = hz ? vT.xz : (abs(nW.x) > abs(nW.z) ? vT.zy : vT.xy); conc = tuffMasonry(tq, hz, up, kj); }
         float kc = smoothstep(0.2, 0.55, xc);
-        col = mix(col, conc, kc); rough = mix(rough, 0.9, kc); RA *= 1.0 - kc * 0.7; GD *= 1.0 - kc; emis *= 1.0 - kc;
+        col = mix(col, conc, kc); rough = mix(rough, uVolc > 0.5 ? 0.97 : 0.9, kc); RA *= 1.0 - kc * 0.7; GD *= 1.0 - kc; emis *= 1.0 - kc;
       }
       if (xs + xf > 0.02) {
         vec2 q = vec2(dot(vT.xz, vec2(0.7071)), vT.y) * 2.2;
@@ -508,6 +540,13 @@
             if (uDbgBack > ${body ? '0.5' : '1.5'}) { col = vec3(0.0); tEmis = vec3(4.0, 0.0, 4.0); } }` : ''}
           ${mode === 0 && !body ? 'if (gl_FrontFacing && uDetail > 0.5) col *= surfAO(vW, nW) * conAO(vW);' : ''}
           col *= cloudShade(vW.xz);
+          {   /* P65i: caves are not black. Rock under a roof (vDepth = metres of solid above the vertex) still gets skylight scattered in through the
+               * mouth and bounced off the walls: a fraction of the hemisphere ambient (uCaveAmb, set per frame from the real hemi light), fading with
+               * the depth into the rock; the seeping wet rock shines a little (lower roughness, darker albedo) */
+            float cvK = smoothstep(0.5, 2.5, vDepth), cvF = 0.35 + 0.65 * exp(-max(vDepth - 2.0, 0.0) * 0.1);
+            gCaveEm = col * uCaveAmb * cvK * cvF;
+            col *= 1.0 - 0.18 * cvK;
+          }
           diffuseColor.rgb = col;
           ${mode === 1 || mode === 3 ? /* glsl */`
             float ad = ${mode === 1 ? '-tD - uBack' : 'tD'};
@@ -516,7 +555,7 @@
             diffuseColor.rgb = mix(col, uHaze, ${mode === 1 ? 'CTX_HAZE(ad)' : '(0.12 + 0.4 * smoothstep(0.0, 50.0, ad))'});` : ''}
         `)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-          roughnessFactor = tRough;`)
+          roughnessFactor = tRough * (1.0 - 0.3 * smoothstep(0.5, 2.5, vDepth));`)
         .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n metalnessFactor = gMetal;')
         // LV2 relief normals: Mikkelsen 2010 surface gradient from screen-space derivatives of the relief height (m)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
@@ -531,7 +570,7 @@
           }`)
         .replace('#include <lights_fragment_begin>', LFB_GLINT || '#include <lights_fragment_begin>')
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-          totalEmissiveRadiance += tEmis;`);
+          totalEmissiveRadiance += tEmis + gCaveEm;`);
     };
     m.customProgramCacheKey = () => 'terrain' + mode + (body ? 'b' : '') + (U.uDetail.value > 0.5 ? 'd' : '');
     return m;
@@ -571,6 +610,7 @@
         varying vec3 vW;
         ${FOAM_GLSL}
         ${PLATE_GLSL}
+        ${TUFF_GLSL}
         // C1 (user: the face must not SCROLL while the section turns; each spot morphs into another random part of the
         // texture, faster the further from the worm): textures are pinned to the face, pu = (τ, y), τ = s + uS0 (s =
         // distance from the pivot along the face; uS0 absorbs pivot moves on the same plane); the variety comes from a
@@ -644,6 +684,7 @@
             float ag = texture(tNoise, pu * 3.7 + vec2(0.13, 0.71)).r * 0.6 + texture(tNoise, pu * 9.1 + 0.3).g * 0.4, ag2 = texture(tNoise, pu * 1.1).b;
             vec3 c = vec3(0.36, 0.355, 0.335) * (0.9 + 0.14 * ag2);
             c = mix(c, vec3(0.43, 0.41, 0.39) * (0.85 + 0.3 * ag), smoothstep(0.62, 0.72, ag) * 0.45);   // aggregate stones (two scales: no tiling)
+            if (uVolc > 0.5) { float kj; c = tuffMasonry(pu, false, 0.0, kj) * 1.3 * (0.85 + 0.3 * ag); }        // P65i: a cut through a ruin wall shows the dark stone courses
             float rb = 1.0 - smoothstep(0.012, 0.022, length(fract(pu / 0.2) - 0.5));
             return mix(c, vec3(0.32, 0.17, 0.09), rb * 0.9);
           }
@@ -849,7 +890,7 @@
       tLavaS: { value: null }, uLavaOn: { value: 0 }, tCover: { value: null }, uDbgBack: { value: 0 },   // tools: 1 body / 2 all slab back faces magenta
       uCtxSolid: { value: 0 },  // D3: 1 = far context opaque, no ghost haze (dry worlds; set by view.js newWorld)
       uCtxHaze: { value: 1 },   // P29j: the slice-view setting: 1 (thin / thick) = the landscape behind the slab recedes into haze; 0 (full) = crisp
-      uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHaze: { value: new T.Color(0xf3d2b0) },
+      uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHaze: { value: new T.Color(0xf3d2b0) }, uCaveAmb: { value: new T.Color(0, 0, 0) },
       uGrassTint: { value: new T.Color(1, 1, 1) }, uDryTint: { value: new T.Color(1, 1, 1) }, uSunDir: { value: new T.Vector3(0, 1, 0) },
       uHalf: { value: C.HALF }, uBack: { value: C.HALF }, uAlpha: { value: 0 }, uTime: { value: 0 }, uSea: { value: W.SEA }, uWaterTex: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
       uCaustic: { value: 1 }, uCloudSh: { value: new T.Vector4(0, 0, 0, 0) }, uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
@@ -1066,6 +1107,8 @@
     U.uTime.value = view.time;
     U.uAlpha.value = ctxA;
     U.uVolc.value = S.biome === 'volcanic' ? 1 : 0;          // volcanic island: the deep bedrock is black basalt too
+    { const mt = U.uMatTint.value, vo = U.uVolc.value > 0.5;   // P65i: boulders of generic rock / sandstone on the volcanic island are dark tuff, not beach sand
+      mt[1].set(vo ? 0.4 : TINT[1][0], vo ? 0.38 : TINT[1][1], vo ? 0.37 : TINT[1][2]); mt[4].set(vo ? 0.42 : TINT[4][0], vo ? 0.38 : TINT[4][1], vo ? 0.36 : TINT[4][2]); }
     { const pl = S.plates || [], n = Math.min(24, pl.length);   // P37 W4: the girder plates (shader: frame / sheets / bolts in plate-local coordinates)
       for (let i = 0; i < n; i++) { const p = pl[i]; U.uPlA.value[i].set(p.cx, p.cy, p.cz, p.hl); U.uPlB.value[i].set(p.ux, p.uy, p.uz, p.ht); U.uPlC.value[i].set(p.nx, 0, p.nz, p.hd); }
       U.uNPl.value = n; }

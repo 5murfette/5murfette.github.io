@@ -73,7 +73,13 @@
     vec3 treeHaze(vec3 c) {
     #ifdef CTX
       float ad = max(0.0, -dot(vTW - uO, uN) - uBack);
-      c = mix(c, uHaze, (0.12 + 0.4 * smoothstep(0.0, 50.0, ad)) * (1.0 - uCtxSolid) + (0.3 + 0.38 * smoothstep(0.0, 40.0, ad)) * uCtxSolid * uCtxHaze);   // CX1 solid; P29j: haze per slice setting
+      /* P65i: aerial perspective by the REAL eye distance and the fog colour (Beer-Lambert, like the scene fog), applied to the albedo
+       * at 0.6 of the fog colour (it is lit afterwards, so the full colour came out as a white frost at 15-25 m); the slice depth
+       * only adds a light cue so the ghost still reads as "behind the cut" */
+      float ed = length(vTW - cameraPosition);
+      float aer = 1.0 - exp(-ed * 0.016 * (0.7 + 0.6 * uCtxSolid * uCtxHaze));
+      float cue = 0.05 * smoothstep(0.0, 40.0, ad);
+      c = mix(c, uHaze * 0.6, clamp(aer * 0.8 + cue, 0.0, 0.7));
     #endif
       return c;
     }

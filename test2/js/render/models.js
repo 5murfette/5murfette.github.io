@@ -171,13 +171,17 @@
 
   /* A prop with baked chunks broke (view.js 'propbreak'): hide the intact group, spawn the chunks and the interior parts
    * as render-only debris at the intact group's transform. No sim state is touched. Returns true when it handled the break
-   * (the caller then skips its procedural chips), false when the model has no chunks (procedural break). */
-  MD.shatter = function (id, grp, seed) {
+   * (the caller then skips its procedural chips), false when the model has no chunks (procedural break). `pick(i, part)` (optional) selects the parts
+   * that fly: i counts chunks, then glass shards, then interior parts. */
+  MD.shatter = function (id, grp, seed, pick) {
     if (!scene || !MD.hasChunks(id) || !grp) return false;
     const b = built[id] || build(id), ps = parts(id), br = SS.MODELS[id].break || {}, rnd = rng(seed | 0);
     const q = grp.quaternion, p = grp.position, sp = br.speed || 3, spin = br.spin || 4, life = br.life || 6;
     grp.visible = false;
+    let pi = -1;
     for (const c of ps) {
+      pi++;
+      if (pick && !pick(pi, c)) continue;                 // P65i: only some parts fly (a car that blows up sheds its glass, bonnet and doors, the wreck stays)
       if (debris.length >= MAXD) { const o = debris.shift(); if (o.g.parent) o.g.parent.remove(o.g); }
       const me = new T.Mesh(c.geo, c.glass ? b.shard : mats(b)); me.castShadow = !c.glass; if (c.glass) me.renderOrder = 3;
       const g = new T.Group(); g.add(me);
