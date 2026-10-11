@@ -1205,7 +1205,7 @@
     if (ffx) Wkg = ffx.W;
     S.lastBoom = S.time; S.lastExplosion = { x: c.x, y: c.y, z: c.z, R: 3 * M.cbrt(Wkg) }; S.lastBlastW = Wkg; S.lastBlastT = S.time;
     let ev;
-    if (SS.blast) ev = SS.blast.explode(S, c, Wkg, { owner: ownerId, kind: wp.name || 'blast', dmg: wp.dmg });
+    if (SS.blast) ev = SS.blast.explode(S, c, Wkg, { owner: ownerId, kind: wp.name || 'blast', dmg: wp.dmg, boom: wp.boom || 0 });
     else { W().carve(c.x, c.y, c.z, 3 * M.cbrt(Wkg)); ev = emit(S, 'explode', { x: c.x, y: c.y, z: c.z, R: 3 * M.cbrt(Wkg), W: Wkg }); }
     S.sectionDirty = true;
     sim.pool_push(S.fx, C.LIMITS.FX, { x: c.x, y: c.y, z: c.z, t: 0 });

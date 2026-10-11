@@ -95,7 +95,7 @@
     const pd = C.PROJ[q.type] || C.WEAPONS[q.type] || {}, own = q.owner, name = (C.WEAPONS[q.type] || {}).name || q.type;
     const i = S.free3d.indexOf(q); if (i >= 0) S.free3d.splice(i, 1);
     if (pd.split) {                                           // cluster / banana: the bomblets fly on in 3D
-      if (pd.W > 0) sim().explode(S, pos, { W: pd.W, dmg: pd.dmg, name, frag: pd.frag }, own);
+      if (pd.W > 0) sim().explode(S, pos, { W: pd.W, dmg: pd.dmg, name, frag: pd.frag, boom: pd.boom }, own);
       const sp = pd.split, sub = C.PROJ[sp.kind];
       for (let k = 0; k < sp.n && S.free3d.length < K.FIELD.MAX_FREE; k++) {
         const d = randDir(S), v = rr(S, sp.vy0, sp.vy1) + 2;

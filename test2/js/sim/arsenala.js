@@ -29,7 +29,7 @@
   /* ---------- projectile models of the new weapons ---------- */
   Object.assign(C.PROJ, {
     // sticky gel droplet (flamethrower): bursts into a burning patch (1-3 s) on terrain / props, sticks to a worm
-    flamedrop: { dmg: 2, impact: 1, arm: 0.03, W: 0, windK: 1.3, drag: 0.55, r: 0.04, wa: 1, flamedrop: 1, fire: 1 },
+    flamedrop: { boom: C.BOOM.FUEL, dmg: 2, impact: 1, arm: 0.03, W: 0, windK: 1.3, drag: 0.55, r: 0.04, wa: 1, flamedrop: 1, fire: 1 },
     // acid flask: bursts on contact into acid drops that eat the ground and burn worms
     acid: { dmg: 8, impact: 1, arm: 0.05, W: Wr(14), windK: 0.3, r: 0.1, wa: 1, acid: 1 },
     // gas canister: bounces like a grenade, the fuse (+ / -) opens it; the cloud infects

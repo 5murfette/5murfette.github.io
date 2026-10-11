@@ -323,6 +323,8 @@
     switch (e.type) {
       case 'explode': { const R = 44 * Math.cbrt(e.W || 1); if (e.wet != null && e.wet > 0.25) break; if (SS.music) { const dk = SS.music.duck_gain(R), dl = AU.space ? AU.space.eval(e, { cls: 'loud' }).delay : 0; if (dl > 0.05) setTimeout(() => SS.music.duck(dk), dl * 1000); else SS.music.duck(dk); } if (AU.space) AU.space.hush(R / 50);   // a charge under the water: its own sound is the 'waterblast' event (no second, dry boom)
         S2(R > 60 ? 'explosion_large' : R > 30 ? 'explosion_medium' : 'explosion_small', clamp(R / 60, 0.4, 1), 1, () => SFX.boom(R, e));
+        // P66a: HE = a sharp crack (the shock front: a short airburst sample pitched up) on top of the low boom; FUEL = a soft 'whoomp' of the ignition (a low, slowed fire_ignite), the boom a little quieter
+        if (!e.boom) S2('explosion_air', clamp(R / 60, 0.25, 0.7), 1.6); else S2('fire_ignite', clamp(0.5 + R / 80, 0.5, 1), 0.6);
         // a gasp from the worm on turn when a blast goes off close to it
         const a = S.active; if (a && !a.dead && Math.hypot(a.pos.x - e.x, a.pos.y - e.y, a.pos.z - e.z) < 7) AU.voice('worm_flinch', a, 0.7, 1.5); break; }
       case 'waterblast': S2('explosion_water', 1, 1, () => SFX.boomWater(44 * Math.cbrt(e.W || 1))); break;

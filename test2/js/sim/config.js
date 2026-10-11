@@ -128,8 +128,12 @@
       LEAF_I: 20,           // impulse (Pa·s) where leaves start to strip (W 1: Z ~ 9 m; was 8 -> stripped within ~20 m)
       LEAF_SPAN: 80,        // ...and are fully stripped at LEAF_I + LEAF_SPAN (W 1: ~83 % at 2 m, 24 % at 5 m)
       FIRE_R: 1.25,         // fireball radius / W^(1/3) (m): ignites dry fuel
+      HE_FIRE_K: 0.2,       // P66a: a detonation (BOOM.HE) has no fireball: its heat reach is this share of FIRE_R (W 1: 0.7 m, inside the crater); BOOM.FUEL keeps the full one
       R_MAX: 7              // never edit terrain farther than this (m)
     },
+    // P66a: explosion class (WeaponDef / ProjDef .boom; blast.explode opts.boom; the 'explode' event .boom). HE = detonation: flash, shock wave, dust and
+    // soot, no fireball, almost no fire; FUEL = deflagration / incendiary (napalm, fuel barrel, car tank, a molotov or thermobaric): rolling fireball, burning ground
+    BOOM: { HE: 0, FUEL: 1 },
     MAT, MATS,
 
     /* Map types. Each one is a generator in sim/worldgen.js plus a look preset in render. */
@@ -224,7 +228,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p67-review',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p66a-he',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',

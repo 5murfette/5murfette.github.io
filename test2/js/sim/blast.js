@@ -140,7 +140,7 @@
     }
     const cr = BL.crater(c, Wc);
     S.lastCrater = cr.box;
-    const ev = sim.emit(S, 'explode', { x: c.x, y: c.y, z: c.z, R: 3 * M.cbrt(Wkg), W: Wkg, kind: o.kind || 'blast', removed: cr.removed, byMat: Array.from(cr.byMat), wet, pushes: [] });   // pushes: the shove of every worm it threw (render: the per-node wave of the soft body)
+    const ev = sim.emit(S, 'explode', { x: c.x, y: c.y, z: c.z, R: 3 * M.cbrt(Wkg), W: Wkg, kind: o.kind || 'blast', boom: o.boom || 0, removed: cr.removed, byMat: Array.from(cr.byMat), wet, pushes: [] });   // pushes: the shove of every worm it threw (render: the per-node wave of the soft body)
     // worms (after the crater: the wave travels through the opened hole)
     const d = SS.plane.dir(S);
     let hits = 0;
@@ -172,9 +172,10 @@
     ev.hits = hits;
     // other subsystems
     if (SS.bodies && SS.bodies.blast) SS.bodies.blast(S, c, Wkg);
-    if (SS.scatter && SS.scatter.blast) SS.scatter.blast(S, c, Wkg);
+    const heK = o.boom === C.BOOM.FUEL ? 1 : B.HE_FIRE_K;                     // P66a: a detonation has no fireball: its heat reach is HE_FIRE_K of a fuel burst's
+    if (SS.scatter && SS.scatter.blast) SS.scatter.blast(S, c, Wkg, heK);
     if (SS.veg && SS.veg.blast) SS.veg.blast(S, c, Wkg);
-    if (SS.veg && SS.veg.ignite) SS.veg.ignite(S, c, B.FIRE_R * M.cbrt(Wkg));
+    if (SS.veg && SS.veg.ignite) SS.veg.ignite(S, c, B.FIRE_R * heK * M.cbrt(Wkg));
     if (SS.ice) SS.ice.blast(S, c, Wkg);                     // Step I: holes / floes in sea ice (wider under water; BEFORE the water cavity lowers the surface it measures the charge's depth from)
     if (SS.water && SS.water.blast) SS.water.blast(S, c, Wkg);
     if (SS.struct) SS.struct.blast(S, c, Wkg);               // M: steel members cut by close charges, spans fall

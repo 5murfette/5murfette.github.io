@@ -23,7 +23,7 @@
     kind: new Uint8Array(MAX), seed: new Float32Array(MAX), c0: new Float32Array(MAX * 3), c1: new Float32Array(MAX * 3), a0: new Float32Array(MAX), drag: new Float32Array(MAX),
     grav: new Float32Array(MAX), buoy: new Float32Array(MAX), hug: new Float32Array(MAX), y0: new Float32Array(MAX), ang: new Float32Array(MAX) };   // hug: > 0 = a ground-hugging dust that follows the terrain at that height; y0: where it was born (wind shear grows with height); ang: how angular a chunk is (0 clod .. 1 broken rock)
   const KEYS = Object.keys(P);
-  let n = 0, scene = null, flash = null, flashT = 9, glowT = 9, glowI = 0, shake = 0, add = null, alp = null;
+  let n = 0, scene = null, flash = null, flashK = 9, flashT = 9, glowT = 9, glowI = 0, shake = 0, add = null, alp = null;
   const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9;   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
   // K_CHUNK: a solid rock / clod / ice shard (alpha pass, bounces on the ground)
   const ADDITIVE = k => k === K_FIRE || k === K_SPARK || k === K_LAVA || k >= K_FLASH;
@@ -227,7 +227,7 @@
     // the surface and a burst of bubbles; the surface show (dome, crown, jet, base surge, foam) is FX.waterBlast
     if (e.wet != null && e.wet > 0.25) {
       for (let i = 0; i < 18; i++) { const d = sphereDir(), sp = rnd(0.5, 2.5) * W3; spawn(K_STEAM, e.x + d[0] * 0.3, e.y + d[1] * 0.3, e.z + d[2] * 0.3, { vx: d[0] * sp, vy: rnd(1.5, 4), vz: d[2] * sp, drag: 3, life: Math.min(1.2, 0.25 + e.wet * 0.4), s0: 0.08, s1: rnd(0.15, 0.4) * W3, a0: 0.7, c0: [0.8, 0.92, 0.95] }); }
-      flash.position.set(e.x, e.y + e.wet, e.z); flash.intensity = 14 * Rf * Math.exp(-e.wet / 1.5); flashT = 0;
+      flash.position.set(e.x, e.y + e.wet, e.z); flash.intensity = 14 * Rf * Math.exp(-e.wet / 1.5); flashT = 0; flashK = 9;
       shake = Math.min(1.2, shake + (e.R || 3) * 0.3 * Math.max(0.3, 1 - camDist / 60));
       return;
     }
@@ -235,14 +235,16 @@
     if (wet) { const k = 0.6; spawn(K_FIRE, e.x, e.y + 0.15, e.z, { life: 0.1 + 0.05 * W3, s0: Rf * 0.5 * k, s1: Rf * 1.5 * k, c0: [3000, 1500, 0], a0: 1 });
       for (let i = 0; i < 5; i++) { const d = sphereDir(), sp = rnd(3, 7) * W3; spawn(K_FIRE, e.x, e.y + 0.2, e.z, { vx: d[0] * sp, vy: Math.abs(d[1]) * sp + 2, vz: d[2] * sp, drag: 10, life: rnd(0.15, 0.3), s0: Rf * 0.3, s1: Rf * 0.8, c0: [2400, 1000, 0], a0: 0.9 }); }
       for (let i = 0; i < 5; i++) { const sp = rnd(0.3, 1.2) * W3, a = rnd(0, 6.283); spawn(K_SMOKE, e.x, e.y + 0.6, e.z, { vx: Math.cos(a) * sp, vy: rnd(1, 2.5) * W3, vz: Math.sin(a) * sp, drag: 1.2, buoy: 0.6, life: rnd(1.5, 2.5), s0: Rf * 0.4, s1: Rf * 2, c0: [0.12, 0.11, 0.1], c1: [0.45, 0.45, 0.45], a0: 0.3 }); }
-      flash.position.set(e.x, e.y + 0.5, e.z); flash.intensity = 40 * Rf; flashT = 0;
+      flash.position.set(e.x, e.y + 0.5, e.z); flash.intensity = 40 * Rf; flashT = 0; flashK = 9;
       shake = Math.min(1.2, shake + (e.R || 3) * 0.25 * Math.max(0.3, 1 - camDist / 60));
       return;
     }
     // fireball: a hot core puff + turbulent lobes (detonation products + afterburn), luminous ~0.1-0.2 W^1/3 s
+    const he = !e.boom;                                 // P66a: C.BOOM.HE (0) = a detonation: white flash + shock wave + dust and soot, NO fireball; FUEL (1) keeps the rolling fireball
     const mf = matMix(e), env = FX.env, rain = env.rain, hard = mf.hard, kd = String(e.kind || ''), isBarrel = /barrel/.test(kd), isCar = /car/.test(kd), isMine = /mine/.test(kd), big = W3 > 2.0;
     const wx = env.wx || 0, wz = env.wz || 0, cnt = v => Math.max(1, Math.round(v * QN));
-    if (SS.flameView) SS.flameView.fireball(e.x, e.y, e.z, Rf, W3, isBarrel || isCar ? 1.25 : 1);              // P45: rolling procedural fireball (render/flame.js)
+    if (he) { /* no fireball: a detonation's products are dark and the flash lasts a few frames */ }
+    else if (SS.flameView) SS.flameView.fireball(e.x, e.y, e.z, Rf, W3, isBarrel || isCar ? 1.25 : 1);              // P45: rolling procedural fireball (render/flame.js)
     else {
       spawn(K_FIRE, e.x, e.y + 0.1, e.z, { life: 0.12 + 0.08 * W3, s0: Rf * 0.6, s1: Rf * 2.1, c0: [3200, 1500, 0], a0: 1 });
       for (let i = 0; i < 9; i++) {
@@ -254,17 +256,23 @@
     const hit = mf.best > 0, cave = env.under ? 1.35 : 1, wetK = 1 - 0.35 * rain, Rr = Math.min(7, 0.9 + 0.62 * e.R);
     const fr = frame(e, Rr * 2 + 1.5), ventK = hit ? Math.max(0, Math.min(1, (fr.tilt - 0.5) / 0.7)) : 0, nx = fr.nx, ny = fr.ny, nz = fr.nz;      // P65k: which way the ground opens (up on the flat, downhill on a slope, sideways at a wall)
     // P58 the flash: a hard white core with rays (a few frames), then a wider orange bloom, and the shock front: a thin ring (camera-facing) and, over ground, a ring lying on it
-    spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.07 + 0.025 * W3, s0: Rf * 1.7, s1: Rf * (3.2 + 0.6 * W3), c0: big ? [5, 4.6, 3.8] : [4.2, 3.2, 1.7], c1: [2.0, 1.0, 0.4], a0: 1 });
-    spawn(K_FLASH, e.x, e.y + 0.4, e.z, { life: 0.2 + 0.05 * W3, s0: Rf * 2.2, s1: Rf * 4.2, c0: [1.1, 0.5, 0.16], c1: [0.4, 0.14, 0.04], a0: 0.55 });
-    if (W3 > 0.6) spawn(K_RING, e.x, e.y + 0.4, e.z, { life: 0.3 + 0.06 * W3, s0: Rf * 1.4, s1: Rf * (5.5 + 1.5 * W3), c0: [0.8, 0.72, 0.6], c1: [0.5, 0.52, 0.6], a0: 0.3 + 0.08 * Math.min(2, W3) });
+    if (he) {                                           // HE: an extremely short, very bright white-yellow flash (3-4 frames), a pale glare, a fast pressure front
+      spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.04 + 0.012 * W3, s0: Rf * 1.5, s1: Rf * (3.0 + 0.6 * W3), c0: [6.5, 6.0, 4.8], c1: [3.0, 2.5, 1.5], a0: 1 });
+      spawn(K_FLASH, e.x, e.y + 0.4, e.z, { life: 0.09 + 0.02 * W3, s0: Rf * 2.0, s1: Rf * 3.6, c0: [1.5, 1.35, 0.95], c1: [0.5, 0.46, 0.34], a0: 0.5 });
+      if (W3 > 0.3) spawn(K_RING, e.x, e.y + 0.4, e.z, { life: 0.2 + 0.05 * W3, s0: Rf * 1.2, s1: Rf * (7 + 2 * W3), c0: [1.0, 0.95, 0.85], c1: [0.6, 0.62, 0.68], a0: 0.5 + 0.12 * Math.min(2, W3) });
+    } else {
+      spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.07 + 0.025 * W3, s0: Rf * 1.7, s1: Rf * (3.2 + 0.6 * W3), c0: big ? [5, 4.6, 3.8] : [4.2, 3.2, 1.7], c1: [2.0, 1.0, 0.4], a0: 1 });
+      spawn(K_FLASH, e.x, e.y + 0.4, e.z, { life: 0.2 + 0.05 * W3, s0: Rf * 2.2, s1: Rf * 4.2, c0: [1.1, 0.5, 0.16], c1: [0.4, 0.14, 0.04], a0: 0.55 });
+      if (W3 > 0.6) spawn(K_RING, e.x, e.y + 0.4, e.z, { life: 0.3 + 0.06 * W3, s0: Rf * 1.4, s1: Rf * (5.5 + 1.5 * W3), c0: [0.8, 0.72, 0.6], c1: [0.5, 0.52, 0.6], a0: 0.3 + 0.08 * Math.min(2, W3) });
+    }
     // shock condensation (Wilson cloud): the rarefaction behind a big blast wave cools humid air below its dew point, a white dome that blinks on for a few tenths of a second
-    if (W3 > 1.3 && !env.under) spawn(K_STEAM, e.x, e.y + Rf * 1.1, e.z, { life: 0.35 + 0.1 * W3, s0: Rf * 2.2, s1: Rf * (4.2 + 0.8 * W3), c0: [0.96, 0.97, 1], c1: [0.9, 0.93, 0.97], a0: Math.min(0.45, 0.2 * W3) * (0.6 + 0.6 * rain) });
+    if (W3 > (he ? 1.0 : 1.3) && !env.under) spawn(K_STEAM, e.x, e.y + Rf * 1.1, e.z, { life: 0.35 + 0.1 * W3, s0: Rf * 2.2, s1: Rf * (4.2 + 0.8 * W3), c0: [0.96, 0.97, 1], c1: [0.9, 0.93, 0.97], a0: Math.min(0.45, 0.2 * W3) * (0.6 + 0.6 * rain) });
     // P61: the holy grenade (the biggest blast, W3 > 2.2) reads big at the game camera: a wide golden-white wash, two slow shock rings
     // (camera-facing and on the ground), a second pulse and a crown of sparks
     const huge = /holy/.test(kd) || W3 > 2.2;
     if (huge) {
       spawn(K_FLASH, e.x, e.y + 0.5, e.z, { life: 0.16, s0: Rf * 2.6, s1: Rf * 7, c0: [3.4, 2.9, 1.9], c1: [1.2, 0.8, 0.3], a0: 0.85 });
-      spawn(K_FLASH, e.x, e.y + 0.6, e.z, { life: 0.55, s0: Rf * 3, s1: Rf * 6.5, c0: [1.0, 0.62, 0.22], c1: [0.3, 0.15, 0.05], a0: 0.5 });
+      spawn(K_FLASH, e.x, e.y + 0.6, e.z, { life: he ? 0.3 : 0.55, s0: Rf * 3, s1: Rf * 6.5, c0: he ? [1.3, 1.1, 0.7] : [1.0, 0.62, 0.22], c1: he ? [0.4, 0.34, 0.2] : [0.3, 0.15, 0.05], a0: 0.5 });
       spawn(K_RING, e.x, e.y + 0.5, e.z, { life: 0.75, s0: Rf * 2, s1: Rf * 10.5, c0: [1.0, 0.9, 0.62], c1: [0.7, 0.62, 0.45], a0: 0.55 });
       later.push({ t: 0.14, fn: () => {
         spawn(K_RING, e.x, e.y + 0.5, e.z, { life: 0.8, s0: Rf * 1.5, s1: Rf * 8.5, c0: [0.95, 0.85, 0.6], c1: [0.6, 0.55, 0.4], a0: 0.4 });
@@ -275,19 +283,28 @@
     if (hit && !env.under) {
       const gc = mf.dust.map(v => Math.min(1, v * 0.75 + 0.25));
       spawn(K_RINGG, e.x, e.y + 0.22, e.z, { life: 0.5 + 0.1 * W3, s0: Rr * 0.7, s1: Rr * 4.6, c0: gc.map(v => v * 0.9), c1: gc.map(v => v * 0.45), a0: 0.7 });
-      if (W3 > 0.9) spawn(K_RINGG, e.x, e.y + 0.3, e.z, { life: 0.34, s0: Rr * 0.4, s1: Rr * 3.4, c0: [1.1, 0.8, 0.45], c1: [0.4, 0.25, 0.1], a0: 0.45 });
+      if (he) spawn(K_RINGG, e.x, e.y + 0.3, e.z, { life: 0.22 + 0.04 * W3, s0: Rr * 0.5, s1: Rr * (5.5 + W3), c0: [1.0, 0.95, 0.85], c1: gc.map(v => v * 0.6), a0: 0.6 });   // the shock front racing along the ground, pale, ahead of the dust
+      else if (W3 > 0.9) spawn(K_RINGG, e.x, e.y + 0.3, e.z, { life: 0.34, s0: Rr * 0.4, s1: Rr * 3.4, c0: [1.1, 0.8, 0.45], c1: [0.4, 0.25, 0.1], a0: 0.45 });
     }
     // soot: TNT is oxygen-poor, its smoke is black; a buoyant puffy column that greys as it thins. Over loose ground the
     // dirt it lofts mixes in (browner, lighter); over snow / ice / foam the vapour is white; rain beats it down and greys it.
     // P58: the column is built in waves (a stem of puffs rising from the crater, a mushroom cap for a big one) and drifts with the wind
-    const sootK = Math.max(0.35, 1 - mf.loft * 0.55), oil = isBarrel || isCar ? 0.6 : 1;
-    const sc0 = [(0.06 + mf.dust[0] * 0.18 * (1 - sootK)) * oil, (0.055 + mf.dust[1] * 0.18 * (1 - sootK)) * oil, (0.05 + mf.dust[2] * 0.18 * (1 - sootK)) * oil];
+    const sootK = Math.max(0.35, 1 - mf.loft * 0.55), oil = isBarrel || isCar ? 0.6 : 1, heK = he ? 1 : 0;
+    const sc0 = [(0.06 + mf.dust[0] * 0.18 * (1 - sootK) + heK * (0.07 + mf.dust[0] * 0.14)) * oil, (0.055 + mf.dust[1] * 0.18 * (1 - sootK) + heK * (0.065 + mf.dust[1] * 0.14)) * oil, (0.05 + mf.dust[2] * 0.18 * (1 - sootK) + heK * (0.06 + mf.dust[2] * 0.14)) * oil];   // HE: dark grey-brown (soil mixed into the soot), not black oil smoke
     const sc1 = [0.32 + (mf.dust[0] - 0.32) * 0.35 * mf.loft, 0.31 + (mf.dust[1] - 0.31) * 0.35 * mf.loft, 0.3 + (mf.dust[2] - 0.3) * 0.35 * mf.loft];
     const nSmoke = cnt(14 * (0.8 + 0.2 * wetK)), colH = Rf * (1.5 + 0.6 * W3) * (isBarrel || isCar ? 1.3 : 1);
     for (let i = 0; i < nSmoke; i++) {
       const d = sphereDir(), sp = rnd(0.5, 2.5) * W3;
-      spawn(K_SMOKE, e.x + d[0] * Rf * 0.4, e.y + 0.2 + Math.abs(d[1]) * Rf * 0.3, e.z + d[2] * Rf * 0.4, { vx: d[0] * sp + wx * 0.2 + nx * ventK * 2.2 * W3, vy: rnd(1.5, 3.5) * W3 * wetK * (1 - 0.45 * ventK), vz: d[2] * sp + wz * 0.2 + nz * ventK * 2.2 * W3, drag: 1.2 + rain * 0.6, buoy: 0.8 * wetK,
+      spawn(K_SMOKE, e.x + d[0] * Rf * 0.4, e.y + 0.2 + Math.abs(d[1]) * Rf * 0.3, e.z + d[2] * Rf * 0.4, { vx: d[0] * sp + wx * 0.2 + nx * ventK * 2.2 * W3, vy: rnd(1.5, 3.5) * W3 * wetK * (1 - 0.45 * ventK), vz: d[2] * sp + wz * 0.2 + nz * ventK * 2.2 * W3, drag: 1.2 + rain * 0.6, buoy: (he ? 0.5 : 0.8) * wetK,
         life: rnd(2.8, 5.0) * (1 - 0.25 * rain) * cave, s0: Rf * 0.5, s1: Rf * rnd(2.2, 3.4), c0: sc0, c1: sc1, a0: 0.8 });
+    }
+    if (he) {                                            // P66a: the detonation's dust and soot cloud: a dark grey-brown billow punched out of the crater at once (it carries the picture once the flash is gone)
+      const nb = cnt(12 + 6 * W3);
+      for (let i = 0; i < nb; i++) {
+        const d = cone(0.1, 1.35), sp = rnd(2.5, 7) * Math.sqrt(W3);
+        spawn(K_SMOKE, e.x + nx * 0.3 + d[0] * Rf * 0.25, e.y + ny * 0.3 + d[1] * Rf * 0.25, e.z + nz * 0.3 + d[2] * Rf * 0.25, { vx: d[0] * sp + wx * 0.2, vy: d[1] * sp * 0.8 + 0.8, vz: d[2] * sp + wz * 0.2, drag: 2.2 + rain * 0.6, buoy: 0.3 * wetK,
+          life: rnd(2.2, 4.0) * (1 - 0.25 * rain) * cave, s0: Rf * 0.7, s1: Rf * rnd(2.0, 3.2), c0: sc0.map(v => v * 1.15), c1: sc1, a0: 0.9 });
+      }
     }
     const nStem = cnt(4 + 3 * W3);
     for (let w = 1; w <= 3; w++) later.push({ t: 0.12 + 0.2 * w, fn: () => {
@@ -343,7 +360,7 @@
         const nv = cnt(7 + 9 * W3 * ventK), col = mf.dust;
         for (let i = 0; i < nv; i++) { const d = cone(0, 0.55), v = rnd(4, 11) * Math.sqrt(W3) * (0.5 + 0.5 * ventK);
           spawn(K_DUST, e.x + nx * 0.3, e.y + ny * 0.3, e.z + nz * 0.3, { vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, drag: 2.4, grav: 1.2, life: rnd(1.2, 2.2), s0: 0.35 * W3, s1: rnd(1.2, 2.0) * W3 * mf.puff, c0: col, c1: col.map(v2 => v2 * 1.1 + 0.05), a0: 0.55 * ventK + 0.15 });
-          if (i % 2 === 0) spawn(K_FIRE, e.x + nx * 0.3, e.y + ny * 0.3, e.z + nz * 0.3, { vx: d[0] * v * 0.8, vy: d[1] * v * 0.8, vz: d[2] * v * 0.8, drag: 6, life: rnd(0.18, 0.35), s0: Rf * 0.3, s1: Rf * 0.75, c0: [rnd(2000, 2600), 1000, 0], a0: 0.85 * ventK }); }
+          if (!he && i % 2 === 0) spawn(K_FIRE, e.x + nx * 0.3, e.y + ny * 0.3, e.z + nz * 0.3, { vx: d[0] * v * 0.8, vy: d[1] * v * 0.8, vz: d[2] * v * 0.8, drag: 6, life: rnd(0.18, 0.35), s0: Rf * 0.3, s1: Rf * 0.75, c0: [rnd(2000, 2600), 1000, 0], a0: 0.85 * ventK }); }
       }
       // granular spray: sand throws a fine bright curtain of grains, snow a powder puff with soft clumps, ash a dark feathery cloud
       const gr = mf.grain || 0;
@@ -354,14 +371,14 @@
       }
     }
     // burning bits (the casing's hot fragments are drawn by render/shrapnel.js): sparks; hard ground (rock, concrete, steel) and metal props strike more
-    const metal = isBarrel || isCar ? 1 : 0, nsp = cnt(10 * (0.6 + 0.9 * Math.max(hard, metal) * Math.max(hard, metal)) * (1 + 0.5 * W3));
+    const metal = isBarrel || isCar ? 1 : 0, nsp = cnt((he ? 6 : 10) * (0.6 + 0.9 * Math.max(hard, metal) * Math.max(hard, metal)) * (1 + 0.5 * W3));
     for (let i = 0; i < nsp; i++) { const d = sphereDir(), sp = rnd(4, 10) * (0.8 + 0.5 * Math.max(hard, metal)); spawn(K_SPARK, e.x, e.y + 0.1, e.z, { vx: d[0] * sp, vy: Math.abs(d[1]) * sp + 2, vz: d[2] * sp, life: rnd(0.4, 1.0), s0: 0.12, s1: 0.06, c0: [rnd(2200, 2900), 1100, 0], grav: 9.8, drag: 0.6 }); }
     // light: warm for fire, whiter on steel / concrete (sparks), cool over ice / snow; a weak daylight flash is hidden by the sun, at dusk / night it lights the land
     const lt = env.tod === 'night' ? 1.5 : env.tod === 'dusk' ? 1.2 : 1;
-    flash.color.setRGB(1 + 0 * mf.cold, 0.66 + 0.2 * hard * hard + 0.12 * mf.cold, 0.32 + 0.4 * hard * hard + 0.4 * mf.cold);
-    own.uGlow.value.set(e.x, e.y + 0.6, e.z, 0); glowI = (env.tod === 'night' ? 0.75 : env.tod === 'dusk' ? 0.4 : 0.1 + 0.3 * env.rain) * Math.min(2, 0.6 + W3); glowT = 0; own.uGlowC.value.setRGB(1, 0.42 + 0.3 * mf.hard * mf.hard, 0.12 + 0.35 * mf.cold);
-    flash.position.set(e.x, e.y + 0.5, e.z); flash.intensity = 55 * Rf * lt * (1.0 + 0.3 * Math.min(2, W3)) * (huge ? 1.9 : 1); flash.distance = 16 + 8 * (lt - 1) + 4 * W3 + (huge ? 14 : 0); flashT = 0;
-    if (SS.lens && SS.lens.shock && SS.view.msaa && SS.view.msaa() >= 4 && !env.under && W3 > 0.75 && camDist < 60) SS.lens.shock(e.x, e.y + 0.3, e.z, (3.5 + 3 * W3) * (huge ? 1.7 : 1), 0.8 + 0.5 * (1 - rain));   // the refraction front of the blast wave
+    if (he) flash.color.setRGB(1, 0.93 + 0.05 * mf.cold, 0.76 + 0.2 * hard * hard + 0.2 * mf.cold); else flash.color.setRGB(1 + 0 * mf.cold, 0.66 + 0.2 * hard * hard + 0.12 * mf.cold, 0.32 + 0.4 * hard * hard + 0.4 * mf.cold);
+    own.uGlow.value.set(e.x, e.y + 0.6, e.z, 0); glowI = (env.tod === 'night' ? 0.75 : env.tod === 'dusk' ? 0.4 : 0.1 + 0.3 * env.rain) * Math.min(2, 0.6 + W3); glowT = 0; own.uGlowC.value.setRGB(1, (he ? 0.8 : 0.42) + 0.3 * mf.hard * mf.hard, (he ? 0.5 : 0.12) + 0.35 * mf.cold); if (he) glowI *= 0.4;
+    flash.position.set(e.x, e.y + 0.5, e.z); flash.intensity = (he ? 85 : 55) * Rf * lt * (1.0 + 0.3 * Math.min(2, W3)) * (huge ? 1.9 : 1); flashK = he ? 26 : 9; flash.distance = 16 + 8 * (lt - 1) + 4 * W3 + (huge ? 14 : 0); flashT = 0;
+    if (SS.lens && SS.lens.shock && SS.view.msaa && SS.view.msaa() >= 4 && !env.under && W3 > (he ? 0.4 : 0.75) && camDist < 60) SS.lens.shock(e.x, e.y + 0.3, e.z, (3.5 + 3 * W3) * (huge ? 1.7 : 1) * (he ? 1.25 : 1), (0.8 + 0.5 * (1 - rain)) * (he ? 1.3 : 1));   // the refraction front of the blast wave
     // camera shake: the charge (W^1/3) over the distance to the camera's focus (camDist = metres), none when far away
     const d = Math.max(0, camDist), amp = 0.62 * W3 / (1 + (d / (5 * W3 + 2)) * (d / (5 * W3 + 2)));
     shake = Math.min(huge ? 1.6 : 1.2, shake + (amp < 0.02 ? 0 : amp * (huge ? 1.5 : 1)));
@@ -488,7 +505,7 @@
     // P58: a white-orange flash, a glowing ring running out over the pool, thick blobs on arcs with a cooling tail, dark scoria, a gout of fume
     spawn(K_FLASH, x, y + 0.2, z, { life: 0.14, s0: 0.5 * size, s1: 1.7 * size + 0.4, c0: [2.6, 1.3, 0.5], c1: [0.8, 0.25, 0.05], a0: 0.8 });
     spawn(K_RINGG, x, y + 0.08, z, { life: 0.7, s0: 0.6 * size, s1: 3.6 * size + 0.8, c0: [1.2, 0.45, 0.1], c1: [0.35, 0.08, 0.02], a0: 0.7 });
-    if (flash && size > 0.5) { flash.color.setRGB(1, 0.42, 0.1); flash.position.set(x, y + 0.6, z); flash.intensity = Math.max(flash.intensity, 22 * size); flashT = 0.2; }
+    if (flash && size > 0.5) { flash.color.setRGB(1, 0.42, 0.1); flash.position.set(x, y + 0.6, z); flash.intensity = Math.max(flash.intensity, 22 * size); flashT = 0.2; flashK = 9; }
     for (let i = 0; i < k; i++) {
       const a = rnd(0, 6.283), sp = rnd(0.4, 2.4) * size, vy = rnd(1.8, 5.2) * sq, s = rnd(0.12, 0.3) * sq;
       spawn(K_LAVA, x, y + 0.05, z, { vx: Math.cos(a) * sp, vy, vz: Math.sin(a) * sp, life: rnd(0.8, 1.6), s0: s, s1: 0.07, c0: [1500, 850, 0], grav: 9.8, drag: 0.4 });
@@ -570,7 +587,7 @@
       s.g.instanceCount = c; s.mesh.visible = c > 0;
       if (c) { s.iPos.needsUpdate = true; s.iA.needsUpdate = true; s.iC.needsUpdate = true; s.iAl.needsUpdate = true; }
     }
-    flashT += dt; flash.intensity = flashT < 0.4 ? flash.intensity * Math.exp(-dt * 9) : 0;
+    flashT += dt; flash.intensity = flashT < 0.4 ? flash.intensity * Math.exp(-dt * flashK) : 0;
     glowT += dt; own.uGlow.value.w = glowI * Math.exp(-glowT * 3.2) * (glowT < 2 ? 1 : 0);
     shake = Math.max(0, shake - dt * 2.2);
   };

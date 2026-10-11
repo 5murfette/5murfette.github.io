@@ -150,7 +150,7 @@
     const W = SS.world, c = { x: b.pos.x, y: b.pos.y, z: b.pos.z };
     if (b.prop === 'car') {                                   // PoC: R54 dmg 44, burning fuel around, a charred wreck stays
       b.wreck = true; b.det = -1; b.burn = -1; b.armed = false;
-      SS.sim.explode(S, c, { W: P.CAR.W_BLAST, dmg: P.CAR.DMG, name: 'an exploding car' }, null);
+      SS.sim.explode(S, c, { W: P.CAR.W_BLAST, dmg: P.CAR.DMG, name: 'an exploding car', boom: C.BOOM.FUEL }, null);
       const top = W.top_at(c.x, c.z);
       for (let k = 0; k < P.CAR.FIRES; k++) { const f = { x: c.x + (rand(S) - 0.5) * 3, y: top, z: c.z + (rand(S) - 0.5) * 1.5, r: 1.1, t1: S.time + 5 + rand(S) * 3 }; S.flames.push(f); SS.sim.emit(S, 'oilfire', { x: f.x, y: f.y, z: f.z, r: f.r, dur: f.t1 - S.time }); }
       SS.sim.log(S, 'A car goes up in flames!', 0xffb060);
@@ -158,7 +158,7 @@
     }
     SS.bodies.remove(S, b);
     if (b.prop === 'barrel') {
-      SS.sim.explode(S, c, { W: P.BARREL.W, dmg: P.BARREL.DMG, name: 'barrel' }, null);
+      SS.sim.explode(S, c, { W: P.BARREL.W, dmg: P.BARREL.DMG, name: 'barrel', boom: C.BOOM.FUEL }, null);
       const top = W.top_at(c.x, c.z), sea = SS.sim.surface_at ? SS.sim.surface_at(S, c.x, c.z) : W.SEA;
       if (top > sea && c.y - top < 3) {                       // oil only burns on land (and not after a high-air burst)
         const f = { x: c.x, y: top, z: c.z, r: P.BARREL.OIL_R, t1: S.time + P.BARREL.OIL_T };
@@ -169,8 +169,8 @@
   }
 
   /* blast hook (blast.js, after bodies.blast): shatter crates, set off barrels and mines, light what the fireball reaches */
-  SC.blast = function (S, c, Wkg) {
-    const BL = SS.blast, fire = C.BLAST.FIRE_R * M.cbrt(Wkg);
+  SC.blast = function (S, c, Wkg, heK) {
+    const BL = SS.blast, fire = C.BLAST.FIRE_R * (heK == null ? 1 : heK) * M.cbrt(Wkg);
     for (let i = S.bodies.length - 1; i >= 0; i--) {
       const b = S.bodies[i];
       if (!b || !b.prop || b.prop === 'boulder') continue;

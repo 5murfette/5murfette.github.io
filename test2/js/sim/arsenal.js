@@ -9,7 +9,8 @@
  * Projectile model (p.type = weapon or sub-munition key, all in C.PROJ): impact (bursts on contact) | bouncy (rest =
  * restitution, fric = tangential retention per bounce, fuse s, fuseSet = F key sets it) ; W (kg TNT-eq), windK, drag
  * (1/s), arm (s before terrain contact counts), split {kind, n, jx, vy0, vy1} (m/s), fire (burning patches), metal
- * (magnets pull it), special handlers: homing | sheep | hole | foam | napalm | flame.
+ * (magnets pull it), boom (P66a explosion class C.BOOM: HE detonation when absent / 0, FUEL = napalm and other fuel / incendiary),
+ * special handlers: homing | sheep | hole | foam | napalm | flame.
  * C layout: const WeaponDef ARSENAL[NWEAPONS]; const ProjDef PROJ[NPROJ]. */
 (function (SS) {
   'use strict';
@@ -37,9 +38,9 @@
     blackhole: { dmg: 0, bouncy: 1, rest: 0.35, fric: 0.85, fuse: 2.5, W: 0, windK: 0, metal: 1, r: 0.1, hole: 1 },
     foam: { dmg: 0, impact: 1, W: 0, windK: 0.6, r: 0.1, foam: { rx: 2.7, ry: 1.9, rz: 1.5 } },
     missile: { dmg: 30, impact: 1, W: Wr(34), windK: 0.6, metal: 1, r: 0.06 },
-    napalm: { dmg: 12, impact: 1, W: Wr(18), windK: 0.4, r: 0.07, napalm: { n: 9, v0: 30 * kT, v1: 120 * kT }, fire: 5 },
-    flame: { dmg: 3, impact: 1, arm: 0.05, W: 0, windK: 2.6, drag: 2.6, r: 0.04, flame: 1, fire: 1 },
-    fuel: { dmg: 6, impact: 1, arm: 0.12, W: 0, windK: 1.8, drag: 1.25, r: 0.03, flame: 1, fire: 1 }   // PoC napalm-crate fuel gobs (R9 dmg 6)
+    napalm: { boom: C.BOOM.FUEL, dmg: 12, impact: 1, W: Wr(18), windK: 0.4, r: 0.07, napalm: { n: 9, v0: 30 * kT, v1: 120 * kT }, fire: 5 },
+    flame: { boom: C.BOOM.FUEL, dmg: 3, impact: 1, arm: 0.05, W: 0, windK: 2.6, drag: 2.6, r: 0.04, flame: 1, fire: 1 },
+    fuel: { boom: C.BOOM.FUEL, dmg: 6, impact: 1, arm: 0.12, W: 0, windK: 1.8, drag: 1.25, r: 0.03, flame: 1, fire: 1 }   // PoC napalm-crate fuel gobs (R9 dmg 6)
   };
   /* black hole, sheep, napalm, sniper, tools: constants of the special handlers */
   C.ARMS = {

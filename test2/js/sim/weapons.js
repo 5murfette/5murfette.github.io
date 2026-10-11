@@ -168,7 +168,7 @@
     if (pd.foam) { growFoam(S, pos, p); return; }
     if (pd.flame) { firePatch(S, pos, A.NAPALM.PATCH_R); return; }
     if (SS.lab) SS.lab.bank_set(S, p.bank);                                   // P42: the bank shot's hard bounces
-    if (pd.W > 0) sim().explode(S, pos, { W: pd.W, dmg: pd.dmg, name, frag: pd.frag }, p.owner);
+    if (pd.W > 0) sim().explode(S, pos, { W: pd.W, dmg: pd.dmg, name, frag: pd.frag, boom: pd.boom }, p.owner);
     if (SS.lab) SS.lab.bank_set(S, 0);
     if (pd.big) { sim().emit(S, 'holy', { x: pos.x, y: pos.y, z: pos.z }); S.slowUntil = S.time + 0.7; }   // PoC slowmo(0.7)
     if (pd.fire) for (let i = 0; i < pd.fire; i++) firePatch(S, { x: pos.x + rr(S, -1, 1), y: pos.y, z: pos.z + rr(S, -1, 1) * 0.3 }, A.NAPALM.PATCH_R);
@@ -867,7 +867,7 @@
       const c = S.crates[i]; if (c.landed || hypot3(c.pos, wp) > 0.75) continue;
       if (p.type === 'missile') {
         S.crates.splice(i, 1);
-        sim().explode(S, c.pos, { W: M.pow(16 / 44, 3), dmg: 10, name: 'a napalm crate' }, p.owner);   // PoC (.., 16, 10)
+        sim().explode(S, c.pos, { W: M.pow(16 / 44, 3), dmg: 10, name: 'a napalm crate', boom: C.BOOM.FUEL }, p.owner);   // PoC (.., 16, 10)
         const cp = P.to_plane(S, c.pos);
         for (let k = 0; k < 26; k++) { const a = rr(S, 0, Math.PI * 2), v = rr(S, 1.5, 7); WP.launch(S, 'fuel', cp.s, c.pos.y, M.cos(a) * v, M.sin(a) * v * 0.6 + 1.5, -1); }
         sim().emit(S, 'banner', { title: 'Napalm crate!', sub: 'The missile lit the supply drop' });
