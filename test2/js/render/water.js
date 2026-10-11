@@ -27,7 +27,7 @@
   const own = {
     tW: { value: null }, tSky: { value: null }, tEnv: { value: null }, uEnv: { value: 0 }, uSun: { value: new T.Vector3(0.5, 0.6, 0.3).normalize() },
     uHorizon: { value: new T.Color(0xf6c89a) }, uDeep: { value: new T.Color(0x0d3a5c) }, uShallow: { value: new T.Color(0x2fa7a8) },
-    uFog: { value: new T.Color(0xf3d2b0) }, uFogD: { value: 0.0026 }, uInsp: { value: 0 }, uWTime: { value: 0 }, uRain: { value: 0 }, uWindD: { value: new T.Vector4(0, 0, 0, 0) },   // P65c: wind-driven chop: xy = distance the wind has carried the ripples (m), z = wind speed (m/s)
+    uFog: { value: new T.Color(0xf3d2b0) }, uFogD: { value: 0.0026 }, uInsp: { value: 0 }, uWTime: { value: 0 }, uRain: { value: 0 }, uCloud: { value: 0 }, uSunCol: { value: new T.Vector3(1, 0.86, 0.66) }, uWDir: { value: new T.Vector2(1, 0) }, uWindD: { value: new T.Vector4(0, 0, 0, 0) },   // P65c: wind-driven chop: xy = distance the wind has carried the ripples (m), z = wind speed (m/s)
     tShelf: { value: null }, uNW: { value: 193 }, uSW: { value: 96 }, uMC: { value: new T.Vector2(48, 48) },   // lattice texels / map side (m) / map centre
     uRing: { value: [0, 1, 2, 3, 4, 5].map(() => new T.Vector4(0, 0, -99, 0)) }   // P29l: open-sea ring waves (x, z, start time, strength)
   };
@@ -43,7 +43,7 @@
 
   /* shared surface shading (inner grid and outer ocean) */
   const SURF = /* glsl */`
-    uniform sampler2D tNoise, tSky; uniform samplerCube tEnv; uniform float uEnv, uWTime, uSea, uFogD, uInsp, uRain; uniform vec3 uSun, uHorizon, uDeep, uShallow, uFog, uO, uN;
+    uniform sampler2D tNoise, tSky; uniform samplerCube tEnv; uniform float uEnv, uWTime, uSea, uFogD, uInsp, uRain, uCloud; uniform vec2 uWDir; uniform vec3 uSunCol, uSun, uHorizon, uDeep, uShallow, uFog, uO, uN;
     uniform vec4 uRing[6], uWindD;
     // P29l (user 2026-10-08: "hitting water just outside the island makes no splash, no wave"): the open sea beyond the
     // simulated lattice has no wave field, so a splash / water blast there starts an expanding ring wave: a wave train
@@ -80,11 +80,17 @@
       return g;
     }
     varying vec3 vW; varying vec3 vNg; varying vec4 vD;
-    float hgt(vec2 p){                                       // P65c: the ripples ride the wind (direction and speed), they used to drift the same way in a gale and in a calm
+    // P65l: wind-driven chop is anisotropic: with the wind rising the crests stretch across the wind direction (short
+    // wavelength along it, long across it) and ride downwind; in a calm the pattern is isotropic
+    vec2 chopUV(vec2 u){
+      float ky = 1.0 / (1.0 + 1.7 * (1.0 - exp(-uWindD.z / 5.0)));
+      return vec2(dot(u, uWDir), dot(u, vec2(-uWDir.y, uWDir.x)) * ky);
+    }
+    float hgt(vec2 p){
       vec2 D = uWindD.xy;
-      return texture2D(tNoise, p*0.045 - D*0.0040).a * 0.6
-           + texture2D(tNoise, p*0.11 - D*0.0067).a * 0.3
-           + texture2D(tNoise, p*0.33 - D*0.0130).g * 0.1;
+      return texture2D(tNoise, chopUV(p*0.045 - D*0.0040)).a * 0.6
+           + texture2D(tNoise, chopUV(p*0.11 - D*0.0067)).a * 0.3
+           + texture2D(tNoise, chopUV(p*0.33 - D*0.0130)).g * 0.1;
     }
     vec4 shade(float depth, float foamS, float dA){          // dA: apparent depth (colour / opacity; LS1 shelf)
       float tD = dot(vW - uO, uN);
@@ -100,17 +106,17 @@
       vec3 rg = seaRings(p); n = normalize(n + vec3(rg.x, 0.0, rg.y) * 0.9);
       vec3 V = normalize(cameraPosition - vW);
       vec3 col = mix(mix(uShallow, uDeep, smoothstep(0.3, 4.5, dA)), mix(vec3(0.05, 0.048, 0.04), vec3(0.018, 0.026, 0.028), smoothstep(0.1, 1.5, depth)), inl);
-      float fres = pow(1.0 - max(dot(n, V), 0.0), 4.0);
+      float fres = pow(1.0 - max(dot(n, V), 0.0), 5.0);                          // Schlick, F0 0.02 (n 1.33): the weight below keeps the sky tint of a deep sea
       vec3 R = reflect(-V, n);
       // K2: the procedural sky-view LUT (render/sky.js: azimuth x elevation, rows packed toward the horizon; no mips)
       float rel = asin(clamp(R.y, 0.0, 1.0));
       vec3 refl = uEnv > 0.5 ? textureCube(tEnv, vec3(R.x, max(R.y, 0.002), R.z)).rgb   // K2e: sky + clouds (cube, render/sky.js)
                              : texture2D(tSky, vec2(atan(R.z, R.x) / 6.2831853 + 0.5, 0.5 + 0.5 * sqrt(rel / 1.5707963))).rgb;
       refl = mix(refl, uHorizon, 0.25);
-      col = mix(col, refl, mix(0.08, 0.03, inl) + 0.72 * fres);
+      col = mix(col, refl, mix(0.07, 0.03, inl) + 0.85 * fres);
       vec3 H = normalize(uSun + V);
       float nh = max(dot(n, H), 0.0);
-      col += vec3(1.0, 0.86, 0.66) * (pow(nh, 260.0) * 3.0 + pow(nh, 40.0) * 0.12);
+      col += uSunCol * (1.0 - 0.9 * max(uRain, uCloud * 0.85)) * (pow(nh, 260.0) * 3.0 + pow(nh, 40.0) * 0.12);   // P65l: sun / moon colour; a clouded sun leaves no glint
       // foam: shore band (moving lines), the thin run-up film, simulated foam (fast water, blasts), steep crests
       float fn = texture2D(tNoise, p * 0.5 + uWTime * 0.03).b;
       float band = 0.5 + 0.5 * sin(depth * 9.0 - uWTime * 1.7 + fn * 4.0);
@@ -127,7 +133,8 @@
       foam = max(foam, (1.0 - smoothstep(0.82, 0.93, vNg.y)) * smoothstep(0.35, 0.75, fn));
       foam = max(foam, min(1.0, rg.z * 1.6) * smoothstep(0.25, 0.65, fn + 0.3));            // ring-wave crests
       foam = max(foam, smoothstep(0.64, 0.8, h0 + (fn - 0.5) * 0.25) * smoothstep(5.5, 10.0, wsp) * smoothstep(0.3, 1.0, depth) * 0.7);   // whitecaps in a strong wind
-      col = mix(col, vec3(0.97, 0.98, 1.0), foam * 0.85);
+      float lk = smoothstep(0.05, 0.8, dot(uSunCol, vec3(0.333)));     // P65l: foam is lit like everything else: white in daylight, dark blue-grey under the moon
+      col = mix(col, mix(vec3(0.2, 0.25, 0.36), vec3(0.97, 0.98, 1.0), lk), foam * 0.85);
       float a = smoothstep(0.006, 0.05, depth) * mix(mix(0.64, 0.93, smoothstep(0.0, 3.0, dA)), 1.0, smoothstep(4.0, 9.0, dA));
       a = mix(a, smoothstep(0.006, 0.06, depth) * mix(0.4, 0.9, smoothstep(0.0, 1.2, depth)), inl);   // a puddle shows its floor
       a = max(a, foam * smoothstep(0.006, 0.03, depth));
@@ -326,6 +333,7 @@
     const set = m => {
       const u = m.uniforms;
       u.tSky.value = sk.tex; u.uDeep.value.set(L.deep);
+      { const sc = new T.Color(L.sun), k = Math.min(1, L.sunI / 3.0); u.uSunCol.value.set(sc.r * k + 0.0, sc.g * k, sc.b * k); }   // P65l: warm sun by day, cool dim moon at night
       if (sk.env) { u.tEnv.value = sk.env; u.uEnv.value = 1; } u.uShallow.value.set(L.shallow); u.uFog.value.copy(haze);
       u.uHorizon.value.setRGB(sk.horizon[0], sk.horizon[1], sk.horizon[2], T.SRGBColorSpace);
     };
@@ -339,14 +347,17 @@
     const k0 = Math.max(0, Math.floor((z - r) * 2)), k1 = Math.min(N1 - 1, Math.ceil((z + r) * 2));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const d = Math.hypot(i * 0.5 - x, k * 0.5 - z) / r; if (d >= 1) continue;
-      const w = ring ? Math.max(1 - d, Math.exp(-Math.pow((d - 0.75) / 0.12, 2))) : 1 - d * d;
+      const w = ring ? Math.max(1 - d, 0.8 * Math.exp(-Math.pow((d - 0.75) / 0.18, 2))) : 1 - d * d;
       const c = k * N1 + i; foam[c] = Math.min(3, foam[c] + amt * w);   // up to 3: a blast's churn lasts ~5 s
     }
   }
   WV.onEvent = function (e) {
     // the open sea (beyond the simulated lattice, or within 3 m of its border): a ring wave on the outer ocean
-    if ((e.type === 'waterblast' || e.type === 'splash') && !SS.world.dry && (e.x < 3 || e.z < 3 || e.x > SS.world.SX - 3 || e.z > SS.world.SZ - 3)) {
-      own.uRing.value[ringN].set(e.x, e.z, own.uWTime.value, e.type === 'waterblast' ? Math.min(1.6, 0.5 + (e.R || 1) * 0.35) : 0.45 + (e.size || 1) * 0.2);
+    // P65l: a splash anywhere starts a visible ring wave whose strength follows the entry (size = f(speed x mass)); the
+    // lattice's own dip of a worm / body adds the real wave on top; blasts inside the lattice have the simulated one
+    const rim = e.x < 3 || e.z < 3 || e.x > SS.world.SX - 3 || e.z > SS.world.SZ - 3;
+    if ((e.type === 'waterblast' && rim || e.type === 'splash') && !SS.world.dry) {
+      own.uRing.value[ringN].set(e.x, e.z, own.uWTime.value, e.type === 'waterblast' ? Math.min(1.6, 0.5 + (e.R || 1) * 0.35) : (rim ? 0.45 : 0.3) + (e.size || 1) * (rim ? 0.2 : 0.3));
       ringN = (ringN + 1) % own.uRing.value.length;
     }
     if (!foam) return;
@@ -421,6 +432,7 @@
       const k = 1 - Math.exp(-dt * 0.5), tx = wm.x, tz = wm.z;
       wsx += (tx - wsx) * k; wsz += (tz - wsz) * k;
       const sp = Math.hypot(wsx, wsz), f = sp < 0.05 ? 0 : Math.max(sp, 0.8) / sp;
+      if (sp > 0.05) own.uWDir.value.set(wsx / sp, wsz / sp);
       w.x += (sp < 0.05 ? 0.7 : wsx * f) * dt; w.y += (sp < 0.05 ? 0.4 : wsz * f) * dt; w.z = sp;
     }
     own.uInsp.value = view.insp || 0;
@@ -438,7 +450,7 @@
     face.visible = !!faceMat.uniforms.tVol.value;
   };
   /* weather (render/weather.js): rain intensity for the rings, fog density multiplier */
-  WV.weather = function (rain, fogMul, fogCol) { own.uRain.value = rain; own.uFogD.value = FOG_D * fogMul; if (fogCol) own.uFog.value.copy(fogCol); };
+  WV.weather = function (rain, fogMul, fogCol, cloud) { own.uRain.value = rain; own.uCloud.value = cloud || 0; own.uFogD.value = FOG_D * fogMul; if (fogCol) own.uFog.value.copy(fogCol); };
   WV.stats = () => ({ ver, tris: grid ? grid.geometry.index.count / 3 : 0, refillMs: +ms.toFixed(3) });
   WV.meshes = () => [grid, outer, face];
   WV.fog = () => ({ color: own.uFog.value, density: own.uFogD.value });   // (the far ocean continues it, farland.js)

@@ -452,7 +452,7 @@
     if (scene.fog) { scene.fog.density = fogD; scene.fog.color.copy(fogC); }
     if (U.uHaze) U.uHaze.value.copy(fogC);
     U.uWet.value = we ? we.wet || 0 : 0;
-    if (SS.waterView && SS.waterView.weather) SS.waterView.weather(rainA, fogMul, fogC);
+    if (SS.waterView && SS.waterView.weather) SS.waterView.weather(rainA, fogMul, fogC, cloud);
 
     // cover texture (uploaded when the sim's cover grids change)
     if (we && we.snowD) {
