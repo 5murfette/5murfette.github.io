@@ -447,7 +447,7 @@
     scorchDirty = true;
   };
   function applyScorch() {
-    const e = scyTex.image.data; e.fill(0);
+    const e = scyTex.image.data; e.fill(0); scyTex.needsUpdate = true;      // (also with no scorch map: a new world must clear the previous one's soot / fresh-ground texels on the GPU)
     if (!scorchMap) return;
     const d = surfTex.image.data;
     for (let q = 0; q < scorchMap.length; q++) { const v = scorchMap[q], fv = freshMap[q]; if (fv) { e[q * 4 + 2] = fv; e[q * 4] = scorchY[q * 2]; e[q * 4 + 1] = scorchY[q * 2 + 1]; } if (v && v > d[q * 4 + 2]) { d[q * 4 + 2] = v; e[q * 4] = scorchY[q * 2]; e[q * 4 + 1] = scorchY[q * 2 + 1]; } }

@@ -307,7 +307,7 @@
 
   /* per frame */
   LW.frame = function (S, view) {
-    if (!S.lava) { for (const me of meshes) me.visible = false; return; }
+    if (!S.lava) { for (const me of meshes) me.visible = false; if (U.uLavaOn) U.uLavaOn.value = 0; return; }
     fit();
     if (S.lava.ver !== ver && view.time - lastT > 0.09) { rebuild(S); ver = S.lava.ver; lastT = view.time; }
     const draw = nI > 0, ctxA = view.ctxA || 0, insp = view.insp || 0;

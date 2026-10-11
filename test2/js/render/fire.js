@@ -21,7 +21,7 @@
   function surf(x, z, yref, cell, tm) {
     const key = (Math.floor(x / 0.2) + 8192) * 16384 + Math.floor(z / 0.2) + 8192;
     let c = gcache.get(key);
-    if (c && tm - c.t < 0.5 && Math.abs(c.r - yref) < 0.8) return c.y;
+    if (c && Math.abs(tm - c.t) < 0.5 && Math.abs(c.r - yref) < 0.8) return c.y;      // (abs: a new match restarts S.time, stale cells must not match)
     const gv = SS.groundView, g = gv ? gv.ground(x, yref, z) : null, y = g == null ? NONE : g;
     if (!c) { c = { y: 0, t: 0, r: 0 }; gcache.set(key, c); }
     c.y = y; c.t = tm; c.r = yref; return y;
@@ -43,9 +43,9 @@
   FV.emit = function (S) {
     const FLv = SS.flameView; if (!FLv) return;
     const fl = S.flames, V = S.veg, W = SS.world, nG = V && V.nAct > 0 ? V.nAct : 0;
-    if ((!fl || !fl.length) && !nG) { last.cells = 0; last.flames = 0; return; }
+    if ((!fl || !fl.length) && !nG) { last.cells = 0; last.flames = 0; if (creep.size) creep.clear(); return; }
     let cell = CELL0; last.tm = S.time;
-    if (S.time - gcT > 4) { gcT = S.time; for (const [k, v] of gcache) if (S.time - v.t > 4) gcache.delete(k); for (const k of creep.keys()) if (S.time > k.t1 + 1) creep.delete(k); }
+    if (Math.abs(S.time - gcT) > 4) { gcT = S.time; for (const [k, v] of gcache) if (Math.abs(S.time - v.t) > 4) gcache.delete(k); for (const k of creep.keys()) if (S.time > k.t1 + 1) creep.delete(k); }
     for (let pass = 0; pass < 4; pass++) {
       grid.clear();
       if (fl) for (const f of fl) {

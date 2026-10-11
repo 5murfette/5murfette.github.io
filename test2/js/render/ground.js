@@ -10,8 +10,7 @@
  *   - contact shadows: a few soft "foot" blobs (centre on the ground, radius) are sent to the terrain shader (uCon, see terrain.js
  *     conAO) which darkens the ground within that distance in 3D, so the shadow wraps a slope, a ridge or a crater rim by construction
  *     (no flat decal, no z-fight). 24 blobs, the ones closest to the section plane win. blob(x, y, z, r, k) any module may call per frame;
- *   - normal5(x, y, z, out): the mean of five SDF gradients round a point (the local slope), shared by graves and devices.
- * API: begin(), blob(x, y, z, r, k), conform(b, it, dt, time), upload(S), normal5(x, y, z, out), ground(x, yref, z), stats().
+ * API: begin(), blob(x, y, z, r, k), conform(b, it, dt, time), upload(S), ground(x, yref, z), stats().
  * Porting: ground() + plane fit are plain math (a native engine uses its physics ray casts); the blobs are a decal / AO term in the terrain material. */
 (function (SS) {
   'use strict';
@@ -21,18 +20,10 @@
   const NONE = -1e9;
   const nb = []; let nUsed = 0, nFit = 0;
   const UP = new T.Vector3(0, 1, 0), v0 = new T.Vector3(), v1 = new T.Vector3(), nn = new T.Vector3(), qb = new T.Quaternion(), qb2 = new T.Quaternion();
-  const NRM = { x: 0, y: 1, z: 0 };
 
   GV.ground = function (x, yref, z) {
     const gy = SS.alien && SS.alien.ground_y ? SS.alien.ground_y(x, yref, z, 26) : SS.world.top_at(x, z);
     return gy > NONE * 0.5 ? gy : null;
-  };
-  GV.normal5 = function (x, y, z, out) {
-    let sx = 0, sy = 0, sz = 0; const W = SS.world;
-    for (const [dx, dz] of [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]) {
-      const gy = GV.ground(x + dx, y + 0.4, z + dz); W.normal(x + dx, (gy != null ? gy : y) + 0.03, z + dz, NRM); sx += NRM.x; sy += NRM.y; sz += NRM.z;
-    }
-    const l = Math.hypot(sx, sy, sz) || 1; out.set(sx / l, sy / l, sz / l); return out;
   };
 
   /* ---------- contact shadows (terrain uniform) ---------- */
@@ -91,7 +82,11 @@
       const m = W && W.mat_at ? W.mat_at(q[0], q[3] - 0.25, q[2]) : 3, c = SKC[m] || SKC[3];
       out.push([q[0], q[1], q[2], q[3], c]);
     }
-    if (out.length || cf.posts) { cf.posts = out.length ? out : null; cf.pdirty = true; }
+    if (out.length || cf.posts) {
+      const o = cf.posts; let same = !!o && o.length === out.length;
+      for (let i = 0; same && i < out.length; i++) for (let k = 0; k < 4; k++) if (Math.abs(out[i][k] - o[i][k]) > 0.01) same = false;
+      if (!same) { cf.posts = out.length ? out : null; cf.pdirty = true; }       // (a refit that finds the same posts must not rebuild the geometry)
+    }
   }
   function buildPosts(cf, g) {
     cf.pdirty = false;

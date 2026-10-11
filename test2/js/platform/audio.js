@@ -416,7 +416,7 @@
         b.lp.frequency.setTargetAtTime(clamp(o.fc || 20000, 300, 20000), t, 0.35);
         if (b.pn) b.pn.pan.setTargetAtTime(clamp(o.pan || 0, -1, 1), t, 0.35);
         if (o.rate) b.s.playbackRate.setTargetAtTime(o.rate, t, 0.6);
-        if (want < 0.004) { if (!b.lowT) b.lowT = t; else if (t - b.lowT > 3) { try { b.s.stop(); b.s.disconnect(); } catch (e) { /* */ } delete wbeds[id]; liveNodes -= 4; } } else b.lowT = 0;
+        if (want < 0.004) { if (!b.lowT) b.lowT = t; else if (t - b.lowT > 3) { try { b.s.stop(); b.s.disconnect(); b.lp.disconnect(); b.g.disconnect(); if (b.pn) b.pn.disconnect(); } catch (e) { /* */ } delete wbeds[id]; liveNodes -= 4; } } else b.lowT = 0;
         return true;
       }
       if (lvl >= 0.004) load_buf(f);                                 // (decode in the background, only once the bed is audible; the pool element covers the first seconds)
