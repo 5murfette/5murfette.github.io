@@ -69,8 +69,27 @@
     for (let i = 0; i < NS; i++) { const u = i / (NS - 1); sp.r[i] *= 1 - 0.06 * k * (0.5 + 0.5 * Math.sin(t * 2.4 - u * 6)) * tw2 + 0.015 * k * Math.sin(t * 1.3 - u * 5); }
     v.hugTw = tw2;
   }
+  /* P51: the worm in the snake's coils: squeezed (the radii shrink, a little more between the turns), coated in green slime (a glossy overlay on the same live
+   * geometry, fading slowly after the kill / the release), and its spine is copied (v.spc: body-local x, y, a, r at NS samples) for the snake's coils (render/xeno.js).
+   * WRAP = the spine range the coils cover (sample indices, tail .. neck). */
+  const WRAP = AV.WRAP = { jT: 22, jH: 128, jHead: 140 };
+  let M_SLIME = null;
+  function squeeze(S, w, v, sp, dt) {
+    let want = 0;
+    for (const X of S.alien.xenos) if (X.target === w.id && X.st >= 2 && X.st <= 4) { want = X.st === 2 ? M.sat((S.time - X.t0) / SS.alien.K.WRAP_T) : 1; break; }
+    v.wrapK = (v.wrapK || 0) + (want - (v.wrapK || 0)) * Math.min(1, dt * (want > 0 ? 5 : 1.5));
+    v.slimeK = want > 0 ? Math.max(v.slimeK || 0, M.sat(((v.slimeK || 0) + dt * 0.9))) : Math.max(0, (v.slimeK || 0) - dt * 0.2);
+    const k = v.wrapK; if (k < 0.004) { v.wrapK = 0; return; }
+    const n = v.wrapN || 2.2, ph = (v.hugT = v.hugT || 0);
+    for (let i = WRAP.jT - 8; i <= WRAP.jH + 8; i++) {
+      const u = (WRAP.jH - i) / (WRAP.jH - WRAP.jT), e = M.sat(Math.min((i - (WRAP.jT - 8)) / 8, (WRAP.jH + 8 - i) / 8));
+      sp.r[i] *= 1 - k * e * (0.11 + 0.05 * Math.cos(6.2832 * n * u));
+    }
+  }
+  const M = { sat: x => Math.min(1, Math.max(0, x)) };
   AV.worm_pre = function (S, w, v, sp, dt) {
     if (!SS.alien) return;
+    squeeze(S, w, v, sp, dt);
     limp(S, w, v, sp, dt);
     SS.alien.infection(S, w, INF);
     const sev = INF.stage === 2 ? 0.12 + 0.88 * INF.sev : 0;
@@ -96,6 +115,20 @@
   };
   AV.worm_post = function (S, w, v, sp, dt, view) {
     const af = frameOf(v, sp);
+    if (v.wrapK > 0.004) {                                              // (the snake's coils read it)
+      let c = v.spc; if (!c) c = v.spc = new Float32Array(NS * 4);
+      for (let i = 0; i < NS; i++) { c[i * 4] = sp.x[i]; c[i * 4 + 1] = sp.y[i]; c[i * 4 + 2] = sp.a[i]; c[i * 4 + 3] = sp.r[i]; }
+    }
+    // the slime coat
+    const sk = v.slimeK || 0;
+    if (sk > 0.01 && !v.slimeM) {
+      if (!M_SLIME) { M_SLIME = new T.MeshPhysicalMaterial({ color: 0x4fd414, roughness: 0.1, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.04, emissive: 0x0f5a02, emissiveIntensity: 0.8, transparent: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }); M_SLIME.userData.shared = true; }
+      v.slimeM = new T.Mesh(v.geo, M_SLIME.clone()); v.slimeM.frustumCulled = false; v.slimeM.renderOrder = 2; v.slimeM.material.userData.shared = false; v.body.add(v.slimeM);
+    }
+    if (v.slimeM) {
+      v.slimeM.visible = sk > 0.01 && v.root.visible && !w.eaten;
+      if (v.slimeM.visible) { const gl = 0.9 + 0.1 * Math.sin((v.hugT = (v.hugT || 0) + dt) * 3.1); v.slimeM.material.opacity = Math.min(0.66, sk * 0.66) * gl; }
+    }
     // a hugger on the face covers the eyes and the mouth
     const hugged = w.hug != null && w.hug >= 0 && !w.dead;
     if (hugged || v.hugHide) { v.eyes.visible = !hugged; v.mouth.visible = !hugged; v.hugHide = hugged; }

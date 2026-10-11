@@ -48,7 +48,7 @@
   AB.safe_step = function (S, a, dir) {
     const ap = P.to_plane(S, a.pos), ah = ap.s + dir * 0.7, wp = P.to_world(S, ah, a.pos.y);
     if (wetAt(S, ah, a.pos.y)) return false;
-    if (xenoNear(S, wp.x, a.pos.y, wp.z, 1.5)) return false;
+    if (xenoNear(S, wp.x, a.pos.y, wp.z, 0.5)) return false;
     // (P38 R3: also not into a live mine, a flame or a gas puff: the retreat walked the worm into its own napalm / gas)
     for (const b of S.bodies) if (b.prop === 'mine' && !b.disarmed && M.len3(b.pos.x - wp.x, b.pos.y - a.pos.y, b.pos.z - wp.z) < 1.4) return false;
     for (const f of S.flames) if (S.time < f.t1 && M.len2(f.x - wp.x, f.z - wp.z) < f.r + 0.5 && Math.abs(f.y - a.pos.y) < 2.5) return false;

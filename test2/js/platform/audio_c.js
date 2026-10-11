@@ -4,11 +4,11 @@
  * sample by id (assets/sfx/manifest.js; ids below, prompts in docs/SOUND_PROMPTS.md "P38 alien events") and falls back to
  * the synthesised version:
  *   egg_open egg_hatch egg_break hugger_leap hugger_attach hugger_die alien_born alien_hiss alien_strike alien_wrap alien_bite
- *   alien_eat alien_hurt alien_burst acid_sizzle acid_hit acid_tree acid_steel crate_hit crate_drop
+ *   alien_eat alien_sleep alien_wake alien_hurt alien_burst acid_sizzle acid_hit acid_tree acid_steel crate_hit crate_drop
  *   P47: hugger_detach parasite_pulse chest_burst embryo_lost (the parasite: the face hugger lets go, the heartbeat-and-cough hit every minute,
  *   the burst out of the chest, the embryo that dies with its host)
  * Events -> ids: egg_open egg_hatch egg_break hugger_leap hugger_attach hugger_die alien_born alien_hiss alien_strike
- * alien_wrap alien_bite alien_eat alien_hurt alien_burst acid_land acid_hit treeacid steelcut{acid} cratehit cratedrop hugger_detach parasite_pulse
+ * alien_wrap alien_bite alien_eat alien_sleep alien_wake alien_hurt alien_burst acid_land acid_hit treeacid steelcut{acid} cratehit cratedrop hugger_detach parasite_pulse
  * chest_burst embryo_lost. */
 (function (SS) {
   'use strict';
@@ -30,6 +30,8 @@
     alien_born() { noise(0.45, 'bandpass', 1200, 1.6, 0.4, 250); [0, 0.07, 0.13, 0.22].forEach(d => noise(0.06, 'highpass', 2200, 0.8, 0.35, 800, 1, d)); tone('sine', 90, 35, 0.5, 0.5, 0.01, 0.0);
       tone('sawtooth', 700, 1900, 0.5, 0.17, 0.05, 0.25); tone('sawtooth', 1050, 2600, 0.5, 0.09, 0.05, 0.25); noise(0.5, 'bandpass', 3000, 2, 0.12, 4200, 1, 0.3); squelch(1.2, 900, 120, 0.05); },
     alien_hiss() { noise(1.0, 'highpass', 3400, 0.6, 0.26, 7000); noise(0.9, 'bandpass', 5200, 1.2, 0.14, 3000, 1, 0.05); tone('sawtooth', 180, 120, 0.9, 0.05, 0.1); [0, 0.25, 0.5].forEach(d => noise(0.14, 'bandpass', 2500, 2, 0.08, 1500, 1, d)); },
+    alien_sleep() { noise(0.9, 'lowpass', 500, 0.8, 0.12, 180); tone('sine', 110, 60, 0.9, 0.1, 0.2); tone('sine', 82, 50, 1.1, 0.08, 0.3, 0.5); },
+    alien_wake() { noise(0.7, 'bandpass', 900, 1.2, 0.3, 2800, 1, 0.1); tone('sawtooth', 70, 190, 0.9, 0.2, 0.05); tone('sawtooth', 105, 260, 0.8, 0.1, 0.05, 0.05); squelch(0.8, 700, 150, 0.2); },
     alien_strike() { noise(0.18, 'bandpass', 1200, 1.2, 0.4, 5200); tone('sawtooth', 600, 1800, 0.35, 0.2, 0.004, 0.02); tone('sawtooth', 900, 2700, 0.35, 0.09, 0.004, 0.02); noise(0.35, 'highpass', 3500, 0.8, 0.22, 6500, 1, 0.05); },
     alien_wrap() { noise(0.6, 'bandpass', 600, 3, 0.2, 280); [0, 0.15, 0.3, 0.45].forEach(d => tone('triangle', 130 + d * 100, 80, 0.12, 0.07, 0.004, d)); },
     alien_bite() { [0, 0.06].forEach(d => { noise(0.07, 'highpass', 1500, 0.9, 0.5, 600, 1, d); tone('square', 210, 80, 0.05, 0.2, 0.002, d); }); tone('triangle', 2600, 1600, 0.1, 0.1, 0.002, 0.03); noise(0.4, 'bandpass', 700, 2, 0.2, 200, 1, 0.08); },
@@ -63,6 +65,8 @@
       case 'embryo_lost': S2('embryo_lost', 0.8, 1, FX.embryo_lost); break;
       case 'alien_born': S2('alien_born', 1, 1, FX.alien_born); break;
       case 'alien_hiss': S2('alien_hiss', 0.8, 1, FX.alien_hiss); break;
+      case 'alien_sleep': S2('alien_sleep', 0.5, 1, FX.alien_sleep); break;
+      case 'alien_wake': S2('alien_wake', 0.9, 1, FX.alien_wake); break;
       case 'alien_strike': S2('alien_strike', 0.9, 1, FX.alien_strike); break;
       case 'alien_wrap': S2('alien_wrap', 0.7, 1, FX.alien_wrap); break;
       case 'alien_bite': S2('alien_bite', 1, 1, FX.alien_bite); break;

@@ -153,9 +153,9 @@
     setText(el, txt); if (el._c !== cls) { el._c = cls; el.className = cls; }
   }
   /* P47: the hatching bar under every opening egg and the alien's own label (kills, HP) */
-  const eggEls = [], xenoEls = [];
+  const eggEls = [], xenoEls = [], sleepEls = [];
   function alienLabels(S) {
-    const A = S.alien; let ne = 0, nx = 0;
+    const A = S.alien; let ne = 0, nx = 0, ns = 0;
     if (A && SS.alien) {
       for (const e of A.eggs) {
         if (e.st !== 1) continue;
@@ -172,6 +172,17 @@
       for (const X of A.xenos) {
         let el = xenoEls[nx]; if (!el) { el = xenoEls[nx] = document.createElement('div'); el.className = 'alabel'; el.innerHTML = '<span class="nm">ALIEN</span><div class="hpbar"><i></i></div><b class="hpn"></b>'; labels.appendChild(el); }
         nx++;
+        if (X.st === 7) {                                                // P51: the sleep bar under the curled-up alien (same bar as the egg's)
+          const h7 = X.n[X.n.length >> 1], p7 = M.sat((S.time - X.t0) / SS.alien.K.SLEEP_T), pt7 = { x: X.home.x, y: h7.y - 0.1, z: X.home.z }, sp7 = project(pt7);
+          let eb = sleepEls[ns]; if (!eb) { eb = sleepEls[ns] = document.createElement('div'); eb.className = 'eggbar'; eb.innerHTML = '<div class="eb"><i></i></div><b></b>'; labels.appendChild(eb); }
+          ns++;
+          const sh7 = SS.view.shownAt(S, h7, 0.6) && sp7.front; eb.style.display = sh7 ? 'block' : 'none';
+          if (sh7) {
+            const woke = X.wkT - X.t0 < SS.alien.K.SLEEP_T - 0.01 && X.gp === 0;
+            eb.firstChild.firstChild.style.width = (p7 * 100).toFixed(1) + '%'; eb.firstChild.firstChild.style.background = woke ? 'hsl(8,85%,50%)' : 'hsl(205,80%,58%)';
+            setText(eb.lastChild, woke ? 'WAKING!' : 'ZZZ ' + Math.floor(p7 * 100) + '%'); eb.style.transform = `translate(${sp7.x}px,${sp7.y}px) translate(-50%,6px)`;
+          }
+        }
         const h = X.n[0], pt = { x: h.x, y: h.y + 0.9 * X.size + 0.3, z: h.z }, sp = project(pt), shown = SS.view.shownAt(S, h, 0.6) && sp.front;
         el.style.display = shown ? 'block' : 'none'; if (!shown) continue;
         el.firstChild.nextSibling.firstChild.style.width = Math.max(0, Math.min(100, 100 * X.hp / X.hpMax)) + '%';
@@ -181,6 +192,7 @@
     }
     for (let i = ne; i < eggEls.length; i++) eggEls[i].style.display = 'none';
     for (let i = nx; i < xenoEls.length; i++) xenoEls[i].style.display = 'none';
+    for (let i = ns; i < sleepEls.length; i++) sleepEls[i].style.display = 'none';
   }
   /* P50: the perk draft overlay (sim/lab.js, phase 'perk'): three cards for the picking team (1 / 2 / 3 or a click = Input.fuse), the others wait */
   let pkEl = null, pkSig = '';

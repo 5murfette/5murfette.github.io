@@ -108,7 +108,7 @@
     return r;
   }
   function slimeStamp(S, X, o, t, sz) {
-    const h = X.n[0]; if (X.st === 2 || X.st === 3 || X.st === 4) return;
+    const h = X.n[0]; if (X.st === 2 || X.st === 3 || X.st === 4 || X.st === 7 || X.st === 8) return;
     const dx = h.x - o.last.x, dz = h.z - o.last.z, d = Math.hypot(dx, dz);
     if (d < 0.11) return;
     const AL = SS.alien; let gy = AL.ground_y(h.x, h.y, h.z, 25); if (gy < -1e8) return;
@@ -130,10 +130,51 @@
     }
     pa.needsUpdate = true; ca.needsUpdate = true; sg.setDrawRange(0, n > 1 ? (n - 1) * 6 : 0); o.slime.visible = show && n > 1;
   }
-  function frameXeno(S, X, o, dt, t) {
+  /* ---------- the tight wrap (P51) ---------- */
+  /* the coils hug the victim's REAL body: the worm view keeps its live spine (v.spc, body-local x, y, tangent a, radius r; the radii already squeezed,
+   * render/infect.js), the coils are a helix round it: ring f of the snake sits on the spine at the fraction f of the way down from the neck to the
+   * tail, at the angle th0 + 2 pi n f round the spine, at the distance (the worm's radius there) + (the snake's own radius): tube against skin, no gap,
+   * the head ending at the victim's head, the head ring on the camera side. n turns (1.3 .. 3.2) so the whole snake length is used. The spine is
+   * snapshotted while the snake is in the wrap state (the eaten worm is no longer drawn: the coils tighten on the shrinking carcass). */
+  const HP3 = new T.Vector3(), CUM = new Float32Array(160);
+  function wrapHelix(S, X, o, camera, rr, sz, Lb) {
+    const K = SS.alien.K, w = S.worms[X.target], WR = AV.WRAP; if (!w || !WR) return false;
+    if (X.st === 2) {
+      const q = SS.actors && SS.actors.vis(w), v = q && q.v;
+      if (v && v.spc && v.wrapK > 0.004) {
+        v.root.updateMatrixWorld(true); v.wrapN = o.wrapN || 2.2;
+        if (!o.snap) o.snap = { c: new Float32Array(v.spc.length), m: new T.Matrix4() };
+        o.snap.c.set(v.spc); o.snap.m.copy(v.body.matrixWorld); o.snapOk = true;
+      }
+    }
+    if (!o.snap || !o.snapOk) return false;
+    const c = o.snap.c, m = o.snap.m, el = m.elements, sc = m.getMaxScaleOnAxis(), jT = WR.jT, jH = WR.jHead;
+    let zs = 1; if (camera && camera.position) zs = ((camera.position.x - el[12]) * el[8] + (camera.position.y - el[13]) * el[9] + (camera.position.z - el[14]) * el[10]) >= 0 ? 1 : -1;
+    CUM[jH] = 0; let ra = 0;
+    for (let j = jH - 1; j >= jT; j--) { CUM[j] = CUM[j + 1] + Math.hypot(c[j * 4] - c[(j + 1) * 4], c[j * 4 + 1] - c[(j + 1) * 4 + 1]); ra += c[j * 4 + 3]; }
+    const Lu = CUM[jT] * sc, Rm = ra / (jH - jT) * sc + RB * sz, Ls = Lb * sz * 0.95;
+    const n = Math.min(3.2, Math.max(1.3, Math.sqrt(Math.max(0, Ls * Ls - Lu * Lu)) / (6.2832 * Rm))); o.wrapN = n;
+    const shrink = X.st === 4 ? 1 - 0.7 * sm(0.1, 1, (S.time - X.t0) / K.EAT_T) : 1;
+    const kb = X.st === 2 ? sm(0, 1, (S.time - X.t0) / (K.WRAP_T * 0.85)) : 1;
+    if (!o.hp) { o.hp = new Float32Array(RINGS * 3); o.hw = new Float32Array(RINGS); }
+    let j = jH;
+    for (let i = 0; i < RINGS; i++) {
+      const f = i / (RINGS - 1), arc = f * CUM[jT];
+      while (j > jT && CUM[j - 1] < arc) j--;
+      const j0 = Math.min(jH, j), j1 = Math.max(jT, j0 - 1), span = CUM[j1] - CUM[j0], u = span > 1e-6 ? Math.min(1, Math.max(0, (arc - CUM[j0]) / span)) : 0;
+      const lx = c[j0 * 4] + (c[j1 * 4] - c[j0 * 4]) * u, ly = c[j0 * 4 + 1] + (c[j1 * 4 + 1] - c[j0 * 4 + 1]) * u, la = c[j0 * 4 + 2] + (c[j1 * 4 + 2] - c[j0 * 4 + 2]) * u, lr = c[j0 * 4 + 3] + (c[j1 * 4 + 3] - c[j0 * 4 + 3]) * u;
+      const th = zs * 1.5708 + 6.2832 * n * f, R = lr * shrink + rr[i] / sc, ct = Math.cos(th) * R, st = Math.sin(th) * R;
+      HP3.set(lx - Math.sin(la) * ct, ly + Math.cos(la) * ct, st * zs * zs).applyMatrix4(m);
+      o.hp[i * 3] = HP3.x; o.hp[i * 3 + 1] = HP3.y; o.hp[i * 3 + 2] = HP3.z;
+      o.hw[i] = sat(kb * 1.8 - f * 0.8);
+    }
+    return true;
+  }
+  function frameXeno(S, X, o, dt, t, camera) {
     if (!o.birth && births[X.id]) o.birth = births[X.id];
     const AL = SS.alien, K = AL.K, n = X.n, N = n.length, sz = X.size, hd = n[0];
-    const coil = X.st === 2 || X.st === 3 || X.st === 4, born = X.st === 6;
+    const wrapping = X.st === 2 || X.st === 3 || X.st === 4, slp = X.st === 7 || X.st === 8, born = X.st === 6, wu = X.st === 8 ? sat((S.time - X.t0) / K.WAKE_T) : 0;
+    if (!wrapping) o.snapOk = false;
     // is it on the visible side of the section? (one decision for the whole body; the head decides)
     const Sx = SS.view && SS.view.shownAt ? SS.view.shownAt(S, hd, 0.5) : true;
     o.hidden = !Sx; o.g.visible = Sx;
@@ -147,13 +188,22 @@
     let rearT = 0;
     if (sinceHiss < K.HISS_T + 0.1) rearT = Math.sin(sat(sinceHiss / (K.HISS_T + 0.1)) * Math.PI) * 1.4;
     rearT = Math.min(1, rearT);
-    if (X.st === 1) rearT = age < K.WIND_T ? 1 : 0.04; else if (X.st === 2) rearT = 0.75; else if (X.st === 3) rearT = 0.95 - 0.5 * sat((t - o.biteT) * 3); else if (X.st === 4) rearT = 0.5;
+    if (X.st === 1) rearT = age < K.WIND_T ? 1 : 0.04; else if (wrapping) rearT = 0; else if (X.st === 7) rearT = 0; else if (X.st === 8) rearT = 2.2 * sm(0.1, 0.45, wu) * (1 - sm(0.72, 1, wu));
     if (born) rearT = 0;
-    o.rear += (rearT - o.rear) * Math.min(1, dt * (X.st === 3 ? 18 : 7));
+    o.rear += (rearT - o.rear) * Math.min(1, dt * (X.st === 3 ? 18 : X.st === 8 ? 9 : 7));
     const Lb = (N - 1) * K.SEG + 0.15, ds = Lb * sz / (RINGS - 1), P = o.rp, Nn = o.rn, gy = o.gyb;
     // ---- the centre line: the sim's track with every ring on the ground there, or the coil nodes
     let endI = RINGS;
-    if (!coil) {
+    if (slp) {                                                           // curled up (a coiled rope, the head on top) / stretching out
+      const sb = o.sb || (o.sb = new Float32Array(RINGS * 3));
+      AL.sleep_fill(X, ds, RINGS, sb, X.st === 8 ? sm(0.15, 0.85, wu) : 0);
+      for (let i = 0; i < RINGS; i++) {
+        const x = sb[i * 3], z = sb[i * 3 + 1]; let g = AL.ground_y(x, hd.y + 0.5, z, 40); if (g < -1e8 || Math.abs(g - (hd.y - K.HOVER * sz)) > 1.2) g = hd.y - K.HOVER * sz - sb[i * 3 + 2] * 0.5;
+        gy[i] = g; P[i * 3] = x; P[i * 3 + 2] = z;
+      }
+      { let a = gy[0]; for (let i = 1; i < RINGS - 1; i++) { const b = gy[i]; gy[i] = 0.25 * a + 0.5 * b + 0.25 * gy[i + 1]; a = b; } }
+      for (let i = 0; i < RINGS; i++) P[i * 3 + 1] = gy[i] + sb[i * 3 + 2];
+    } else {
       AL.track_fill(X, ds, RINGS, o.rb); endI = RINGS;
       for (let i = 2; i < RINGS; i++) if (Math.hypot(o.rb[i * 2] - o.rb[i * 2 - 2], o.rb[i * 2 + 1] - o.rb[i * 2 - 1]) < 0.3 * ds) { endI = i; break; }      // (a short track: the rings past its end would pile up on one spot; they are not grown yet)
       for (let i = 0; i < RINGS; i++) {
@@ -162,11 +212,6 @@
       }
       for (let pass = 0; pass < 2; pass++) { let a = gy[0]; for (let i = 1; i < RINGS - 1; i++) { const b = gy[i]; gy[i] = 0.25 * a + 0.5 * b + 0.25 * gy[i + 1]; a = b; } }
       for (let i = 0; i < RINGS; i++) { P[i * 3] = o.rb[i * 2]; P[i * 3 + 1] = gy[i]; P[i * 3 + 2] = o.rb[i * 2 + 1]; }
-    } else {
-      if (!o.pts || o.pts.length !== N) { o.pts = n.map(() => new T.Vector3()); o.curve = new T.CatmullRomCurve3(o.pts); }
-      for (let i = 0; i < N; i++) o.pts[i].set(n[i].x, n[i].y, n[i].z);
-      const sp = o.curve.getSpacedPoints(RINGS - 1);
-      for (let i = 0; i < RINGS; i++) { P[i * 3] = sp[i].x; P[i * 3 + 1] = sp[i].y; P[i * 3 + 2] = sp[i].z; gy[i] = sp[i].y; }
     }
     // the radius of every ring (born: the rings come out of the chest one after the other; eating: the swallowed lump)
     const swallow = X.st === 4 ? sat((S.time - X.t0) / 2.6) : -1, emerged = born ? sat(age / (K.BORN_T * 0.55)) * Lb * sz : 1e9;
@@ -175,6 +220,7 @@
       const s = i * ds / sz; let r = radius(s, Lb) * sz * (1 + 0.025 * Math.sin(s * 62));
       if (swallow >= 0) r *= 1 + 0.9 * Math.exp(-Math.pow((i / (RINGS - 1) - 0.1 - swallow * 0.6) / 0.07, 2)) * (1 - swallow * 0.35);
       if (born) r *= sm(emerged, emerged - 0.5, s * sz);
+      if (X.st === 7) r *= 1 + 0.035 * Math.sin(t * 1.5 - i * 0.05);                // (slow breathing)
       if (i >= endI - 8) r *= sm(endI, endI - 8, i);
       rr[i] = r;
     }
@@ -185,12 +231,13 @@
       bk = 1 - sm(0.0, 0.42, u); bx = (c.x - hd.x) * bk; by = (c.y - gy[0]) * bk; bz = (c.z - hd.z) * bk;
       shake = sm(0.4, 0.55, u) * (1 - sm(0.6, 1, u));
     }
+    if (X.st === 8) shake = sm(0.35, 0.5, wu) * (1 - sm(0.8, 1, wu));
     // ---- lift of the front third (a level head on top of a short S-rise), the birth arc, the shake
     const lift = o.rear * 0.5 * sz, srr = 0.3 * Lb * sz, arc = born ? 0.32 * Math.sin(Math.PI * sat(age / (K.BORN_T * 0.5))) * sz : 0;
     o.swayT += dt * (1.2 + 0.2 * o.rear);
     for (let i = 0; i < RINGS; i++) {
       const s = i * ds, ry = rr[i] * 0.84, w = 1 - sm(0, srr, s), wb = born ? Math.exp(-s / (0.9 * sz)) : 0;
-      P[i * 3 + 1] += (coil ? 0 : ry) + (lift + arc * wb) * w + (born ? by * (1 - 0.5 * sm(0, Lb * sz, s)) : 0);
+      P[i * 3 + 1] += ry + (lift + arc * wb) * w + (born ? by * (1 - 0.5 * sm(0, Lb * sz, s)) : 0);
       if (born) { P[i * 3] += bx; P[i * 3 + 2] += bz; }
     }
     // the lateral sway of a held pose / the shake (perpendicular to the track, in the ground plane)
@@ -199,6 +246,17 @@
       const tx = P[(i + 1) * 3] - P[(i - 1) * 3], tz = P[(i + 1) * 3 + 2] - P[(i - 1) * 3 + 2], tl = Math.hypot(tx, tz) || 1, f = Math.sin(o.swayT * (shake > 0.01 ? 9 : 1) - i * 0.28) * swayA * (0.3 + 0.7 * sm(0, 0.5, i / (RINGS - 1)));
       P[i * 3] += -tz / tl * f; P[i * 3 + 2] += tx / tl * f;
     }
+    // ---- the tight wrap: blend the coils onto the victim's body; a sleeper settles from the last pose of the wrap into its curl
+    const hx = wrapping && wrapHelix(S, X, o, camera, rr, sz, Lb);
+    if (hx) for (let i = 0; i < RINGS; i++) { const k = o.hw[i]; if (k <= 0) continue; P[i * 3] += (o.hp[i * 3] - P[i * 3]) * k; P[i * 3 + 1] += (o.hp[i * 3 + 1] - P[i * 3 + 1]) * k; P[i * 3 + 2] += (o.hp[i * 3 + 2] - P[i * 3 + 2]) * k; }
+    if (!o.hold) o.hold = new Float32Array(RINGS * 3);
+    if (X.st === 7 && o.holdOk) { const k = sm(0, 1.2, S.time - X.t0); if (k < 1) for (let i = 0; i < RINGS * 3; i++) P[i] = o.hold[i] + (P[i] - o.hold[i]) * k; }
+    else if (X.st !== 7 && X.st !== 8) { for (let i = 0; i < RINGS * 3; i++) o.hold[i] = P[i]; o.holdOk = true; }
+    if (hx && o.dripT <= 0) {                                                          // slime dripping off the coils
+      o.dripT = 0.07 + Math.random() * 0.08; const F = SS.fx, i = 3 + Math.floor(Math.random() * (RINGS - 8));
+      if (F && F.spawn) F.spawn(F.KIND.CHUNK, P[i * 3] + rnd(-0.03, 0.03), P[i * 3 + 1] - rr[i] * 0.6, P[i * 3 + 2], { vx: rnd(-0.05, 0.05), vy: rnd(-0.1, 0.1), vz: rnd(-0.05, 0.05), grav: 5, life: rnd(0.6, 1.1), s0: 0.035, s1: 0.012, c0: [0.3, 0.8, 0.06] });
+    }
+    o.dripT = (o.dripT || 0) - dt;
     // ---- the tube: rings with parallel-transport-like frames biased to the world up
     const pos = o.geo.getAttribute('position'), cola = o.geo.getAttribute('color'); let px = 0, py = 1, pz = 0;
     for (let i = 0; i < RINGS; i++) {
@@ -225,16 +283,16 @@
     const film = born ? 0.92 : sat(1 - (S.time - (X.born != null ? X.born : X.t0) - K.BORN_T) / 7) * 0.8; o.wetM.visible = film > 0.02; o.wetM.material.opacity = film;
     // ---- the head
     const h0 = v3.set(P[0], P[1], P[2]).clone(), r4 = Math.min(RINGS - 1, 8), dir = v0.set(P[0] - P[r4 * 3], P[1] - P[r4 * 3 + 1], P[2] - P[r4 * 3 + 2]).normalize().clone();
-    dir.y -= 0.22 * o.rear; if (X.st === 2 || X.st === 3) dir.y -= 0.3; if (X.st === 1 && age < K.WIND_T) dir.y -= 0.1;
+    dir.y -= 0.22 * o.rear; if (X.st === 1 && age < K.WIND_T) dir.y -= 0.1;
     if (o.rear > 0.25) { const yw = Math.sin(o.swayT * 1.3) * 0.18 * o.rear, c = Math.cos(yw), sn = Math.sin(yw), dx = dir.x * c - dir.z * sn; dir.z = dir.x * sn + dir.z * c; dir.x = dx; }
     dir.normalize();
     const up = v1.copy(UP).addScaledVector(dir, -dir.y); if (up.lengthSq() < 1e-4) up.set(0, 0, 1); up.normalize(); const side = v2.crossVectors(up, dir).normalize();
     m4.makeBasis(side, up, dir); q0.setFromRotationMatrix(m4);
-    const hs = sz, bite = X.st === 3 ? 1 : X.st === 4 ? 0.1 + 0.1 * Math.sin(t * 9) : sinceHiss < K.HISS_T ? 0.3 + 0.1 * Math.sin(t * 30) : 0;
+    const hs = sz, bite = X.st === 3 ? 1 : X.st === 4 ? 0.1 + 0.1 * Math.sin(t * 9) : X.st === 8 ? (wu > 0.25 && wu < 0.9 ? 0.55 + 0.15 * Math.sin(t * 28) : 0) : sinceHiss < K.HISS_T ? 0.3 + 0.1 * Math.sin(t * 30) : 0;
     o.open += (bite - o.open) * Math.min(1, dt * 16);
     const op = o.open, hp = h0;                                          // (hp: the tip of the head)
     // eyes: two tiny glossy beads on the sides of the head
-    for (let k = 0; k < 2; k++) { const e = o.eyes[k]; e.position.copy(hp).addScaledVector(dir, -0.115 * hs).addScaledVector(side, (k ? 1 : -1) * 0.067 * hs).addScaledVector(up, 0.03 * hs); e.scale.setScalar(0.016 * hs); e.visible = !born || age > 0.3; }
+    for (let k = 0; k < 2; k++) { const e = o.eyes[k]; e.position.copy(hp).addScaledVector(dir, -0.115 * hs).addScaledVector(side, (k ? 1 : -1) * 0.067 * hs).addScaledVector(up, 0.03 * hs); e.scale.setScalar(0.016 * hs); e.visible = (!born || age > 0.3) && X.st !== 7; }
     // the mouth line (a thin dark-red slit under the snout) and the small lower jaw that drops to bite
     o.mouth.visible = false;
     o.jaw.visible = op > 0.06; o.jaw.position.copy(hp).addScaledVector(dir, -0.17 * hs).addScaledVector(up, -0.03 * hs); o.jaw.quaternion.copy(q0); o.jaw.rotateX(0.75 * op); o.jaw.translateZ(0.075 * hs); o.jaw.translateY(-0.012 * hs);
@@ -266,7 +324,7 @@
       if (dr.length < 48) { v3.copy(hp).addScaledVector(dir, -0.04 * hs).addScaledVector(up, -0.05 * hs); dr.push({ x: v3.x + rnd(-0.02, 0.02), y: v3.y, z: v3.z + rnd(-0.02, 0.02), vx: dir.x * 0.2, vy: -0.1, vz: dir.z * 0.2, life: rnd(1, 2), r: rnd(0.008, 0.014) * sz }); }
     }
   }
-  AV.xenoFrame = function (S, X, o, dt, t) { frameXeno(S, X, o, dt, t); };
+  AV.xenoFrame = function (S, X, o, dt, t, camera) { frameXeno(S, X, o, dt, t, camera); };
 
   /* ---------- drool, flying heads, carcasses ---------- */
   AV.xenoFx = function (S, dt) {
@@ -288,10 +346,10 @@
     // the eaten body: dragged into the coils, shrinking
     for (let i = carcass.length - 1; i >= 0; i--) {
       const c = carcass[i], u = (S.time - c.t0) / 2.6, X = S.alien.xenos.find(q => q.id === c.xid);
-      if (u >= 1 || !X) { c.mesh.parent && c.mesh.parent.remove(c.mesh); c.mesh.geometry.dispose(); c.mesh.material.dispose(); carcass.splice(i, 1); continue; }
+      if (u >= 1 || !X) { if (c.slime) { c.slime.parent && c.slime.parent.remove(c.slime); c.slime.material.dispose(); } c.mesh.parent && c.mesh.parent.remove(c.mesh); c.mesh.geometry.dispose(); c.mesh.material.dispose(); carcass.splice(i, 1); continue; }
       const k = sm(0.1, 1, u), h = X.n[0];
-      v3.set(c.p.x + (h.x - c.p.x) * k * k, c.p.y + (h.y + 0.2 - c.p.y) * k * k + 0.15 * Math.sin(u * 9) * (1 - u), c.p.z + (h.z - c.p.z) * k * k);
-      c.mesh.matrix.compose(v3, c.q, sc3.copy(c.s).multiplyScalar(Math.max(0.01, 1 - k))); c.mesh.matrixWorldNeedsUpdate = true;
+      v3.copy(c.p); if (c.slime) c.slime.material.opacity = 0.8 * (1 - k);
+      c.mesh.matrix.compose(v3, c.q, sc3.copy(c.s).multiplyScalar(Math.max(0.01, 1 - k))); c.mesh.matrixWorldNeedsUpdate = true; if (c.slime) { c.slime.matrix.copy(c.mesh.matrix); c.slime.matrixWorldNeedsUpdate = true; }
     }
   };
   /* a headless clone of a worm's live body (positions as drawn this frame), the neck stump red */
@@ -306,7 +364,9 @@
     const mat = v.mesh.material.clone(); mat.userData.shared = false;
     const mesh = new T.Mesh(geo, mat); mesh.frustumCulled = false; mesh.matrixAutoUpdate = false; rootG.add(mesh);
     const p = new T.Vector3(), qq = new T.Quaternion(), s = new T.Vector3(); v.body.matrixWorld.decompose(p, qq, s);
-    carcass.push({ mesh, p, q: qq, s, t0: S.time, xid });
+    const slime = new T.Mesh(geo, new T.MeshPhysicalMaterial({ color: 0x4fd414, roughness: 0.1, clearcoat: 1, emissive: 0x0f5a02, emissiveIntensity: 0.8, transparent: true, opacity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }));
+    slime.frustumCulled = false; slime.matrixAutoUpdate = false; slime.material.userData.shared = false; rootG.add(slime); mesh.userData.slime = slime;
+    carcass.push({ mesh, p, q: qq, s, t0: S.time, xid, slime });
     if (S.settings.blood) {                                              // the severed head
       const hm = new T.Mesh(new T.SphereGeometry(0.125, 12, 9), M_.head2); hm.frustumCulled = false; rootG.add(hm);
       const af = v.af; if (af) { v3.set(af.cx, af.cy, 0).applyMatrix4(v.body.matrixWorld); hm.position.copy(v3); }
