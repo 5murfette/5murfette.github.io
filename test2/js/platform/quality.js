@@ -7,9 +7,9 @@
   Q.PRESETS = {
     // dpr: the highest pixel ratio (the adaptive resolution steps down from it, see Q.adapt_*); msaa: samples of the canvas (0 = no
     // antialiasing) and of the lens target; farScale: the far-world pass resolution relative to the canvas; far pass: no MSAA (soft haze)
-    low: { name: 'low', dpr: 1, msaa: 0, farScale: 0.4, shadow: 1024, softShadow: false, detail: false, nearCtx: false, tex: 'low', grass: 0.25, particles: 0.4, waterN: 97, remeshMs: 5, motes: 80, haze: false, grade: false },
-    medium: { name: 'medium', dpr: 1.5, msaa: 2, farScale: 0.5, shadow: 2048, softShadow: true, detail: true, nearCtx: true, tex: 'medium', grass: 0.5, particles: 0.7, waterN: 193, remeshMs: 8, motes: 180, haze: false, grade: true },
-    high: { name: 'high', dpr: 2, msaa: 4, farScale: 0.5, shadow: 4096, softShadow: true, detail: true, nearCtx: true, tex: 'high', grass: 1, particles: 1, waterN: 193, remeshMs: 10, motes: 260, grade: true, haze: typeof location !== 'undefined' && /[?&]haze=1/.test(location.search) }
+    low: { name: 'low', dpr: 1, msaa: 0, farScale: 0.4, shadow: 1024, softShadow: false, detail: false, nearCtx: false, tex: 'low', grass: 0.25, particles: 0.4, waterN: 97, remeshMs: 5, motes: 80, haze: false, grade: false, bloom: false },
+    medium: { name: 'medium', dpr: 1.5, msaa: 2, farScale: 0.5, shadow: 2048, softShadow: true, detail: true, nearCtx: true, tex: 'medium', grass: 0.5, particles: 0.7, waterN: 193, remeshMs: 8, motes: 180, haze: false, grade: true, bloom: true },
+    high: { name: 'high', dpr: 2, msaa: 4, farScale: 0.5, shadow: 4096, softShadow: true, detail: true, nearCtx: true, tex: 'high', grass: 1, particles: 1, waterN: 193, remeshMs: 10, motes: 260, grade: true, bloom: true, haze: typeof location !== 'undefined' && /[?&]haze=1/.test(location.search) }
   };
 
   /* P38-R4 adaptive resolution (presentation only). The canvas pixel ratio steps down while the frame interval cannot keep the

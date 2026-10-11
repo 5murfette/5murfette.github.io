@@ -113,6 +113,11 @@
       float fn = texture2D(tNoise, p * 0.5 + uWTime * 0.03).b;
       float band = 0.5 + 0.5 * sin(depth * 9.0 - uWTime * 1.7 + fn * 4.0);
       float foam = (1.0 - smoothstep(0.0, 0.7, depth)) * smoothstep(0.35, 0.9, band * 0.6 + fn * 0.6);
+      // P61: wave lines travelling to the shore (sharp leading edge, lace trailing off-shore), fading with depth
+      float swp = fract(depth * 1.7 + uWTime * 0.14 + fn * 0.45);
+      float swl = smoothstep(0.0, 0.05, swp) * (1.0 - smoothstep(0.05, 0.36, swp)) * (1.0 - smoothstep(0.5, 1.7, depth));
+      float swn = smoothstep(0.3, 0.72, fn * 0.55 + texture2D(tNoise, p * 2.3 + uWTime * 0.02).g * 0.65);
+      foam = max(foam, swl * swn * 0.9);
       foam = max(foam, (1.0 - smoothstep(0.01, 0.07, depth)) * 0.75) * (1.0 - inl);       // swash: the sea only
       // simulated foam (blasts, fast water) as a lace: dense with holes while fresh, breaking into streaks as it fades
       float lace = fn * 0.6 + texture2D(tNoise, p * 1.9 - uWTime * 0.05).g * 0.5, fq = min(foamS, 1.5);

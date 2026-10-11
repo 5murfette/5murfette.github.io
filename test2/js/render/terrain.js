@@ -321,7 +321,20 @@
       float under = surf - vW.y;
       float wetB = smoothstep(-0.45, 0.0, under);
       if (uWaterTex > 0.5) wetB = max(wetB, wt.a * smoothstep(-0.7, -0.1, wt.r - vW.y));   // recent run-up dries slowly
-      col *= mix(1.0, 0.62, wetB * (0.45 + 0.55 * poro));     // wet sand loses ~40 % albedo; wet rock darkens too (film fills its micro-relief)
+      // P61: wave lapping on the beach: the run-up edge oscillates (travelling along the shore), the sand behind it is a darker wet band
+      // and a thin lace of foam stays on the edge (sea level beaches only)
+      float lapFoam = 0.0;
+      if (uWaterTex < 0.5 || (wt.r > uSea - 0.5 && wt.r < uSea + 0.4)) {
+        float lnz = texture(tNoise, vW.xz * 0.35).b;
+        float lapS = 0.5 + 0.5 * sin(uTime * 0.8 + vW.x * 0.35 + vW.z * 0.3 + lnz * 4.0);
+        float u2 = uSea + 0.04 + 0.2 * lapS - vW.y;
+        float nearSea = smoothstep(0.8, 0.2, abs(vW.y - uSea));
+        wetB = max(wetB, smoothstep(-0.14, 0.0, u2) * nearSea);
+        wetB = max(wetB, 0.7 * smoothstep(-0.9, -0.15, u2 - 0.1 * lapS) * nearSea);
+        float lnz2 = texture(tNoise, vW.xz * 1.7 + vec2(uTime * 0.02, 0.0)).g;
+        lapFoam = exp(-pow((u2 + 0.01) / 0.03, 2.0)) * smoothstep(0.3, 0.7, lnz * 0.5 + lnz2 * 0.7) * nearSea * step(0.0, u2 + 0.1);
+      }
+      col *= mix(1.0, 0.5, wetB * (0.45 + 0.55 * poro));     // wet sand loses ~40 % albedo; wet rock darkens too (film fills its micro-relief)
       rough = mix(rough, 0.3 + 0.3 * (1.0 - poro), wetB * 0.7 * smoothstep(-0.45, 0.0, under));   // a sheen near the water only; damp ground stays matte
       // water film: the smoothed mesh lies a few cm above the simulated bed in concave floors (one vertex per cell),
       // so a shallow pool's water is under it: terrain just above the surface of a wet column reads as a film
@@ -329,6 +342,7 @@
       if (uWaterTex > 0.5) { film = smoothstep(0.0, 0.02, wt.g) * smoothstep(-0.07, -0.005, under); col *= mix(1.0, 0.8, film); rough = mix(rough, 0.07, film); }
       RA *= (1.0 - film) * uDetail;                       // a puddle's water surface is flat (and Low has no relief)
       GD *= (1.0 - film) * (1.0 - smoothstep(-0.05, 0.05, under)) * uDetail * sky;   // none in puddles, under water, caves
+      col = mix(col, vec3(0.95, 0.97, 1.0), lapFoam * 0.7 * (1.0 - smoothstep(0.0, 0.1, under)));
       if (under > 0.0) {
         col *= mix(vec3(1.0), vec3(0.42, 0.66, 0.72), smoothstep(0.0, 2.0, under));
         col += uCaustic * caustic(vW) * vec3(0.55, 0.7, 0.62) * smoothstep(0.0, 0.35, under) * exp(-under * 0.6) * max(up, 0.2);
@@ -402,6 +416,21 @@
     }
   `;
 
+  /* P61: surface ambient occlusion from the world density volume: a few taps along the normal (solid within 0.4 / 1.0 / 2.2 m darkens:
+   * crevices, the foot of a cliff, the ground under an overhang) plus a slight sideways spread so flat ground stays clean. */
+  const SURF_AO = /* glsl */`
+    uniform highp sampler3D tVol; uniform vec3 uVolSize;
+    float aoSolid(vec3 p){ return texture(tVol, (p / 0.5 + 0.5) / uVolSize).r > 0.0 ? 1.0 : 0.0; }
+    float surfAO(vec3 p, vec3 n){
+      vec3 t = normalize(abs(n.y) > 0.9 ? cross(n, vec3(1.0, 0.0, 0.0)) : cross(n, vec3(0.0, 1.0, 0.0)));
+      vec3 b = cross(n, t);
+      vec3 q = p + n * 0.15;
+      float a = aoSolid(q + n * 0.4) * 1.0 + aoSolid(q + n * 0.4 + t * 0.5) * 0.5 + aoSolid(q + n * 0.4 - b * 0.5) * 0.5
+              + aoSolid(q + n * 1.0 + t * 0.9) * 0.8 + aoSolid(q + n * 1.0 - t * 0.9 + b * 0.5) * 0.8
+              + aoSolid(q + n * 2.2 + b * 1.6) * 0.6 + aoSolid(q + n * 2.2 - b * 1.6 - t * 0.8) * 0.6;
+      return 1.0 - 0.72 * clamp(a / 4.0, 0.0, 1.0);
+    }
+  `;
   function patchVertex(sh, body) {
     sh.vertexShader = 'attribute float depth; attribute vec4 mA; attribute vec4 mB; attribute vec4 mC; attribute vec4 mD;\nvarying vec3 vW; varying vec3 vWN; varying float vDepth; varying vec4 vMA; varying vec4 vMB; varying vec4 vMC; varying vec4 vMD;\nvarying vec3 vT; varying vec3 vTN;\n' +
       (body ? 'attribute vec3 tpos;\n' : '') +
@@ -420,6 +449,7 @@
     if (mode === 0) m.shadowSide = T.DoubleSide;
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
+      if (mode === 0 && !body) Object.assign(sh.uniforms, { tVol: { value: volTex }, uVolSize: { value: VOLSIZE } });
       patchVertex(sh, body);
       // slice zero (t = 0) is the collision section: the slab is everything from -uBack up to it, nothing in front
       // D6: a dry world's lattice is drawn only inside the disc uLatR (x, z, r; r 0 = off): the far grid beyond it
@@ -432,7 +462,7 @@
         sh.fragmentShader = 'uniform vec3 uO, uN, uLatR; uniform float uBack; varying vec3 vW;\nvoid main() {\n float tD = dot(vW - uO, uN);\n ' + clip + '\n gl_FragColor = vec4(0.0);\n}';
         return;
       }
-      sh.fragmentShader = COMMON + sh.fragmentShader
+      sh.fragmentShader = COMMON + (mode === 0 && !body ? SURF_AO : '') + sh.fragmentShader
         .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
           float tD = dot(vW - uO, uN);
           ${clip}`)
@@ -443,6 +473,7 @@
           ${mode === 0 ? `if (!gl_FrontFacing) { col = texture(tMats, vec3(vT.xz*0.1 + vT.y*0.07, 14.0)).rgb * 0.35; tEmis = vec3(0.0);
             col = mix(col, vec3(0.88, 0.92, 0.97), smoothstep(0.2, 0.55, vMD.y));   // P37 W4: the inside of foam is white, not dark
             if (uDbgBack > ${body ? '0.5' : '1.5'}) { col = vec3(0.0); tEmis = vec3(4.0, 0.0, 4.0); } }` : ''}
+          ${mode === 0 && !body ? 'if (gl_FrontFacing && uDetail > 0.5) col *= surfAO(vW, nW);' : ''}
           diffuseColor.rgb = col;
           ${mode === 1 || mode === 3 ? /* glsl */`
             float ad = ${mode === 1 ? '-tD - uBack' : 'tD'};

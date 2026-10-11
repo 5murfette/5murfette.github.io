@@ -27,6 +27,7 @@
   V.init = function (canvas, textures, quality, opts) {
     tx = textures; Q = quality; opts = opts || {};
     renderer = new T.WebGLRenderer({ canvas, antialias: Q.msaa > 0 && !Q.grade, preserveDrawingBuffer: !!opts.preserve, powerPreference: 'high-performance' });
+    if (SS.lens && SS.lens.bloom) SS.lens.bloom(Q.bloom);
     renderer.localClippingEnabled = true;                // P46: the section rule is a clipping plane on every material (render/section.js)
     renderer.setPixelRatio(Math.min(Q.dpr, window.devicePixelRatio || 1));
     renderer.toneMapping = T.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;

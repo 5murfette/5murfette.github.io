@@ -127,7 +127,7 @@
       Object.assign(sh.uniforms, U);
       sh.vertexShader = /* glsl */`
         uniform float uTime, uHalf, uBack, uSnow; uniform sampler2D tNoise, tSurf; uniform vec3 uO, uN, uWind; uniform vec4 uWhirl[4]; uniform vec4 uAcid[8];
-        varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid;
+        varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid; varying float vGust; varying float vPatch;
       ` + sh.vertexShader
         .replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
           vH = position.y;
@@ -144,6 +144,15 @@
             float f = wh.w * exp(-d * d / (wh.z * wh.z * 2.5));
             w += vec2(-r.y, r.x) / d * f * 0.12;
           }
+          // P61: travelling gust waves along the wind direction (a slow broad front modulated by a noise), the blades lean and flutter in them
+          float wsp = length(uWind.xz), wk = clamp(wsp * 0.22, 0.0, 1.6);
+          vec2 wdir = uWind.xz / max(wsp, 1e-3);
+          float gph = dot(ip.xz, wdir) * 0.16 - uTime * (0.7 + 0.35 * wsp);
+          float gwv = 0.5 + 0.5 * sin(gph + 1.6 * texture2D(tNoise, ip.xz * 0.02).a);
+          gwv = gwv * gwv * (0.45 + 0.55 * texture2D(tNoise, ip.xz * 0.05 - wdir * uTime * 0.03).g);
+          vGust = gwv * wk;
+          w += wdir * gwv * wk * 0.11 + vec2(-wdir.y, wdir.x) * sin(uTime * 3.1 + ip.x * 1.3 + ip.z * 0.9) * 0.025 * gwv * wk;
+          vPatch = texture2D(tNoise, ip.xz * 0.045 + 0.31).b;
           vec2 sway = w * vH * vH;
           float ac = 0.0;                                      // P44: acid pools (xz, r, strength): the grass inside is burnt and flattened
           for (int i = 0; i < 8; i++) { vec4 a = uAcid[i]; if (a.w <= 0.0) continue; float d = length(ip.xz - a.xy) / max(a.z, 0.05); ac = max(ac, a.w * (1.0 - smoothstep(0.75, 1.45, d))); }
@@ -166,11 +175,13 @@
             vec4 worldPosition = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
           #endif`);
       // back faces keep the up-facing blade normal: DoubleSide would flip it downwards (black blades seen from behind)
-      sh.fragmentShader = 'uniform vec3 uBase, uTip, uDryTip; uniform float uTime; varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid;\n' + sh.fragmentShader
+      sh.fragmentShader = 'uniform vec3 uBase, uTip, uDryTip; uniform float uTime; varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid; varying float vGust; varying float vPatch;\n' + sh.fragmentShader
         .replace('#include <normal_fragment_begin>', T.ShaderChunk.normal_fragment_begin.replace('gl_FrontFacing ? 1.0 : - 1.0', '1.0'))
         .replace('#include <color_fragment>', /* glsl */`#include <color_fragment>
           vec3 tip = mix(uTip, uDryTip, smoothstep(0.35, 0.85, vSurf.g)) * vTint;
+          tip *= vec3(0.88 + 0.24 * vPatch, 0.92 + 0.14 * vPatch, 1.12 - 0.28 * vPatch);           // P61: patches of fresher / drier grass
           vec3 c = mix(uBase, tip, smoothstep(0.0, 1.0, vH));
+          c *= 1.0 + 0.28 * vGust * smoothstep(0.3, 1.0, vH);                                       // the lit undersides of blades bent by a gust
           if (vTint.r > 1.5) c = mix(uBase, vec3(1.0, 0.86, 0.2), smoothstep(0.6, 0.95, vH) + 0.3 * vH);
           if (vTint.b > 1.5) c = mix(uBase, vec3(0.98, 0.95, 1.0), smoothstep(0.6, 0.95, vH) + 0.3 * vH);
           c = mix(c, vec3(0.06, 0.05, 0.04), smoothstep(0.1, 0.5, vSurf.b));          // scorched
@@ -179,7 +190,7 @@
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           totalEmissiveRadiance += vSurf.a * vec3(3.0, 1.0, 0.2) * smoothstep(0.3, 1.0, vH) * (0.7 + 0.3 * sin(uTime * 13.0 + vH * 9.0));`);
     };
-    m.customProgramCacheKey = () => 'grass4';
+    m.customProgramCacheKey = () => 'grass5';
     return m;
   };
 

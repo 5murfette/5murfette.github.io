@@ -15,20 +15,21 @@
   const T = window.THREE;
   const LN = SS.lens = {};
   const MAXR = 3, RING_T = 0.5, MAXH = 4, R_E = 2.6, R_H = 1.0, R_FX = 2.4;        // Einstein / horizon radius per unit of visual scale; effect reach
-  const rings = [];                     // { x, y, z, R, k, t }
+  const rings = [];
+  let bloomOn = false;                     // { x, y, z, R, k, t }
   let rt = null, quadScene = null, quadCam = null, mat = null;
   const sunDirV = new T.Vector3(), v = new T.Vector3(), r = new T.Vector3(), size = new T.Vector2();
   function init(renderer) {
-    rt = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, samples: window.LNS != null ? window.LNS : SS.view && SS.view.msaa ? Math.min(2, SS.view.msaa()) : 2 });
+    rt = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, generateMipmaps: bloomOn, minFilter: bloomOn ? T.LinearMipmapLinearFilter : T.LinearFilter, samples: window.LNS != null ? window.LNS : SS.view && SS.view.msaa ? Math.min(2, SS.view.msaa()) : 2 });
     mat = new T.ShaderMaterial({
       uniforms: { tScene: { value: rt.texture }, uRes: { value: new T.Vector2(1, 1) }, uN: { value: 0 },
         uH: { value: [0, 1, 2, 3].map(() => new T.Vector4()) }, uNR: { value: 0 }, uR: { value: [0, 1, 2].map(() => new T.Vector4()) }, uRk: { value: [0, 1, 2].map(() => new T.Vector2()) },
         uNZ: { value: 0 }, uZ: { value: [0, 1, 2, 3].map(() => new T.Vector4()) }, uT: { value: 0 },
-        uGA: { value: new T.Vector4(1, 0, 0, 0) }, uSunP: { value: new T.Vector4(0, 0, 0, 0) }, uSunC: { value: new T.Vector3() }, uSh: { value: new T.Vector3() }, uHi: { value: new T.Vector3(1, 1, 1) } },
-      depthTest: false, depthWrite: false,
+        uGA: { value: new T.Vector4(1, 0, 0, 0) }, uBl: { value: 0.55 }, uSunP: { value: new T.Vector4(0, 0, 0, 0) }, uSunC: { value: new T.Vector3() }, uSh: { value: new T.Vector3() }, uHi: { value: new T.Vector3(1, 1, 1) } },
+      depthTest: false, depthWrite: false, defines: bloomOn ? { BLOOM: 1 } : {},
       vertexShader: 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: /* glsl */`
-        uniform sampler2D tScene; uniform vec4 uGA, uSunP; uniform vec3 uSunC; uniform vec3 uSh, uHi; uniform vec2 uRes; uniform float uT; uniform int uNZ; uniform vec4 uZ[4]; uniform int uN; uniform vec4 uH[${MAXH}]; uniform int uNR; uniform vec4 uR[${MAXR}]; uniform vec2 uRk[${MAXR}];
+        uniform sampler2D tScene; uniform float uBl; uniform vec4 uGA, uSunP; uniform vec3 uSunC; uniform vec3 uSh, uHi; uniform vec2 uRes; uniform float uT; uniform int uNZ; uniform vec4 uZ[4]; uniform int uN; uniform vec4 uH[${MAXH}]; uniform int uNR; uniform vec4 uR[${MAXR}]; uniform vec2 uRk[${MAXR}];
         varying vec2 vUv;
         void main(){
           vec2 asp = vec2(uRes.x / uRes.y, 1.0), uv = vUv;
@@ -63,7 +64,21 @@
             float n = mix(mix(a0, a1, fp.x), mix(a2, a3, fp.x), fp.y) - 0.5;
             uv += vec2(n * 0.9, sin(q.y * 1.7 + n * 6.0) * 0.25) * 0.0075 * m / asp;
           }
-          vec3 col = texture2D(tScene, clamp(uv, vec2(0.001), vec2(0.999))).rgb * dark + ring;
+          vec3 col = textureLod(tScene, clamp(uv, vec2(0.001), vec2(0.999)), 0.0).rgb * dark + ring;
+          #ifdef BLOOM
+          // P61 bloom: the bright parts (HDR above the knee) of the scene's mip chain (lods 2, 3, 4: 5 taps each), added before the tone map
+          {
+            vec3 bl = vec3(0.0); vec2 px = 1.0 / uRes;
+            for (int k = 0; k < 3; k++) {
+              float lod = 2.0 + float(k), st = exp2(lod) * 1.6; vec2 o = px * st; vec3 a = vec3(0.0);
+              a += textureLod(tScene, uv, lod).rgb * 0.4;
+              a += textureLod(tScene, uv + vec2(o.x, 0.0), lod).rgb * 0.15 + textureLod(tScene, uv - vec2(o.x, 0.0), lod).rgb * 0.15;
+              a += textureLod(tScene, uv + vec2(0.0, o.y), lod).rgb * 0.15 + textureLod(tScene, uv - vec2(0.0, o.y), lod).rgb * 0.15;
+              bl += max(a - 1.15, 0.0) * (k == 0 ? 0.6 : k == 1 ? 0.8 : 1.0);
+            }
+            col += min(bl, vec3(1.5)) * uBl;
+          }
+          #endif
           // P56 sun glare: a soft warm veil round the sun on the screen (uSunP = uv, strength), added before the tone map
           vec2 sd = (vUv - uSunP.xy) * asp; float sr = dot(sd, sd);
           col += uSunC * uSunP.w * (exp(-sr * 14.0) * 0.55 + exp(-sr * 2.4) * 0.25);
@@ -97,6 +112,7 @@
   LN.sun = function (dir, col, k) { sunDir = dir; sunCol = col; sunK = k; };
   LN.grade = function (g) { GR = g || NEUTRAL; if (mat) LN.applyGrade(); };
   LN.applyGrade = function () { mat.uniforms.uGA.value.set(GR.sat, GR.con, GR.vig, 1 / 255); mat.uniforms.uSh.value.set(GR.sh[0], GR.sh[1], GR.sh[2]); mat.uniforms.uHi.value.set(GR.hi[0], GR.hi[1], GR.hi[2]); };
+  LN.bloom = function (on) { bloomOn = !!on; };                  // P61: before the first frame (init reads it); quality-gated by view.js
   LN.clear = function () { rings.length = 0; };
   LN.tick = function (dt) { for (let i = rings.length - 1; i >= 0; i--) if ((rings[i].t += dt) > RING_T) rings.splice(i, 1); };
   LN.render = function (renderer, scene, camera, holes, haze) {
