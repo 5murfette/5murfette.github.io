@@ -19,14 +19,14 @@
     temperate: { sky: 'sky', sun: 0xffe2b8, sunI: 3.0, hemiS: 0xcfe2ff, hemiG: 0x7a5a3a, hemiI: 1.15, fog: 0.0062, haze: 0xf1d9c0, exp: 1.05, grass: [1, 1, 1], dry: [1, 1, 1], gBase: 0x173a0c, gTip: 0x8cc840, gDry: 0xc8a85c, deep: 0x0d3a5c, shallow: 0x2fa7a8, sunDir: [-0.42, 0.62, 0.66] },
     alpine: { sky: 'sky_cold', sun: 0xfff3e6, sunI: 2.9, hemiS: 0xd8e8ff, hemiG: 0x6a7080, hemiI: 1.3, fog: 0.0070, haze: 0xdde8f5, exp: 1.0, grass: [0.86, 0.96, 0.92], dry: [0.95, 0.95, 0.9], gBase: 0x1a3418, gTip: 0x7aa860, gDry: 0xb8a878, deep: 0x123a58, shallow: 0x5fb0c8, sunDir: [-0.5, 0.5, 0.7] },
     canyon: { sky: 'sky', sun: 0xffd4a0, sunI: 3.2, hemiS: 0xffe2c4, hemiG: 0x8a4a2a, hemiI: 1.1, fog: 0.0058, haze: 0xf0c8a0, exp: 1.05, grass: [1.05, 0.95, 0.75], dry: [1.1, 0.98, 0.8], gBase: 0x2a3a12, gTip: 0xa8b050, gDry: 0xd8b070, deep: 0x1a3a48, shallow: 0x4a9a8a, sunDir: [-0.55, 0.55, 0.62] },
-    desert: { sky: 'sky', sun: 0xfff0d2, sunI: 3.4, hemiS: 0xfff0d8, hemiG: 0xa07850, hemiI: 1.2, fog: 0.0055, haze: 0xf5dcb0, exp: 1.0, grass: [1.1, 1.0, 0.75], dry: [1.15, 1.0, 0.8], gBase: 0x3a3a14, gTip: 0xb8b060, gDry: 0xe0c080, deep: 0x0d4a66, shallow: 0x38c0c0, sunDir: [-0.35, 0.72, 0.6] },
+    desert: { sky: 'sky', sun: 0xfff0d2, sunI: 3.4, hemiS: 0xfff0d8, hemiG: 0xa07850, hemiI: 1.15, fog: 0.0055, haze: 0xf5dcb0, exp: 0.94, grass: [1.1, 1.0, 0.75], dry: [1.15, 1.0, 0.8], gBase: 0x3a3a14, gTip: 0xb8b060, gDry: 0xe0c080, deep: 0x0d4a66, shallow: 0x38c0c0, sunDir: [-0.35, 0.72, 0.6] },
     volcanic: { sky: 'sky_storm', skyTint: [1.7, 1.55, 1.6], sun: 0xffc896, sunI: 3.1, hemiS: 0xb8b4c4, hemiG: 0x5e463a, hemiI: 1.7, fog: 0.0072, haze: 0x8e7672, exp: 1.45, grass: [0.8, 0.85, 0.7], dry: [0.9, 0.85, 0.7], gBase: 0x1a2410, gTip: 0x6a7a40, gDry: 0x8a7a50, deep: 0x0a1a22, shallow: 0x2a5a5a, sunDir: [-0.5, 0.45, 0.72] }
   };
   V.LOOKS = LOOKS;
 
   V.init = function (canvas, textures, quality, opts) {
     tx = textures; Q = quality; opts = opts || {};
-    renderer = new T.WebGLRenderer({ canvas, antialias: Q.msaa > 0, preserveDrawingBuffer: !!opts.preserve, powerPreference: 'high-performance' });
+    renderer = new T.WebGLRenderer({ canvas, antialias: Q.msaa > 0 && !Q.grade, preserveDrawingBuffer: !!opts.preserve, powerPreference: 'high-performance' });
     renderer.localClippingEnabled = true;                // P46: the section rule is a clipping plane on every material (render/section.js)
     renderer.setPixelRatio(Math.min(Q.dpr, window.devicePixelRatio || 1));
     renderer.toneMapping = T.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
@@ -301,7 +301,22 @@
    * itself, warm low light, long shadows); night = the sun under the horizon (the sky goes dark), a cool moon light
    * (shadows still), stars, and the active worm carries its lamp. 'random' picks by seed. */
   V.timeOfDay = S => SS.sim.time_of_day(S);                // (the sim owns it: the ice temperature reads it)
+  /* P56 colour grade per biome and time of day (render/lens.js: after the tone map): sat, con (S-curve 0..1), vig, cool shadows sh, warm highlights hi */
+  const GRADES = {
+    temperate: { sat: 1.12, con: 0.16, vig: 0.22, sh: [-0.004, 0.0, 0.012], hi: [1.03, 1.0, 0.95] },
+    alpine: { sat: 1.1, con: 0.2, vig: 0.22, sh: [-0.006, 0.0, 0.016], hi: [1.02, 1.0, 0.96] },
+    canyon: { sat: 1.06, con: 0.18, vig: 0.24, sh: [0.0, -0.004, 0.012], hi: [1.04, 1.0, 0.94] },
+    desert: { sat: 1.14, con: 0.27, vig: 0.22, sh: [0.004, -0.002, 0.012], hi: [1.03, 0.99, 0.93] },
+    volcanic: { sat: 1.14, con: 0.2, vig: 0.3, sh: [0.004, -0.004, 0.008], hi: [1.05, 0.98, 0.92] }
+  };
+  function gradeFor(L, tod) {
+    const g = GRADES[view.biome] || GRADES.temperate;
+    if (tod === 'night') return { sat: g.sat * 0.92, con: g.con * 0.6, vig: g.vig * 1.2, sh: [-0.002, 0.002, 0.014], hi: [0.96, 1.0, 1.08] };
+    if (tod === 'dusk') return { sat: g.sat * 1.08, con: g.con, vig: g.vig * 1.1, sh: [-0.002, -0.004, 0.016], hi: [1.06, 0.98, 0.9] };
+    return g;
+  }
   function applyLook(S) {
+    view.biome = S.biome;
     let L = LOOKS[S.biome] || LOOKS.temperate, skyDir = null;
     const tod = SS.world.under ? 'day' : V.timeOfDay(S); view.tod = tod;
     if (tod !== 'day') {
@@ -311,7 +326,7 @@
         skyDir = [Math.cos(az) * 0.99, -0.14, Math.sin(az) * 0.99];
         const m = [-Math.cos(az) * 0.6, 0.62, -Math.sin(az) * 0.6];
         view.moonDir = m;
-        L = Object.assign({}, L, { sunDir: m, sun: 0x9fb4e8, sunI: 0.6, hemiS: 0x405074, hemiG: 0x17150f, hemiI: 0.5, exp: L.exp * 1.35, fog: L.fog * 0.8 });
+        L = Object.assign({}, L, { sunDir: m, sun: 0x9fb4e8, sunI: 0.85, hemiS: 0x4a6090, hemiG: 0x1c1c22, hemiI: 0.8, exp: L.exp * 1.35, fog: L.fog * 0.8 });
       }
     }
     let sk;
@@ -320,7 +335,7 @@
     if (SS.skyView) {
       // K2: the procedural sky for this biome + weather; the fog / haze is the sky's own horizon colour (aerial
       // perspective: the far terrain fades into exactly the sky behind it), a little of the biome's haze tint
-      sk = SS.skyView.look(S.biome, S.weather ? S.weather.kind : 'clear', skyDir || L.sunDir);
+      sk = SS.skyView.look(S.biome, S.weather ? S.weather.kind : 'clear', skyDir || L.sunDir, tod === 'night' && view.moonDir ? { k: 1, moon: view.moonDir } : null);
       if (SS.cloudView) SS.cloudView.look(S, sk);
       if (SS.farView) SS.farView.look(S, sk, L);
     } else {
@@ -341,6 +356,11 @@
     if (tod === 'night') { sun.color.set(L.sun); sun.intensity = L.sunI; }     // moonlight (not the reddened sun beam)
     if (stars) stars.material.opacity = tod === 'night' ? 0.95 : tod === 'dusk' ? 0.18 : 0;
     renderer.toneMappingExposure = L.exp;
+    if (SS.lens && SS.lens.grade) {
+      SS.lens.grade(gradeFor(L, tod));
+      const sc = sun.color;
+      SS.lens.sun(tod === 'night' || SS.world.under ? null : L.sunDir, [sc.r * 0.5, sc.g * 0.4, sc.b * 0.3], tod === 'dusk' ? 0.55 : 0.3);
+    }
     const U = SS.terrain.uniforms;
     U.uHaze.value.copy(haze);
     U.uGrassTint.value.setRGB(L.grass[0], L.grass[1], L.grass[2]); U.uDryTint.value.setRGB(L.dry[0], L.dry[1], L.dry[2]);
@@ -388,7 +408,9 @@
     const ci = x / H, ck = z / H, rc = r / H, i0 = Math.max(0, Math.floor(ci - rc)), i1 = Math.min(n - 1, Math.ceil(ci + rc)), k0 = Math.max(0, Math.floor(ck - rc)), k1 = Math.min(n - 1, Math.ceil(ck + rc));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const d = Math.hypot(i - ci, k - ck) / rc; if (d >= 1) continue;
-      const rag = 0.82 + 0.18 * Math.sin(i * 12.9898 + k * 78.233) * Math.sin(k * 4.1 + i * 2.3), f = Math.min(1, (1 - d) * 1.8) * a * rag;
+      const rag = 0.82 + 0.18 * Math.sin(i * 12.9898 + k * 78.233) * Math.sin(k * 4.1 + i * 2.3), an = Math.atan2(k - ck, i - ci);
+      const ray = 0.62 + 0.38 * Math.sin(an * 7.0 + x * 3.7) * Math.sin(an * 3.0 - z * 2.9 + 1.0) + 0.12 * Math.sin(an * 17.0 + x), rim = 1 + 0.5 * Math.exp(-Math.pow((d - 0.62) / 0.16, 2));   // blast rays and a burnt rim around the crater edge
+      const f = Math.min(1, Math.min(1, (1 - d) * 1.8 * Math.max(0.35, ray)) * rim) * a * rag;
       const v = Math.round(255 * f); if (v > scorchMap[k * n + i]) scorchMap[k * n + i] = v;
     }
     scorchDirty = true;
@@ -554,7 +576,7 @@
         case 'oilfire': SS.fx.dust(e.x, e.y + 0.5, e.z, 8, 1.4, 0x2a2420); break;
         case 'grassfire': SS.fx.dust(e.x, e.y + 0.3, e.z, Math.min(5, 2 + e.cells / 10 | 0), 0.5, 0x3a3330); break;
         case 'land': if (!(e.worm && e.speed > 9)) SS.fx.dustAt(e.x, e.y, e.z, Math.min(10, 2 + e.speed | 0), 0.5); break;      // (a hard landing's dust is react.js's: it was spawned twice)
-        case 'bounce': SS.fx.dustAt(e.x, e.y, e.z, 3, 0.3); SS.fx.spark(e.x, e.y, e.z); break;
+        case 'bounce': SS.fx.dustAt(e.x, e.y, e.z, 3, 0.3); SS.fx.impact(e.x, e.y, e.z, 0, 1, 0, null, 0.45); break;
         case 'jump': SS.fx.dustAt(e.x, e.y - 0.45, e.z, 3, 0.35); break;
         case 'fire': SS.fx.dust(e.pos.x, e.pos.y, e.pos.z, 4, 0.4, 0xdddddd); break;
         case 'rope_hook': SS.fx.spark(e.x, e.y, e.z); break;
@@ -617,6 +639,7 @@
     view.pxScale = renderer.domElement.height * camera.projectionMatrix.elements[5] * 0.5;
     SS.terrain.frame(S, view, ctxF, insp);
     const wind = S.wind || null;
+    SS.fx.env.wx = wind && wind.mean ? wind.mean.x : 0; SS.fx.env.wz = wind && wind.mean ? wind.mean.z : 0;
     SS.grass.frame(S, view.time, wind ? wind.mean : null, wind ? wind.whirls : null, S.weather ? S.weather.snowCover : 0);
     outlineMat.uniforms.uTime.value = view.time; outlineMat.uniforms.uAlpha.value = (0.55 + 0.45 * (1 - insp)) * (1 - edgeA);
     outline.visible = edgeA < 0.999;
@@ -645,7 +668,10 @@
     camera.position.set(view.camT.x + bx * dist * Math.cos(tilt), view.camT.y + dist * Math.sin(tilt), view.camT.z + bz * dist * Math.cos(tilt));
     camera.lookAt(view.camT);
     const sh = SS.fx.shake();
-    if (sh > 0) { camera.position.x += (Math.random() - 0.5) * sh * 0.5; camera.position.y += (Math.random() - 0.5) * sh * 0.5; camera.position.z += (Math.random() - 0.5) * sh * 0.5; }
+    if (sh > 0) {                                                           // P58: a smooth, damped rattle (a few mixed frequencies, mostly vertical and along the slab), not white noise
+      const q = view.time, k = sh * sh * 0.3 + sh * 0.12, ox = Math.sin(q * 43.0) * 0.6 + Math.sin(q * 71.0 + 1.3) * 0.4, oy = Math.sin(q * 51.0 + 0.7) * 0.7 + Math.sin(q * 29.0) * 0.3, oz = Math.sin(q * 37.0 + 2.1) * 0.5 + Math.sin(q * 83.0) * 0.5;
+      camera.position.x += ox * k * 0.5; camera.position.y += oy * k * 0.6; camera.position.z += oz * k * 0.5;
+    }
     sky.position.copy(camera.position);
     view.sky = sky;
     // sun follows the action so the shadow map stays dense around it
@@ -700,7 +726,7 @@
     if (stars) { stars.position.copy(camera.position); stars.visible = !SS.world.under && stars.material.opacity > 0; }
     if (SS.lens) SS.lens.tick(dt);
     const hz = SS.flameView && Q.haze && !SS.world.under && SS.flameView.haze().n > 0 ? SS.flameView.haze() : null;       // P45: heat haze over big fires (high quality only: costs a lens pass)
-    if (SS.lens && ((S.holes && S.holes.length) || SS.lens.active() || hz)) {                       // P29c: gravitational lensing (render/lens.js)
+    if (SS.lens && ((S.holes && S.holes.length) || SS.lens.active() || hz || (Q.grade && !SS.lens.off))) {                       // P29c: gravitational lensing (render/lens.js)
       const HK = C.ARMS.HOLE;
       SS.lens.render(renderer, scene, camera, (S.holes || []).map(h => ({ x: h.x, y: h.y, z: h.z, s: 0.25 + 0.55 * Math.min(1, h.t / HK.GROW) })), hz);
     } else renderer.render(scene, camera);

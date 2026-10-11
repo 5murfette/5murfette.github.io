@@ -128,8 +128,9 @@
     addFx(line, life);
   }
   AV.onEvent = function (S, e) {
-    if (e.type === 'shot' && e.weapon === 'shotgun' && e.from && e.to && clipOk(S, e.from, e.to)) { streak(e.from, e.to, 0xffe9a0, 0.025, 0.16); SS.fx.spark(e.to.x, e.to.y, e.to.z); }
-    if (e.type === 'shot' && e.end && e.to) SS.fx.spark(e.to.x, e.to.y, e.to.z);
+    if (e.type === 'shot' && e.weapon === 'shotgun' && e.from && e.to && clipOk(S, e.from, e.to)) { streak(e.from, e.to, 0xffe9a0, 0.025, 0.16);
+      const nx = e.from.x - e.to.x, ny = e.from.y - e.to.y, nz = e.from.z - e.to.z, nl = Math.hypot(nx, ny, nz) || 1; SS.fx.impact(e.to.x, e.to.y, e.to.z, nx / nl, ny / nl, nz / nl, null, 1.1); }
+    if (e.type === 'shot' && e.end && e.to) SS.fx.impact(e.to.x, e.to.y, e.to.z, 0, 1, 0, null, 1.4);
     if (e.type === 'zap' && clipOk(S, e.from, e.to)) arc(e.from, e.to, 0.3);
     // (teleport: the PoC beams + ghosts live in render/actors.js teleStart)
     if (e.type === 'airburst') SS.fx.explosion({ x: e.x, y: e.y, z: e.z, W: 0.05, R: 1 }, 20);

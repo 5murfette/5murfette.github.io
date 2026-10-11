@@ -17,17 +17,18 @@
   const MAXR = 3, RING_T = 0.5, MAXH = 4, R_E = 2.6, R_H = 1.0, R_FX = 2.4;        // Einstein / horizon radius per unit of visual scale; effect reach
   const rings = [];                     // { x, y, z, R, k, t }
   let rt = null, quadScene = null, quadCam = null, mat = null;
-  const v = new T.Vector3(), r = new T.Vector3(), size = new T.Vector2();
+  const sunDirV = new T.Vector3(), v = new T.Vector3(), r = new T.Vector3(), size = new T.Vector2();
   function init(renderer) {
-    rt = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, samples: SS.view && SS.view.msaa ? SS.view.msaa() : 4 });
+    rt = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, samples: window.LNS != null ? window.LNS : SS.view && SS.view.msaa ? Math.min(2, SS.view.msaa()) : 2 });
     mat = new T.ShaderMaterial({
       uniforms: { tScene: { value: rt.texture }, uRes: { value: new T.Vector2(1, 1) }, uN: { value: 0 },
         uH: { value: [0, 1, 2, 3].map(() => new T.Vector4()) }, uNR: { value: 0 }, uR: { value: [0, 1, 2].map(() => new T.Vector4()) }, uRk: { value: [0, 1, 2].map(() => new T.Vector2()) },
-        uNZ: { value: 0 }, uZ: { value: [0, 1, 2, 3].map(() => new T.Vector4()) }, uT: { value: 0 } },
+        uNZ: { value: 0 }, uZ: { value: [0, 1, 2, 3].map(() => new T.Vector4()) }, uT: { value: 0 },
+        uGA: { value: new T.Vector4(1, 0, 0, 0) }, uSunP: { value: new T.Vector4(0, 0, 0, 0) }, uSunC: { value: new T.Vector3() }, uSh: { value: new T.Vector3() }, uHi: { value: new T.Vector3(1, 1, 1) } },
       depthTest: false, depthWrite: false,
       vertexShader: 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: /* glsl */`
-        uniform sampler2D tScene; uniform vec2 uRes; uniform float uT; uniform int uNZ; uniform vec4 uZ[4]; uniform int uN; uniform vec4 uH[${MAXH}]; uniform int uNR; uniform vec4 uR[${MAXR}]; uniform vec2 uRk[${MAXR}];
+        uniform sampler2D tScene; uniform vec4 uGA, uSunP; uniform vec3 uSunC; uniform vec3 uSh, uHi; uniform vec2 uRes; uniform float uT; uniform int uNZ; uniform vec4 uZ[4]; uniform int uN; uniform vec4 uH[${MAXH}]; uniform int uNR; uniform vec4 uR[${MAXR}]; uniform vec2 uRk[${MAXR}];
         varying vec2 vUv;
         void main(){
           vec2 asp = vec2(uRes.x / uRes.y, 1.0), uv = vUv;
@@ -63,17 +64,38 @@
             uv += vec2(n * 0.9, sin(q.y * 1.7 + n * 6.0) * 0.25) * 0.0075 * m / asp;
           }
           vec3 col = texture2D(tScene, clamp(uv, vec2(0.001), vec2(0.999))).rgb * dark + ring;
+          // P56 sun glare: a soft warm veil round the sun on the screen (uSunP = uv, strength), added before the tone map
+          vec2 sd = (vUv - uSunP.xy) * asp; float sr = dot(sd, sd);
+          col += uSunC * uSunP.w * (exp(-sr * 14.0) * 0.55 + exp(-sr * 2.4) * 0.25);
           gl_FragColor = vec4(col, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
+          // P56 grade (after the tone map, in display space): saturation (uGA.x), S-curve contrast (uGA.y), cool shadows / warm highlights (uSh, uHi),
+          // vignette (uGA.z), a 1/255 dither against banding in dark gradients (uGA.w)
+          vec3 g = gl_FragColor.rgb; float lum = dot(g, vec3(0.2126, 0.7152, 0.0722));
+          g = mix(vec3(lum), g, uGA.x);
+          g = mix(g, g * g * (3.0 - 2.0 * g), uGA.y);
+          g += uSh * (1.0 - smoothstep(0.0, 0.5, lum));
+          g *= mix(vec3(1.0), uHi, smoothstep(0.35, 0.95, lum));
+          vec2 vq = (vUv - 0.5) * vec2(1.0, 0.85);
+          g *= 1.0 - uGA.z * smoothstep(0.18, 0.62, dot(vq, vq) * 2.2);
+          g += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * uGA.w;
+          gl_FragColor = vec4(max(g, 0.0), 1.0);
         }`
     });
     SS.section.exempt(mat, 'post: full-screen lens quad');
+    LN.applyGrade();
     quadScene = new T.Scene(); quadCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const q = new T.Mesh(new T.PlaneGeometry(2, 2), mat); q.frustumCulled = false; quadScene.add(q);
   }
   LN.shock = function (x, y, z, R, k) { if (rings.length >= MAXR) rings.shift(); rings.push({ x, y, z, R: Math.max(2, R), k: k || 1, t: 0 }); };
   LN.active = () => rings.length > 0;
+  /* the grade of the frame (view.js applyLook): sat, con, vig, shadow tint [r, g, b], highlight tint [r, g, b]; init() is lazy */
+  let GR = { sat: 1, con: 0, vig: 0, sh: [0, 0, 0], hi: [1, 1, 1] };
+  let sunDir = null, sunCol = [1, 1, 1], sunK = 0;
+  LN.sun = function (dir, col, k) { sunDir = dir; sunCol = col; sunK = k; };
+  LN.grade = function (g) { GR = g; if (mat) LN.applyGrade(); };
+  LN.applyGrade = function () { mat.uniforms.uGA.value.set(GR.sat, GR.con, GR.vig, 1 / 255); mat.uniforms.uSh.value.set(GR.sh[0], GR.sh[1], GR.sh[2]); mat.uniforms.uHi.value.set(GR.hi[0], GR.hi[1], GR.hi[2]); };
   LN.clear = function () { rings.length = 0; };
   LN.tick = function (dt) { for (let i = rings.length - 1; i >= 0; i--) if ((rings[i].t += dt) > RING_T) rings.splice(i, 1); };
   LN.render = function (renderer, scene, camera, holes, haze) {
@@ -113,6 +135,12 @@
       const px = Math.hypot((v.x * 0.5 + 0.5 - cx) * size.x / size.y, v.y * 0.5 + 0.5 - cy);
       mat.uniforms.uZ.value[nz++].set(cx, cy, px, 0.35 + 0.65 * haze.d[i * 4 + 3]);
     }
+    if (sunDir && sunK > 0) {
+      v.copy(camera.position).add(sunDirV.set(sunDir[0], sunDir[1], sunDir[2]).multiplyScalar(200)); v.project(camera);
+      const vis = v.z < 1 ? 1 : 0, ex = Math.max(Math.abs(v.x), Math.abs(v.y));
+      mat.uniforms.uSunP.value.set(v.x * 0.5 + 0.5, v.y * 0.5 + 0.5, 0, vis * sunK * Math.max(0, 1 - Math.max(0, ex - 1.0) * 1.6));
+      mat.uniforms.uSunC.value.set(sunCol[0], sunCol[1], sunCol[2]);
+    } else mat.uniforms.uSunP.value.w = 0;
     mat.uniforms.uNZ.value = nz; mat.uniforms.uT.value += 1 / 60;
     mat.uniforms.uN.value = n; mat.uniforms.uRes.value.set(size.x, size.y);
     renderer.setRenderTarget(prev);

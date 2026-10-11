@@ -261,7 +261,7 @@
             if (texture(tVol, (vW / 0.5 + 0.5) / uVolSize).r > 0.0) discard;   // rock: the terrain cap
           }
           float dd = surf - vW.y;
-          vec3 col = mix(uShallow * 1.08, uDeep * 0.7, smoothstep(0.0, 2.6, dd));
+          vec3 col = mix(uShallow * 0.95, uDeep * 0.62, smoothstep(0.0, 4.2, dd));
           col = mix(col, mix(vec3(0.16, 0.15, 0.11), vec3(0.05, 0.06, 0.055), smoothstep(0.0, 1.2, dd)), inl);   // groundwater pool: murky
           // sun shafts along the refracted sun direction, drifting, fading with depth
           vec2 dW = vec2(uN.z, -uN.x); float u = dot(vW.xz, dW);

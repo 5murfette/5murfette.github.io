@@ -177,7 +177,7 @@
     uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze;
     // the landscape behind the slab (mode 1, ad = m beyond its back face): the old ghost haze while it fades
     // (uCtxSolid 0); drawn solid (CX1) it still recedes into the haze with the slice-view setting (P29j, uCtxHaze)
-    #define CTX_HAZE(ad) ((0.12 + 0.4 * smoothstep(0.0, 50.0, ad)) * (1.0 - uCtxSolid) + (0.3 + 0.38 * smoothstep(0.0, 40.0, ad)) * uCtxSolid * uCtxHaze)
+    #define CTX_HAZE(ad) ((0.12 + 0.4 * smoothstep(0.0, 50.0, ad)) * (1.0 - uCtxSolid) + (0.16 + 0.36 * smoothstep(0.0, 55.0, ad)) * uCtxSolid * uCtxHaze)
     uniform vec4 uMatP[12]; uniform vec3 uMatTint[12]; uniform vec3 uLatR; uniform vec4 uRelief[12]; uniform highp sampler3D tRel; uniform float uGlint[12];
     varying vec3 vW; varying vec3 vWN; varying float vDepth; varying vec4 vMA; varying vec4 vMB; varying vec4 vMC; varying vec4 vMD;
     varying vec3 vT; varying vec3 vTN;      // texture space: = world for terrain; where the rock came from for bodies
@@ -751,6 +751,12 @@
           if (tb > 0.002) col = mix(col, capCol(m2, pu, strata, dd, sf, heat, e2), tb); else e2 = vec3(0.0);
           vec3 cEmis = mix(e1, e2, tb);
           col *= mix(1.0, 0.68, smoothstep(1.0, 8.0, dd));                                // deeper = darker
+          if (!outL && !deepR) {                                                          // P56: contact shading along the cut's border (a baked AO: air within 0.5 / 1.2 m in the plane and below)
+            vec3 dw3 = vec3(dW.x, 0.0, dW.y);
+            float ao = (dens(vW + dw3 * 0.5) <= 0.0 ? 1.0 : 0.0) + (dens(vW - dw3 * 0.5) <= 0.0 ? 1.0 : 0.0) + (dens(vW - vec3(0.0, 0.5, 0.0)) <= 0.0 ? 1.0 : 0.0)
+                    + 0.6 * ((dens(vW + dw3 * 1.2) <= 0.0 ? 1.0 : 0.0) + (dens(vW - dw3 * 1.2) <= 0.0 ? 1.0 : 0.0) + (dens(vW + vec3(0.0, 1.2, 0.0)) <= 0.0 ? 1.0 : 0.0));
+            col *= 1.0 - 0.085 * ao;
+          }
           col *= mix(1.0, 0.42, smoothstep(0.0, 70.0, -vW.y));                           // P29a: the deep body fades darker
           col *= mix(1.0, 0.62, (1.0 - smoothstep(uSea - 1.0, uSea + 0.3, vW.y)));               // waterlogged base
           col = mix(col, vec3(0.05, 0.045, 0.04), sf.b * (1.0 - smoothstep(0.0, 0.35, dd)) * 0.8); // charred surface

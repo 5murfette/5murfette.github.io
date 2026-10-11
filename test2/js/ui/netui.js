@@ -9,7 +9,10 @@
   const NU = SS.netui = {};
   let box = null, hooked = false, curSettings = null;
   const css = `#netui{position:fixed;left:50%;top:8%;transform:translateX(-50%);width:min(720px,94vw);max-height:84vh;overflow:auto;z-index:40;
-    background:rgba(21,29,35,.96);border:1px solid rgba(236,226,200,.16);border-radius:16px;padding:16px 18px;font:500 14px var(--f-ui);color:#efe9da;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+    background:linear-gradient(180deg,rgba(40,30,22,.97),rgba(18,14,12,.98));border:1px solid rgba(236,226,200,.16);border-radius:20px;padding:18px 20px;font:500 15px var(--f-ui);color:#efe9da;
+    box-shadow:0 0 0 100vmax rgba(8,6,4,.62),0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,214,150,.1);animation:nucard .3s var(--ease,ease-out) both}
+    @keyframes nucard{from{opacity:0;transform:translateX(-50%) translateY(14px)}to{opacity:1;transform:translateX(-50%)}}
+    #netui :focus-visible{outline:2px solid #ffb02e;outline-offset:2px}#netui button:hover:not(:disabled){filter:brightness(1.1)}#netui button:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 #8a5200}
     #netui h2{margin:0 0 4px;font:400 22px var(--f-display);color:#ffb02e}#netui h3{margin:0 0 6px;font:400 14px var(--f-display);color:#ffb02e;letter-spacing:.04em}
     #netui .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}#netui .col{background:rgba(255,255,255,.04);border-radius:12px;padding:12px}
     #netui .code{font:400 42px var(--f-display);letter-spacing:.12em;color:#efe9da;text-align:center;margin:6px 0;user-select:all}

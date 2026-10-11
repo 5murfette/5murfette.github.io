@@ -9,7 +9,9 @@
   const C = SS.CFG, D = C.DENSITY;
   const MN = SS.menu = {};
   const KEY = 'burrowBrawl3d.settings';
-  let lastShow = null, root, panel, prog, bar, lbl, pct, cur, onStart, onResume, page = 'main', pv = null, pvTimer = 0, cv = {}, rowsEl = null;
+  let lastShow = null, root, panel, prog, bar, lbl, pct, cur, onStart, onResume, page = 'main', pv = null, pvTimer = 0, cv = {}, rowsEl = null, tabsEl = null;
+  /* the right column is a tab strip + one page: main (match and rules), field (battlefield), lab, opts (display and sound) */
+  const TABS = [['main', 'Match'], ['field', 'Battlefield'], ['lab', 'Lab'], ['opts', 'Options']];
 
   const BIOME_LOOK = {
     random: 'linear-gradient(135deg,#6b5b95,#3a7bd5 50%,#d76d77)',
@@ -149,12 +151,17 @@
 
   /* ---------- generic rows ---------- */
   function seg(opts, val, onpick) {
-    const w = el('div', 'seg');
+    const w = el('div', 'seg'); w.setAttribute('role', 'radiogroup');
     for (const [v, t] of opts) {
-      const b = el('button', 'sg' + (String(v) === String(val) ? ' on' : ''), t); b.type = 'button'; b.dataset.v = v;
-      b.onclick = () => { for (const x of w.children) x.classList.remove('on'); b.classList.add('on'); onpick(v); };
+      const on = String(v) === String(val), b = el('button', 'sg' + (on ? ' on' : ''), t); b.type = 'button'; b.dataset.v = v; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', on ? 'true' : 'false');
+      b.onclick = () => { for (const x of w.children) { x.classList.remove('on'); x.setAttribute('aria-checked', 'false'); } b.classList.add('on'); b.setAttribute('aria-checked', 'true'); onpick(v); };
       w.appendChild(b);
     }
+    w.addEventListener('keydown', e => {                                 // Left / Right move the choice inside a group (Tab moves between groups)
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0; if (!d) return;
+      const k = [...w.children], i = k.indexOf(document.activeElement); if (i < 0) return;
+      const n = k[Math.max(0, Math.min(k.length - 1, i + d))]; e.preventDefault(); n.focus(); n.click();
+    });
     return w;
   }
   function selectW(opts, val, onpick) {
@@ -209,7 +216,7 @@
     cv.top = el('canvas'); cv.top.width = 192; cv.top.height = 192; cv.side = el('canvas'); cv.side.width = 288; cv.side.height = 192;
     for (const [c, name] of [[cv.top, 'Top'], [cv.side, 'Side']]) {
       const f = el('button', 'mini'); f.type = 'button'; f.title = 'Battlefield settings'; f.append(c, el('span', 'mtag', name), el('span', 'mgo', 'EDIT ▸'));
-      f.onclick = () => { page = 'field'; buildRows(); }; minis.appendChild(f);
+      f.onclick = () => go('field'); minis.appendChild(f);
     }
     const sr = el('div', 'seedrow2', '<span>SEED</span>');
     cv.seed = el('input'); cv.seed.type = 'number'; cv.seed.min = 0; cv.seed.max = 99999; cv.seed.value = cur.seed;
@@ -236,21 +243,38 @@
     };
     draw(); host.appendChild(tbox); return draw;
   }
+  function go(p) { page = p; buildRows(); rowsEl.scrollTop = 0; syncTabs(); }
+  function syncTabs() {
+    if (!tabsEl) return;
+    for (const b of tabsEl.children) {
+      const on = b.dataset.page === page; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1;
+      if (b.dataset.page === 'lab') { const n = labBits(), s = 'Lab' + (n ? ` <i>${n}</i>` : ''); if (b._h !== s) { b._h = s; b.innerHTML = s; } }
+    }
+  }
+  function buildTabs() {
+    tabsEl = el('div', 'mtabs'); tabsEl.setAttribute('role', 'tablist');
+    for (const [id, t] of TABS) {
+      const b = el('button', 'mtab', t); b.type = 'button'; b.dataset.page = id; b.setAttribute('role', 'tab');
+      b.onclick = () => go(id); tabsEl.appendChild(b);
+    }
+    tabsEl.addEventListener('keydown', e => {
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0; if (!d) return;
+      const i = TABS.findIndex(x => x[0] === page), n = TABS[(i + d + TABS.length) % TABS.length][0]; e.preventDefault(); go(n); tabsEl.children[TABS.findIndex(x => x[0] === n)].focus();
+    });
+    return tabsEl;
+  }
   function buildRows() {
     rowsEl.innerHTML = '';
+    rowsEl.classList.remove('enter'); void rowsEl.offsetWidth; rowsEl.classList.add('enter');
     if (page === 'field') return buildField();
     if (page === 'lab') return buildLab();
-    sec(rowsEl, 'Match');
+    if (page === 'opts') return buildOpts();
     let redraw = () => {};
     for (const r of MATCH) { rowOf(r, rowsEl, r.teams ? () => redraw() : null); if (r.teams) redraw = teamsBlock(rowsEl); }
     sec(rowsEl, 'Rules');
     for (const r of RULES) rowOf(r, rowsEl);
-    const bf = el('button', 'bfbtn', '<span>BATTLEFIELD</span><em>Biome, terrain, trees, rocks, props, bunkers ...</em><b>▸</b>'); bf.type = 'button';
-    bf.onclick = () => { page = 'field'; buildRows(); };
-    sec(rowsEl, 'Battlefield'); rowsEl.appendChild(bf);
-    const lb = el('button', 'bfbtn', `<span>LAB</span><em>Experimental mechanics: ${labBits() ? labBits() + ' active' : 'all off'}</em><b>▸</b>`); lb.type = 'button';
-    lb.onclick = () => { page = 'lab'; buildRows(); };
-    sec(rowsEl, 'Lab'); rowsEl.appendChild(lb);
+  }
+  function buildOpts() {
     sec(rowsEl, 'Display');
     for (const r of DISPLAY) rowOf(r, rowsEl, r.k === 'ghostAuto' ? () => { if (SS.view && SS.view.setGhostAuto) SS.view.setGhostAuto(cur.ghostAuto !== false); } : r.k === 'idle' ? () => { if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false; if (SS.idleView) SS.idleView.enabled = cur.idle !== false; } : null);
     sec(rowsEl, 'Sound');
@@ -266,11 +290,9 @@
   }
   /* P42: the Lab screen: one card per experimental mechanic (toggle, description, status). Saved at once (applies to the next match, local or hosted) */
   function buildLab() {
-    const head = el('div', 'fhead'), back = el('button', 'back', '◂ BACK'); back.type = 'button'; back.onclick = () => { page = 'main'; buildRows(); };
-    head.append(back, el('span', '', 'LAB')); rowsEl.appendChild(head);
     rowsEl.appendChild(el('div', 'labintro', 'New game mechanics to try out. Everything here is off by default, applies to the next match (also an online match you host) and shows as a badge in the game.'));
     const cnt = el('div', 'labcount');
-    const upd = () => { cnt.textContent = labBits() ? labBits() + ' of ' + LAB.length + ' active' : 'all off'; };
+    const upd = () => { syncTabs(); cnt.textContent = labBits() ? labBits() + ' of ' + LAB.length + ' active' : 'all off'; };
     for (const r of LAB) {
       if (r.sec) sec(rowsEl, r.sec);
       const bit = C.LAB.FLAG[r.id], card = el('div', 'labcard');
@@ -282,13 +304,11 @@
     }
     const bar = el('div', 'labbar'), all = el('button', 'back', 'Enable all'), none = el('button', 'back', 'Disable all');
     all.type = none.type = 'button';
-    const set = v => { cur.labFlags = v; MN.save(cur); buildRows(); };
+    const set = v => { cur.labFlags = v; MN.save(cur); buildRows(); syncTabs(); };
     all.onclick = () => set(C.LAB.ALL); none.onclick = () => set(0);
     bar.append(cnt, all, none); rowsEl.appendChild(bar); upd();
   }
   function buildField() {
-    const head = el('div', 'fhead'), back = el('button', 'back', '◂ BACK'); back.type = 'button'; back.onclick = () => { page = 'main'; buildRows(); };
-    head.append(back, el('span', '', 'BATTLEFIELD')); rowsEl.appendChild(head);
     sec(rowsEl, 'Biome');
     const cards = el('div', 'biomes');
     for (const b of [{ id: 'random', name: 'Surprise me' }].concat(C.BIOMES)) {
@@ -325,7 +345,7 @@
     addEventListener('keydown', e => {
       if (e.code !== 'Escape' || e.repeat || !onResume || !MN.visible() || panel.style.display === 'none') return;
       e.preventDefault(); e.stopImmediatePropagation();                 // (R4: the game's own Escape handler must not reopen the menu in the same event)
-      if (page === 'field' || page === 'lab') { page = 'main'; buildRows(); return; }
+      if (page !== 'main') { go('main'); return; }
       MN.hide(); onResume();
     });
     bar = prog.querySelector('i'); lbl = prog.querySelector('span'); pct = prog.querySelector('b');
@@ -339,20 +359,23 @@
     onStart = start; onResume = opts.onResume;
     root.classList.remove('gone'); root.classList.add('menu'); root.classList.toggle('ingame', !!opts.inGame); prog.style.display = 'none'; panel.style.display = '';
     panel.innerHTML = '';
-    const head = el('div', 'mhead', '<img class="mlogo" src="assets/logo.webp" alt="Burrow Brawl"><div class="sub">Turn-based worm warfare on a rotatable cross-section of a fully destructible 3D world</div>');
+    const head = el('div', 'mhead', '<img class="mlogo" src="assets/logo.webp" alt="Burrow Brawl"><div class="sub">Turn-based worm warfare on a rotatable cross-section of a fully destructible 3D world</div>' + (opts.inGame ? '<div class="mpause">Paused</div>' : ''));
     const body = el('div', 'mbody'), left = el('div', 'mleft'), right = el('div', 'mright');
-    buildPreview(left); rowsEl = el('div', 'rows'); right.appendChild(rowsEl); buildRows();
+    buildPreview(left); rowsEl = el('div', 'rows'); right.append(buildTabs(), rowsEl); buildRows(); syncTabs();
     body.append(left, right);
     const btns = el('div', 'mbtns');
     btns.appendChild(el('div', 'hint', 'Generation runs on this device (10-20 s on phones)'));
-    if (onResume) { const r = el('button', 'ghost', 'Resume'); r.type = 'button'; r.onclick = () => { MN.hide(); onResume(); }; btns.appendChild(r); }
+    // in the pause menu Resume is the primary button (focused), "New battle" the quieter one; at the start "Start battle" is
+    const primary = !!onResume;
     if (MN.onOnline) { const on = el('button', 'ghost', 'Play online'); on.type = 'button'; on.onclick = () => { MN.save(cur); MN.onOnline(); }; btns.appendChild(on); }
-    const go = el('button', 'go', opts.inGame ? 'New battle' : 'Start battle'); go.type = 'button';
+    const go = el('button', primary ? 'ghost' : 'go', opts.inGame ? 'New battle' : 'Start battle'); go.type = 'button';
     go.onclick = () => { MN.save(cur); const s = Object.assign({}, cur); s.biome = MN.resolve_biome(cur); onStart(s); };
-    btns.appendChild(go);
+    let rs = null;
+    if (onResume) { rs = el('button', 'go', 'Resume'); rs.type = 'button'; rs.onclick = () => { MN.hide(); onResume(); }; }
+    btns.append(go); if (rs) btns.appendChild(rs);
     panel.append(head, body, btns);
     refreshPreview(true);
-    go.focus();
+    (rs || go).focus();
   };
   MN.visible = () => root && !root.classList.contains('gone');
   MN.state = () => cur;                                     // (tests / tools)

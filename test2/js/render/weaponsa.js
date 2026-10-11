@@ -425,8 +425,7 @@
       case 'mgfire': mg.t = nowT; mg.pos = { x: e.x, y: e.y, z: e.z }; mg.dir = { x: e.dx, y: e.dy, z: e.dz }; mg.n += e.n; mg.worm = e.worm; break;
       case 'mgimpact': {
         if (mg.pos && trT.length < TRN && Math.random() < 0.6) trT.push({ t: nowT, p: [mg.pos.x + mg.dir.x * 0.8, mg.pos.y + mg.dir.y * 0.8, mg.pos.z + mg.dir.z * 0.8, e.x, e.y, e.z] });
-        if (Math.random() < 0.5) FX.spark(e.x, e.y, e.z);
-        if (Math.random() < 0.35) FX.dust(e.x + e.nx * 0.1, e.y + e.ny * 0.1, e.z + e.nz * 0.1, 2, 0.35, 0xb8a080);
+        if (Math.random() < 0.6) FX.impact(e.x, e.y, e.z, e.nx, e.ny, e.nz, e.mat || null, 0.7);
         break;
       }
       case 'mortarburst': FX.spawn(K.SMOKE, e.x, e.y, e.z, { life: 1.6, s0: 0.6, s1: 2.6, a0: 0.35, c0: [0.3, 0.28, 0.27], c1: [0.55, 0.55, 0.55], drag: 1 }); for (let i = 0; i < 8; i++) FX.spawn(K.SPARK, e.x, e.y, e.z, { vx: rnd(-4, 4), vy: rnd(-1, 4), vz: rnd(-4, 4), life: rnd(0.3, 0.6), s0: 0.1, s1: 0.04, c0: [2400, 1200, 0], grav: 6 }); break;

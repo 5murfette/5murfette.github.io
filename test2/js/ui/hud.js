@@ -51,10 +51,37 @@
     hugged: ['Mmmph! Get it off!', 'MMPH!!', 'Hmmf! Hmmf!'],                                                 // P47: the face hugger
     sick: ['I do not feel so good…', 'Something is moving in my chest', 'Is it hot in here?', 'My tummy hurts…', 'Whoa… dizzy…']
   };
+  /* the floating things over the worms (damage numbers, pickups, speech bubbles): one array, no DOM query per frame */
+  const pops = []; let popN = 0;
+  function dropPop(i) { pops[i].remove(); pops.splice(i, 1); }
+  function addPop(el, w, t) { el._w = w; el._t = t; labels.appendChild(el); pops.push(el); return el; }
   function say(w, kind, arg) {
-    for (const o of labels.querySelectorAll('.bubble')) if (o._w === w) o.remove();      // one bubble per worm
+    for (let i = pops.length - 1; i >= 0; i--) if (pops[i]._bub && pops[i]._w === w) dropPop(i);      // one bubble per worm
     const L = SAY[kind], el = document.createElement('div'); el.className = 'pop bubble';
-    el.textContent = L[Math.floor(Math.random() * L.length)].replace('{w}', arg || ''); labels.appendChild(el); el._w = w; el._t = curS ? curS.time : 0; el._bub = 1;
+    el.textContent = L[Math.floor(Math.random() * L.length)].replace('{w}', arg || ''); el._bub = 1; addPop(el, w, curS ? curS.time : 0);
+  }
+  /* damage number: the team colour of the hurt worm, bigger for hard hits (>= 30) and crits (>= 60), small for burning / poison ticks;
+   * a damage-over-time tick is skipped while the previous one of that worm is still fresh; neighbours are spread sideways */
+  function damagePop(S, e) {
+    const amt = Math.round(e.amount); if (!(amt > 0)) return;
+    if (e.dot) for (let i = pops.length - 1; i >= 0; i--) if (pops[i]._dot && pops[i]._w === e.worm && S.time - pops[i]._t < 0.5) return;
+    const el = document.createElement('div'); el.className = 'pop' + (e.dot ? ' dot' : amt >= 60 ? ' crit' : amt >= 30 ? ' big' : '');
+    el.innerHTML = '<span class="pn">-' + amt + '</span>'; el.style.color = css(C.TEAMS[e.worm.team].rgb);
+    el._dx = ((popN++ % 3) - 1) * 24; el._dot = !!e.dot; addPop(el, e.worm, S.time);
+  }
+  function gainPop(S, e) {
+    const el = document.createElement('div'); el.className = 'pop gain';
+    el.innerHTML = '<span class="pn">' + esc(e.kind === 'health' ? '+' + e.amount : e.kind === 'tool' ? ((C.SKILL && C.SKILL.NAMES && C.SKILL.NAMES[e.tool]) || 'Tool') : C.ARSENAL[e.weapon].name) + '</span>';
+    el.style.color = e.kind === 'health' ? '#79d98b' : e.kind === 'tool' ? '#9fe8ff' : '#ffb02e'; el._dx = 0; addPop(el, e.worm, S.time);
+  }
+  /* kill feed (top right under the maps): who went down and how; entries fade by themselves (CSS) and are removed when the animation ends */
+  const KILL_VERB = ['was eliminated', 'was blown up', 'was shot', 'was crushed', 'burned to death', 'fell into the lava', 'succumbed to poison', 'drowned', 'was electrocuted', 'fell to their death', 'was eaten by the alien', 'was dissolved by acid', 'was shredded'];
+  let feedEl = null;
+  function killFeed(S, e) {
+    if (!feedEl) { feedEl = $('feed'); feedEl.addEventListener('animationend', ev => { if (ev.animationName === 'kfout' && ev.target.parentNode === feedEl) ev.target.remove(); }); }
+    const el = document.createElement('div'); el.className = 'kf'; el.style.setProperty('--team', css(C.TEAMS[e.worm.team].rgb));
+    el.innerHTML = '<i>☠</i><b>' + esc(e.worm.name) + '</b><span>' + (KILL_VERB[e.cause | 0] || KILL_VERB[0]) + '</span>';
+    feedEl.appendChild(el); while (feedEl.children.length > 3) feedEl.removeChild(feedEl.firstChild);
   }
   let curS = null;
   function banner(title, sub, color) {
@@ -80,25 +107,20 @@
     if (e.type === 'hugger_detach' && e.worm && !e.worm.dead) { say(e.worm, 'sick'); banner('INFECTED', `${e.worm.name} loses ${SS.alien.K.PARA_HP} HP every ${SS.alien.K.PARA_T} s`, '#b6ff4a'); }
     if (e.type === 'chest_burst' && e.wormId != null) banner('Something bursts out!', e.worm ? e.worm.name : '', '#b6ff4a');
     if (e.type === 'reset') U.clear();
-    if (e.type === 'hurt') {
-      const el = document.createElement('div'); el.className = 'pop'; el.textContent = '-' + e.amount; el.style.color = css(C.TEAMS[e.worm.team].rgb);
-      labels.appendChild(el); el._w = e.worm; el._t = S.time;
-    }
+    if (e.type === 'hurt' && e.worm) damagePop(S, e);
+    if (e.type === 'kill' && e.worm) killFeed(S, e);
     if (e.type === 'turn') banner(`${SS.sim.team_name(S, e.worm.team)} · ${e.worm.name}`, SS.game && SS.game.is_cpu(S, e.worm.team) ? 'CPU' : 'is up', css(C.TEAMS[e.worm.team].rgb));
     if (e.type === 'banner') banner(e.title, e.sub, 'var(--accent)');
     if (e.type === 'labbank') banner('Bank shot x' + e.k.toFixed(1), e.bounces + (e.bounces > 1 ? ' ricochets' : ' ricochet'), 'var(--accent)');
-    if (e.type === 'pickup' && e.worm) {
-      const el = document.createElement('div'); el.className = 'pop'; el.textContent = e.kind === 'health' ? '+' + e.amount : e.kind === 'tool' ? ((C.SKILL && C.SKILL.NAMES && C.SKILL.NAMES[e.tool]) || 'Tool') : C.ARSENAL[e.weapon].name; el.style.color = e.kind === 'health' ? '#79d98b' : e.kind === 'tool' ? '#9fe8ff' : '#ffb02e';
-      labels.appendChild(el); el._w = e.worm; el._t = S.time;
-    }
-    if (e.type === 'reset') { overShown = null; for (const k in gridBtn) gridBtn[k].s = ''; }
+    if (e.type === 'pickup' && e.worm) gainPop(S, e);
+    if (e.type === 'reset') { overShown = null; teamN = -1; if (feedEl) feedEl.innerHTML = ''; for (const k in gridBtn) gridBtn[k].s = ''; }
   };
 
   /* drop every worm label, damage pop and speech bubble (they hold worm objects: a replay restore / a new game
    * replaces those, the old ones would stay frozen on screen next to the new ones) */
   U.clear = function () {
     for (const el of wl.values()) el.remove(); wl.clear();
-    for (const el of labels.querySelectorAll('.pop, .bubble')) el.remove();
+    while (pops.length) dropPop(pops.length - 1);
   };
   function label(w) {
     let el = wl.get(w);
@@ -226,21 +248,21 @@
       const sp = project({ x: w.pos.x, y: w.pos.y + 0.85, z: w.pos.z });
       el.style.display = show && sp.front ? 'block' : 'none';
       if (!show) continue;
-      setText(el.children[0], (w === a ? '▸ ' : '') + w.name);
+      setText(el.children[0], w.name);
       infoLabel(S, w, el.children[4]);
       setText(el.children[1], inSec ? '' : ` ${Math.abs(P.to_plane(S, w.pos).t).toFixed(1)} m off`);
       el.children[2].firstChild.style.width = Math.max(0, Math.min(100, 100 * w.hp / (w.hp0 || 100))) + '%';
       setText(el.children[3], String(Math.max(0, Math.round(w.hp))));                                   // PoC: the HP number
       el.style.opacity = inSec ? 1 : insp;
       el.style.transform = `translate(${sp.x}px,${sp.y}px) translate(-50%,-100%)`;
-      el.classList.toggle('ghost', !inSec); el.classList.toggle('active', w === a);
+      el.classList.toggle('ghost', !inSec); el.classList.toggle('active', w === a); el.classList.toggle('low', w.hp > 0 && w.hp <= 0.3 * (w.hp0 || 100));
     }
-    for (const el of labels.querySelectorAll('.pop')) {
-      const age = S.time - el._t;
-      if (age > (el._bub ? 1.9 : 1.6) || age < 0) { el.remove(); continue; }
+    for (let i = pops.length - 1; i >= 0; i--) {
+      const el = pops[i], age = S.time - el._t;
+      if (age > (el._bub ? 1.9 : 1.6) || age < 0) { dropPop(i); continue; }
       if (el._bub) { const bp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.25, z: el._w.pos.z }); el.style.transform = `translate(${bp.x}px,${bp.y}px) translate(-50%,-100%)`; el.style.opacity = Math.min(1, (1.9 - age) * 3); continue; }
       const sp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.5 + age * 0.8, z: el._w.pos.z });
-      el.style.transform = `translate(${sp.x}px,${sp.y}px) translate(-50%,-100%) scale(${1 + Math.max(0, 0.3 - age)})`; el.style.opacity = 1 - age / 1.6;
+      el.style.transform = `translate(${sp.x + el._dx}px,${sp.y}px) translate(-50%,-100%)`; el.style.opacity = age < 1 ? 1 : Math.max(0, 1 - (age - 1) / 0.6);
     }
     const g = S.proj.find(p => p.type === 'grenade' || p.type === 'gas');
     if (g) {
@@ -298,11 +320,12 @@
   function drawTop(S, a, team, tc) {
     setHTML('tbTurn', `<div class="lbl">Turn</div><div class="tn" style="--team:${tc}">${esc(team.name)}</div><div class="wn">${esc(a.name)}${SS.game && SS.game.is_cpu(S, a.team) ? ' · CPU' : SS.net && SS.net.active ? (a.team === SS.net.team ? ' · you' : ' · friend') : ''}</div>`);
     const retreat = S.retreatT > 0, place = S.phase === 'place', t = place ? S.placeT : retreat ? S.retreatT : S.turnT, lim = S.settings.turnTime > 0;
-    setHTML('tbTime', `<div class="lbl">${place ? 'Deploy' : retreat ? 'Retreat' : S.sudden ? 'Sudden death' : 'Time'}</div><b class="${retreat || ((lim || place) && t < 10) ? 'low' : ''}">${place || retreat || (lim && S.phase === 'play') ? Math.max(0, Math.ceil(t)) : S.phase === 'play' ? '∞' : '–'}</b>`);
+    const tlow = retreat || ((lim || place) && t < 10), tfrac = lim && S.phase === 'play' && !retreat && !place ? Math.max(0, Math.min(1, Math.ceil(t) / S.settings.turnTime)) : 0;
+    setHTML('tbTime', `<div class="lbl">${place ? 'Deploy' : retreat ? 'Retreat' : S.sudden ? 'Sudden death' : 'Time'}</div><b class="${tlow ? 'low' : ''}">${place || retreat || (lim && S.phase === 'play') ? Math.max(0, Math.ceil(t)) : S.phase === 'play' ? '∞' : '–'}</b>${tfrac > 0 ? `<i class="tbar${tlow ? ' low' : ''}" style="width:${(tfrac * 100).toFixed(1)}%"></i>` : ''}`);
     const w = S.wind, d = P.dir(S); let along = 0, sp = 0;
     if (w && !SS.world.under) { along = w.mean.x * d.x + w.mean.z * d.z; sp = Math.hypot(w.mean.x, w.mean.z); }
     const f = Math.min(1, Math.abs(along) / 12) * 50;
-    setHTML('tbWind', `<div class="lbl">Wind</div><div class="wbar"><i style="left:${along < 0 ? 50 - f : 50}%;width:${f.toFixed(1)}%"></i></div><div class="wt">${Math.abs(along) < 0.3 ? 'calm' : (along < 0 ? '◀ ' : '') + Math.abs(along).toFixed(1) + ' m/s' + (along > 0 ? ' ▶' : '')}</div>`);
+    setHTML('tbWind', `<div class="lbl">Wind</div><div class="wbar"><i class="${along < 0 ? 'l' : 'r'}" style="left:${along < 0 ? 50 - f : 50}%;width:${f.toFixed(1)}%"></i></div><div class="wt">${Math.abs(along) < 0.3 ? 'calm' : (along < 0 ? '◀ ' : '') + Math.abs(along).toFixed(1) + ' m/s' + (along > 0 ? ' ▶' : '')}</div>`);
     const we = S.weather, name = we ? ((C.WEATHER_NAME && C.WEATHER_NAME[we.kind]) || we.kind) : 'Caves';
     setHTML('tbWx', `<div class="lbl">Weather</div><div class="wxn">${SS.world.under ? 'Underground' : (WX_ICON[we && we.kind] || '') + ' ' + name}</div><div class="wxs">${SS.world.under ? 'no wind' : (SS.ice && SS.ice.air_temp ? Math.round(SS.ice.air_temp(S)) + ' °C · ' : '') + sp.toFixed(1) + ' m/s full wind'}${SS.view.timeOfDay && !SS.world.under && SS.view.timeOfDay(S) !== 'day' ? ' · ' + SS.view.timeOfDay(S) : ''}</div>`);
   }
@@ -314,22 +337,49 @@
     const el = $('weapons'); el.innerHTML = '';
     for (const k of C.ARSENAL_ORDER) {
       const d = C.ARSENAL[k], b = document.createElement('button');
-      b.className = 'wpn'; b.type = 'button'; b.title = `${d.name} (${d.key}): ${d.info}`;
+      b.className = 'wpn'; b.type = 'button'; b.dataset.k = k; b.setAttribute('aria-label', `${d.name} (${d.key}): ${d.info}`);
       const ico = (vector || !(SS.iconsArt && SS.iconsArt[k])) && SS.icons[k] ? `<svg viewBox="0 0 24 24" class="vi">${SS.icons[k]}</svg>` : `<img src="assets/icons/icon-${k}.webp" alt="">`;
       b.innerHTML = `${ico}<span class="k">${d.key}</span><span class="a"></span><span class="n">${d.name.replace('Baseball ', '').replace(' Rifle', '').replace('Pocket ', '').replace('Fuse ', '').replace('Flamethrower', 'Flamer')}</span>`;
       b.onclick = () => { if (U.onPick) U.onPick(k); b.blur(); };
       el.appendChild(b); gridBtn[k] = { b, a: b.querySelector('.a'), s: '' };
     }
     gridBuilt = S ? S.settings.art || 'painted' : 'painted';
+    if (!el._tip) {                                                       // (once: the grid element stays, its buttons are rebuilt)
+      el._tip = 1;
+      el.addEventListener('pointerover', e => { const b = e.target.closest ? e.target.closest('.wpn') : null; if (b) showTip(b.dataset.k, b); });
+      el.addEventListener('pointerleave', hideTip);
+      el.addEventListener('focusin', e => { const b = e.target.closest ? e.target.closest('.wpn') : null; if (b) showTip(b.dataset.k, b); });
+      el.addEventListener('focusout', hideTip);
+    }
   }
+  /* weapon tooltip: name, key, the weapon's info and the numbers that matter (ammo, blast, fuse, how it is used). Event driven: built on hover only */
+  const KIND_TXT = { charge: 'Hold to charge', target: 'Click a target', drop: 'Dropped at your feet', stream: 'Hold to spray', melee: 'Melee', hitscan: 'Instant shot', utility: 'Utility', rope: 'Swing', zip: 'Zipline', dig: 'Digs', chute: 'Glide', skip: 'Ends the turn' };
+  let tipEl = null, tipK = null, lastS = null, lastA = null;
+  function showTip(k, btn) {
+    const S = lastS, a = lastA; if (!k || !S || !a) return;
+    if (!tipEl) tipEl = $('wtip');
+    const d = C.ARSENAL[k], pd = C.PROJ[k] || {}, n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, g = gridBtn[k];
+    const img = g && g.b.querySelector('img') ? `<img src="${g.b.querySelector('img').getAttribute('src')}" alt="">` : '';
+    let m = `<span class="${n > 0 ? 'am' : 'no'}">${n === Infinity ? 'Unlimited' : n > 0 ? 'Ammo ×' + n : 'Out of ammo'}</span>`;
+    if (KIND_TXT[d.kind]) m += `<span>${KIND_TXT[d.kind]}</span>`;
+    if (pd.W) m += `<span>${pd.W.toFixed(2)} kg TNT-eq</span>`;
+    if (pd.fuse || pd.fuseSet) m += `<span>Fuse ${SS.weaponsA && SS.weaponsA.fuse_of ? SS.weaponsA.fuse_of(S, k) : pd.fuseSet ? S.fuse : pd.fuse} s</span>`;
+    tipEl.innerHTML = `<div class="th">${img}<b>${esc(d.name)}</b><kbd>${esc(d.key)}</kbd></div><div class="ti">${esc(d.info || '')}</div><div class="tm">${m}</div>`;
+    const r = btn.getBoundingClientRect(), gr = $('weapons').getBoundingClientRect(), w = tipEl.offsetWidth, hh = tipEl.offsetHeight;
+    tipEl.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px'; tipEl.style.top = Math.max(8, gr.top - hh - 10) + 'px';
+    tipEl.classList.add('on'); tipK = k;
+  }
+  function hideTip() { if (tipEl) tipEl.classList.remove('on'); tipK = null; }
   function drawWeapons(S, a) {
     if (gridBuilt !== (S.settings.art || 'painted')) buildGrid(S);
+    lastS = S; lastA = a;
     const mine = !(SS.game && SS.game.is_cpu(S, a.team)) && !(SS.net && SS.net.active && a.team !== SS.net.team);
     for (const k of C.ARSENAL_ORDER) {
       const g = gridBtn[k], n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, usable = n > 0 && !(SS.weapons.needs_storm(k) && !(S.weather && S.weather.storm));
       const key = (S.weapon === k ? 's' : '') + (usable ? '' : 'e') + n;
       if (g.s === key) continue;
       g.s = key; g.b.classList.toggle('sel', S.weapon === k); g.b.classList.toggle('empty', !usable); g.a.textContent = n === Infinity ? '' : '×' + n;
+      if (tipK === k) showTip(k, g.b);
     }
     const d = C.ARSENAL[S.weapon] || {}, pd = C.PROJ[S.weapon] || {};
     let hint = '';
@@ -375,11 +425,37 @@
     if (!show) return;
     const t = S.over, names = S.worms.filter(w => !w.dead).map(w => w.name).join(', ');
     el.style.setProperty('--team', t >= 0 ? css(SS.sim.team_rgb(S, t)) : 'var(--accent)');
+    el.classList.toggle('draw', t < 0);
     el.querySelector('h2').textContent = t >= 0 ? `${SS.sim.team_name(S, t)} win` : 'Nobody wins';
     el.querySelector('p').textContent = t >= 0 ? `${names} ${names.indexOf(',') > 0 ? 'are' : 'is'} the last worm${names.indexOf(',') > 0 ? 's' : ''} standing after ${S.round} round${S.round > 1 ? 's' : ''}.` : 'Everyone went down together.';
+    el.querySelector('.stand').innerHTML = (S.teams || []).map((tm, i) => {
+      const alive = S.worms.filter(w => w.team === i && !w.dead), hp = alive.reduce((s, w) => s + Math.max(0, Math.round(w.hp)), 0);
+      return `<div class="st${i === t ? ' win' : ''}" style="--team:${css(tm.rgb)}"><span>${esc(SS.sim.team_name(S, i))}</span><em>${alive.length} left · ${hp} HP</em></div>`;
+    }).join('');
     const guest = SS.net && SS.net.active && !SS.net.isHost;
     $('bRematch').style.display = guest ? 'none' : ''; $('bSetup').style.display = guest ? 'none' : '';
-    if (guest) el.querySelector('p').textContent += ' The host starts the next map.';
+    if (guest) el.querySelector('p').textContent += ' The host starts the next map.'; else $('bRematch').focus();
+  }
+  /* the team panel: persistent rows (the bars animate); only the parts that changed are written */
+  let teamEls = [], teamN = -1;
+  function drawTeams(S, a, tot) {
+    const T = S.teams || [], root = $('teams');
+    if (teamN !== T.length) {
+      root.innerHTML = ''; teamEls = []; teamN = T.length;
+      for (let i = 0; i < T.length; i++) {
+        const row = document.createElement('div'); row.className = 'tm'; row.style.setProperty('--team', css(T[i].rgb));
+        row.innerHTML = '<span></span><div class="bar"><i></i></div><b></b>'; root.appendChild(row);
+        teamEls.push({ row, nm: row.children[0], bar: row.children[1].firstChild, hp: row.children[2], n: '', w: '', v: -1, c: '' });
+      }
+    }
+    for (let i = 0; i < T.length; i++) {
+      const t = T[i], g = teamEls[i], max = S.worms.filter(w => w.team === i).reduce((s, w) => s + (w.hp0 || 100), 0) || 1;
+      const n = esc(t.name) + (t.ctl === 'cpu' ? ' · CPU' : '') + infTeam(S, i) + labTeam(S, i), w = (100 * tot[i] / max).toFixed(1) + '%', c = 'tm' + (a.team === i ? ' cur' : '') + (tot[i] <= 0 ? ' out' : '');
+      if (g.n !== n) { g.n = n; g.nm.innerHTML = n; }
+      if (g.w !== w) { g.w = w; g.bar.style.width = w; }
+      if (g.v !== tot[i]) { g.v = tot[i]; g.hp.textContent = tot[i]; }
+      if (g.c !== c) { g.c = c; g.row.className = c; }
+    }
   }
   function drawHUD(S) {
     const a = S.active;
@@ -392,7 +468,7 @@
     const vmax = wp.vmax || 28, pd = C.PROJ[S.weapon] || {};
     setHTML('hud', `
       <div class="power ${S.charging ? 'on' : ''}"><i style="width:${(S.power * 100).toFixed(0)}%"></i><span>${S.charging ? (vmax * Math.max(C.WORM_DYN.MIN_POWER, S.power)).toFixed(1) + ' m/s' : pd.W ? pd.W.toFixed(2) + ' kg TNT-eq' + (pd.mortar ? ' · burst ' + S.wa.mortarH + ' m (+ / −)' : pd.fuse ? ' · ' + (SS.weaponsA ? SS.weaponsA.fuse_of(S, S.weapon) : pd.fuseSet ? S.fuse : pd.fuse) + ' s fuse' + (pd.fuseSet ? ' (+ / −)' : '') : ' · contact fuse') : wp.kind === 'rope' ? 'reach ' + C.ROPE_MAX + ' m' : wp.name}</span></div>
-      <div class="row"><div class="compass"><div class="needle" style="transform:rotate(${brg}deg)"></div><span>${brg.toFixed(0).padStart(3, '0')}°</span></div>
+      <div class="hrow"><div class="compass"><div class="needle" style="transform:rotate(${brg}deg)"></div><span>${brg.toFixed(0).padStart(3, '0')}°</span></div>
         <div class="facts">
           <div>Section ${S.phase !== 'play' ? '<span class="lock">locked · attack resolving</span>' : SS.sim.heading_window && SS.sim.heading_window(S) ? '<span class="ok">turns only toward the play area or a worm</span>' : '<span class="ok">free to rotate</span>'}</div>
           <div>Aim ${Math.round(S.aim * 180 / Math.PI)}° · alt ${a.pos.y.toFixed(1)} m · s ${ap.s.toFixed(1)} m</div>
@@ -405,7 +481,7 @@
       `);
     const tot = (S.teams || []).map((t, i) => teamHP(S, i));
     // P1: N teams; bars relative to the team's starting total (worms x starting HP)
-    setHTML('teams', (S.teams || []).map((t, i) => { const max = S.worms.filter(w => w.team === i).reduce((s, w) => s + (w.hp0 || 100), 0) || 1; return `<div class="tm${a.team === i ? ' cur' : ''}" style="--team:${css(t.rgb)}"><span>${esc(t.name)}${t.ctl === 'cpu' ? ' · CPU' : ''}${infTeam(S, i)}${labTeam(S, i)}</span><div class="bar"><i style="width:${(100 * tot[i] / max).toFixed(1)}%"></i></div><b>${tot[i]}</b></div>`; }).join(''));
+    drawTeams(S, a, tot);
     // the log fades in 0.05 steps (so the string, and the DOM, change a few times per line instead of every frame)
     setHTML('log', S.log.map(l => `<div style="color:${css(l.rgb)};opacity:${Math.max(0.35, Math.round((1 - (S.time - l.t) / 14) * 20) / 20)}">${esc(l.text)}</div>`).join(''));
   }

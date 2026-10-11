@@ -8,189 +8,8 @@
 <title>Burrow Brawl — rotatable cross-section artillery</title>
 <link rel="icon" type="image/webp" href="assets/logo.webp">
 <link rel="stylesheet" href="vendor/fonts.css">
+<link rel="stylesheet" href="assets/hud.css">
 <link rel="stylesheet" href="assets/menu.css">
-<style>
-  /* P9: the PoC (Burrow Brawl) look: Bungee + Barlow Semi Condensed (vendor/fonts.css, OFL), ink / amber palette */
-  :root{--glass:rgba(13,19,24,.78);--edge:rgba(236,226,200,.16);--ink:#efe9da;--dim:#9ba7a9;--gold:#ffb02e;--accent:#ffb02e;--danger:#ff5b4f;--good:#79d98b;
-    --f-display:'Bungee','Impact','Arial Black',sans-serif;--f-ui:'Barlow Semi Condensed','Arial Narrow','Helvetica Neue',Arial,sans-serif}
-  html,body{margin:0;height:100%;overflow:hidden;background:#0d1216;font:500 14px/1.3 var(--f-ui);color:var(--ink)}
-  #view{position:fixed;inset:0;width:100%;height:100%;display:block}
-  #vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 45%,transparent 55%,rgba(30,12,0,.38) 100%)}
-  #labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
-  .wlabel,.pop,.fuse{position:absolute;left:0;top:0;white-space:nowrap;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 6px rgba(0,0,0,.6)}
-  .wlabel{color:var(--team);text-align:center;font-size:12px}
-  .wlabel.active .nm{font-size:14px}
-  .wlabel .hpn{display:block;font-size:11px;line-height:1;margin-top:1px;color:#fff}
-  .wlabel .hpbar{width:46px;height:5px;margin:2px auto 0;border-radius:3px;background:rgba(0,0,0,.55);box-shadow:0 0 0 1px rgba(255,255,255,.25);overflow:hidden}
-  .wlabel .hpbar i{display:block;height:100%;background:var(--team)}
-  .wlabel.ghost{color:#ff7070}.wlabel.ghost .hpbar i{background:#ff7070}
-  .wlabel .off{font-weight:500;color:#ffc2c2}
-  .wlabel .inf{display:block;font-size:10px;line-height:1.1;margin-top:1px;font-weight:800;letter-spacing:.3px}
-  .wlabel .inf:empty{display:none}
-  .wlabel .inf.hug{color:#d6ffa0}.wlabel .inf.sick{color:#b6ff4a}.wlabel .inf.lethal{color:#ff6a5a}.wlabel .inf.soon{animation:infp .7s ease-in-out infinite alternate}
-  @keyframes infp{from{opacity:.55}to{opacity:1}}
-  .tperk{font-style:normal;font-size:9px;letter-spacing:.06em;color:#bfe6ff;opacity:.9}
-  .tstreak{font-style:normal;font-size:11px;font-weight:700;color:#ffb04a;text-shadow:0 0 6px rgba(255,150,40,.6)}
-  .tinf{font-style:normal;font-size:11px;color:#b6ff4a;text-shadow:0 0 6px rgba(120,255,40,.6)}
-  .eggbar,.alabel{position:absolute;left:0;top:0;pointer-events:none;text-align:center;font:800 10px var(--f-ui);color:#d6ffa0;text-shadow:0 1px 2px #000,0 0 5px rgba(0,0,0,.7);white-space:nowrap}
-  .eggbar .eb{width:52px;height:7px;margin:0 auto 1px;border-radius:4px;background:rgba(0,0,0,.62);box-shadow:0 0 0 1px rgba(182,255,74,.55),0 0 8px rgba(120,255,40,.35);overflow:hidden}
-  .eggbar .eb i{display:block;height:100%;border-radius:4px;transition:background .5s}
-  .eggbar.ripe .eb{animation:infp .5s ease-in-out infinite alternate;box-shadow:0 0 0 1px rgba(255,90,60,.8),0 0 10px rgba(255,70,40,.5)}
-  .alabel{color:#b6ff4a;font-size:12px}.alabel .hpbar{width:46px;height:5px;margin:2px auto 0;border-radius:3px;background:rgba(0,0,0,.55);box-shadow:0 0 0 1px rgba(182,255,74,.45);overflow:hidden}
-  .alabel .hpbar i{display:block;height:100%;background:#b6ff4a}.alabel .hpn{display:block;font-size:11px;line-height:1;margin-top:1px;color:#fff}
-  .pop{font-size:22px;font-weight:900;-webkit-text-stroke:1px rgba(0,0,0,.5)}
-  .pop.bubble{font:700 14px var(--f-ui);-webkit-text-stroke:0;color:#1a1a1a;background:#fff;border-radius:12px;padding:4px 10px;text-shadow:none;box-shadow:0 3px 10px rgba(0,0,0,.35)}
-  .fuse{font:800 15px ui-monospace,monospace;color:#fff;background:rgba(200,40,20,.85);padding:1px 6px;border-radius:10px;text-shadow:none}
-  .panel{position:fixed;background:var(--glass);border:1px solid var(--edge);border-radius:14px;padding:10px 12px;backdrop-filter:blur(10px) saturate(1.3);-webkit-backdrop-filter:blur(10px) saturate(1.3);box-shadow:0 10px 30px rgba(0,0,0,.28)}
-  #hud{top:14px;left:14px;width:340px}
-  #hud .skills{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
-  #hud .sk{display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 4px;border-radius:12px;background:rgba(159,232,255,.13);border:1px solid rgba(159,232,255,.35);color:#9fe8ff;font:700 11px var(--f-ui)}
-  #hud .sk svg.vi{width:16px;height:16px}
-  #hud .sk b{color:#fff;font-size:12px} #hud .sk i{font-style:normal;color:var(--dim);font-weight:600}
-  .fuse.armed{background:rgba(200,40,20,.9)} .fuse.sentry{background:rgba(30,80,120,.85)}
-  #hud .who .nm{font-size:17px;font-weight:800;color:var(--team);letter-spacing:.2px}
-  #hud .hp{position:relative;height:12px;margin:5px 0 8px;border-radius:7px;background:rgba(0,0,0,.45);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
-  #hud .hp i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,var(--team),#fff8);border-radius:7px}
-  #hud .hp b{position:absolute;right:6px;top:-2px;font-size:11px}
-  .chips{display:flex;gap:6px;margin-bottom:8px}
-  .chip{flex:1;text-align:center;padding:4px 0;border-radius:9px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);color:var(--dim);font-size:12px}
-  .chip.on{background:linear-gradient(180deg,rgba(255,226,140,.28),rgba(255,180,60,.16));border-color:rgba(255,220,140,.6);color:#fff}
-  .chip kbd{font:10px ui-monospace,monospace;opacity:.7;margin-right:4px}
-  .power{position:relative;height:16px;border-radius:8px;background:rgba(0,0,0,.4);overflow:hidden;margin-bottom:8px}
-  .power i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,#ffd35a,#ff7a2a,#ff2a2a)}
-  .power span{position:absolute;inset:0;text-align:center;font-size:11px;line-height:16px;color:var(--dim)}
-  .power.on span{color:#fff;font-weight:700}
-  .row{display:flex;gap:10px;align-items:center}
-  .wind{display:flex;align-items:center;gap:8px;margin-top:6px;font:600 12px system-ui,sans-serif}
-  .wind .wx{min-width:92px;opacity:.9}
-  .wind .wa{display:inline-block;width:16px;text-align:center;font:700 15px system-ui;color:#bfe3ff;transition:transform .3s}
-  .wind .ws{min-width:56px;font:700 12px ui-monospace,monospace}
-  .wind .wb{display:inline-flex;align-items:center;gap:2px;color:#bfe3ff}
-  .wind .wb b{display:inline-flex;gap:2px}
-  .wind .wb i{display:block;width:6px;height:10px;border-radius:1px;background:rgba(255,255,255,.18)}
-  .wind .wb i.on{background:#8fd0ff}
-  .wind .wb.l b{flex-direction:row-reverse}
-  .wind .wn{opacity:.75;font:600 11px ui-monospace,monospace}
-  .compass{position:relative;width:62px;height:62px;flex:none;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.1),rgba(0,0,0,.35));box-shadow:inset 0 0 0 1px rgba(255,255,255,.2)}
-  .compass .needle{position:absolute;left:29px;top:5px;width:4px;height:26px;border-radius:2px;background:linear-gradient(var(--gold),#ff9a3a);transform-origin:2px 26px}
-  .compass span{position:absolute;bottom:8px;width:100%;text-align:center;font:700 11px ui-monospace,monospace}
-  .facts{font-size:12px;color:var(--dim)}.facts b{color:var(--ink)}
-  .ok{color:#a6eb9c}.lock{color:#ffb27a}
-  .over{margin-top:8px;font-size:18px;font-weight:900;color:var(--gold)}
-  .hot{margin-top:7px;padding:4px 8px;border-radius:6px;font-size:12px;font-weight:700;color:#ffd2a8;background:rgba(150,50,10,.55);box-shadow:inset 0 0 0 1px rgba(255,150,80,.5);animation:hotp 1.6s ease-in-out infinite}
-  @keyframes hotp{50%{background:rgba(190,70,15,.7)}}
-  #teams{bottom:170px;left:14px;display:grid;gap:5px;padding:8px 10px;min-width:190px}
-  #teams .tm{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;color:var(--team);font-weight:700;font-size:13px}
-  #teams .tm span{white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis}
-  #teams .tm.cur span{text-decoration:underline;text-underline-offset:3px}
-  .clock{display:inline-block;margin-left:6px;padding:0 6px;border-radius:6px;background:rgba(255,255,255,.12);font-variant-numeric:tabular-nums}
-  .clock.warn{background:rgba(255,91,79,.35)}
-  #teams .bar{min-width:60px;height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden}
-  #teams .bar i{display:block;height:100%;background:var(--team)}
-  #teams b{color:var(--ink);font-size:12px}
-  #banner{position:fixed;top:21%;left:0;right:0;text-align:center;font:400 34px var(--f-display);letter-spacing:1px;pointer-events:none;opacity:0;text-shadow:0 3px 18px rgba(0,0,0,.6),0 1px 2px #000}
-  #banner small{display:block;font:600 16px var(--f-ui);color:var(--ink);letter-spacing:.5px;margin-top:4px}
-  /* P9 top bar: turn · time · wind · weather */
-  #topbar{position:fixed;top:10px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:3;pointer-events:none}
-  #topbar .tb{position:static;padding:6px 12px;display:flex;flex-direction:column;justify-content:center;gap:2px}
-  #topbar .lbl{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:700}
-  #tbTurn .tn{font:400 16px var(--f-display);color:var(--team);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
-  #tbTurn .wn{font-weight:700;font-size:14px;white-space:nowrap}
-  #tbTime{align-items:center;min-width:62px}#tbTime b{font:400 28px/1 var(--f-display);font-variant-numeric:tabular-nums}#tbTime b.low{color:var(--danger)}
-  #tbWind .wbar{position:relative;height:10px;width:150px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden}
-  #tbWind .wbar::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;margin-left:-1px;background:rgba(255,255,255,.45)}
-  #tbWind .wbar i{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,#7fd3ff,#e8f7ff)}
-  #tbWind .wt{font-weight:700;font-variant-numeric:tabular-nums;font-size:13px}
-  #tbWx .wxn{font-weight:800;font-size:15px;white-space:nowrap}#tbWx .wxs{font-size:12px;color:var(--dim);white-space:nowrap}
-  /* P9 weapon grid + info line */
-  #weapons{left:50%;transform:translateX(-50%);bottom:10px;display:grid;grid-template-columns:repeat(22,46px);gap:4px;padding:5px;z-index:3}   /* (P37: 44 weapons: 2 rows wide, 3 below 1200 px; 14 columns made 4-5 rows covering the aim area) */
-  .wpn{position:relative;width:46px;height:46px;border-radius:7px;border:1px solid transparent;background:rgba(255,255,255,.04);color:var(--ink);font:700 9px var(--f-ui);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:0 0 2px;overflow:hidden}
-  .wpn:hover{background:rgba(255,255,255,.1)}
-  .wpn.sel{border-color:var(--accent);background:rgba(255,176,46,.16)}
-  .wpn.empty{opacity:.3}
-  .wpn img{position:absolute;top:3px;left:50%;transform:translateX(-50%);width:40px;height:26px;object-fit:contain;pointer-events:none}
-  .wpn .k{position:absolute;top:1px;left:3px;font-size:9px;color:var(--dim)}
-  .wpn svg.vi{position:absolute;top:5px;left:50%;transform:translateX(-50%);width:22px;height:22px;color:var(--ink)}
-  .wpn.sel svg.vi{color:var(--accent)}
-  .wpn .a{position:absolute;top:1px;right:3px;font-size:9px;color:var(--accent);font-weight:800}
-  .wpn .n{white-space:nowrap;max-width:48px;overflow:hidden;text-overflow:ellipsis;line-height:1}
-  #winfo{left:50%;transform:translateX(-50%);bottom:122px;font-weight:700;font-size:14px;padding:4px 12px;white-space:nowrap;max-width:calc(100vw - 32px);overflow:hidden;text-overflow:ellipsis;z-index:3}
-  #winfo:empty{display:none}
-  #winfo em{font-style:normal;color:var(--accent)}
-  /* P9 game over */
-  #over{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(ellipse at center,rgba(13,18,22,.35),rgba(13,18,22,.85));z-index:8}
-  #over.hidden{display:none}
-  #over .card{text-align:center;padding:26px 34px;background:rgba(21,29,35,.92);border:1px solid var(--edge);border-radius:16px}
-  #over h2{margin:0;font:400 40px var(--f-display);color:var(--team,var(--accent));text-shadow:0 4px 0 rgba(0,0,0,.35)}
-  #over p{margin:8px 0 18px;color:var(--dim);font-size:16px}
-  .bbtn{font:400 18px var(--f-display);padding:10px 20px;border-radius:12px;border:0;cursor:pointer;background:var(--accent);color:#2a1606;box-shadow:0 4px 0 #8a5200;margin:0 6px}
-  .bbtn.ghost{background:rgba(255,255,255,.1);color:var(--ink);box-shadow:0 4px 0 rgba(0,0,0,.4)}
-  #banner.show{animation:ban 2.2s ease-out}
-  #labbadge{position:fixed;left:50%;top:78px;transform:translateX(-50%);padding:2px 10px;border-radius:10px;background:rgba(40,70,90,.72);border:1px solid rgba(150,210,240,.45);color:#bfe6ff;font:700 10px/1.5 var(--f-display);letter-spacing:.1em;text-transform:uppercase;z-index:4;pointer-events:none;display:none;white-space:nowrap}
-  #perkui{position:fixed;left:0;right:0;top:27%;padding:18px 0 20px;background:linear-gradient(90deg,transparent,rgba(8,12,16,.62) 18%,rgba(8,12,16,.62) 82%,transparent);display:none;text-align:center;z-index:20;pointer-events:none}
-  #perkui.on{display:block}
-  #perkui .pk-h{font:400 30px var(--f-display);letter-spacing:2px;color:var(--team,var(--accent));text-shadow:0 3px 18px rgba(0,0,0,.7),0 1px 2px #000}
-  #perkui .pk-h small{display:block;font:600 14px var(--f-ui);color:var(--ink);letter-spacing:.5px;margin-top:2px}
-  #perkui .pk-row{display:flex;justify-content:center;gap:16px;margin:16px 14px 0;flex-wrap:wrap}
-  #perkui .pk-card{pointer-events:auto;cursor:pointer;width:200px;padding:14px 14px 16px;border-radius:14px;background:rgba(21,29,35,.93);border:2px solid var(--edge);color:var(--ink);text-align:left;box-shadow:0 6px 0 rgba(0,0,0,.35);transition:transform .12s,border-color .12s}
-  #perkui .pk-card:hover{transform:translateY(-4px);border-color:var(--team,var(--accent))}
-  #perkui .pk-card.off{pointer-events:none;opacity:.55;cursor:default}
-  #perkui .pk-key{display:inline-block;min-width:22px;padding:1px 6px;border-radius:6px;background:var(--team,var(--accent));color:#1a1206;font:700 13px var(--f-ui);text-align:center}
-  #perkui .pk-name{font:400 20px var(--f-display);margin:8px 0 4px;color:var(--gold,#ffd27a)}
-  #perkui .pk-txt{font:500 13px/1.35 var(--f-ui);color:var(--ink);opacity:.9}
-  #perkui .pk-foot{margin-top:14px;font:600 13px var(--f-ui);color:var(--dim);text-shadow:0 1px 3px #000}
-  #rotnow{position:fixed;top:30%;left:0;right:0;text-align:center;font:400 30px var(--f-display);letter-spacing:2px;color:var(--accent);pointer-events:none;opacity:0;transition:opacity .25s;text-shadow:0 3px 18px rgba(0,0,0,.7),0 1px 2px #000}
-  #rotnow.on{opacity:.95}#rotnow b{display:block;font:400 54px/1 var(--f-display);font-variant-numeric:tabular-nums;color:var(--ink)}#rotnow.low b{color:var(--danger)}
-  @keyframes ban{0%{opacity:0;transform:translateY(12px) scale(.96)}15%{opacity:1;transform:none}70%{opacity:1}100%{opacity:0;transform:translateY(-8px)}}
-  #log{bottom:10px;left:14px;max-width:max(180px,min(360px,calc(50vw - 360px)));font-size:12px;min-height:20px;z-index:2}
-  /* P49 debug toolbox */
-  #dbgbtn{position:fixed;top:14px;right:136px;z-index:4;padding:5px 9px;border-radius:10px;border:1px solid var(--edge);background:var(--glass);color:var(--ink);font-size:13px;cursor:pointer}
-  #dbg{left:14px;top:260px;width:260px;max-height:calc(100vh - 360px);overflow:auto;z-index:6;font-size:12px}
-  #dbg.hidden{display:none}
-  #dbg .dh{display:flex;align-items:center;gap:6px;margin-bottom:6px}#dbg .dh b{flex:1;color:var(--gold);font-size:13px;letter-spacing:.06em}#dbg .dh span{color:var(--dim);font:10px ui-monospace,monospace}
-  #dbg button{font:700 11px var(--f-ui);color:var(--ink);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:3px 7px;cursor:pointer}
-  #dbg button:hover{background:rgba(255,255,255,.16)}#dbg button.on{background:rgba(255,176,46,.22);border-color:var(--accent);color:#fff}
-  #dbg .dt,#dbg .di{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
-  #dbg .dp{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0}#dbg .dp:empty{display:none}
-  #dbg label{display:flex;align-items:center;gap:5px;color:var(--dim)}#dbg input[type=number]{width:60px}#dbg select,#dbg input[type=number]{background:rgba(0,0,0,.4);color:var(--ink);border:1px solid rgba(255,255,255,.18);border-radius:5px;padding:1px 3px;font:11px var(--f-ui)}
-  #dbg .dm{margin-top:6px;color:var(--dim)}#dbg .dm b{color:var(--accent)}
-  #dbgcur{position:fixed;pointer-events:none;z-index:7;display:none;padding:2px 8px;border-radius:9px;background:rgba(255,176,46,.88);color:#2a1606;font:800 11px var(--f-ui);white-space:nowrap}
-  #dbgcur.on{display:block}#dbgcur::before{content:"+ ";font-weight:900}
-  #help{top:14px;right:14px;width:285px;font-size:12px}
-  #help.hidden{display:none}
-  #help h1{font-size:15px;margin:0 0 6px;color:var(--gold)}
-  #help kbd{display:inline-block;min-width:14px;padding:0 4px;border:1px solid #7d8c9c;border-bottom-width:2px;border-radius:4px;background:rgba(255,255,255,.08);font:11px ui-monospace,monospace;text-align:center}
-  #help table{border-collapse:collapse}#help td{padding:1px 4px;vertical-align:top}
-  #help p{margin:6px 0 0;color:var(--dim)}
-  #maps{top:90px;right:14px;display:flex;gap:10px;align-items:flex-start}
-  #maps figure{margin:0}
-  #maps figcaption{font-size:11px;color:var(--dim);margin-bottom:4px}
-  #secmap{width:320px;display:block;border-radius:8px;background:#16202b}
-  #topmap{width:170px;height:170px;display:block;border-radius:8px;cursor:pointer}
-  #menubtn{position:fixed;top:14px;right:14px;z-index:4;padding:6px 12px;border-radius:10px;border:1px solid var(--edge);background:var(--glass);color:var(--ink);font:700 12px inherit;cursor:pointer;backdrop-filter:blur(8px)}
-  #help{top:52px;z-index:5}
-  .vslider{width:170px;accent-color:var(--accent,#e8b04a);cursor:pointer}
-  #mutebtn{position:fixed;top:14px;right:90px;z-index:4;padding:5px 9px;border-radius:10px;border:1px solid var(--edge);background:var(--glass);color:var(--ink);font-size:13px;cursor:pointer}
-  #netpanel{position:fixed;left:50%;top:44px;transform:translateX(-50%);padding:3px 10px;border-radius:10px;background:rgba(10,14,20,.6);color:#cfe;font:600 12px system-ui;z-index:5;display:none}
-  #netpanel.warn{color:#ffd76a} #netpanel.bad{color:#ff7a6a}
-  /* touch pad (P24.4): hidden unless body.touch; on a touch device the weapon grid opens from 🎒 */
-  #touch{display:none}
-  body.touch #touch{display:block}
-  body.touch #weapons.closed{display:none}
-  #touch>div{position:fixed;display:flex;gap:10px;z-index:6}
-  #touch .tl{left:14px;bottom:18px} #touch .tc{left:150px;bottom:18px;flex-direction:column} #touch .tr{right:14px;bottom:18px} #touch .tt{right:14px;top:64px}
-  #touch button{width:58px;height:58px;border-radius:16px;border:1px solid rgba(255,255,255,.35);background:rgba(20,24,30,.55);color:#fff;font:700 16px system-ui;touch-action:none;user-select:none;-webkit-user-select:none}
-  #touch button.wide{width:76px} #touch button.fire{width:84px;height:84px;border-radius:42px;background:rgba(200,60,30,.75);font-size:18px}
-  #touch button.on{background:rgba(255,200,80,.6)}
-  body.touch #winfo{bottom:118px} body.touch #teams{display:none}
-  /* P38 R3: the HUD at small sizes: the top bar sheds the weather, then moves beside the buttons, the log leaves the grid, the info line follows the grid height */
-  @media (max-width:1400px){#topbar #tbWx{display:none}#log{top:150px;bottom:auto;max-width:220px;max-height:150px;overflow:hidden}}
-  @media (max-width:1200px){#weapons{grid-template-columns:repeat(17,44px)}.wpn{width:44px}#topbar{left:auto;right:136px;transform:none}#tbWind .wbar{width:110px}}
-  @media (max-width:1100px){#maps{display:none}#winfo{bottom:164px}#teams{bottom:202px}}
-  @media (max-width:920px){#hud{width:250px}#topbar{top:10px;right:136px;gap:4px}#topbar .tb{padding:4px 8px}#tbTurn .tn{max-width:120px}#tbWind .wbar{width:80px}}
-  @media (max-width:860px){#weapons{grid-template-columns:repeat(12,44px)}#winfo{bottom:226px}#teams{bottom:262px}}
-  @media (max-width:700px){.biomes{grid-template-columns:repeat(2,1fr)}.mgrid{grid-template-columns:1fr}.mgrid label.check{grid-column:1}#hud{width:280px;top:84px}#maps{display:none}#topbar #tbWind{display:none}#topbar{left:8px;right:auto}#log{top:226px;max-width:calc(100vw - 28px)}}
-</style>
 </head>
 <body>
 <canvas id="view"></canvas>
@@ -200,8 +19,7 @@
 <div id="labbadge"></div>
 <div id="perkui"></div>
 <div id="topbar"><div id="tbTurn" class="panel tb"></div><div id="tbTime" class="panel tb"></div><div id="tbWind" class="panel tb"></div><div id="tbWx" class="panel tb"></div></div>
-<div id="hud" class="panel"></div>
-<button id="mutebtn" title="Sound on / off (F2)">🔊</button>
+<button id="mutebtn" class="ibtn" title="Sound on / off (F2)" aria-label="Sound on / off">🔊</button>
 <div id="weapons" class="panel"></div>
 <!-- P24.4 touch pad (shown on touch devices: body.touch): the PoC #touch controls -->
 <div id="touch">
@@ -211,9 +29,8 @@
   <div class="tt"><button data-k="weapons">🎒</button><button data-k="zoom">🔍</button><button data-k="Tab">⇄</button><button data-k="NumpadSubtract" title="setting -">−</button><button data-k="NumpadAdd" title="setting +">+</button></div>
 </div>
 <div id="winfo" class="panel"></div>
-<div id="over" class="hidden"><div class="card"><h2></h2><p></p><button class="bbtn" id="bRematch">Rematch</button><button class="bbtn ghost" id="bSetup">Change setup</button></div></div>
-<div id="teams" class="panel"></div>
-<div id="log" class="panel"></div>
+<div id="over" class="hidden" role="dialog" aria-label="Game over"><div class="card"><svg class="crown" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M2.5 7l5 4.5L12 3.5l4.5 8L21.5 7l-1.8 11H4.3zM4.6 19.5h14.8v2H4.6z"/></svg><h2></h2><p></p><div class="stand"></div><button class="bbtn" id="bRematch">Rematch</button><button class="bbtn ghost" id="bSetup">Change setup</button></div></div>
+<div id="lcol"><div id="hud" class="panel"></div><div id="teams" class="panel"></div><div id="log" class="panel" aria-live="off"></div></div>
 <div id="help" class="panel hidden">
   <h1>Burrow Brawl <span style="font-weight:400;color:var(--dim);font-size:12px">— controls (F1 / ? hides)</span></h1>
   <table>
@@ -236,12 +53,16 @@
   </table>
   <p>The glowing outline is the 2D collision slice. After an attack you have a few seconds to retreat; the section stays locked until the aftermath settles.</p>
 </div>
+<div id="rcol">
 <div id="maps" class="panel">
   <figure><figcaption>Current section (side view)</figcaption><canvas id="secmap" width="320" height="120"></canvas></figure>
   <figure><figcaption>World from above</figcaption><canvas id="topmap" width="170" height="170"></canvas></figure>
 </div>
-<button id="dbgbtn" title="Debug toolbox (F9)" style="display:none">🛠</button>
-<button id="menubtn" title="Map menu (M)">☰ Map</button>
+<div id="feed" aria-live="polite"></div>
+</div>
+<div id="wtip" class="panel" role="tooltip"></div>
+<button id="dbgbtn" class="ibtn" title="Debug toolbox (F9)" aria-label="Debug toolbox" style="display:none">🛠</button>
+<button id="menubtn" class="ibtn" title="Pause menu (M / Esc)">☰ Menu</button>
 <div id="menu"></div>
 <script src="vendor/three.min.js"></script>
 <script src="js/render/section.js"></script>

@@ -154,6 +154,14 @@
           diffuseColor.rgb = treeHaze(c);`)
         .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n normal = normalize(vNormal);')  // same outward normal on both faces
         .replace('#include <emissivemap_fragment>', /* glsl */`#include <emissivemap_fragment>
+          #if NUM_DIR_LIGHTS > 0
+          {
+            // P56 translucency: leaves seen against the sun pass its light (a warm, saturated green glow on the rim of the crown)
+            vec3 vdir = normalize(vViewPosition);
+            float tl = pow(max(dot(directionalLights[0].direction, -vdir), 0.0), 3.0);
+            totalEmissiveRadiance += diffuseColor.rgb * vec3(1.1, 1.0, 0.45) * directionalLights[0].color * tl * 0.14;
+          }
+          #endif
           totalEmissiveRadiance += vTr.b * smoothstep(0.78, 0.98, nl + 0.25 * sin(uTime * 8.0 + vTW.y * 5.0 + vTW.x * 3.0)) * vec3(1.2, 0.33, 0.04);`);  // leaf embers
     };
     const coreFS = sh => {

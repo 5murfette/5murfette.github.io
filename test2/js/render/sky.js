@@ -60,7 +60,7 @@
     const float Rg = 6360e3, Rt = 6460e3, PI = 3.14159265;
     const vec3 bR = vec3(5.802e-6, 13.558e-6, 33.1e-6), bO = vec3(0.650e-6, 1.881e-6, 0.085e-6);
     const float HR = 8000.0, HM = 1200.0;
-    uniform vec3 uSun, uAbs, uAlb, uOvc; uniform float uTurb, uOv, uOvL, uE, uObsH;
+    uniform vec3 uSun, uAbs, uAlb, uOvc, uMoon; uniform float uTurb, uOv, uOvL, uE, uObsH, uNight;
     vec2 raySphere(vec3 o, vec3 d, float R){ float b = dot(o, d), c = dot(o, o) - R * R, h = b * b - c; if (h < 0.0) return vec2(-1.0); h = sqrt(h); return vec2(-b - h, -b + h); }
     vec3 dens(float h){ return vec3(exp(-h / HR), exp(-h / HM), max(0.0, 1.0 - abs(h - 25e3) / 15e3)); }
     vec3 ext(vec3 dd){ vec3 bM = vec3(3.996e-6) * uTurb; return bR * dd.x + (bM + bM * uAbs) * dd.y + bO * dd.z; }
@@ -111,12 +111,17 @@
       vec3 dir = vec3(cos(el) * cos(az), sin(el), cos(el) * sin(az));
       vec3 L = scatter(dir);
       L = mix(L, overcast(dir), uOv);
+      // P56 night: a faint moonlit airglow (deep blue, a paler band at the horizon) and a halo round the moon, so the night sky is not black
+      float nel = clamp(dir.y, -0.2, 1.0), mm = max(dot(dir, uMoon), 0.0);
+      vec3 ng = mix(vec3(0.020, 0.032, 0.062), vec3(0.003, 0.0065, 0.019), pow(max(nel, 0.0), 0.45)) * (nel < 0.0 ? 0.5 : 1.0);
+      ng += vec3(0.5, 0.62, 0.9) * (pow(mm, 18.0) * 0.012 + pow(mm, 220.0) * 0.06);
+      L += ng * uNight * (1.0 - 0.6 * uOv);
       gl_FragColor = vec4(L, 1.0);
     }`;
   /* dome: LUT + sun disc + sharp aureole + lightning flash; (uDark kept for weather.js, unused: the overcast is in
    * the LUT); dithered against banding */
   const DOME_F = /* glsl */`
-    uniform sampler2D tLut, tNoise; uniform vec3 uSun, uSunC; uniform float uOv, uFlash, uDark, uDisc, uDeck, uDeckH, uVis; uniform vec2 uDrift;
+    uniform sampler2D tLut, tNoise; uniform vec3 uSun, uSunC, uMoon; uniform float uNight, uOv, uFlash, uDark, uDisc, uDeck, uDeckH, uVis; uniform vec2 uDrift;
     varying vec3 vD;
     vec2 lutUV(vec3 d){
       float el = asin(clamp(d.y, -1.0, 1.0));
@@ -139,6 +144,7 @@
       float disc = smoothstep(0.99997, 0.999985, mu) * step(0.0, d.y + 0.01);
       float aur = pow(max(mu, 0.0), 900.0) * 0.6 + pow(max(mu, 0.0), 60.0) * 0.015;
       c += uSunC * (disc * uDisc + aur * 40.0) * clr;
+      c += vec3(2.2, 2.4, 2.9) * smoothstep(0.99955, 0.99975, dot(d, uMoon)) * uNight * (1.0 - uOv) * step(0.0, d.y);
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       c += uFlash * vec3(0.75, 0.8, 1.0) * (0.15 + 0.6 * l);
       gl_FragColor = vec4(c, 1.0);
@@ -166,14 +172,14 @@
     renderer = rend;
     rt = new T.WebGLRenderTarget(LW, LH, { type: T.HalfFloatType, format: T.RGBAFormat, depthBuffer: false, stencilBuffer: false, generateMipmaps: false });
     rt.texture.minFilter = rt.texture.magFilter = T.LinearFilter; rt.texture.wrapS = T.RepeatWrapping; rt.texture.wrapT = T.ClampToEdgeWrapping;
-    const U = { uSun: { value: P.sun }, uAbs: { value: P.abs }, uAlb: { value: P.alb }, uOvc: { value: P.ovc }, uTurb: { value: 1 }, uOv: { value: 0 }, uOvL: { value: 1 }, uE: { value: SKY_E }, uObsH: { value: OBS_H } };
+    const U = { uSun: { value: P.sun }, uAbs: { value: P.abs }, uAlb: { value: P.alb }, uOvc: { value: P.ovc }, uTurb: { value: 1 }, uMoon: { value: new T.Vector3(0, 1, 0) }, uNight: { value: 0 }, uOv: { value: 0 }, uOvL: { value: 1 }, uE: { value: SKY_E }, uObsH: { value: OBS_H } };
     lutMat = new T.ShaderMaterial({ uniforms: U, vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }', fragmentShader: LUT_F, depthTest: false, depthWrite: false });
     SS.section.exempt(lutMat, 'sky: full-screen LUT quad');
     lutScene = new T.Scene(); lutCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const q = new T.Mesh(new T.PlaneGeometry(2, 2), lutMat); q.frustumCulled = false; lutScene.add(q);
     domeMat = new T.ShaderMaterial({
       side: T.BackSide, depthWrite: false, fog: false,
-      uniforms: { tLut: { value: rt.texture }, tNoise: { value: tx.noise }, uSun: { value: P.sun }, uSunC: { value: new T.Vector3(1, 1, 1) }, uOv: { value: 0 }, uFlash: { value: 0 }, uDark: { value: 0 }, uDisc: { value: 60 },
+      uniforms: { tLut: { value: rt.texture }, tNoise: { value: tx.noise }, uMoon: { value: new T.Vector3(0, 1, 0) }, uNight: { value: 0 }, uSun: { value: P.sun }, uSunC: { value: new T.Vector3(1, 1, 1) }, uOv: { value: 0 }, uFlash: { value: 0 }, uDark: { value: 0 }, uDisc: { value: 60 },
         uDeck: { value: 0 }, uDeckH: { value: 1000 }, uVis: { value: 40000 }, uDrift: { value: new T.Vector2() } },
       vertexShader: 'varying vec3 vD; void main(){ vD = position; vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }',
       fragmentShader: DOME_F
@@ -189,14 +195,16 @@
   };
 
   /* new look: biome + weather kind (+ the biome's sun direction); renders the LUT and reads back the ring colours */
-  SK.look = function (biome, kind, sunDir) {
+  SK.look = function (biome, kind, sunDir, night) {
     const B = BIOME[biome] || BIOME.temperate, Wk = Object.assign({}, WEATHER[kind] || WEATHER.clear);
     if (biome === 'volcanic') { Wk.ov = Math.max(Wk.ov, VOLC_MIN.ov); Wk.ovL = Math.min(Wk.ovL, VOLC_MIN.ovL); }
     P.sun.set(sunDir[0], sunDir[1], sunDir[2]).normalize();
     P.turb = B.turb * Wk.turb; P.abs.set(B.abs[0] * Wk.ash, B.abs[1] * Wk.ash, B.abs[2] * Wk.ash);
     P.alb.set(B.alb[0], B.alb[1], B.alb[2]); P.ovc.set(B.ovc[0], B.ovc[1], B.ovc[2]); P.ov = Wk.ov; P.ovL = Wk.ovL;
     P.storm = !!Wk.storm;
-    const u = lutMat.uniforms; u.uTurb.value = P.turb; u.uOv.value = P.ov; u.uOvL.value = P.ovL;
+    const u = lutMat.uniforms; u.uNight.value = night ? night.k : 0; if (night) u.uMoon.value.set(night.moon[0], night.moon[1], night.moon[2]).normalize();
+    domeMat.uniforms.uMoon.value.copy(u.uMoon.value); domeMat.uniforms.uNight.value = night ? night.k : 0;
+    u.uTurb.value = P.turb; u.uOv.value = P.ov; u.uOvL.value = P.ovL;
     domeMat.uniforms.uOv.value = P.ov;
     domeMat.uniforms.uDeck.value = P.ov > 0.4 ? P.ov : 0;
     domeMat.uniforms.uDeckH.value = Wk.deckH || 1000;

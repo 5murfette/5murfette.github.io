@@ -20,12 +20,16 @@
   const rnd = (a, b) => a + M.random() * (b - a), clamp = (a, lo, hi) => (a < lo ? lo : a > hi ? hi : a);
   let clock = 0;
   const st = [];                               // per worm id: the reaction state
-  const OUT = { sx: 1, sy: 1, ox: 0, oy: 0, pain: 0, scream: false, fear: 0, cheer: 0, yawn: 0, daze: false, wob: 0, flail: false, wet: 0, perk: 0 };
-  const K = { FEAR_R: 4.6, FEAR_FUSE: 2.6, YAWN_T: 12, YAWN_D: 1.3 };
+  const OUT = { sx: 1, sy: 1, ox: 0, oy: 0, pain: 0, scream: false, fear: 0, cheer: 0, yawn: 0, daze: false, wob: 0, flail: false, wet: 0, perk: 0,
+    lean: 0, lookW: 0, look: 0, sad: 0, happy: 0, relief: 0, watch: 0, wx: 0, wy: 0, arms: 0, panic: 0, thrash: 0, struggle: 0 };
+  const K = { FEAR_R: 4.6, FEAR_FUSE: 2.6, YAWN_T: 12, YAWN_D: 1.3, WATCH_R: 11, NEAR_R: 7.5, SAD_T: 2.6, CHEER_T: 1.5, PHEW_DELAY: 0.55, PHEW_T: 1.3 };
+  const ROCKETS = { bazooka: 1, homing: 1, mortar: 1, airstrike: 1 };
+  const smoothstep = x => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 
   function get(w) {
     let s = st[w.id];
-    if (!s) s = st[w.id] = { painT: 0, painK: 0, dazeT: 0, fear: 0, fearT: 0, sweatT: 0, perkT: -9, lastActive: false, drownBub: 0, lastHurt: -9, src: 0, bubT: 0, hp: w.hp };
+    if (!s) s = st[w.id] = { painT: 0, painK: 0, dazeT: 0, fear: 0, fearT: 0, sweatT: 0, perkT: -9, lastActive: false, drownBub: 0, lastHurt: -9, src: 0, bubT: 0, hp: w.hp,
+      hitT: -9, hitK: 0, fireT: -9, fireK: 0, fireKind: 0, sadT: -9, cheerT: -9, duckT: -9, phewT: -9, watchK: 0, wlook: 0, chargeK: 0 };
     return s;
   }
   RX.init = function () {};
@@ -40,6 +44,7 @@
         if (C_.DS_CAUSE[e.src | 0] !== C_.CAUSE.DROWN) { s.painT = M.max(s.painT, 0.35); s.painK = M.max(s.painK, 0.25); }
         return;
       }
+      s.hitT = clock; s.hitK = clamp(e.amount / 26, 0.35, 1);
       const k = clamp(e.amount / 42, 0.14, 0.9);
       s.painT = 0.55 + 1.1 * k; s.painK = k;
       if (e.amount >= 26) s.dazeT = M.max(s.dazeT, 1.2 + 2.2 * k);
@@ -48,7 +53,11 @@
       const s = get(e.worm), sp = e.speed || 0;
       if (sp > 9 && F) F.dustAt(e.x, e.y + 0.05, e.z, 6 + M.round(sp), 0.35 + 0.02 * sp);
     } else if (e.type === 'zap' && e.worm) { const s = get(e.worm); s.painT = 1.2; s.painK = 0.8; s.dazeT = 3; }
-    else if (e.type === 'kill' && e.worm) deathFx(S, e);
+    else if (e.type === 'kill' && e.worm) { deathFx(S, e); mourn(S, e.worm); }
+    else if (e.type === 'fire' && S.active) { const s = get(S.active); s.fireT = clock; s.fireKind = ROCKETS[e.weapon] ? 1 : 2; s.fireK = ROCKETS[e.weapon] ? 1 : M.min(1, 0.45 + (e.speed || 10) / 40); }
+    else if (e.type === 'shot' && S.active && (e.weapon === 'shotgun' || e.weapon === 'sniper' || e.weapon === 'handgun') && !e.end) { const s = get(S.active); s.fireT = clock; s.fireKind = 1; s.fireK = e.weapon === 'shotgun' ? 1 : e.weapon === 'sniper' ? 1.1 : 0.45; }
+    else if (e.type === 'swing' && e.worm) { const s = get(e.worm); s.fireT = clock; s.fireKind = 3; s.fireK = 1; }
+    else if (e.type === 'explode') nearMiss(S, e);
     else if (e.type === 'drown' && e.worm) { const s = get(e.worm); s.drownBub = clock; }
   };
 
@@ -92,6 +101,29 @@
     }
   }
 
+  /* a worm died: its team mates are sad for a while (head down, slow breath); the active worm, when it was the enemy, cheers */
+  function mourn(S, victim) {
+    for (const w of S.worms) {
+      if (w === victim || w.dead || w.eaten) continue;
+      const s = get(w);
+      if (w.team === victim.team) s.sadT = clock + 0.6;
+      else if (w === S.active && S.phase !== 'over') s.cheerT = clock + 0.5;
+    }
+  }
+  /* an explosion that did not touch a worm close to it: it ducks at once, then lets out a breath ("phew") */
+  function nearMiss(S, e) {
+    const hit = e.pushes || [];
+    for (const w of S.worms) {
+      if (w.dead || w.eaten) continue;
+      const d = M.hypot(w.pos.x - e.x, w.pos.y - e.y, w.pos.z - e.z);
+      if (d > K.NEAR_R || d < 0.01) continue;
+      let pushed = false;
+      for (const q of hit) if (q.worm === w) pushed = true;
+      if (pushed) continue;
+      const s = get(w); s.duckT = clock; s.phewT = clock + K.PHEW_DELAY;
+    }
+  }
+
   /* fear: the nearest live fuse / armed mine within reach (0..1) */
   function fearOf(S, w) {
     let best = 0; const P = SS.plane, C = SS.CFG;
@@ -109,6 +141,7 @@
   RX.pose = function (S, w, v, dt, c) {
     const s = get(w), F = SS.fx, o = OUT, t = clock;
     o.sx = o.sy = 1; o.ox = o.oy = 0; o.pain = 0; o.scream = false; o.fear = 0; o.cheer = 0; o.yawn = 0; o.daze = false; o.wob = 0; o.flail = false; o.wet = 0; o.perk = 0;
+    o.lean = 0; o.lookW = 0; o.look = 0; o.sad = 0; o.happy = 0; o.relief = 0; o.watch = 0; o.arms = 0; o.panic = 0; o.thrash = 0; o.struggle = 0;
     if (w.drowning) o.flail = true;
     // --- face: pain, daze
     s.painT = M.max(0, s.painT - dt);
@@ -126,10 +159,99 @@
     if (isA && !s.lastActive && t > 0.5) s.perkT = t;
     s.lastActive = isA;
     { const q = t - s.perkT; if (q >= 0 && q < 0.55 && !c.air) { const k = M.sin(q / 0.55 * M.PI); o.sy += 0.09 * k; o.sx -= 0.04 * k; o.oy += 0.0; o.perk = k; } }
-    // --- victory
-    if (S.phase === 'over' && S.over >= 0 && w.team === S.over && !w.dead && !c.air) {
-      const q = t * 5.2 + (w.id || 0) * 1.3, hop = M.abs(M.sin(q)); o.oy += 0.32 * hop; o.sy += 0.1 * M.cos(q * 2) * 0.5; o.sx -= 0.04 * M.cos(q * 2); o.cheer = 1; o.flail = true;
+    // --- victory: a dance (hops with a squash before each landing and a stretch in the air, a swaying lean, both arms up)
+    const won = S.phase === 'over' && S.over >= 0 && w.team === S.over && !w.dead && !c.air;
+    if (won) {
+      const q = t * 5.2 + (w.id || 0) * 1.3, hop = M.abs(M.sin(q)), sqz = M.pow(1 - hop, 5);
+      o.oy += 0.3 * hop; o.sy += 0.1 * hop - 0.13 * sqz; o.sx += 0.08 * sqz - 0.04 * hop; o.lean += 0.2 * M.sin(q * 0.5); o.cheer = 1; o.arms = 1; o.happy = 1; o.wob += 0.25 * M.sin(q);
     }
+    const airQ = c.air || w.dead;
+    // --- the shot: recoil (rockets, guns: the body is thrown back, a squash, a springy return), the throw (a wind-up that leans back with the power,
+    // then a forward whip on release), the bat (a lunge into the swing)
+    { const q = t - s.fireT;
+      if (q >= 0 && q < 0.7 && !airQ) {
+        const k = s.fireK, e1 = M.exp(-q / 0.11), e2 = M.exp(-q / 0.2), re = q > 0.12 ? M.sin((q - 0.12) / 0.4 * M.PI * 1.5) * M.exp(-(q - 0.12) / 0.2) : 0;
+        if (s.fireKind === 1) { o.lean -= 0.42 * k * e1 - 0.06 * k * re; o.ox -= 0.07 * k * e1; o.sy -= 0.06 * k * e1; o.sx += 0.04 * k * e1; o.wob -= 0.35 * k * e2; }
+        else if (s.fireKind === 2) { o.lean += 0.5 * k * smoothstep(q / 0.05) * e2 - 0.05 * re; o.ox += 0.1 * k * e1; o.sx += 0.07 * k * e1; o.sy -= 0.03 * k * e2; }
+        else if (s.fireKind === 3) { o.lean += 0.5 * smoothstep(q / 0.06) * M.exp(-q / 0.24); o.ox += 0.12 * M.exp(-q / 0.15); o.sx += 0.06 * M.exp(-q / 0.15); o.sy -= 0.05 * M.exp(-q / 0.3); }
+      }
+      const wk = S.charging && w === S.active && S.phase === 'play' && !ROCKETS[S.weapon] && !c.air ? clamp(S.power || 0, 0, 1) : 0;
+      s.chargeK += (wk - s.chargeK) * M.min(1, dt * 12);
+      if (s.chargeK > 0.01) { o.lean -= 0.4 * s.chargeK; o.sy -= 0.04 * s.chargeK; o.ox -= 0.05 * s.chargeK; }
+    }
+    // --- a blast close by that missed it: a duck, then a sigh of relief ("phew")
+    if (!airQ && !c.burn) {
+      const qd = t - s.duckT, qp = t - s.phewT, hurtRecent = t - s.lastHurt < 1.2;
+      if (qd >= 0 && qd < 0.6 && !hurtRecent) { const k = M.exp(-qd / 0.13); o.sy -= 0.1 * k; o.sx += 0.05 * k; o.fear = M.max(o.fear, 0.7 * k); }
+      if (qp >= 0 && qp < K.PHEW_T && !hurtRecent) {
+        const u = qp / K.PHEW_T, inh = M.sin(M.PI * M.min(1, u / 0.4)) * (u < 0.4 ? 1 : 0), exh = u >= 0.4 ? M.sin(M.PI * (u - 0.4) / 0.6) : 0;
+        o.sy += 0.07 * inh - 0.06 * exh; o.sx -= 0.03 * inh; o.relief = u < 0.85 ? 1 : 0; o.lookW = M.max(o.lookW, 0.6 * exh); o.look = -0.5;
+        if (u > 0.4 && u < 0.5 && F && c.inSec && s.sweatT < 0) { s.sweatT = 0.3; F.splash(w.pos.x + 0.1, w.pos.y + 0.5, w.pos.z, 0.07); }
+      }
+    }
+    // --- sad: a team mate died: the head sinks, the body sags and breathes slowly, the eyes look down
+    { const q = t - s.sadT;
+      if (q >= 0 && q < K.SAD_T && !airQ && !c.burn && !o.pain && !won && !c.aiming) {
+        const k = smoothstep(q / 0.5) * (1 - smoothstep((q - (K.SAD_T - 0.7)) / 0.7));
+        o.sad = k; o.lookW = M.max(o.lookW, 0.9 * k); o.look = -0.8 + 0.05 * M.sin(t * 2.5); o.sy -= 0.07 * k - 0.012 * k * M.sin(t * 3.1); o.lean -= 0.12 * k; o.ox -= 0.03 * k;
+      }
+    }
+    // --- celebration after a kill: two hops with a fist pump
+    { const q = t - s.cheerT;
+      if (q >= 0 && q < K.CHEER_T && !airQ && !c.burn && !o.pain && !won) {
+        const u = q / K.CHEER_T, ph = u * 2 * M.PI * 2 - M.PI * 0.5, hop = M.max(0, M.sin(ph)), sqz = u < 0.9 ? M.pow(M.max(0, -M.sin(ph)), 3) : 0, fade = 1 - smoothstep((u - 0.8) / 0.2);
+        o.oy += 0.26 * hop * fade; o.sy += (0.09 * hop - 0.1 * sqz) * fade; o.sx += (0.06 * sqz - 0.03 * hop) * fade; o.lean += 0.18 * M.sin(u * 8) * fade; o.happy = fade; o.arms = fade; o.cheer = M.max(o.cheer, 0.6);
+      }
+    }
+    // --- dizzy: it staggers (a slow sway of the whole body, the head rolls: see o.wob)
+    if ((o.daze || w.dizzyUntil > S.time) && !c.air && !c.burn) {
+      const k = o.daze ? M.min(1, s.dazeT) : 1, ph = t * 2.4 + (w.id || 0);
+      o.lean += 0.2 * M.sin(ph) * k; o.ox += 0.07 * M.sin(ph - 0.8) * k; o.sy -= 0.02 + 0.02 * M.sin(ph * 2) * k; o.wob += 0.2 * M.sin(ph * 1.7) * k;
+    }
+    // --- on fire: a panic (a frantic jig: stamping hops, a whipping lean and head)
+    if (c.burn && !c.air && !w.dead) {
+      const q = t * 8.5 + (w.id || 0) * 2.1, hop = M.abs(M.sin(q));
+      o.panic = 1; o.oy += 0.1 * hop; o.lean += 0.3 * M.sin(q * 0.75); o.sy += 0.05 * M.sin(q * 2) - 0.04 * M.pow(1 - hop, 4); o.wob += 0.45 * M.sin(q * 1.6); o.ox += 0.05 * M.sin(q * 0.75 + 1);
+    }
+    // --- a projectile coming at it: the head turns to follow it (only a worm that is not busy)
+    {
+      let best = null, bd = K.WATCH_R;
+      if (!c.air && !c.aiming && !c.burn && !w.dead && !c.wet && !won && S.proj.length) {
+        const sw0 = SS.plane.to_plane(S, w.pos);
+        for (const p of S.proj) {
+          if (p.owner === w.id && p.age < 1.2) continue;
+          const dx = (p.s - sw0.s) * c.f, dy = p.y - (w.pos.y + 0.3), d = M.hypot(dx, dy);
+          if (d < bd && M.hypot(p.vs, p.vy) > 1 && p.vs * c.f * dx + p.vy * dy < 0) { bd = d; best = { dx, dy, d }; }
+        }
+      }
+      s.watchK += ((best ? 1 : 0) - s.watchK) * M.min(1, dt * (best ? 9 : 3));
+      if (best) s.wlook = M.atan2(best.dy, best.dx);
+      if (s.watchK > 0.02) { o.watch = s.watchK; o.lookW = M.max(o.lookW, s.watchK); o.look = s.wlook; o.perk = M.max(o.perk, 0.5 * s.watchK); }
+    }
+    // --- thrown by a blow: the airborne body thrashes (a wave of curvature runs along it, it rocks back and forth), dying away with the flight
+    if (c.air && !w.dead && !c.wet && c.speed > 3) {
+      const age = t - s.hitT, th = age >= 0 && age < 4 ? s.hitK * M.exp(-age / 1.3) * M.min(1, (c.speed - 3) / 4) * smoothstep(age / 0.06) : 0;
+      if (th > 0.02) { o.thrash = th; o.flail = true; o.pain = M.max(o.pain, 0.3 * th); }
+    }
+    // --- in the water: a drowning worm fights (writhing, rocking) until it is too weak, a swimming one paddles
+    if (c.wet > 0.12 || w.drowning) {
+      const weak = w.drowning ? M.min(1, M.max(0.25, (w.hp || 0) / 40)) : 1;
+      o.struggle = (w.drowning ? 0.9 : 0.4) * weak; o.flail = true;
+    }
+    // --- the dying beat (the last 1.1 s before the worm is gone): by cause. Fire, gas, acid, current, a hard fall: it sags and folds, the head sinks, the eyes shut;
+    // a blast or a bullet: it freezes, the eyes bulge, it shivers (and swells: polish.js shudder)
+    if (S.phase === 'dying' && S.dyingW === w && !S.dyingGrave && !c.air) {
+      const k = clamp(1 - S.dyingT / 1.1, 0, 1), cz = w.cause | 0, CA = C_.CAUSE;
+      if (cz === CA.BURN || cz === CA.LAVA || cz === CA.POISON || cz === CA.ACID || cz === CA.SHOCK || cz === CA.FALL || cz === CA.DROWN) {
+        const kk = smoothstep(k / 0.85);
+        o.sy -= 0.46 * kk; o.sx += 0.14 * kk; o.lean -= 0.45 * kk; o.ox -= 0.08 * kk; o.lookW = 1; o.look = -1.15; o.pain = M.max(o.pain, 0.5 + 0.4 * kk); o.wob += 0.15 * M.sin(t * 17) * (1 - kk);
+      } else {
+        o.fear = M.max(o.fear, 0.4 + 0.6 * k); o.sy += 0.03 * M.sin(t * 33) * k; o.sx -= 0.02 * M.sin(t * 29) * k;
+      }
+    }
+    // --- the crawl: an inchworm stretch (the body lengthens and contracts with the wave, a small bob); a breathing idle
+    if (!c.air && c.crawl > 0.12 && !c.burn && !w.swim) { const ph = TAU * v.pose.wave * 0.5; o.sx += 0.05 * c.crawl * M.sin(ph); o.oy += 0.012 * c.crawl * M.abs(M.sin(ph)); }
+    else if (!c.air && c.crawl < 0.05 && !c.burn && !w.dead) { const br = M.sin(t * 2.1 + (w.id || 0) * 1.9); o.sy += 0.018 * br; o.sx -= 0.007 * br; }
     // --- low HP: heavy breathing, sweat; an idle stretch + yawn
     const calm = !c.air && !c.burn && !w.drowning && !w.swim && (c.crawl || 0) < 0.15 && s.fear < 0.1 && !o.pain && !o.cheer && !c.aiming;
     if (calm && w.hp > 0 && w.hp <= 25) {

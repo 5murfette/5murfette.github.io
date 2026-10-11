@@ -5,7 +5,7 @@
   'use strict';
   const C = SS.CFG, U = SS.dbgui = {};
   const K = () => SS.debug.KIND;
-  let root = null, curEl = null, allowed = false, open = false, tab = 'Props', item = null, sky = false, pend = null;
+  let root = null, curEl = null, allowed = false, open = false, mini = false, tab = 'Props', item = null, sky = false, pend = null;
   const P = { weapon: 0, tool: 0, hp: 200, size: 1, boom: 3, fire: 1.6, acid: 0.32, whp: 50 };
 
   const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -46,10 +46,10 @@
   }
   function render() {
     if (!root) return;
-    root.classList.toggle('hidden', !(allowed && open));
+    root.classList.toggle('hidden', !(allowed && open)); root.classList.toggle('min', mini);
     if (!allowed || !open) return;
     const cat = catalogue(), items = cat[tab] || [];
-    root.innerHTML = `<div class="dh"><b>DEBUG TOOLBOX</b><span>F9</span><button data-a="close" title="Close (F9)">x</button></div>`
+    root.innerHTML = `<div class="dh"><b>DEBUG TOOLBOX</b><span>F9</span><button data-a="min" title="Collapse / expand" aria-label="Collapse">${mini ? '+' : '–'}</button><button data-a="close" title="Close (F9)" aria-label="Close">x</button></div>`
       + `<div class="dt">${Object.keys(cat).map(t => `<button data-tab="${t}" class="${t === tab ? 'on' : ''}">${t}</button>`).join('')}</div>`
       + `<div class="di">${items.map((it, i) => `<button data-i="${i}" class="${item && item.kind === it.kind ? 'on' : ''}">${esc(it.label)}</button>`).join('')}</div>`
       + `<div class="dp">${ctlHTML(item && cat[tab].some(x => x.kind === item.kind) ? item : null)}</div>`
@@ -77,6 +77,7 @@
     root.addEventListener('click', e => {
       const t = e.target.closest('button'); if (!t) return;
       if (t.dataset.a === 'close') U.toggle();
+      else if (t.dataset.a === 'min') { mini = !mini; render(); }
       else if (t.dataset.tab) { tab = t.dataset.tab; item = null; render(); cursor(); }
       else if (t.dataset.i != null) { const it = catalogue()[tab][+t.dataset.i]; item = item && item.kind === it.kind ? null : it; render(); cursor(); }
       t.blur();
