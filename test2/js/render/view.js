@@ -211,6 +211,7 @@
     return v === team || S.time - (planted || -99) < SS.CFG.ARMS.TRAPS.PLANT_SEEN;
   };
   V.zoom = d => { view.zoom = M.clamp(view.zoom * Math.pow(1.1, M.clamp(d, -8, 8)), 8, 80); };   // d notches (the 🔍 button sends 6)
+  V.camKey = () => (view.dir.cur ? view.dir.cur.key : '');      // (tools: the director's current interest)
   V.snapCamera = () => { view.camT = null; view.dir.cur = null; };
   /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
   const PX = 0.0643;
@@ -220,6 +221,11 @@
   function interest(S, a) {
     const P2 = SS.plane, at = (s, y) => P2.to_world(S, s, y);
     if (S.phase === 'place') return null;
+    if (S.phase === 'over' && S.over >= 0 && SS.cine && SS.cine.victory()) {                 // P63: the winners
+      let win = S.active && !S.active.dead && S.active.team === S.over ? S.active : null;      // (the team's centroid can lie inside the land: frame one worm)
+      if (!win) for (const w of S.worms) if (!w.dead && w.team === S.over) { win = w; break; }
+      if (win) return { key: 'victory', x: win.pos.x, y: win.pos.y, z: win.pos.z, d: 520, p: 9 };
+    }
     if (S.free3d && S.free3d.length) { const q = S.free3d[0]; return { key: 'free3d', x: q.pos.x, y: q.pos.y, z: q.pos.z, d: 900, p: 9 }; }   // P37 W4: a shell bounced off a force field flies in 3D
     if (S.phase === 'dying' && S.dyingW) { const w = S.dyingW, g = S.dyingGrave && w.grave ? w.grave : w.pos; return { key: 'dying', x: g.x, y: g.y, z: g.z, d: 480, p: 9 }; }
     if (S.strikes && S.strikes.length) {
@@ -250,8 +256,8 @@
         const asp = camera ? camera.aspect : 1.5, dd = M.clamp((Math.max((s1 - s0) / asp, y1 - y0) / PX) * 1.25 + 380, 560, 1300), c = at((s0 + s1) / 2, (y0 + y1) / 2);
         return { key: 'projs', x: c.x, y: c.y, z: c.z, d: dd, p: 7 };
       }
-      const p = S.proj[0], sp = Math.hypot(p.vs, p.vy), c = at(p.s + p.vs * 0.12, p.y + p.vy * 0.12);
-      return { key: 'proj' + (p.id || 0), x: c.x, y: c.y, z: c.z, d: M.clamp(560 + sp / PX * 0.3, 560, 860), p: 7 };
+      const p = S.proj[0], sp = Math.hypot(p.vs, p.vy), cin = SS.cine && SS.cine.enabled, ld = cin ? 0.2 : 0.12, c = at(p.s + p.vs * ld, p.y + p.vy * ld);
+      return { key: 'proj' + (p.id || 0), x: c.x, y: c.y, z: c.z, d: M.clamp(560 + sp / PX * 0.3, 560, cin ? 980 : 860), p: 7 };   // P63: a long shot zooms out a little more
     }
     if (S.moais) for (const m of S.moais) { const b = SS.bodies.by_id(S, m.body); if (b && Math.hypot(b.vel.x, b.vel.y, b.vel.z) > 25 * PX) return { key: 'moai', x: b.pos.x, y: b.pos.y, z: b.pos.z, d: 640, p: 6 }; }
     const ex = S.lastExplosion;
@@ -553,6 +559,7 @@
   /* ---------- events ---------- */
   /* metres from the camera's focus point to an event (the camera shake of a blast follows the distance, not the zoom) */
   function focusDist(e) { return view.camT ? Math.hypot(e.x - view.camT.x, e.y - view.camT.y, e.z - view.camT.z) : view.zoom; }
+  const camApi = { focusDist: e => focusDist(e), camT: () => view.camT };
   function onEvents(S) {
     const camDist = view.zoom;
     for (const e of S.events) {
@@ -590,6 +597,7 @@
         case 'zip_hook': SS.fx.spark(e.x, e.y, e.z); break;
         case 'chute_open': if (e.worm) SS.fx.dust(e.worm.pos.x, e.worm.pos.y + 0.6, e.worm.pos.z, 6, 0.5, 0xe8e8e8); break;
       }
+      if (SS.cine) SS.cine.onEvent(S, e, camApi);
       if (SS.fx.onEvent) SS.fx.onEvent(S, e, camDist);
       if (SS.actors.onEvent) SS.actors.onEvent(S, e);
       if (SS.armsView) SS.armsView.onEvent(S, e);
@@ -607,7 +615,7 @@
 
   /* ---------- per-frame sync + render ---------- */
   const ease = x => x * x * (3 - 2 * x);
-  const v4 = new T.Vector3(), yAxis = new T.Vector3(0, 1, 0);
+  const v4 = new T.Vector3(), v5 = new T.Vector3(), yAxis = new T.Vector3(0, 1, 0);
   /* P38-R2: slow motion / instant replay run at V.timeScale (set by main.js): every effect and animation clock (view.time, particles,
    * blood, react / worn / gadget timers) gets the scaled dt, the camera and the terrain remesh the real one (dtU). */
   V.timeScale = 1;
@@ -658,22 +666,26 @@
     if (a && !a.dead && (a.walking || a.air || S.charging || S.proj.length) && (view.pan.s || view.pan.y)) { const k = Math.exp(-dtU * 5); view.pan.s *= k; view.pan.y *= k; if (Math.abs(view.pan.s) + Math.abs(view.pan.y) < 0.05) view.pan.s = view.pan.y = 0; }
     // PoC camera director (interest() / updateCamera): the most interesting thing wins by priority, a new interest of
     // the same or lower priority takes over only after 1.2 s; zoom = the PoC distance / its default 640 px x the user's
-    const it = interest(S, a), dr = view.dir;
+    const it = interest(S, a), dr = view.dir, cin = SS.cine && SS.cine.enabled, prevKey = dr.cur ? dr.cur.key : '';
     dr.since += dtU;
-    if (it && (!dr.cur || it.key === dr.cur.key || it.p > dr.cur.p || dr.since > 1.2 || (S.phase === 'play' && it.key === 'active'))) { if (!dr.cur || it.key !== dr.cur.key) dr.since = 0; dr.cur = it; }
+    if (it && (!dr.cur || it.key === dr.cur.key || it.p > dr.cur.p || dr.since > 1.2 || (dr.cur.key.startsWith('proj') && it.key.startsWith('boom')) || (S.phase === 'play' && it.key === 'active'))) { if (!dr.cur || it.key !== dr.cur.key) dr.since = 0; dr.cur = it; }
     else if (!it && dr.cur && dr.since > 1.2) dr.cur = null;
     const cur = view.lock || dr.cur || { key: 'active', x: a ? a.pos.x : SS.world.MX, y: a ? a.pos.y : 10, z: a ? a.pos.z : SS.world.MZ, d: 0, p: 0 };
-    const pk = cur.key === 'active' ? 1 : 0, fx = cur.x + d.x * view.pan.s * pk, fy = cur.y + 1.2 + view.pan.y * pk, fz = cur.z + d.z * view.pan.s * pk;
+    const co = cin ? SS.cine.frame(S, dtU, cur.key, view) : null;                    // P63: the cinematic moves on top of the director
+    const pk = cur.key === 'active' ? 1 : 0, fx = cur.x + d.x * view.pan.s * pk, fy = cur.y + 1.2 + view.pan.y * pk + (co ? co.dy : 0), fz = cur.z + d.z * view.pan.s * pk;
     const wantZ = cur.key === 'active' ? view.zoom : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * cur.d / 640);   // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
     if (!view.camT) { view.camT = new T.Vector3(fx, fy, fz); view.camZ = wantZ; }
+    else if (!cin && SS.cine && cur.key !== prevKey && prevKey && !view.lock) { view.camT.set(fx, fy, fz); view.camZ = wantZ; }     // cinematic camera off: an instant cut to a new interest
     const rate = cur.key === 'active' ? 6 : cur.p >= 7 ? 4.5 : 3.2;
-    view.camT.lerp(v4.set(fx, fy, fz), 1 - Math.exp(-dtU * rate));
+    const tp = co ? SS.cine.turnPos(fx, fy, fz, v5) : null;
+    if (tp) view.camT.copy(tp); else view.camT.lerp(v4.set(fx, fy, fz), 1 - Math.exp(-dtU * rate));
     view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dtU * 2.4));
     if (insp < 0.05) { view.orbit.yaw *= Math.exp(-dtU * 4); view.orbit.tilt *= Math.exp(-dtU * 4); }
-    const tilt = 0.2 + insp * (0.5 + view.orbit.tilt), yaw = insp * (0.55 + view.orbit.yaw), dist = (view.camZ || view.zoom) * (1 + insp * 0.9);
+    const tilt = 0.2 + insp * (0.5 + view.orbit.tilt), yaw = insp * (0.55 + view.orbit.yaw) + (co && insp < 0.05 ? co.yaw : 0), dist = M.max(co ? 7 : 0, (view.camZ || view.zoom) * (1 + insp * 0.9) * (co ? co.k : 1));
     const cy = Math.cos(yaw), sy = Math.sin(yaw), bx = n.x * cy + d.x * sy, bz = n.z * cy + d.z * sy;
     camera.position.set(view.camT.x + bx * dist * Math.cos(tilt), view.camT.y + dist * Math.sin(tilt), view.camT.z + bz * dist * Math.cos(tilt));
     camera.lookAt(view.camT);
+    if (co && co.roll && insp < 0.05) camera.rotateZ(co.roll);
     const sh = SS.fx.shake();
     if (sh > 0) {                                                           // P58: a smooth, damped rattle (a few mixed frequencies, mostly vertical and along the slab), not white noise
       const q = view.time, k = sh * sh * 0.3 + sh * 0.12, ox = Math.sin(q * 43.0) * 0.6 + Math.sin(q * 71.0 + 1.3) * 0.4, oy = Math.sin(q * 51.0 + 0.7) * 0.7 + Math.sin(q * 29.0) * 0.3, oz = Math.sin(q * 37.0 + 2.1) * 0.5 + Math.sin(q * 83.0) * 0.5;

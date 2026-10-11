@@ -61,7 +61,8 @@
   const DISPLAY = [
     { k: 'quality', t: 'Visual quality', w: 'seg', dyn: 'quality' }, { k: 'slice', t: 'Slice view', o: OPTS.slice, w: 'seg' }, { k: 'ghost', t: 'Front ghost', o: OPTS.ghost, n: 1, w: 'seg', h: 'how visible the part of the world in front of the section is (Off = hidden)' }, { k: 'art', t: 'Artwork', o: OPTS.art, w: 'seg' },
     { k: 'idle', t: 'Idle antics', b: true, d: true, h: 'bored worms juggle, scroll a phone, doze off ...' },
-    { k: 'ghostAuto', t: 'Auto ghost after attacks', b: true, d: true, h: 'the front half shows at 50 % after a shot and while an alien attacks' }
+    { k: 'ghostAuto', t: 'Auto ghost after attacks', b: true, d: true, h: 'the front half shows at 50 % after a shot and while an alien attacks' },
+    { k: 'cine', t: 'Cinematic camera', b: true, d: true, h: 'smooth turn moves, hit and kill cams, victory orbit (off = instant cuts); any key skips' }
   ];
   const FIELD = [
     { k: 'shape', t: 'Terrain shape', o: OPTS.shape, w: 'seg' },
@@ -276,7 +277,7 @@
   }
   function buildOpts() {
     sec(rowsEl, 'Display');
-    for (const r of DISPLAY) rowOf(r, rowsEl, r.k === 'ghostAuto' ? () => { if (SS.view && SS.view.setGhostAuto) SS.view.setGhostAuto(cur.ghostAuto !== false); } : r.k === 'idle' ? () => { if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false; if (SS.idleView) SS.idleView.enabled = cur.idle !== false; } : null);
+    for (const r of DISPLAY) rowOf(r, rowsEl, r.k === 'ghostAuto' ? () => { if (SS.view && SS.view.setGhostAuto) SS.view.setGhostAuto(cur.ghostAuto !== false); } : r.k === 'cine' ? () => { if (SS.cine) SS.cine.setEnabled(cur.cine !== false); } : r.k === 'idle' ? () => { if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false; if (SS.idleView) SS.idleView.enabled = cur.idle !== false; } : null);
     sec(rowsEl, 'Sound');
     musicRow(rowsEl);
   }

@@ -109,7 +109,10 @@
     if (e.type === 'reset') U.clear();
     if (e.type === 'hurt' && e.worm) damagePop(S, e);
     if (e.type === 'kill' && e.worm) killFeed(S, e);
-    if (e.type === 'turn') banner(`${SS.sim.team_name(S, e.worm.team)} · ${e.worm.name}`, SS.game && SS.game.is_cpu(S, e.worm.team) ? 'CPU' : 'is up', css(C.TEAMS[e.worm.team].rgb));
+    if (e.type === 'turn') {
+      const tt = `${SS.sim.team_name(S, e.worm.team)} · ${e.worm.name}`, ts = SS.game && SS.game.is_cpu(S, e.worm.team) ? 'CPU' : 'is up', tc = css(C.TEAMS[e.worm.team].rgb), dl = SS.cine ? SS.cine.turnDelay() : 0;
+      if (dl > 0.05) setTimeout(() => banner(tt, ts, tc), dl * 1000); else banner(tt, ts, tc);      // P63: the name appears as the camera move settles
+    }
     if (e.type === 'banner') banner(e.title, e.sub, 'var(--accent)');
     if (e.type === 'labbank') banner('Bank shot x' + e.k.toFixed(1), e.bounces + (e.bounces > 1 ? ' ricochets' : ' ricochet'), 'var(--accent)');
     if (e.type === 'pickup' && e.worm) gainPop(S, e);

@@ -142,6 +142,7 @@
     try {
       await ensureRenderer(settings);
       SS.view.setSlice(settings.slice); SS.view.setGhost(settings.ghost | 0); if (SS.view.setGhostAuto) SS.view.setGhostAuto(settings.ghostAuto !== false);
+      if (SS.cine) SS.cine.setEnabled(settings.cine !== false);
       let t0 = performance.now();
       const job = SS.sim.begin_reset(S, settings);
       let p = 0, ts = performance.now();
@@ -186,7 +187,7 @@
     const s = Object.assign({}, C.SETTINGS);
     for (const k of ['biome', 'weather', 'lava', 'wind', 'quality', 'slice', 'ghost', 'under', 'cpu', 'skill', 'placement', 'time', 'art', 'shape', 'first', 'volcanoes', 'mapSize']) if (params.has(k)) s[k] = params.get(k);
     for (const k of SS.CFG.DENSITY.KEYS.concat(['mineFuse', 'toolCrates'])) if (params.has(k)) s[k] = params.get(k);
-    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
+    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto', 'cine']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
     for (const k of ['teams', 'worms', 'hp', 'turnTime']) if (params.has(k)) s[k] = parseInt(params.get(k), 10) || 0;
     if (params.has('ctl')) s.ctl = params.get('ctl').split(',');
     if (params.has('lab')) s.labFlags = parseInt(params.get('lab'), 10) || 0;     // P42: Lab mechanics bit mask (tests)
@@ -255,6 +256,7 @@
       vis: w => SS.view.vis(w),
       pause(v) { paused = v; this.keepPaused = v; },
       replaying: () => RP.play ? { i: RP.play.i, n: RP.play.inputs.length } : null,
+      stepOnce: input => { if (input) input(); step(); },      // (tools: one fixed step, the real game path, without a render)
       advance(sec, input) { const n = Math.round(sec / C.STEP); for (let i = 0; i < n; i++) { if (input) input(i); step(); } SS.view.snapCamera(); frameRender(C.STEP); },
       render(dt) { if (!dt) SS.view.snapCamera(); frameRender(dt || C.STEP); },   // (dt: the studio / tools advance the view clock by the sim time they stepped)
       slabExtent() { const b = SS.terrain.uniforms.uBack.value; return { minT: -b, maxT: 0, thickness: b }; },
@@ -278,7 +280,7 @@
         if (Array.isArray(st.names)) ok.names = st.names.slice(0, 4).map(v => String(v).slice(0, 18));
         // presentation stays the guest's own (a different quality reloads the renderer: it dropped the link mid-match)
         const mine = SS.menu.load() || {}, pres = {};
-        for (const k of ['slice', 'art', 'ghost', 'idle', 'ghostAuto']) if (mine[k] != null) pres[k] = mine[k];     // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
+        for (const k of ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine']) if (mine[k] != null) pres[k] = mine[k];     // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
         pres.quality = Q ? Q.name : mine.quality;                          // (P38 R6 R6: the RUNNING quality: a saved one that differs would reload the page and drop the link)
         netGame = true; newGame(SS.menu.sanitize(Object.assign(urlSettings(), pres, ok, { cpu: 'off' }), C.SETTINGS));
       });
@@ -337,7 +339,7 @@
             // lockstep: the driver steps in real time; the follower also catches up on queued inputs (<= 60 per frame)
             // (catch-up applies to the follower only: a driver never runs ahead of real time)
             if (!menuOpen) { acc += dt; let n = 0; while (running && n < 60 && (acc >= C.STEP || (!SS.net.drives(S.active ? S.active.team : 0) && SS.net.pending() > 2))) { if (!stepNet()) { acc = Math.min(acc, C.STEP); break; } acc = Math.max(0, acc - C.STEP); n++; } SS.net.flush(); }
-          } else if (!paused && !menuOpen) { tscale = RP.play ? 0.5 : S.time < (S.slowUntil || 0) && S.slowUntil - S.time < 1.5 ? 0.35 : 1; acc += dt * tscale; while (acc >= C.STEP && running) { step(); acc -= C.STEP; } }   // (PoC slow motion)
+          } else if (!paused && !menuOpen) { tscale = RP.play ? 0.5 : S.time < (S.slowUntil || 0) && S.slowUntil - S.time < 1.5 ? 0.35 : 1; if (!RP.play && SS.cine) tscale = Math.min(tscale, SS.cine.timeScale()); acc += dt * tscale; while (acc >= C.STEP && running) { step(); acc -= C.STEP; } }   // (PoC slow motion)
           else acc = 0;
           if (!paused) { SS.view.timeScale = menuOpen ? 1 : tscale; frameRender(dt); adaptDpr(rawMs, now / 1000); }
         }
