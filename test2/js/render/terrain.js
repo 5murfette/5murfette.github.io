@@ -30,7 +30,7 @@
   // C1: the cut face's 3D noise and pinned-coordinate offset (τ = s + uS0, see the cap shader); MORPH_CELL = the world
   // cell size (m) of the texture-offset grid: a face point that moves ~one cell while the section turns has fully
   // changed its texture (at s = 20 m a 7° turn; under the worm never)
-  const CAPU = { tN3: { value: null }, uS0: { value: 0 } };
+  const CAPU = { tN3: { value: null }, uS0: { value: 0 }, uCapK: { value: new T.Vector4(1, 1, 1, 1) } };   // uCapK: night / dusk grade of the cut face: rgb tint x brightness, w = saturation
   const MORPH_CELL = 2.5;
   let capPivot = null;
   let farData = null, farKey = '', farRange = null;
@@ -173,7 +173,12 @@
     float gMetal = 0.0;
     float fakeEnvK = 0.0;
     uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tWater; uniform sampler2D tCover; uniform float uPlayR;
-    uniform vec3 uO, uN, uHaze, uGrassTint, uDryTint, uSunDir;
+    uniform vec3 uO, uN, uHaze, uGrassTint, uDryTint, uSunDir; uniform vec4 uCloudSh;
+    // P65c: drifting cloud shadows (xy = how far the wind aloft has carried them, z = cover, w = strength): patches of the land lie in shade, the sun-lit rest keeps its colour
+    float cloudShade(vec2 p){
+      float n = texture(tNoise, (p - uCloudSh.xy) * 0.0055).a;
+      return 1.0 - uCloudSh.w * smoothstep(0.62 - 0.26 * uCloudSh.z, 0.8 - 0.26 * uCloudSh.z, n);
+    }
     uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze;
     // the landscape behind the slab (mode 1, ad = m beyond its back face): the old ghost haze while it fades
     // (uCtxSolid 0); drawn solid (CX1) it still recedes into the haze with the slice-view setting (P29j, uCtxHaze)
@@ -474,6 +479,7 @@
             col = mix(col, vec3(0.88, 0.92, 0.97), smoothstep(0.2, 0.55, vMD.y));   // P37 W4: the inside of foam is white, not dark
             if (uDbgBack > ${body ? '0.5' : '1.5'}) { col = vec3(0.0); tEmis = vec3(4.0, 0.0, 4.0); } }` : ''}
           ${mode === 0 && !body ? 'if (gl_FrontFacing && uDetail > 0.5) col *= surfAO(vW, nW);' : ''}
+          col *= cloudShade(vW.xz);
           diffuseColor.rgb = col;
           ${mode === 1 || mode === 3 ? /* glsl */`
             float ad = ${mode === 1 ? '-tD - uBack' : 'tD'};
@@ -793,13 +799,14 @@
           col = mix(col, vec3(0.05, 0.045, 0.04), sf.b * (1.0 - smoothstep(0.0, 0.35, dd)) * 0.8); // charred surface
           if (capLava) { float skinF; cEmis = lavaSection(pu, cLv.r - vW.y, vW.y - cLv.a, cLv.b, skinF); col = vec3(0.034, 0.03, 0.028) * skinF; }
           if (capCv > 0.5) { col = mix(vec3(0.84, 0.87, 0.93) * (0.92 + 0.12 * nb), vec3(0.085, 0.08, 0.078) * (0.8 + 0.4 * nb), smoothstep(0.4, 0.6, capAsh)); cEmis = vec3(0.0); }
+          col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uCapK.w) * uCapK.rgb;
           diffuseColor.rgb = col;
         `)
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += cEmis;')
         // the cut face is an open section (nothing is drawn in front of it): light it from the sun's side of the
         // plane with a slight upward tilt (uCapN), so it reads the same whether the sun is in front or behind
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n normal = normalize((viewMatrix * vec4(uCapN, 0.0)).xyz);');
-      sh.fragmentShader = 'uniform vec3 uCapN;\n' + sh.fragmentShader;
+      sh.fragmentShader = 'uniform vec3 uCapN; uniform vec4 uCapK;\n' + sh.fragmentShader;
     };
     m.customProgramCacheKey = () => bspline ? 'cap5b' : 'cap5';
     return m;
@@ -816,7 +823,7 @@
       uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHaze: { value: new T.Color(0xf3d2b0) },
       uGrassTint: { value: new T.Color(1, 1, 1) }, uDryTint: { value: new T.Color(1, 1, 1) }, uSunDir: { value: new T.Vector3(0, 1, 0) },
       uHalf: { value: C.HALF }, uBack: { value: C.HALF }, uAlpha: { value: 0 }, uTime: { value: 0 }, uSea: { value: W.SEA }, uWaterTex: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
-      uCaustic: { value: 1 }, uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
+      uCaustic: { value: 1 }, uCloudSh: { value: new T.Vector4(0, 0, 0, 0) }, uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
       uNL: { value: W.NX }, uSL: { value: W.SX },
       uLatR: { value: new T.Vector3(48, 48, 0) },   // D6: dry worlds' lattice disc (x, z, r; r 0 = off, set per frame)
       uPlA: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uPlB: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uPlC: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uNPl: { value: 0 },   // P37 W4: plate registry
@@ -1041,6 +1048,8 @@
   TR.setBack = function (m) { U.uBack.value = m; };
   TR.vol = () => volTex;                     // 3D density + material texture (render/water.js: the aquarium face skips rock)
   TR.slabMaterial = () => slabMat;
+  TR.cloudShadow = function (dx, dz, cover, k) { U.uCloudSh.value.set(dx, dz, cover, k); };
+  TR.capLook = function (r, g, b, sat) { CAPU.uCapK.value.set(r, g, b, sat); };
   TR.capN = capN;                                // debug/tests
   TR.ctxMaterial = () => ctxFar;
   TR.slabDepthMaterial = () => slabDepth;

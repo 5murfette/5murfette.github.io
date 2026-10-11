@@ -27,11 +27,11 @@
   const own = {
     tW: { value: null }, tSky: { value: null }, tEnv: { value: null }, uEnv: { value: 0 }, uSun: { value: new T.Vector3(0.5, 0.6, 0.3).normalize() },
     uHorizon: { value: new T.Color(0xf6c89a) }, uDeep: { value: new T.Color(0x0d3a5c) }, uShallow: { value: new T.Color(0x2fa7a8) },
-    uFog: { value: new T.Color(0xf3d2b0) }, uFogD: { value: 0.0026 }, uInsp: { value: 0 }, uWTime: { value: 0 }, uRain: { value: 0 },
+    uFog: { value: new T.Color(0xf3d2b0) }, uFogD: { value: 0.0026 }, uInsp: { value: 0 }, uWTime: { value: 0 }, uRain: { value: 0 }, uWindD: { value: new T.Vector4(0, 0, 0, 0) },   // P65c: wind-driven chop: xy = distance the wind has carried the ripples (m), z = wind speed (m/s)
     tShelf: { value: null }, uNW: { value: 193 }, uSW: { value: 96 }, uMC: { value: new T.Vector2(48, 48) },   // lattice texels / map side (m) / map centre
     uRing: { value: [0, 1, 2, 3, 4, 5].map(() => new T.Vector4(0, 0, -99, 0)) }   // P29l: open-sea ring waves (x, z, start time, strength)
   };
-  let ringN = 0;
+  let ringN = 0, windT = 0, wsx = 0, wsz = 0;
   /* LS1 island shelf: the lattice sea is at most SEA (3 m) deep over a flat floor, the outer plane is the open ocean;
    * shading both by their real depth drew the lattice square on the sea (a light 3 m-deep floor inside, deep water
    * outside). Real islands: a turquoise shelf a few metres off the beach, then the slope drops to deep blue. Colour and
@@ -44,7 +44,7 @@
   /* shared surface shading (inner grid and outer ocean) */
   const SURF = /* glsl */`
     uniform sampler2D tNoise, tSky; uniform samplerCube tEnv; uniform float uEnv, uWTime, uSea, uFogD, uInsp, uRain; uniform vec3 uSun, uHorizon, uDeep, uShallow, uFog, uO, uN;
-    uniform vec4 uRing[6];
+    uniform vec4 uRing[6], uWindD;
     // P29l (user 2026-10-08: "hitting water just outside the island makes no splash, no wave"): the open sea beyond the
     // simulated lattice has no wave field, so a splash / water blast there starts an expanding ring wave: a wave train
     // behind a front moving at ~5 m/s, decaying with age and radius; returns the slope (normal) and a crest-foam share
@@ -80,10 +80,11 @@
       return g;
     }
     varying vec3 vW; varying vec3 vNg; varying vec4 vD;
-    float hgt(vec2 p){
-      return texture2D(tNoise, p*0.045 + vec2(uWTime*0.010, uWTime*0.006)).a * 0.6
-           + texture2D(tNoise, p*0.11 - vec2(uWTime*0.017, -uWTime*0.012)).a * 0.3
-           + texture2D(tNoise, p*0.33 + vec2(-uWTime*0.03, uWTime*0.025)).g * 0.1;
+    float hgt(vec2 p){                                       // P65c: the ripples ride the wind (direction and speed), they used to drift the same way in a gale and in a calm
+      vec2 D = uWindD.xy;
+      return texture2D(tNoise, p*0.045 - D*0.0040).a * 0.6
+           + texture2D(tNoise, p*0.11 - D*0.0067).a * 0.3
+           + texture2D(tNoise, p*0.33 - D*0.0130).g * 0.1;
     }
     vec4 shade(float depth, float foamS, float dA){          // dA: apparent depth (colour / opacity; LS1 shelf)
       float tD = dot(vW - uO, uN);
@@ -92,7 +93,8 @@
       foamS = max(foamS, 0.0) + max(-1.0 - foamS, 0.0);
       vec2 p = vW.xz; float e = 0.12;
       float h0 = hgt(p), hx = hgt(p + vec2(e, 0.0)), hz = hgt(p + vec2(0.0, e));
-      float amp = 2.2 * smoothstep(0.0, 0.5, depth);         // ripples calm down in the shallows
+      float wsp = uWindD.z, wk = (0.55 + 1.6 * (1.0 - exp(-wsp / 6.0))) / 1.18;   // chop height by wind speed (1 at a breeze)
+      float amp = 2.2 * wk * smoothstep(0.0, 0.5, depth);    // ripples calm down in the shallows
       vec3 n = normalize(vNg + vec3((h0 - hx) * amp, 0.0, (h0 - hz) * amp));
       if (uRain > 0.01) { vec2 rr = rainRings(p, uWTime) * 0.45 * smoothstep(0.01, 0.15, depth); n = normalize(n + vec3(rr.x, 0.0, rr.y)); }
       vec3 rg = seaRings(p); n = normalize(n + vec3(rg.x, 0.0, rg.y) * 0.9);
@@ -124,6 +126,7 @@
       foam = max(foam, smoothstep(0.05, 0.5, foamS) * smoothstep(0.78 - fq * 0.32, 0.98 - fq * 0.28, lace));
       foam = max(foam, (1.0 - smoothstep(0.82, 0.93, vNg.y)) * smoothstep(0.35, 0.75, fn));
       foam = max(foam, min(1.0, rg.z * 1.6) * smoothstep(0.25, 0.65, fn + 0.3));            // ring-wave crests
+      foam = max(foam, smoothstep(0.64, 0.8, h0 + (fn - 0.5) * 0.25) * smoothstep(5.5, 10.0, wsp) * smoothstep(0.3, 1.0, depth) * 0.7);   // whitecaps in a strong wind
       col = mix(col, vec3(0.97, 0.98, 1.0), foam * 0.85);
       float a = smoothstep(0.006, 0.05, depth) * mix(mix(0.64, 0.93, smoothstep(0.0, 3.0, dA)), 1.0, smoothstep(4.0, 9.0, dA));
       a = mix(a, smoothstep(0.006, 0.06, depth) * mix(0.4, 0.9, smoothstep(0.0, 1.2, depth)), inl);   // a puddle shows its floor
@@ -233,11 +236,11 @@
     // the aquarium face at slice zero
     faceMat = new T.ShaderMaterial({
       transparent: true, depthWrite: false, fog: false, side: T.DoubleSide,
-      uniforms: Object.assign(shared(), { tVol: { value: null }, uVolSize: { value: new T.Vector3(SS.world.NX, SS.world.NY, SS.world.NZ) } }),
+      uniforms: Object.assign(shared(), { tVol: { value: null }, uVolSize: { value: new T.Vector3(SS.world.NX, SS.world.NY, SS.world.NZ) }, uFaceK: { value: new T.Vector4(1, 1, 1, 1) }, uFaceH: { value: 0 } }),
       vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */`
         uniform highp sampler2D tW; uniform highp sampler3D tVol; uniform sampler2D tNoise;
-        uniform vec3 uVolSize, uSun, uDeep, uShallow, uFog, uN; uniform float uWTime, uFogD, uSea, uNW, uSW;
+        uniform vec3 uVolSize, uSun, uDeep, uShallow, uFog, uN; uniform vec4 uFaceK; uniform float uWTime, uFogD, uSea, uNW, uSW, uFaceH;
         varying vec3 vW;
         void main(){
           vec2 g = vW.xz * 2.0;
@@ -281,6 +284,9 @@
           // meniscus: a thin bright line at the surface
           float px = max(fwidth(vW.y), 1e-3);
           col = mix(col, vec3(0.82, 0.95, 1.0), (1.0 - smoothstep(0.0, px * 2.5, dd)) * 0.85);
+          // P65c: the face is the sea seen from the side: lit like the rest of the scene (dusk warm and dim, moonlight cool and dark), overcast seas greyer
+          col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uFaceK.w) * uFaceK.rgb;
+          col = mix(col, uFog * 0.55, uFaceH * (1.0 - 0.5 * smoothstep(0.0, 4.0, dd)));
           float a = mix(0.74, 0.95, smoothstep(0.0, 2.0, dd));
           float fd = length(cameraPosition - vW);
           col = mix(col, uFog, 1.0 - exp(-fd * fd * uFogD * uFogD));
@@ -314,6 +320,8 @@
 
   // P1 sudden death: the sea level rose (uSea is the terrain's shared uniform, set by view.seaChanged)
   WV.seaChanged = function (sea) { if (outer) outer.position.y = sea; if (face) face.scale.y = sea + 4; };
+  /* P65c: the aquarium face's grade by time of day (view.js applyLook): tint x brightness and saturation, haze share (overcast / ash seas) */
+  WV.faceLook = function (r, g, b, sat, haze) { if (!faceMat) return; faceMat.uniforms.uFaceK.value.set(r, g, b, sat); faceMat.uniforms.uFaceH.value = haze; };
   WV.look = function (L, sk, haze) {
     const set = m => {
       const u = m.uniforms;
@@ -407,6 +415,14 @@
     const on = !!st && !SS.world.dry;                    // dry worlds (Step D): no sea at all; render/dunes.js draws the far dunes
     grid.visible = face.visible = on; outer.visible = !SS.world.dry;
     own.uWTime.value = view.time;
+    {                                                    // the wind (smoothed: a new turn's wind must not make the ripples jump) carries the chop along
+      const wm = S.wind && S.wind.mean ? S.wind.mean : { x: 0, z: 0 }, w = own.uWindD.value, dt = Math.max(0, Math.min(0.1, view.time - windT));
+      windT = view.time;
+      const k = 1 - Math.exp(-dt * 0.5), tx = wm.x, tz = wm.z;
+      wsx += (tx - wsx) * k; wsz += (tz - wsz) * k;
+      const sp = Math.hypot(wsx, wsz), f = sp < 0.05 ? 0 : Math.max(sp, 0.8) / sp;
+      w.x += (sp < 0.05 ? 0.7 : wsx * f) * dt; w.y += (sp < 0.05 ? 0.4 : wsz * f) * dt; w.z = sp;
+    }
     own.uInsp.value = view.insp || 0;
     const L = (view.look && view.look.sunDir) || [-0.42, 0.62, 0.66];
     own.uSun.value.set(L[0], L[1], L[2]).normalize();

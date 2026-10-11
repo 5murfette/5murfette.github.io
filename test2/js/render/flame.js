@@ -615,7 +615,9 @@
       const x = c.x / c.w, y = c.y / c.w, z = c.z / c.w;
       const f = 0.8 + 0.12 * Math.sin(flick * 13.1 + l * 2.0) + 0.08 * Math.sin(flick * 27.7 + l) + 0.06 * Math.sin(flick * 51.3);
       const tgt = Math.min(60, 9 * Math.sqrt(c.w)) * (f + 0.05 * Math.sin(flick * 97.0 + l * 5.0)) * (1.15 - 0.55 * U.uDay.value);
-      L.position.set(x, y + 0.9 + Math.min(2, c.ymax - y) * 0.4, z);
+      /* P65c: the light hangs 1.4 m toward the camera: on the section plane itself it only grazed the cut face (the strata under a fire stayed dark) */
+      const tx = cp.x - x, tz = cp.z - z, tl = Math.max(Math.hypot(tx, tz), 1e-3), fw = Math.min(1.4, tl);
+      L.position.set(x + tx / tl * fw, y + 0.9 + Math.min(2, c.ymax - y) * 0.4, z + tz / tl * fw);
       L.color.setRGB(1.0, 0.43 + 0.08 * Math.sin(flick * 9.0 + l), 0.14);
       L.distance = 10 + 4 * Math.sqrt(c.w);
       L.intensity += (tgt - L.intensity) * 0.35;

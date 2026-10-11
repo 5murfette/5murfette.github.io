@@ -390,6 +390,12 @@
       wu.uHorizon.value.setRGB(sk.horizon[0], sk.horizon[1], sk.horizon[2], T.SRGBColorSpace);
     }
     if (SS.waterView) SS.waterView.look(L, sk, haze);
+    {                                    // P65c: the cut faces (rock cap, sea face) take the time of day's light: dusk warm and dimmer, moonlight cool, dark and desaturated
+      const hz = S.biome === 'volcanic' ? 0.3 : 0, wv = SS.waterView || {};
+      if (tod === 'night') { if (SS.terrain.capLook) SS.terrain.capLook(0.7, 0.8, 0.98, 0.72); if (wv.faceLook) wv.faceLook(0.2, 0.3, 0.44, 0.8, hz + 0.1); }
+      else if (tod === 'dusk') { if (SS.terrain.capLook) SS.terrain.capLook(1, 0.97, 0.93, 1); if (wv.faceLook) wv.faceLook(0.78, 0.64, 0.52, 0.9, hz); }
+      else { if (SS.terrain.capLook) SS.terrain.capLook(1, 1, 1, 1); if (wv.faceLook) wv.faceLook(1, 1, 1, 1, hz); }
+    }
     if (SS.weatherView) SS.weatherView.look(L, sk, haze);
     if (SS.fx.look) SS.fx.look(L, sk);
     if (SS.flameView) SS.flameView.look(L, sk);
@@ -739,6 +745,12 @@
     if (SS.bloodView) SS.bloodView.frame(S, dt);
     SS.fx.update(dt, camera);
     if (SS.flameView) SS.flameView.update(S, dt, camera);
+    {                                    // P65c: cloud shadows ride the wind aloft (2x the surface wind, like the cloud layer), only in daylight and where the sky is not overcast
+      const wm = S.wind && S.wind.mean ? S.wind.mean : { x: 0, z: 0 }, cv = S.weather ? S.weather.cloud : 0.1, cd = view.cloudD || (view.cloudD = { x: 0, z: 0 });
+      cd.x += (wm.x * 2 + 0.6) * Math.min(dt, 0.1); cd.z += (wm.z * 2 + 0.3) * Math.min(dt, 0.1);
+      const lit = view.tod === "night" || SS.world.under ? 0 : view.tod === "dusk" ? 0.7 : 1, k = 0.34 * lit * M.clamp((0.9 - cv) / 0.5, 0, 1);
+      SS.terrain.cloudShadow(cd.x, cd.z, cv, k);
+    }
     // U: underground maps hide the whole sky world (several modules re-enable their meshes per frame) and light the
     // active worm's lamp
     if (SS.world.under) {
@@ -749,7 +761,10 @@
     } else {
       if (sky) sky.visible = true; if (motes) motes.visible = view.tod !== 'night';
       // night: the active worm's lamp lights its surroundings (as in the caves, a little weaker)
-      const a = S.active; lamp.intensity = view.tod === 'night' && a && !a.dead ? 26 : 0; if (a) lamp.position.set(a.pos.x, a.pos.y + 0.7, a.pos.z);
+      /* P65c: the lamp hangs 1.1 m in front of the worm (toward the camera) and 0.9 m up, not inside its head: at 0.3 m the 1/d^1.6 falloff
+       * burned the worm white (and left the cut face at a grazing angle) */
+      const a = S.active; lamp.intensity = view.tod === 'night' && a && !a.dead ? 11 : 0;
+      if (a) { const n = SS.plane.nrm(S); lamp.position.set(a.pos.x + n.x * 1.1, a.pos.y + 0.9, a.pos.z + n.z * 1.1); }
     }
     if (SS.prewarm) SS.prewarm.tick();
     if (stars) { stars.position.copy(camera.position); stars.visible = !SS.world.under && stars.material.opacity > 0; }
