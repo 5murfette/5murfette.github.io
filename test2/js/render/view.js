@@ -78,7 +78,8 @@
     if (SS.treeView) SS.treeView.init(scene, tx, Q);   // after terrain (shared uniforms) and bodyView (flame shader)
     SS.grass.init(scene, tx, Q);
     SS.grass.material().userData.uniforms.tSurf.value = surfTex;
-    SS.terrain.onChunk = (ci, c) => SS.grass.onChunk(ci, c);
+    SS.terrain.onChunk = (ci, c) => { SS.grass.onChunk(ci, c); if (SS.clutterView) SS.clutterView.onChunk(ci, c); };
+    if (SS.clutterView) SS.clutterView.init(scene, tx, Q);   // P62: pebbles / twigs / flowers / scrub on the ground
 
     outlineMat = SS.mat.outline();
     outline = new T.Mesh(new T.BufferGeometry(), outlineMat); outline.renderOrder = 7; outline.frustumCulled = false; scene.add(outline);
@@ -108,6 +109,8 @@
     if (SS.ventsView) SS.ventsView.init(scene);             // P25: fumaroles
     if (SS.bloodView) SS.bloodView.init(scene);             // the PoC's optional gore (setup Blood: On)
     if (SS.weatherView) SS.weatherView.init(scene, tx, Q, { skyMat, sun, hemi, fill, motes, heightTex, renderer });
+    if (SS.trailView) SS.trailView.init(scene, Q);     // P62: footstep dust, drag marks, wading rings, breath fog
+    if (SS.lifeView) SS.lifeView.init(scene, tx, Q);   // P62: birds, butterflies, lizards, fish, fireflies, embers, falling leaves
     if (SS.shrapView) SS.shrapView.init(scene);        // X2: luminous casing shrapnel
     if (SS.spatView) SS.spatView.init(scene);          // LV4: lava spatter clots
     if (SS.structView) SS.structView.init(scene);      // M: steel bridges
@@ -300,6 +303,8 @@
     if (SS.weaponsView) SS.weaponsView.clear();
     if (SS.bloodView) SS.bloodView.clear();
     if (SS.weatherView && SS.weatherView.clear) SS.weatherView.clear();
+    if (SS.lifeView) SS.lifeView.clear();
+    if (SS.trailView) SS.trailView.clear();
     if (SS.shrapView) SS.shrapView.clear();
     if (SS.spatView) SS.spatView.clear();
     if (SS.structView) SS.structView.clear();
@@ -606,6 +611,7 @@
       if (SS.bloodView) SS.bloodView.onEvent(S, e);
       if (SS.audio) SS.audio.onEvent(S, e);                   // P10: procedural sound
       if (SS.weatherView && SS.weatherView.onEvent) SS.weatherView.onEvent(S, e);
+      if (SS.lifeView) SS.lifeView.onEvent(S, e);
       if (SS.shrapView) SS.shrapView.onEvent(S, e);
       if (SS.alienView && SS.alienView.onEvent) SS.alienView.onEvent(S, e);          // P47: the infected worm, the alien's bite / burst
       if (SS.ui && SS.ui.onEvent) SS.ui.onEvent(S, e);
@@ -626,6 +632,7 @@
     autoGhost(S, dtU);
     if (S.weather && view.wxKind !== undefined && S.weather.kind !== view.wxKind) applyLook(S);   // 5f: the weather turned
     const W = SS.world;
+    if (SS.clutterView) SS.clutterView.S = S;
     SS.terrain.update(renderer, S, dtU, Q.remeshMs);
     if (W.version !== view.heightFor && view.time - view.heightT > 0.4) { buildHeights(); view.heightT = view.time; }
     if (S.veg && (S.veg.surfVer !== view.surfVer || scorchDirty)) uploadSurface(S);
@@ -656,6 +663,7 @@
     const wind = S.wind || null;
     SS.fx.env.wx = wind && wind.mean ? wind.mean.x : 0; SS.fx.env.wz = wind && wind.mean ? wind.mean.z : 0;
     SS.grass.frame(S, view.time, wind ? wind.mean : null, wind ? wind.whirls : null, S.weather ? S.weather.snowCover : 0);
+    if (SS.clutterView) SS.clutterView.frame(S, view, wind ? wind.mean : null);
     outlineMat.uniforms.uTime.value = view.time; outlineMat.uniforms.uAlpha.value = (0.55 + 0.45 * (1 - insp)) * (1 - edgeA);
     outline.visible = edgeA < 0.999;
     if (water) water.material.uniforms.uTime.value = view.time;
@@ -714,6 +722,8 @@
     if (SS.waterView) SS.waterView.frame(S, view, camera);
     if (SS.dunesView) SS.dunesView.frame(S, view);
     if (SS.weatherView) SS.weatherView.frame(S, view, camera, dt);
+    if (SS.lifeView) SS.lifeView.frame(S, view, camera, dt);
+    if (SS.trailView) SS.trailView.frame(S, view, camera, dt);
     if (SS.farView) SS.farView.frame(view.time);
     if (SS.cloudView) { SS.cloudView.frame(S, view, camera, dt); if (SS.skyView) SS.skyView.frame(camera, SS.cloudView.drift(), SS.cloudView.uniforms.uVis.value, view.time); }
     if (SS.shrapView) SS.shrapView.frame(S, view, camera, dt);

@@ -32,6 +32,7 @@
     return surf[(k * surfN + i) * 4] / 255;
   }
 
+  GR.cover = grassAt;
   const m4 = new T.Matrix4(), q4 = new T.Quaternion(), v4 = new T.Vector3(), s4 = new T.Vector3(), yAxis = new T.Vector3(0, 1, 0), col = new T.Color();
   GR.onChunk = function (ci, c) {
     let im = per.get(ci);
