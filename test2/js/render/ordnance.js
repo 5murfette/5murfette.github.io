@@ -252,7 +252,10 @@
     const add = (m, x, y, z) => { m.position.set((x || 0) * K, (y || 0) * K, (z || 0) * K); m.castShadow = true; g.add(m); return m; };
     const box = (w, h, d, m) => new T.Mesh(new T.BoxGeometry(w * K, h * K, d * K), m);
     const cyl = (r0, r1, h, mat, seg) => { const c = new T.Mesh(new T.CylinderGeometry(r0 * K, r1 * K, h * K, seg || 14), mat); c.rotation.z = -PI / 2; return c; };
-    if (id === 'bazooka' || id === 'homing') {
+    const bz = id === 'bazooka' && SS.models && SS.models.mesh('held_bazooka');
+    if (bz) {
+      g.add(bz);                                                                    // P59: the baked launcher (tube axis on y 0, +x = the muzzle, pistol grip at x 0.09)
+    } else if (id === 'bazooka' || id === 'homing') {
       const m = id === 'homing' ? MAT.blue : MAT.olive;
       add(cyl(1.35, 1.35, 15, m), 3); add(cyl(1.9, 1.5, 2.6, MAT.olive2), 10.8); add(cyl(1.6, 1.9, 2, MAT.olive2), -4.8);
       add(box(1.4, 2.6, 1.2, MAT.dark), 2, -2.2); add(box(2.4, 1.2, 1, MAT.dark), 4, 1.9); add(box(0.6, 1.2, 0.6, MAT.dark), 4.8, 2.9);
@@ -299,7 +302,7 @@
     // dropped item in one hand under it
     const thrown = ['grenade', 'cluster', 'banana', 'holy', 'dynamite', 'sheep', 'blackhole', 'boulder', 'mine', 'magnet', 'spring', 'foam', 'dog', 'sentry', 'claymore', 'ffield', 'punch'].includes(id);
     if (thrown) g.children.forEach(c => { c.position.x -= 2 * K; });       // closer to the body
-    g.userData.grips = thrown ? [[3 * K, -2.6 * K, 0]] : [[2 * K, -2.4 * K, 1.2 * K], [7 * K, -1.6 * K, -1.2 * K]];
+    g.userData.grips = thrown ? [[3 * K, -2.6 * K, 0]] : bz ? [[0.09, -0.2, 0.03], [0.33, -0.1, -0.07]] : [[2 * K, -2.4 * K, 1.2 * K], [7 * K, -1.6 * K, -1.2 * K]];
     g.userData.id = id;
     return g;
   };

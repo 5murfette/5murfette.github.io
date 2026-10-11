@@ -41,7 +41,6 @@
   const rng = S => M.rng_next(S.gdRng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
   const norm3 = v => { const l = M.nz(M.len3(v.x, v.y, v.z), 1); v.x /= l; v.y /= l; v.z /= l; return v; };
-  const pdirOf = S => P.dir(S);
 
   GD.init = function (S) {
     S.gdRng = M.rng_make(((Math.imul(S.settings.seed | 0, 2246822519) + 0x6d1) >>> 0) || 1);

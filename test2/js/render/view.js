@@ -148,6 +148,11 @@
       renderer.setRenderTarget(tr); if (SS.farView && SS.farView.dirty) SS.farView.dirty();
       renderer.compile(scene, camera); renderer.render(scene, camera);
       renderer.setRenderTarget(rt0); tr.dispose();
+      if ((ghostAutoOn || ghostUser > 0) && SS.section.renderGhost) {                 // R11: the front ghost pass (the automatic one is on by default): its programs and its full-size float target are built now, not in the first attack of the match
+        const g0 = SS.section.ghost; SS.section.setGhost(50);
+        try { SS.section.renderGhost(renderer, scene, camera, V); } finally { SS.section.setGhost(g0); }
+        renderer.setRenderTarget(rt0);
+      }
     } finally {
       for (const o of hid) o.visible = false;
       renderer.setViewport(vp); renderer.setScissor(sc); renderer.setScissorTest(st); renderer.setRenderTarget(rt0);
@@ -296,12 +301,12 @@
   }
 
   /* ---------- new map: look, surface map, height maps (terrain meshes are built by main via buildTerrain) ---------- */
-  const tc = new T.Color();
   /* PoC "Time of day": day = the biome's sun; dusk = the sun 4° above the horizon (the physical sky turns to a sunset by
    * itself, warm low light, long shadows); night = the sun under the horizon (the sky goes dark), a cool moon light
    * (shadows still), stars, and the active worm carries its lamp. 'random' picks by seed. */
   V.timeOfDay = S => SS.sim.time_of_day(S);                // (the sim owns it: the ice temperature reads it)
   /* P56 colour grade per biome and time of day (render/lens.js: after the tone map): sat, con (S-curve 0..1), vig, cool shadows sh, warm highlights hi */
+  const NO_HOLES = [];                                     // (the lens pass now runs every frame on a graded quality: no temporary array without a black hole)
   const GRADES = {
     temperate: { sat: 1.12, con: 0.16, vig: 0.22, sh: [-0.004, 0.0, 0.012], hi: [1.03, 1.0, 0.95] },
     alpine: { sat: 1.1, con: 0.2, vig: 0.22, sh: [-0.006, 0.0, 0.016], hi: [1.02, 1.0, 0.96] },
@@ -357,9 +362,10 @@
     if (stars) stars.material.opacity = tod === 'night' ? 0.95 : tod === 'dusk' ? 0.18 : 0;
     renderer.toneMappingExposure = L.exp;
     if (SS.lens && SS.lens.grade) {
-      SS.lens.grade(gradeFor(L, tod));
+      /* (R11: only where the quality grades the frame; on low the lens pass runs only for a black hole / heat haze and used to apply the grade and the sun glare then: the picture jumped) */
+      SS.lens.grade(Q.grade ? gradeFor(L, tod) : null);
       const sc = sun.color;
-      SS.lens.sun(tod === 'night' || SS.world.under ? null : L.sunDir, [sc.r * 0.5, sc.g * 0.4, sc.b * 0.3], tod === 'dusk' ? 0.55 : 0.3);
+      SS.lens.sun(!Q.grade || tod === 'night' || SS.world.under ? null : L.sunDir, [sc.r * 0.5, sc.g * 0.4, sc.b * 0.3], tod === 'dusk' ? 0.55 : 0.3);
     }
     const U = SS.terrain.uniforms;
     U.uHaze.value.copy(haze);
@@ -728,7 +734,7 @@
     const hz = SS.flameView && Q.haze && !SS.world.under && SS.flameView.haze().n > 0 ? SS.flameView.haze() : null;       // P45: heat haze over big fires (high quality only: costs a lens pass)
     if (SS.lens && ((S.holes && S.holes.length) || SS.lens.active() || hz || (Q.grade && !SS.lens.off))) {                       // P29c: gravitational lensing (render/lens.js)
       const HK = C.ARMS.HOLE;
-      SS.lens.render(renderer, scene, camera, (S.holes || []).map(h => ({ x: h.x, y: h.y, z: h.z, s: 0.25 + 0.55 * Math.min(1, h.t / HK.GROW) })), hz);
+      SS.lens.render(renderer, scene, camera, !(S.holes && S.holes.length) ? NO_HOLES : S.holes.map(h => ({ x: h.x, y: h.y, z: h.z, s: 0.25 + 0.55 * Math.min(1, h.t / HK.GROW) })), hz);
     } else renderer.render(scene, camera);
     SS.section.tick(scene, renderer);
     if (SS.section.ghost > 0) SS.section.renderGhost(renderer, scene, camera, V);      // P46: the optional front ghost (0 = off, costs nothing)

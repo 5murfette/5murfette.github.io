@@ -278,7 +278,7 @@
   function bearing(th) { return ((90 + th * 180 / Math.PI) % 360 + 360) % 360; }
   /* P47: a team with infected (or face-hugged) worms shows a lime count in the team panel */
   function infTeam(S, t) { let n = 0; for (const w of S.worms) if (w.team === t && !w.dead && (w.embryo || (w.hug != null && w.hug >= 0))) n++; return n ? ` <em class="tinf" title="infected by the alien parasite">☣${n}</em>` : ''; }
-  function teamHP(S, t) { return S.worms.filter(w => w.team === t).reduce((s, w) => s + Math.max(0, w.hp), 0); }
+  function teamHP(S, t) { let h = 0; for (let i = 0; i < S.worms.length; i++) if (S.worms[i].team === t) h += Math.max(0, S.worms[i].hp); return h; }
   /* dry worlds (Step D): the active worm on hot sand → which way to walk back (along the section, or rotate first) */
   function hotRow(S, a) {
     const W = SS.world, D = C.DRY;
@@ -294,19 +294,6 @@
    * 0.6 of it, bazookas all), the arrow the full wind relative to the view (up = into the screen), numbers in m/s at
    * 10 m (gusts included). */
   const WX_ICON = { clear: '☀', cloudy: '☁', rain: '☂', storm: '⚡', snow: '❄', blizzard: '❄❄', ashfall: '▒', fog: '≋' };
-  function windRow(S) {
-    const w = S.wind, we = S.weather; if (!w || !we || SS.world.under) return '';
-    const d = P.dir(S), n = P.nrm(S), mx = w.mean.x, mz = w.mean.z, sp = Math.hypot(mx, mz);
-    const along = mx * d.x + mz * d.z, toward = mx * n.x + mz * n.z;
-    const ang = Math.atan2(along, -toward) * 180 / Math.PI;                  // 0 = into the screen, 90 = right
-    const nb = Math.min(5, Math.round(Math.abs(along) / 2.4)), bars = Array.from({ length: 5 }, (_, i) => `<i class="${i < nb ? 'on' : ''}"></i>`).join('');
-    const name = (C.WEATHER_NAME && C.WEATHER_NAME[we.kind]) || we.kind;
-    return `<div class="wind"><span class="wx">${WX_ICON[we.kind] || ''} ${name}</span>
-      <span class="wa" style="transform:rotate(${ang.toFixed(0)}deg)">↑</span>
-      <span class="ws">${sp.toFixed(1)} m/s</span>
-      <span class="wb ${along < 0 ? 'l' : 'r'}">${along < 0 ? '◀' : ''}<b>${bars}</b>${along >= 0 ? '▶' : ''}</span>
-      <span class="wn">${along >= 0 ? '+' : '−'}${Math.abs(along).toFixed(1)} in plane</span></div>`;
-  }
   /* Step I: on sea ice: its thickness and the highest fall it survives (Gold capacity vs the landing load) */
   function iceRow(S, a) {
     if (!SS.ice || !S.ice) return '';
@@ -438,6 +425,7 @@
   }
   /* the team panel: persistent rows (the bars animate); only the parts that changed are written */
   let teamEls = [], teamN = -1;
+  function teamMax(S, t) { let m = 0; for (let i = 0; i < S.worms.length; i++) if (S.worms[i].team === t) m += S.worms[i].hp0 || 100; return m || 1; }      // (a loop: this runs every frame, no temporary arrays)
   function drawTeams(S, a, tot) {
     const T = S.teams || [], root = $('teams');
     if (teamN !== T.length) {
@@ -449,7 +437,7 @@
       }
     }
     for (let i = 0; i < T.length; i++) {
-      const t = T[i], g = teamEls[i], max = S.worms.filter(w => w.team === i).reduce((s, w) => s + (w.hp0 || 100), 0) || 1;
+      const t = T[i], g = teamEls[i], max = teamMax(S, i);
       const n = esc(t.name) + (t.ctl === 'cpu' ? ' · CPU' : '') + infTeam(S, i) + labTeam(S, i), w = (100 * tot[i] / max).toFixed(1) + '%', c = 'tm' + (a.team === i ? ' cur' : '') + (tot[i] <= 0 ? ' out' : '');
       if (g.n !== n) { g.n = n; g.nm.innerHTML = n; }
       if (g.w !== w) { g.w = w; g.bar.style.width = w; }

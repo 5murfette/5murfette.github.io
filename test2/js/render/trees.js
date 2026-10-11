@@ -478,7 +478,6 @@
     makeMats();
   };
 
-  const mtx = new T.Matrix4();
   function freeFlames(id) { const fl = flames.get(id); if (fl) { for (const f of fl) SS.bodyView.unflame(f); flames.delete(id); } }
   TV.frame = function (S, view) {
     if (!own) return;

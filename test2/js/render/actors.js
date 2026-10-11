@@ -154,7 +154,6 @@
     return sp;
   }
   A.faceNormals = faceNormals;                                  // (tests)
-  function updateBody(g, p) { return buildRings(g, spine(p)); }
   A.wormSpine = p => spine(Object.assign({ t: 0, crawl: 0, air: 0, headD: 0, arcD: 0, wave: 0 }, p));   // tests / tools
   const HEAD_NAT = 2.27 - 3.32;                // the head's heading in the rest pose (rad, facing frame)
   const EYE_GEO = new T.SphereGeometry(0.075, 16, 12), PUPIL_GEO = new T.SphereGeometry(0.043, 12, 8), GLINT_GEO = new T.SphereGeometry(0.011, 6, 4);
@@ -478,7 +477,7 @@
         if (w.grave && !graves.has(w)) graves.set(w, A.makeGrave(scene, w.grave, w));
         const gv = graves.get(w);
         if (gv) {
-          if (!w.grave) { scene.remove(gv); graves.delete(w); continue; }
+          if (!w.grave) { scene.remove(gv); if (SS.graveView) SS.graveView.dispose(gv); graves.delete(w); continue; }      // (R11: the alien ate the body: the tombstone's geometry / materials / textures are freed too)
           gv.visible = SS.view.shownAt(S, w.grave, 0.5);                    // follows the section view
           if (gv.visible && SS.graveView) SS.graveView.frame(gv, w.grave, S, P.nrm(S), view.time, dt, w);
         }
@@ -723,6 +722,8 @@
       } else if (p.type === 'sheep') {                                     // walks: faces its way, legs swing
         m.rotation.set(0, -Math.atan2(P.dir(S).z * p.dir, P.dir(S).x * p.dir), 0, 'YXZ');
         const L = m.userData.legs; if (L) for (let i = 0; i < 4; i++) L[i].rotation.z = Math.sin(p.age * 14 + i * 1.6) * 0.5;
+        const wd = m.userData.waddle;
+        if (wd) { const ph = p.age * 14; wd.position.y = 0.03 + Math.abs(Math.sin(ph)) * 0.025; wd.rotation.x = Math.sin(ph) * 0.07; wd.rotation.z = Math.sin(ph * 2) * 0.03; }     // P59: a waddle of the baked sheep
       } else if (p.type === 'flame' || p.type === 'fuel') { if (trailT > 0.02) SS.fx.spark(wp.x, wp.y, wp.z); }
       else if (SS.weaponsView && SS.weaponsView.orient(m, p, S, dt)) { /* P37-W3 shells */ }
       else { m.rotation.set(0, -S.theta, (m.rotation.z || 0) - p.vs * dt * 3, 'YXZ'); }

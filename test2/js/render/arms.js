@@ -50,6 +50,12 @@
     foam: () => { const g = new T.Group(); add(g, G.sph(0.11), M.foam); add(g, new T.SphereGeometry(0.115, 12, 6, 0, Math.PI * 2, 0, 1.0), M.blue); return g; },
     // ASSET: proj_sheep (models/proj_sheep.glb, clips walk / hop)
     sheep: () => {
+      const bk = SS.models && SS.models.mesh('proj_sheep');
+      if (bk) {
+        /* P59: the baked cartoon sheep (static mesh, +x = the head): bobbed / waddled by actors.js syncProjectiles (userData.waddle) */
+        const g = new T.Group(), body = new T.Group(); body.position.y = 0.03; bk.scale.setScalar(0.9); body.add(bk); g.add(body);
+        g.userData.waddle = body; return g;
+      }
       const g = new T.Group(), body = new T.Group(); g.add(body);
       for (let i = 0; i < 9; i++) add(body, G.sph(0.11 + 0.03 * ((i * 7) % 3) / 2), M.wool, Math.cos(i * 2.4) * 0.12, 0.06 + Math.sin(i * 1.7) * 0.07, Math.sin(i * 2.4) * 0.1);
       add(body, G.box(0.12, 0.12, 0.1), M.black, 0.24, 0.12, 0); add(body, G.box(0.05, 0.03, 0.12), M.black, 0.22, 0.17, 0);
@@ -57,7 +63,6 @@
       g.userData.legs = legs; return g;
     }
   };
-  const cache = {};
   AV.projMesh = function (type) { const f = BUILD[type]; if (!f) return null; return f(); };
   const ROCKET = { homing: 1, missile: 1, napalm: 1 };
   AV.isRocket = type => !!ROCKET[type];

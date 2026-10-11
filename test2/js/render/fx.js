@@ -172,7 +172,6 @@
     mfx(M2.OBSIDIAN, [0.2, 0.19, 0.2], 0.5, 0.8, 0.8, 1.8, 1.0, 0.1, 0, 0.2, [0.12, 0.11, 0.13]);
     mfx(M2.BEDROCK, g(M2.BEDROCK, 0.4), 0.7, 0.9, 0.9, 1.2, 0.9, 0.3, 0, 0.5);
   })();
-  const MIXR = { dust: [0, 0, 0], chunk: [0, 0, 0] };
   /* the blast's ground: blend of the materials the crater removed (e.byMat), weighted by voxel count */
   function matMix(e) {
     const o = { best: 0, dust: [0.55, 0.5, 0.45], chunk: [0.4, 0.36, 0.32], amt: 1, puff: 1, lift: 1, chunks: 1, hard: 0.5, loft: 0.5, cold: 0, scorch: 0.8 };

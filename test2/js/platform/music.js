@@ -109,7 +109,7 @@
    * -> an element or null (not unlocked yet / pool empty: the caller retries on the next frame) */
   function new_el(file, deck) {
     const AM = SS.amedia, on_err = () => { failed[file] = true; deck.dead = true; };
-    if (AM) return AM.acquire(DIR + file, { onerror: on_err });
+    if (AM) return AM.acquire(DIR + file, { onerror: on_err, keep: true });      // (keep: a layer outlives the pool's 60 s reclaim and its own 'ended'; free_el releases it)
     const el = new Audio(DIR + file); el.preload = 'auto'; el.volume = 0; el.addEventListener('error', on_err); return el;
   }
   function free_el(el) {
@@ -190,7 +190,7 @@
     try {
       if (sting_el) free_el(sting_el);
       const el = new_el(f, { dead: false }); if (!el) return false; sting_el = el; el.volume = clamp(vol * 0.9, 0, 1);
-      const done = () => { sting_until = now() + 0.8; if (sting_el === el) sting_el = null; };
+      const done = () => { sting_until = now() + 0.8; if (sting_el === el) { sting_el = null; free_el(el); } };
       if (el._slot) el._slot.onended = done; else el.addEventListener('ended', done);
       play_el(el);
     } catch (e) { return false; }

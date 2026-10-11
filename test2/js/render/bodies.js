@@ -91,8 +91,10 @@
     VEND_TX = new T.CanvasTexture(cv); VEND_TX.userData.shared = true; return VEND_TX;
   }
   // ASSET: prop_fridge / prop_vending / prop_phonebooth (models/prop_*.glb)
-  function junkMesh(b, meshes) {
+  function junkMesh(b, meshes, g) {
     const P = pm(), [w, h, d] = SS.CFG.PROPS.JUNK[b.prop];
+    const bk = SS.models && SS.models.mesh('prop_' + b.prop);
+    if (bk) { g.add(bk); return; }                                  // P59: the baked model, fitted to the sim box at bake time (models.json "fit")
     if (b.prop === 'fridge') {
       meshes.push(box(w, h, d, new T.MeshStandardMaterial({ color: [0xf2f2ee, 0xd8e8ef, 0xf6e6c8][b.id % 3], roughness: 0.3 })));
       meshes.push(box(w + 0.01, 0.02, d + 0.01, P.dark, 0, h * 0.13, 0), box(0.05, 0.36, 0.05, P.chrome, w * 0.36, h * 0.3, d / 2 + 0.03), box(0.05, 0.5, 0.05, P.chrome, w * 0.36, -h * 0.15, d / 2 + 0.03));
@@ -154,9 +156,21 @@
         pa.setXYZ(i, v.x * r * j, v.y * r * j, v.z * r * j);
       }
       geo.computeVertexNormals();
-      meshes.push(std(geo, mats.boulder));
+      const bk = SS.models && SS.models.mesh('prop_boulder');
+      if (bk) {
+        /* P59: the baked mossy rock, fitted to the bounding box of THIS shell (the sim collides with the shell): turned by a hash-chosen
+         * quarter turn about Y first (so equal shells do not look alike), then stretched per axis; sits on the shell's centre */
+        geo.computeBoundingBox();
+        const bb = geo.boundingBox, sz = SS.MODELS.prop_boulder.size, q = (SS.math.hash3(b.shapeId || b.id, 7, 3) * 4) | 0, sw = (q & 1) === 1;
+        const ex = bb.max.x - bb.min.x, ey = bb.max.y - bb.min.y, ez = bb.max.z - bb.min.z;
+        const mx = sw ? sz[2] : sz[0], mz = sw ? sz[0] : sz[2];
+        const bm = bk.children[0]; bm.rotation.y = q * Math.PI / 2;
+        bk.scale.set(ex / mx, ey / sz[1], ez / mz);
+        bk.position.set((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
+        geo.dispose(); g.add(bk);
+      } else meshes.push(std(geo, mats.boulder));
     } else if (b.prop === 'car') carMesh(b, meshes, g);
-    else if (SS.CFG.PROPS.JUNK[b.prop]) junkMesh(b, meshes);
+    else if (SS.CFG.PROPS.JUNK[b.prop]) junkMesh(b, meshes, g);
     else if (SS.CFG.PROPS.STONE[b.prop]) stoneMesh(b, meshes);
     else meshes.push(std(new T.BoxGeometry(1, 1, 1), mats.prop));
     for (const m of meshes) g.add(m);

@@ -219,7 +219,7 @@
    *   a gesture (Safari refuses that: total silence). */
   const bufs = {}, loading = {}, nbuf = [], MAXBUF = 160;
   const web = typeof location !== 'undefined' && /^https?:$/.test(location.protocol) && typeof fetch === 'function';
-  let mode_err = '', preloaded = 0;
+  let preloaded = 0;
   function decode(data) {
     return new Promise((res, rej) => { const r = ctx.decodeAudioData(data, res, rej); if (r && r.then) r.then(res, rej); });
   }
@@ -366,7 +366,7 @@
     let el = loops[id];
     if (!el) {
       const f = resolve(SS.SFX_FILES[id][0]); if (!f || !AM) return false;
-      el = AM.acquire('assets/sfx/' + f, { keep: true, onerror: () => { badFile[f] = true; delete loops[id]; } }); if (!el) return false;
+      el = AM.acquire('assets/sfx/' + f, { keep: true, onerror: () => { badFile[f] = true; if (loops[id]) AM.release(loops[id]); delete loops[id]; } }); if (!el) return false;
       el.loop = true; el.volume = 0; loops[id] = el;
     }
     const want = muted ? 0 : clamp(lvl, 0, 1) * 0.6;

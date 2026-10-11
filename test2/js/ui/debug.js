@@ -60,7 +60,7 @@
   U.armed = () => !!(allowed && item);
   U.cancel = () => { item = null; render(); cursor(); };
   U.toggle = () => { if (!allowed) return; open = !open; if (!open) item = null; render(); cursor(); };
-  U.allowed = on => { allowed = !!on; if (!allowed) { open = false; item = null; } const b = document.getElementById('dbgbtn'); if (b) b.style.display = allowed ? '' : 'none'; render(); cursor(); };
+  U.allowed = on => { allowed = !!on; pend = null; if (!allowed) { open = false; item = null; } const b = document.getElementById('dbgbtn'); if (b) b.style.display = allowed ? '' : 'none'; render(); cursor(); };
   U.isOpen = () => allowed && open;
   U.item = () => item;
   /* a world click while armed: remember the drop for the next step's Input */

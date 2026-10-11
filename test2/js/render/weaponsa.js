@@ -302,7 +302,7 @@
   }
 
   /* ---------- acid puddles, droplets ---------- */
-  const SPOTN = 96, DROPN = 160;
+  const DROPN = 160;
   let dropsIM = null;
   const m4 = new T.Matrix4(), q4 = new T.Quaternion(), p3 = new T.Vector3(), s3 = new T.Vector3(1, 1, 1), eq = new T.Quaternion().setFromAxisAngle(new T.Vector3(1, 0, 0), -Math.PI / 2);
   function makeAcid() {

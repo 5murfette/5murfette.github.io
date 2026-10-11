@@ -42,6 +42,7 @@
     STEMG = new T.CylinderGeometry(0.004, 0.005, 1, 4); STEMG.translate(0, 0.5, 0);
     WING_GEO = new T.CircleGeometry(0.07, 10); WING_GEO.scale(1, 1.35, 1); WING_GEO.translate(0.06, 0, 0);
   }
+  const own = geo => { geo.userData.own = true; return geo; };       // (R11: a geometry made per grave: GV.dispose frees it; the shared ones and the baked model's stay)
   const mesh = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x || 0, y || 0, z || 0); m.castShadow = true; m.receiveShadow = true; return m; };
 
   /* the stone's face: granite (speckles, a soft vignette), an engraved border, "R.I.P.", the worm's name and a small team
@@ -108,7 +109,7 @@
       bm.castShadow = bm.receiveShadow = true; baked.position.y = -0.06; body.add(baked);
       sideMat = faceMat = Array.isArray(bm.material) ? bm.material[0] : bm.material; scorch = faceMat;
       const dm = new T.MeshStandardMaterial({ map: decalTexture(name || 'Worm', teamRgb), transparent: true, roughness: 0.8, metalness: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-      const decal = new T.Mesh(new T.PlaneGeometry(PANEL_W, PANEL_H), dm); decal.position.set(0, PANEL_Y - 0.06, PANEL_Z); decal.renderOrder = 2; body.add(decal);
+      const decal = new T.Mesh(own(new T.PlaneGeometry(PANEL_W, PANEL_H)), dm); decal.position.set(0, PANEL_Y - 0.06, PANEL_Z); decal.renderOrder = 2; body.add(decal);
       faceMat = dm;
     } else {
       faceMat = new T.MeshStandardMaterial({ map: faceTexture(name || 'Worm', teamRgb), roughness: 0.78, metalness: 0.02 });
@@ -121,12 +122,12 @@
     // the charge (graves that will go off): three sticks strapped to the stone's foot, a timer box, wires
     const charge = new T.Group(); charge.position.set(0, 0.12, 0.075); body.add(charge);
     const red = new T.MeshStandardMaterial({ color: 0xc0261b, roughness: 0.55 }), tape = new T.MeshStandardMaterial({ color: 0x2b2b2b, roughness: 0.8 });
-    for (const dx of [-0.075, 0, 0.075]) { const st = mesh(new T.CylinderGeometry(0.035, 0.035, 0.26, 12), red, dx, 0, 0.0); st.rotation.z = Math.PI / 2 * 0; charge.add(st); }
-    for (const dy of [-0.07, 0.07]) charge.add(mesh(new T.BoxGeometry(0.25, 0.03, 0.085), tape, 0, dy, 0));
-    const tt = timerTexture(), disp = new T.Mesh(new T.PlaneGeometry(0.17, 0.07), new T.MeshBasicMaterial({ map: tt, toneMapped: false }));
-    const box = mesh(new T.BoxGeometry(0.2, 0.1, 0.05), tape, 0, 0.0, 0.055); charge.add(box); disp.position.set(0, 0.0, 0.082); charge.add(disp);
-    const led = new T.Mesh(new T.SphereGeometry(0.014, 8, 6), new T.MeshBasicMaterial({ color: 0xff2a1a, toneMapped: false })); led.position.set(0.085, 0.05, 0.08); charge.add(led);
-    const wire = new T.Mesh(new T.TorusGeometry(0.07, 0.006, 5, 14, Math.PI), new T.MeshStandardMaterial({ color: 0x2a6fd0 })); wire.position.set(0, 0.06, 0.06); charge.add(wire);
+    for (const dx of [-0.075, 0, 0.075]) { const st = mesh(own(new T.CylinderGeometry(0.035, 0.035, 0.26, 12)), red, dx, 0, 0.0); st.rotation.z = Math.PI / 2 * 0; charge.add(st); }
+    for (const dy of [-0.07, 0.07]) charge.add(mesh(own(new T.BoxGeometry(0.25, 0.03, 0.085)), tape, 0, dy, 0));
+    const tt = timerTexture(), disp = new T.Mesh(own(new T.PlaneGeometry(0.17, 0.07)), new T.MeshBasicMaterial({ map: tt, toneMapped: false }));
+    const box = mesh(own(new T.BoxGeometry(0.2, 0.1, 0.05)), tape, 0, 0.0, 0.055); charge.add(box); disp.position.set(0, 0.0, 0.082); charge.add(disp);
+    const led = new T.Mesh(own(new T.SphereGeometry(0.014, 8, 6)), new T.MeshBasicMaterial({ color: 0xff2a1a, toneMapped: false })); led.position.set(0.085, 0.05, 0.08); charge.add(led);
+    const wire = new T.Mesh(own(new T.TorusGeometry(0.07, 0.006, 5, 14, Math.PI)), new T.MeshStandardMaterial({ color: 0x2a6fd0 })); wire.position.set(0, 0.06, 0.06); charge.add(wire);
     if (baked) charge.position.z = 0.12;
     charge.visible = false;
     // greenery (after the grave has settled for good): blades and flowers beside / behind the stone (readable at play
@@ -212,5 +213,5 @@
     }
   };
   const SHARED = () => [STONE, DARK, SOIL, MOSS, STEM].concat(GRASS);
-  GV.dispose = function (grp) { const sh = SHARED(); grp.traverse(o => { if (!o.isMesh || !o.material) return; for (const m of [].concat(o.material)) if (!sh.includes(m)) { if (m.map && !m.map.userData.shared) m.map.dispose(); m.dispose(); } }); };   // (the stone has a material ARRAY: face + sides)
+  GV.dispose = function (grp) { const sh = SHARED(); grp.traverse(o => { if (o.isMesh && o.geometry && o.geometry.userData.own) o.geometry.dispose(); if (!o.isMesh || !o.material) return; for (const m of [].concat(o.material)) if (!sh.includes(m)) { if (m.map && !m.map.userData.shared) m.map.dispose(); m.dispose(); } }); };   // (the stone has a material ARRAY: face + sides)
 })(window.SS = window.SS || {});

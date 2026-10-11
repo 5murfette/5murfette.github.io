@@ -33,7 +33,7 @@
   function is_silent(el) { return el.src === SILENT || String(el.src).slice(0, 10) === 'data:audio'; }
   function make_slot() {
     const el = new Audio(); el.preload = 'auto';
-    const slot = { el, busy: 0, ok: false, pending: false, onerror: null, onended: null };
+    const slot = { el, busy: 0, gen: 0, ok: false, pending: false, onerror: null, onended: null };
     el.addEventListener('playing', () => { if (!is_silent(el)) stat.playing++; });
     el.addEventListener('ended', () => { if (slot.onended) slot.onended(); if (!slot.keep) slot.busy = 0; });
     el.addEventListener('error', () => {
@@ -48,7 +48,7 @@
     const el = slot.el; let p;
     if (slot.pending) return;
     slot.pending = true;
-    try { el.src = SILENT; el.volume = 1; el.muted = false; p = el.play(); } catch (e) { AM.warn('unlock play threw', String(e)); return; }
+    try { el.src = SILENT; el.volume = 1; el.muted = false; p = el.play(); } catch (e) { slot.pending = false; AM.warn('unlock play threw', String(e)); return; }      // (R11: pending stayed set: the element was never tried again)
     const done = () => { slot.pending = false; if (slot.busy) return; if (!slot.ok) { slot.ok = true; stat.unlocked++; } try { el.pause(); } catch (e) { /* */ } };
     if (p && p.then) p.then(done, e => { slot.pending = false; if (e && e.name === 'NotAllowedError') { stat.rejected++; AM.warn('unlock rejected', e.name); } }); else done();
   }
@@ -66,23 +66,24 @@
     if (!AM.gestured || !pool.length) return null;
     const t = Date.now();
     let slot = null;
-    for (const s of pool) if (!s.busy || t - s.busy > 60000) { slot = s; if (s.ok) break; }
+    for (const s of pool) if (!s.busy || (!s.keep && t - s.busy > 60000)) { slot = s; if (s.ok) break; }      // (R11: a keep element - a music layer, an ambient bed - is never reclaimed as stale)
     if (!slot) { AM.warn('pool exhausted'); return null; }
     const el = slot.el;
-    slot.pending = false; slot.busy = t; slot.keep = !!(opts && opts.keep); slot.onerror = (opts && opts.onerror) || null; slot.onended = (opts && opts.onended) || null;
+    slot.pending = false; slot.busy = t; slot.gen++; slot.keep = !!(opts && opts.keep); slot.onerror = (opts && opts.onerror) || null; slot.onended = (opts && opts.onended) || null;
     try { el.pause(); el.loop = false; el.volume = 0; el.playbackRate = 1; el.src = src; } catch (e) { slot.busy = 0; return null; }
     return el;
   };
   AM.release = function (el) {
     const s = el && el._slot; if (!s) return;
-    s.busy = 0; s.keep = false; s.onerror = s.onended = null;
+    s.busy = 0; s.gen++; s.keep = false; s.onerror = s.onended = null;
     try { el.pause(); el.src = SILENT; } catch (e) { /* */ }
   };
   // play an acquired element: counts it, releases it again when the browser refuses
   AM.play = function (el) {
     stat.plays++;
+    const s = el._slot, gen = s ? s.gen : 0;                    // (R11: a promise rejected late belongs to the borrower that started it, not to the next one)
     let p; try { p = el.play(); } catch (e) { AM.warn('play threw', String(e)); AM.release(el); return false; }
-    if (p && p.catch) p.catch(e => { stat.rejected++; AM.warn('play rejected', (e && e.name) + ' ' + (e && e.message)); if (e && e.name === 'NotAllowedError') AM.gestured = false; if (!(el._slot && el._slot.keep)) AM.release(el); });
+    if (p && p.catch) p.catch(e => { if (s && s.gen !== gen) return; stat.rejected++; AM.warn('play rejected', (e && e.name) + ' ' + (e && e.message)); if (e && e.name === 'NotAllowedError') AM.gestured = false; if (!(el._slot && el._slot.keep)) AM.release(el); });
     return true;
   };
   AM.status = () => ({ gestured: AM.gestured, pool: pool.length, free: pool.filter(s => !s.busy).length, unlocked: stat.unlocked, plays: stat.plays, playing: stat.playing, rejected: stat.rejected, errors: stat.errors, last_error: stat.last_error });

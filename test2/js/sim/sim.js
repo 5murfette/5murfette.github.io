@@ -1505,7 +1505,10 @@
     sim.sanitize_input(inp);
     if (inp.reset) { sim.reset(S, S.settings); return; }
     if (dbgInp.dbk && SS.debug) { if (dbgInp !== inp) sim.sanitize_input(dbgInp); SS.debug.apply(S, dbgInp); }     // P49: the debug toolbox's drop (only while S.debugOn)
-    if (S.phase === 'perk' && SS.lab) { SS.lab.perk_step(S, inp, dt); a = S.active; }   // P50: the perk draft (a pick may start the first turn)
+    if (S.phase === 'perk' && SS.lab) {                           // P50: the perk draft (a pick may start the first turn)
+      SS.lab.perk_step(S, inp, dt); a = S.active;
+      inp.weapon = ''; inp.fuse = 0; inp.adj = 0; inp.fire_pressed = 0; inp.fire_held = 0; inp.jump = 0; inp.backflip = 0; inp.end_turn = 0; inp.wsel = 0; inp.drop = 0;   // (R11: the key / click that picked a card (1 / 2 / 3 are weapon keys too) is spent: it must not also act in the first turn that the last pick starts)
+    }
     if (S.phase === 'place') {                                    // P13: deployment (the world runs, worms are placed)
       if (inp.rotate || inp.rotate_mouse) sim.rotate_by(S, (inp.rotate + inp.rotate_mouse) * (inp.fine ? 0.25 : 1) * C.ROT_SPEED * dt);
       SS.game.place_step(S, inp, dt);                             // (the world steps below; control needs 'play')

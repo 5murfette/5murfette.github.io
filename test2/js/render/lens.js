@@ -91,10 +91,11 @@
   LN.shock = function (x, y, z, R, k) { if (rings.length >= MAXR) rings.shift(); rings.push({ x, y, z, R: Math.max(2, R), k: k || 1, t: 0 }); };
   LN.active = () => rings.length > 0;
   /* the grade of the frame (view.js applyLook): sat, con, vig, shadow tint [r, g, b], highlight tint [r, g, b]; init() is lazy */
-  let GR = { sat: 1, con: 0, vig: 0, sh: [0, 0, 0], hi: [1, 1, 1] };
+  const NEUTRAL = { sat: 1, con: 0, vig: 0, sh: [0, 0, 0], hi: [1, 1, 1] };
+  let GR = NEUTRAL;
   let sunDir = null, sunCol = [1, 1, 1], sunK = 0;
   LN.sun = function (dir, col, k) { sunDir = dir; sunCol = col; sunK = k; };
-  LN.grade = function (g) { GR = g; if (mat) LN.applyGrade(); };
+  LN.grade = function (g) { GR = g || NEUTRAL; if (mat) LN.applyGrade(); };
   LN.applyGrade = function () { mat.uniforms.uGA.value.set(GR.sat, GR.con, GR.vig, 1 / 255); mat.uniforms.uSh.value.set(GR.sh[0], GR.sh[1], GR.sh[2]); mat.uniforms.uHi.value.set(GR.hi[0], GR.hi[1], GR.hi[2]); };
   LN.clear = function () { rings.length = 0; };
   LN.tick = function (dt) { for (let i = rings.length - 1; i >= 0; i--) if ((rings[i].t += dt) > RING_T) rings.splice(i, 1); };
