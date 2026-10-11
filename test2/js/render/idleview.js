@@ -158,7 +158,11 @@
     for (let i = 0; i < P.N; i++) {
       const h = new T.Group(), inn = new T.Group(); h.add(inn); h.visible = false;
       let obj = null;
-      if (i <= P.GREN2) { obj = SS.ordnance ? SS.ordnance.proj('grenade') : null; if (obj) obj.userData = {}; }
+      if (i <= P.GREN2) {
+        obj = SS.ordnance ? SS.ordnance.proj('grenade') : null;
+        /* half the in-flight grenade's size: juggling balls in the worm's tiny hands (user 2026-10-11) */
+        if (obj) { obj.userData = {}; obj.scale.multiplyScalar(0.5); }
+      }
       else if (i === P.PHONE) obj = mkPhone(kit);
       else if (i === P.WATCH) obj = mkWatch();
       else if (i === P.MAP) obj = mkMap();

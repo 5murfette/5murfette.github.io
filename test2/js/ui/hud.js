@@ -182,8 +182,30 @@
     for (let i = ne; i < eggEls.length; i++) eggEls[i].style.display = 'none';
     for (let i = nx; i < xenoEls.length; i++) xenoEls[i].style.display = 'none';
   }
+  /* P50: the perk draft overlay (sim/lab.js, phase 'perk'): three cards for the picking team (1 / 2 / 3 or a click = Input.fuse), the others wait */
+  let pkEl = null, pkSig = '';
+  function perkPanel(S) {
+    if (!pkEl) { pkEl = $('perkui'); if (!pkEl) return; pkEl.addEventListener('click', e => { const c = e.target.closest ? e.target.closest('.pk-card') : null; if (c && !c.classList.contains('off')) SS.input.perkPick = +c.dataset.n; }); }
+    const D = S.lab && S.lab.draft, on = S.phase === 'perk' && D && D.on;
+    if (!on) { if (pkSig) { pkSig = ''; pkEl.classList.remove('on'); } return; }
+    const team = D.team, cpu = SS.game.is_cpu(S, team), mine = !cpu && !(SS.net && SS.net.active && team !== SS.net.team), L = SS.lab;
+    const left = Math.max(0, Math.ceil(D.t)), sig = [team, D.opts.join(), mine, cpu ? 0 : left, S.lab.perks.join()].join('|');
+    if (sig === pkSig) return; pkSig = sig;
+    let h = `<div class="pk-h" style="--team:${css(SS.sim.team_rgb(S, team))}">${esc(SS.sim.team_name(S, team))} · PERK DRAFT<small>${cpu ? 'CPU is choosing…' : mine ? `Pick one: press 1 / 2 / 3 or click · ${left} s` : 'Waiting for the pick…'}</small></div><div class="pk-row" style="--team:${css(SS.sim.team_rgb(S, team))}">`;
+    for (let i = 0; i < D.nopt; i++) h += `<div class="pk-card${mine ? '' : ' off'}" data-n="${i + 1}"><span class="pk-key">${i + 1}</span><div class="pk-name">${L.PERK_NAMES[D.opts[i]]}</div><div class="pk-txt">${L.PERK_TEXT[D.opts[i]]}</div></div>`;
+    h += '</div>';
+    const got = []; for (let t = 0; t < S.teams.length; t++) { const n = L.perk_list(S, t); if (n) got.push(`${esc(SS.sim.team_name(S, t))}: ${n}`); }
+    if (got.length) h += `<div class="pk-foot">${got.join(' &nbsp;·&nbsp; ')}</div>`;
+    pkEl.innerHTML = h; pkEl.classList.add('on');
+  }
+  /* the team panel chip: the perks (initials) and the streak of team t */
+  function labTeam(S, t) {
+    if (!SS.lab || !S.lab || !SS.lab.flags(S)) return '';
+    const pk = SS.lab.perk_list(S, t, true), st = S.lab.streak[t] | 0;
+    return (pk ? ` <em class="tperk" title="perks: ${esc(SS.lab.perk_list(S, t))}">${pk}</em>` : '') + (st > 0 ? ` <em class="tstreak" title="streak: +${st * 10} % blast damage">x${st}</em>` : '');
+  }
   U.draw = function (S) {
-    netPanel(); rotSplash(S); labBadge(S); alienLabels(S);
+    netPanel(); rotSplash(S); labBadge(S); perkPanel(S); alienLabels(S);
     const a = S.active, insp = M.clamp(S.inspect, 0, 1);
     for (const w of S.worms) {
       const el = label(w);
@@ -371,7 +393,7 @@
       `);
     const tot = (S.teams || []).map((t, i) => teamHP(S, i));
     // P1: N teams; bars relative to the team's starting total (worms x starting HP)
-    setHTML('teams', (S.teams || []).map((t, i) => { const max = S.worms.filter(w => w.team === i).reduce((s, w) => s + (w.hp0 || 100), 0) || 1; return `<div class="tm${a.team === i ? ' cur' : ''}" style="--team:${css(t.rgb)}"><span>${esc(t.name)}${t.ctl === 'cpu' ? ' · CPU' : ''}${infTeam(S, i)}</span><div class="bar"><i style="width:${(100 * tot[i] / max).toFixed(1)}%"></i></div><b>${tot[i]}</b></div>`; }).join(''));
+    setHTML('teams', (S.teams || []).map((t, i) => { const max = S.worms.filter(w => w.team === i).reduce((s, w) => s + (w.hp0 || 100), 0) || 1; return `<div class="tm${a.team === i ? ' cur' : ''}" style="--team:${css(t.rgb)}"><span>${esc(t.name)}${t.ctl === 'cpu' ? ' · CPU' : ''}${infTeam(S, i)}${labTeam(S, i)}</span><div class="bar"><i style="width:${(100 * tot[i] / max).toFixed(1)}%"></i></div><b>${tot[i]}</b></div>`; }).join(''));
     // the log fades in 0.05 steps (so the string, and the DOM, change a few times per line instead of every frame)
     setHTML('log', S.log.map(l => `<div style="color:${css(l.rgb)};opacity:${Math.max(0.35, Math.round((1 - (S.time - l.t) / 14) * 20) / 20)}">${esc(l.text)}</div>`).join(''));
   }

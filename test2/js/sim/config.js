@@ -212,9 +212,9 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p48-debug-snake',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p54-telehold',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
-                collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, under: 'off', cpu: 'off',
+                collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
       blood: false, select: false, keepRope: false, rooms: false, time: 'day', art: 'painted', shape: 'island',
       rotLock: true, labFlags: 0, mineFuse: 'default', teamBlood: false, toolCrates: 'normal',        // (contracts: W1 / W3 / W4 read them; the menu sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
@@ -580,20 +580,25 @@
   SS.CFG.LIMITS = { WORMS: 16, PROJ: 512, PENDING: 256, FLAMES: 512, DEVICES: 64, HOLES: 16, STRIKES: 16, BULLETS: 64, ZAPS: 16, MOAIS: 16, FX: 256, PLANE_BODIES: 512, EVENTS: 4096, LOG: 7, LAB_METEORS: 8 };
   /* P42 Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic */
   SS.CFG.LAB = {
-    FLAG: { BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32 }, ALL: 63,
+    FLAG: { BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32, PERKS: 64, STREAK: 128, LONGSHOT: 256, FATIGUE: 512 }, ALL: 1023,
     BANK_K: 0.2, BANK_MAX: 3, BANK_SPEED: 2,
     UNDER_RATIO: 0.5, UNDER_K: 1.35,
     GUST_T0: 6, GUST_T1: 12, GUST_DIR: 0.9, GUST_V0: -4, GUST_V1: 5, GUST_MAX: 11,
     MET_EVERY: 3, MET_WARN: 2.2, MET_R: 26, MET_W: 0.45, MET_DMG: 30,
     CLOCK_PCT: 10, CLOCK_MIN: 15,
-    MOON_EVERY: 3, MOON_K: 0.5
+    MOON_EVERY: 3, MOON_K: 0.5,
+    PERK: { RADIUS: 0, PADDED: 1, SPRING: 2, THICK: 3, MAGNET: 4, TIME: 5 }, PERK_COUNT: 6, PERK_EVERY: 3, PERK_OPTS: 3, PERK_T: 20, PERK_CPU_T: 1.2,
+    RADIUS_K: 1.15, PADDED_K: 0.8, SPRING_K: 1.2, THICK_K: 0.85, MAGNET_K: 2.5, TIME_S: 10,
+    STREAK_K: 0.1, STREAK_MAX: 4,
+    LONG_M: 25, LONG2_M: 40, LONG_K: 1.25, LONG2_K: 1.5,
+    FAT_M: 25, FAT_RAD: 0.1, FAT_STEP: 2
   };
   /* ---------- enums (P38 R7 / P8). The JS sim keeps strings as the enum NAMES (a C port compiles each list into an enum; the index is the value):
    *   phase: C.PH / C.PHASE_NAME  (S.phase is the name in JS);  weapon: C.WEAPON_KEYS (the wire carries index + 1);  weather: C.WEATHER;  biome: C.BIOMES[i].id;
    *   cause / damage source: C.CAUSE / C.DS (already integers);  settings: C.SETTING_ENUMS below: value -> index, 'auto' / 'random' -> -1 (the Settings struct
    *   holds an i8 per enum setting; numbers stay numbers, mineFuse -1 = random, 0..3 s). setting_enc / setting_dec convert one value. ---------- */
-  SS.CFG.PH = { PLAY: 0, ATTACK: 1, RESOLVE: 2, DYING: 3, PLACE: 4, OVER: 5 };
-  SS.CFG.PHASE_NAME = ['play', 'attack', 'resolve', 'dying', 'place', 'over'];
+  SS.CFG.PH = { PLAY: 0, ATTACK: 1, RESOLVE: 2, DYING: 3, PLACE: 4, OVER: 5, PERK: 6 };
+  SS.CFG.PHASE_NAME = ['play', 'attack', 'resolve', 'dying', 'place', 'over', 'perk'];
   SS.CFG.SETTING_ENUMS = {
     weather: ['clear', 'cloudy', 'rain', 'storm', 'snow', 'blizzard', 'ashfall', 'fog'], wind: ['calm', 'breeze', 'strong', 'gale'], lava: ['off', 'on'], skill: ['easy', 'normal', 'hard'],
     time: ['day', 'dusk', 'night'], shape: ['islands', 'hills', 'caverns', 'canyon'], mapSize: ['normal', 'large'], placement: ['random', 'user'], toolCrates: ['off', 'low', 'normal', 'high'],

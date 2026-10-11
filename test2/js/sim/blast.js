@@ -167,7 +167,7 @@
         ev.pushes.push({ wormId: w.id, dv: e.dv, r: e.r });
       }
       const dmg = Math.round(e.dmg * (SS.lab ? SS.lab.dmg_k(S, o.owner, w) : 1));     // (P42: Lab damage factors; 1 when off)
-      if (dmg >= 1) { const l = e.r || 1; S.hitDir = e.r > 0.05 ? { x: (w.pos.x - c.x) / l, y: (w.pos.y - c.y) / l, z: (w.pos.z - c.z) / l } : { x: 0, y: -1, z: 0 }; sim.hurt(S, w, dmg, C.DS.BLAST); hits++; }
+      if (dmg >= 1) { const l = e.r || 1; S.hitDir = e.r > 0.05 ? { x: (w.pos.x - c.x) / l, y: (w.pos.y - c.y) / l, z: (w.pos.z - c.z) / l } : { x: 0, y: -1, z: 0 }; sim.hurt(S, w, dmg, C.DS.BLAST); hits++; if (SS.lab) SS.lab.hit(S, o.owner, w, dmg); }
     }
     ev.hits = hits;
     // other subsystems

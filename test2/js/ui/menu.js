@@ -58,7 +58,8 @@
   ];
   const DISPLAY = [
     { k: 'quality', t: 'Visual quality', w: 'seg', dyn: 'quality' }, { k: 'slice', t: 'Slice view', o: OPTS.slice, w: 'seg' }, { k: 'ghost', t: 'Front ghost', o: OPTS.ghost, n: 1, w: 'seg', h: 'how visible the part of the world in front of the section is (Off = hidden)' }, { k: 'art', t: 'Artwork', o: OPTS.art, w: 'seg' },
-    { k: 'idle', t: 'Idle antics', b: true, d: true, h: 'bored worms juggle, scroll a phone, doze off ...' }
+    { k: 'idle', t: 'Idle antics', b: true, d: true, h: 'bored worms juggle, scroll a phone, doze off ...' },
+    { k: 'ghostAuto', t: 'Auto ghost after attacks', b: true, d: true, h: 'the front half shows at 50 % after a shot and while an alien attacks' }
   ];
   const FIELD = [
     { k: 'shape', t: 'Terrain shape', o: OPTS.shape, w: 'seg' },
@@ -79,7 +80,11 @@
     { id: 'GUSTS', t: 'Wind gusts', d: 'While you aim, the wind keeps shifting every 6-12 seconds, in strength and heading. Check the wind bar right before you fire: a perfect shot can be blown off at the last second.' },
     { id: 'METEORS', t: 'Meteor shower', d: 'Every third turn two or three meteors are announced by red rings on the ground and strike 2.2 seconds later near the action. They hit everyone, so shelter matters.' },
     { id: 'CLOCK', t: 'Pressure clock', d: 'An overtime mode: the turn clock shrinks by 10 % every round, down to 15 seconds. Needs a turn time (not "No limit"). Long games get frantic.' },
-    { id: 'MOON', t: 'Moon phase', d: 'Every third round gravity halves for worms and props: jumps are huge and floaty, falls are gentle. Shells keep their normal flight, so rope and jump routes change.' }
+    { id: 'MOON', t: 'Moon phase', d: 'Every third round gravity halves for worms and props: jumps are huge and floaty, falls are gentle. Shells keep their normal flight, so rope and jump routes change.' },
+    { sec: 'Batch 2: perks, momentum, precision', id: 'PERKS', t: 'Perk draft', d: 'At the start of the match and every third round (rounds 1, 4, 7 ...) each team picks 1 of 3 random perks, press 1 / 2 / 3 or click a card: wide blasts (+15 % radius), padded boots (-20 % landing damage), spring legs (+20 % jump), thick skin (-15 % blast damage taken), crate magnet (2.5 x pickup reach), extra time (+10 s per turn). The CPU picks by a fixed ranking; online, the pick is a normal input.' },
+    { id: 'STREAK', t: 'Streak', d: 'Damage an enemy with a blast during your turn and your team gains a streak step (up to x4): +10 % blast damage per step, shown on the team panel. A turn without a hit resets it. Rewards consistency, and the underdog has the other mechanic to catch up.' },
+    { id: 'LONGSHOT', t: 'Long shot', d: 'A blast that hurts an enemy farther than 25 m from the shooter deals +25 % damage, farther than 40 m +50 %, with a LONG SHOT banner. Rewards sniping across the map and punishes camping at range.' },
+    { id: 'FATIGUE', t: 'Fatigue', d: 'Every metre a worm walks, swings or falls during its turn (up to 25 m) makes that same worm\'s NEXT shot sway: up to 5.7 degrees of random aim error. Stand still for a perfect aim, move for position: the HUD badge shows the current sway.' }
   ];
   MN.LAB = LAB;
   const labBits = () => LAB.reduce((n, r) => n + (((cur.labFlags | 0) & C.LAB.FLAG[r.id]) ? 1 : 0), 0);
@@ -247,7 +252,7 @@
     lb.onclick = () => { page = 'lab'; buildRows(); };
     sec(rowsEl, 'Lab'); rowsEl.appendChild(lb);
     sec(rowsEl, 'Display');
-    for (const r of DISPLAY) rowOf(r, rowsEl, r.k === 'idle' ? () => { if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false; if (SS.idleView) SS.idleView.enabled = cur.idle !== false; } : null);
+    for (const r of DISPLAY) rowOf(r, rowsEl, r.k === 'ghostAuto' ? () => { if (SS.view && SS.view.setGhostAuto) SS.view.setGhostAuto(cur.ghostAuto !== false); } : r.k === 'idle' ? () => { if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false; if (SS.idleView) SS.idleView.enabled = cur.idle !== false; } : null);
     sec(rowsEl, 'Sound');
     musicRow(rowsEl);
   }
@@ -267,6 +272,7 @@
     const cnt = el('div', 'labcount');
     const upd = () => { cnt.textContent = labBits() ? labBits() + ' of ' + LAB.length + ' active' : 'all off'; };
     for (const r of LAB) {
+      if (r.sec) sec(rowsEl, r.sec);
       const bit = C.LAB.FLAG[r.id], card = el('div', 'labcard');
       const top = el('div', 'labtop'), nm = el('div', 'labname', r.t);
       const st = el('span', 'labstatus', 'EXPERIMENTAL'); nm.appendChild(st);

@@ -11,6 +11,7 @@
   I.panReset = false;
   I.clicks = [];           // P9: left clicks without a drag (client x, y): targets on the section
   I.pickWeapon = '';       // P9: a weapon chosen on the weapon grid (consumed by the next sample)
+  I.perkPick = 0;          // P50: a perk card clicked in the draft overlay (1..3, consumed by the next sample)
   /* PoC mouse aim (aimAt / pointerdown / pointermove): the cursor aims the active worm (the shot line runs through it,
    * the worm turns to it), a left press aims + starts the shot, holding charges, releasing fires. The mouse aims only
    * when really used for it: not while a keyboard shot charges, not for nudges within 40 px after aiming with the keys,
@@ -174,6 +175,7 @@
     }
     inp.weapon = wkey;
     inp.fuse = p.has('KeyF') && S ? (Math.floor(SS.weaponsA ? SS.weaponsA.fuse_of(S, S.weapon) : S.fuse) % 5) + 1 : 0;                  // PoC: F cycles the fuse 1-5 s
+    if (S && S.phase === 'perk') { inp.fuse = I.perkPick | 0; for (let n = 1; n <= 3; n++) if (p.has('Digit' + n) || p.has('Numpad' + n)) inp.fuse = n; I.perkPick = 0; }      // P50: the perk draft picks a card with 1 / 2 / 3 or a click (Input.fuse)
     inp.rotate = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0);
     inp.rotate_mouse = I.mouseRot;
     inp.fine = shift ? 1 : 0;

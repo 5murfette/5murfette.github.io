@@ -88,6 +88,7 @@
     const a = S.active, key = S.weapon, d = def(key);
     if (!a || a.dead || !WP.can_use(S, key)) { S.charging = false; return false; }   // (before any read of a: none in 'place')
     const aim = sim().aim_dir(S), ap = P.to_plane(S, a.pos);
+    if (SS.lab && S.settings.labFlags) { const sw = SS.lab.sway(S, a, aim); aim.s = sw.s; aim.y = sw.y; }      // P50: a tired worm's aim sways
     if (d.wa && d.kind !== 'charge' && SS.weaponsA) return SS.weaponsA.use(S, key, a, ap, aim);      // stream / hitscan / target weapons of P37-W3
     if (SS.gadgets && SS.gadgets.KEYS[key]) return SS.gadgets.use(S, a, key, power);          // P37 W4: dog, punch, sentry, claymore, gravity gun
     if (key === 'ffield' && SS.ffield) return SS.ffield.use(S, a);
@@ -294,6 +295,7 @@
       { const q = P.to_world(S, s, y); if (!WP.open_air(q.x, y, q.z)) { sim().log(S, 'No room there: sealed in rock.', 0xffb27a); return false; } }
       const from = { x: a.pos.x, y: a.pos.y, z: a.pos.z }, to = P.to_world(S, s, y);
       a.pos.x = to.x; a.pos.y = y; a.pos.z = to.z; a.vs = 0; a.vy = 0; a.air = true; S.rope = null; S.teleT = A.TELEPORT.BEAM;
+      WP.tele_hold(a, to.x, y, to.z);
       sim().emit(S, 'teleport', { wormId: a.id, from, to: { x: to.x, y, z: to.z } });
       used(S, key); return true;
     }
@@ -849,7 +851,7 @@
         if (w.sample(c.pos.x, c.pos.y - 0.35, c.pos.z) > 0) { c.landed = true; while (w.sample(c.pos.x, c.pos.y - 0.3, c.pos.z) > 0) c.pos.y += 0.05; }
         if (c.pos.y < sim().surface_at(S, c.pos.x, c.pos.z) || c.pos.y < 0.3) { S.crates.splice(i, 1); sim().emit(S, 'splash', { x: c.pos.x, y: c.pos.y, z: c.pos.z, size: 0.8 }); continue; }
       } else if (w.sample(c.pos.x, c.pos.y - 0.4, c.pos.z) <= 0) c.landed = false;                 // ground blasted away
-      if (c.landed && a && !a.dead && sim().ctl(S, a) && hypot3(a.pos, c.pos) < CR.PICK && !(c.by === a.id && S.time < (c.pickT || 0))) {   // (PoC: not while it still hangs on its chute)
+      if (c.landed && a && !a.dead && sim().ctl(S, a) && hypot3(a.pos, c.pos) < CR.PICK * (SS.lab ? SS.lab.pick_k(S, a) : 1) && !(c.by === a.id && S.time < (c.pickT || 0))) {   // (PoC: not while it still hangs on its chute)
         S.crates.splice(i, 1);
         if (c.kind === 'tool' && SS.skills) SS.skills.pickup(S, a, c);
         else if (c.kind === 'health') { a.hp += CR.HP; if (SS.weaponsA && a.gas) SS.weaponsA.cure(S, a); sim().emit(S, 'pickup', { wormId: a.id, kind: 'health', amount: CR.HP }); sim().log(S, `${a.name} picks up +${CR.HP} HP.`, 0x79d98b); }
@@ -891,8 +893,16 @@
     }
   };
 
+  WP.tele_hold = function (w, x, y, z) { w.teleHold = A.TELEPORT.HOLD; w.teleX = x; w.teleY = y; w.teleZ = z; };
   WP.step = function (S, dt) {
     if (S.teleT > 0) S.teleT -= dt;
+    /* teleport / placement: a worm hangs where it rematerialises until the beam has fully built it (A.TELEPORT.HOLD s;
+     * render/actors.js fades it in over the same time); only then gravity takes it (WP.step runs after the worm
+     * physics, so the hold overrides this step's fall) */
+    for (const w of S.worms) if (w.teleHold > 0) {
+      if (!w.dead) { w.pos.x = w.teleX; w.pos.y = w.teleY; w.pos.z = w.teleZ; w.vs = 0; w.vy = 0; w.air = true; if (w.vel) { w.vel.x = 0; w.vel.y = 0; w.vel.z = 0; } }
+      w.teleHold -= dt;
+    }
     for (const w of S.worms) if (w.batHit && S.time >= w.batHit.t) {           // P37-8: the bat hit's delayed throw
       const h = w.batHit; w.batHit = null; S.lastBoom = S.time;
       if (!w.dead) { shove(S, w, h.x, h.y, h.z); sim().emit(S, 'batfly', { wormId: w.id}); }

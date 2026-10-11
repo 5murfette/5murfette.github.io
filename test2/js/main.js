@@ -141,7 +141,7 @@
     paused = true; running = false;
     try {
       await ensureRenderer(settings);
-      SS.view.setSlice(settings.slice); SS.view.setGhost(settings.ghost | 0);
+      SS.view.setSlice(settings.slice); SS.view.setGhost(settings.ghost | 0); if (SS.view.setGhostAuto) SS.view.setGhostAuto(settings.ghostAuto !== false);
       let t0 = performance.now();
       const job = SS.sim.begin_reset(S, settings);
       let p = 0, ts = performance.now();
@@ -186,7 +186,7 @@
     const s = Object.assign({}, C.SETTINGS);
     for (const k of ['biome', 'weather', 'lava', 'wind', 'quality', 'slice', 'ghost', 'under', 'cpu', 'skill', 'placement', 'time', 'art', 'shape', 'first', 'volcanoes', 'mapSize']) if (params.has(k)) s[k] = params.get(k);
     for (const k of SS.CFG.DENSITY.KEYS.concat(['mineFuse', 'toolCrates'])) if (params.has(k)) s[k] = params.get(k);
-    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
+    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
     for (const k of ['teams', 'worms', 'hp', 'turnTime']) if (params.has(k)) s[k] = parseInt(params.get(k), 10) || 0;
     if (params.has('ctl')) s.ctl = params.get('ctl').split(',');
     if (params.has('lab')) s.labFlags = parseInt(params.get('lab'), 10) || 0;     // P42: Lab mechanics bit mask (tests)
@@ -278,7 +278,7 @@
         if (Array.isArray(st.names)) ok.names = st.names.slice(0, 4).map(v => String(v).slice(0, 18));
         // presentation stays the guest's own (a different quality reloads the renderer: it dropped the link mid-match)
         const mine = SS.menu.load() || {}, pres = {};
-        for (const k of ['slice', 'art', 'ghost', 'idle']) if (mine[k] != null) pres[k] = mine[k];     // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
+        for (const k of ['slice', 'art', 'ghost', 'idle', 'ghostAuto']) if (mine[k] != null) pres[k] = mine[k];     // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
         pres.quality = Q ? Q.name : mine.quality;                          // (P38 R6 R6: the RUNNING quality: a saved one that differs would reload the page and drop the link)
         netGame = true; newGame(SS.menu.sanitize(Object.assign(urlSettings(), pres, ok, { cpu: 'off' }), C.SETTINGS));
       });

@@ -29,6 +29,8 @@
   .wlabel .inf:empty{display:none}
   .wlabel .inf.hug{color:#d6ffa0}.wlabel .inf.sick{color:#b6ff4a}.wlabel .inf.lethal{color:#ff6a5a}.wlabel .inf.soon{animation:infp .7s ease-in-out infinite alternate}
   @keyframes infp{from{opacity:.55}to{opacity:1}}
+  .tperk{font-style:normal;font-size:9px;letter-spacing:.06em;color:#bfe6ff;opacity:.9}
+  .tstreak{font-style:normal;font-size:11px;font-weight:700;color:#ffb04a;text-shadow:0 0 6px rgba(255,150,40,.6)}
   .tinf{font-style:normal;font-size:11px;color:#b6ff4a;text-shadow:0 0 6px rgba(120,255,40,.6)}
   .eggbar,.alabel{position:absolute;left:0;top:0;pointer-events:none;text-align:center;font:800 10px var(--f-ui);color:#d6ffa0;text-shadow:0 1px 2px #000,0 0 5px rgba(0,0,0,.7);white-space:nowrap}
   .eggbar .eb{width:52px;height:7px;margin:0 auto 1px;border-radius:4px;background:rgba(0,0,0,.62);box-shadow:0 0 0 1px rgba(182,255,74,.55),0 0 8px rgba(120,255,40,.35);overflow:hidden}
@@ -125,6 +127,18 @@
   .bbtn.ghost{background:rgba(255,255,255,.1);color:var(--ink);box-shadow:0 4px 0 rgba(0,0,0,.4)}
   #banner.show{animation:ban 2.2s ease-out}
   #labbadge{position:fixed;left:50%;top:78px;transform:translateX(-50%);padding:2px 10px;border-radius:10px;background:rgba(40,70,90,.72);border:1px solid rgba(150,210,240,.45);color:#bfe6ff;font:700 10px/1.5 var(--f-display);letter-spacing:.1em;text-transform:uppercase;z-index:4;pointer-events:none;display:none;white-space:nowrap}
+  #perkui{position:fixed;left:0;right:0;top:27%;padding:18px 0 20px;background:linear-gradient(90deg,transparent,rgba(8,12,16,.62) 18%,rgba(8,12,16,.62) 82%,transparent);display:none;text-align:center;z-index:20;pointer-events:none}
+  #perkui.on{display:block}
+  #perkui .pk-h{font:400 30px var(--f-display);letter-spacing:2px;color:var(--team,var(--accent));text-shadow:0 3px 18px rgba(0,0,0,.7),0 1px 2px #000}
+  #perkui .pk-h small{display:block;font:600 14px var(--f-ui);color:var(--ink);letter-spacing:.5px;margin-top:2px}
+  #perkui .pk-row{display:flex;justify-content:center;gap:16px;margin:16px 14px 0;flex-wrap:wrap}
+  #perkui .pk-card{pointer-events:auto;cursor:pointer;width:200px;padding:14px 14px 16px;border-radius:14px;background:rgba(21,29,35,.93);border:2px solid var(--edge);color:var(--ink);text-align:left;box-shadow:0 6px 0 rgba(0,0,0,.35);transition:transform .12s,border-color .12s}
+  #perkui .pk-card:hover{transform:translateY(-4px);border-color:var(--team,var(--accent))}
+  #perkui .pk-card.off{pointer-events:none;opacity:.55;cursor:default}
+  #perkui .pk-key{display:inline-block;min-width:22px;padding:1px 6px;border-radius:6px;background:var(--team,var(--accent));color:#1a1206;font:700 13px var(--f-ui);text-align:center}
+  #perkui .pk-name{font:400 20px var(--f-display);margin:8px 0 4px;color:var(--gold,#ffd27a)}
+  #perkui .pk-txt{font:500 13px/1.35 var(--f-ui);color:var(--ink);opacity:.9}
+  #perkui .pk-foot{margin-top:14px;font:600 13px var(--f-ui);color:var(--dim);text-shadow:0 1px 3px #000}
   #rotnow{position:fixed;top:30%;left:0;right:0;text-align:center;font:400 30px var(--f-display);letter-spacing:2px;color:var(--accent);pointer-events:none;opacity:0;transition:opacity .25s;text-shadow:0 3px 18px rgba(0,0,0,.7),0 1px 2px #000}
   #rotnow.on{opacity:.95}#rotnow b{display:block;font:400 54px/1 var(--f-display);font-variant-numeric:tabular-nums;color:var(--ink)}#rotnow.low b{color:var(--danger)}
   @keyframes ban{0%{opacity:0;transform:translateY(12px) scale(.96)}15%{opacity:1;transform:none}70%{opacity:1}100%{opacity:0;transform:translateY(-8px)}}
@@ -184,6 +198,7 @@
 <div id="labels"></div>
 <div id="banner"></div>
 <div id="labbadge"></div>
+<div id="perkui"></div>
 <div id="topbar"><div id="tbTurn" class="panel tb"></div><div id="tbTime" class="panel tb"></div><div id="tbWind" class="panel tb"></div><div id="tbWx" class="panel tb"></div></div>
 <div id="hud" class="panel"></div>
 <button id="mutebtn" title="Sound on / off (F2)">🔊</button>

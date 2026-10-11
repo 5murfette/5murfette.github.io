@@ -480,7 +480,25 @@
   V.inSlab = (S, p) => { const t = P.to_plane(S, p).t; return t <= C.WORM_R && t >= -SS.terrain.uniforms.uBack.value - C.WORM_R; };
   // P29j (user 2026-10-08: "the slice view setting doesn't work, the full map behind is always shown"): the slab depth
   // (uBack) AND the haze of everything behind it: thin / thick = crisp to 1.5 / 6 m, the rest recedes; full = all crisp
-  V.setGhost = pct => SS.section.setGhost(pct);
+  /* the front ghost = max(the player's setting, the automatic one): after the attack (resolve / dying) and while an alien
+   * strikes / wraps / bites / eats, the front half of the map shows at 50 %, so what happens off the section (an alien
+   * eating someone in front of the cut) is seen (user 2026-10-11); faded in / out over ~0.5 s */
+  let ghostUser = 0, ghostAuto = 0, ghostAutoOn = true;
+  V.setGhostAuto = on => { ghostAutoOn = !!on; };
+  V.setGhost = pct => { ghostUser = Math.max(0, Math.min(100, +pct || 0)); return SS.section.setGhost(Math.max(ghostUser, ghostAuto)); };
+  function alienBusy(S) {
+    const A = S.alien; if (!A || !A.xenos) return false;
+    for (let i = 0; i < A.xenos.length; i++) { const st = A.xenos[i].st; if (st >= 1 && st <= 4) return true; }
+    return false;
+  }
+  function autoGhost(S, dt) {
+    const want = ghostAutoOn && S && (S.phase === 'resolve' || S.phase === 'dying' || alienBusy(S)) ? 50 : 0;
+    ghostAuto += (want - ghostAuto) * Math.min(1, dt * 4);
+    if (want === 0 && ghostAuto < 1) ghostAuto = 0;
+    const eff = Math.max(ghostUser, ghostAuto);
+    if (Math.abs(eff - SS.section.ghost) > 0.25 || (eff === 0 && SS.section.ghost !== 0)) SS.section.setGhost(eff);
+  }
+  V.ghostAuto = () => ghostAuto;
   V.setSlice = function (name) { V.slice = V.SLICE[name] ? name : 'thin'; SS.terrain.setBack(V.SLICE[V.slice]); SS.terrain.uniforms.uCtxHaze.value = V.slice === 'full' ? 0 : 1; return V.slice; };
 
   /* ---------- section outline ribbon ---------- */
@@ -568,6 +586,7 @@
     const dt = dtU * (V.timeScale || 1);
     view.time += dt;
     onEvents(S);
+    autoGhost(S, dtU);
     if (S.weather && view.wxKind !== undefined && S.weather.kind !== view.wxKind) applyLook(S);   // 5f: the weather turned
     const W = SS.world;
     SS.terrain.update(renderer, S, dtU, Q.remeshMs);

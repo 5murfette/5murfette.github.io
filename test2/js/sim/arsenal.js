@@ -59,7 +59,7 @@
     SNIPER: { V: 3600 * kV, G: 0.5, RANGE: 60, PEN: 0.45, DMG: 45, PUSH: 120 * kL, KEEP: 0.92, PEN_STEP: 7 / 0.45, LIFE: 1.2 },
     BAT: { DELAY: 0.22, REACH: 1.2, DMG: 30, PUSH: 640 * kL, PUSH_UP: 60 * kL },
     DIG: { TORCH_V: 30 * kT, TORCH_T: 3.2, DRILL_V: 36 * kT, DRILL_T: 2.6, R: 0.62, TICK: 0.05, DMG: 15, PUSH: 160 * kL, WARM: 0.5, COOL: 0.45 },   // P37 W4: WARM s the worm puts on its welding mask and lights the torch before it cuts; COOL s the mask goes back up
-    TELEPORT: { BEAM: 1.5 },
+    TELEPORT: { BEAM: 1.5, HOLD: 1.5 },
     GIRDER: { L: 5.9, T: 1.1, D: 1.5, REACH: 14, ANGLES: 8, TURN: 1.9, STEP: Math.PI / 8 },   // P37 W4: ANGLES / STEP = the old 22.5° steps (touch / tests); TURN rad/s = the held keys (free angle); T 1.1 (was 0.6): both faces of the plate must lie on the linear part of its distance field (half thickness >= the 0.5 m voxel), or the faces come out lumpy
     // PoC bellows: 460 (1 - d / R) + 60 px/s within 170 px (10.9 m); worms on kL, shells on kT
     BELLOWS: { RANGE: 170 * kL, COS: 0.82, V0: 460 * kL, V1: 60 * kL, UP: 65 * kL, PV0: 460 * kT, PV1: 60 * kT, PUP: 65 * kT },

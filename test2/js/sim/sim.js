@@ -280,7 +280,7 @@
       // life cycle / damage (sim.js hurt, kill, drown)
       dying: false, drowning: 0, gravePending: false, hitDir: null, burnT: -1e9, mgKill: null, batHit: null,
       // weapons A / aliens / shrapnel (weaponsa.js, alien.js, shrapnel.js)
-      gas: 0, coughT: null, coughAt: null, stickT: 0, acidT: null, hopT: 0, hopDir: 0, hug: null, embryo: false, embT: 0, embNext: 0, embHit: -1, eaten: false, shrapT: null, shrapSum: 0
+      gas: 0, coughT: null, coughAt: null, stickT: 0, acidT: null, hopT: 0, hopDir: 0, hug: null, embryo: false, embT: 0, embNext: 0, embHit: -1, eaten: false, teleHold: 0, teleX: 0, teleY: 0, teleZ: 0, shrapT: null, shrapSum: 0
     };
   };
 
@@ -433,6 +433,7 @@
       emit(S, 'gameover', { team: S.over, round: S.round });
       return;
     }
+    if (SS.lab && SS.lab.draft_begin(S, first)) return;           // P50: the perk draft (phase 'perk'); next_turn runs again when it ends
     if (!first) SS.game.turn_change(S);
     S.teamTurn = SS.game.next_team(S);
     // never hand a turn to a worm that is swimming / sinking: the rotation goes on past it (it keeps its place in the
@@ -627,6 +628,7 @@
   // landing damage (PoC: head-on / glancing, both only on floors and slopes), the spring trap's minimum
   function landHurt(S, w, dmg) {
     if (w.springFall) { w.springFall = false; dmg = M.max(dmg, C.ARMS.SPRING.FALL_MIN); }
+    if (dmg > 0 && SS.lab) dmg = SS.lab.landing_dmg(S, w, dmg);      // (P50: the PADDED perk)
     if (dmg > 0) hurt(S, w, dmg, DS.LANDING);
   }
   function landNow(S, a, impact) {
@@ -816,7 +818,7 @@
       if (a.windUp > 0 && (a.air || S.rope || a.swim || a.drowning)) a.windUp = 0;               // knocked off its feet / roped: no spring
       if (!a.air && inp.jump && !(a.windUp > 0)) { a.windUp = S.time + WD.JUMP_WIND; a.windFace = a.facing; a.walking = false; }
       else if (a.windUp > 0 && !a.air && S.time >= a.windUp) {
-        a.windUp = 0; a.vy = WD.JUMP_VY; a.vs = a.windFace * sim.jump_vs(S, a); a.air = true; a.hop = false; a.slide = false; a.squash = S.time; emit(S, 'jump', M.v3_copy(a.pos));
+        a.windUp = 0; a.vy = WD.JUMP_VY * (SS.lab ? SS.lab.jump_k(S, a) : 1); a.vs = a.windFace * sim.jump_vs(S, a); a.air = true; a.hop = false; a.slide = false; a.squash = S.time; emit(S, 'jump', M.v3_copy(a.pos));
       }
       else if (!a.air && inp.backflip && !(a.windUp > 0)) { a.vy = WD.HOP_VY; a.vs = a.facing * WD.HOP_VS; a.air = true; a.hop = true; a.hopAt = S.time; a.slide = false; a.squash = S.time; emit(S, 'jump', M.v3_copy(a.pos)); }
       else if (a.air && inp.backflip && a.hop && S.time - a.hopAt < WD.SALTO_WIN && a.vy > WD.SALTO_VMIN) {
@@ -1197,6 +1199,7 @@
   /* Explosion entry point. wp: weapon def ({W} TNT-equivalent kg; legacy {R} accepted). */
   sim.explode = function (S, c, wp, ownerId) {
     let Wkg = wp.W != null ? wp.W : M.pow((wp.R || 3) / 3, 3);
+    if (SS.lab) Wkg = SS.lab.blast_w(S, Wkg, ownerId);              // P50: the RADIUS perk
     const Wfull = Wkg, ffx = SS.ffield && S.ffields && S.ffields.length ? SS.ffield.contain_pre(S, c, Wkg, wp) : null;   // P37 W4: a blast inside a force field is contained
     if (ffx) Wkg = ffx.W;
     S.lastBoom = S.time; S.lastExplosion = { x: c.x, y: c.y, z: c.z, R: 3 * M.cbrt(Wkg) }; S.lastBlastW = Wkg; S.lastBlastT = S.time;
@@ -1502,6 +1505,7 @@
     sim.sanitize_input(inp);
     if (inp.reset) { sim.reset(S, S.settings); return; }
     if (dbgInp.dbk && SS.debug) { if (dbgInp !== inp) sim.sanitize_input(dbgInp); SS.debug.apply(S, dbgInp); }     // P49: the debug toolbox's drop (only while S.debugOn)
+    if (S.phase === 'perk' && SS.lab) { SS.lab.perk_step(S, inp, dt); a = S.active; }   // P50: the perk draft (a pick may start the first turn)
     if (S.phase === 'place') {                                    // P13: deployment (the world runs, worms are placed)
       if (inp.rotate || inp.rotate_mouse) sim.rotate_by(S, (inp.rotate + inp.rotate_mouse) * (inp.fine ? 0.25 : 1) * C.ROT_SPEED * dt);
       SS.game.place_step(S, inp, dt);                             // (the world steps below; control needs 'play')

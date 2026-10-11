@@ -138,6 +138,7 @@
     // the section jumps to the new worm: rebuild it and treat the jump like a turn of the section (the material edge
     // fades out and is rebuilt here; user 2026-10-08: the old outline stayed while a CPU placed elsewhere)
     S.O = { x: p.x, z: p.z }; S.sectionDirty = true; S.lastRotate = S.time;
+    if (SS.weapons && SS.weapons.tele_hold) SS.weapons.tele_hold(w, p.x, p.y, p.z);     // hangs until the beam has built it (user 2026-10-11)
     SS.sim.emit(S, 'teleport', { wormId: w.id, from: { x: p.x, y: p.y + 30, z: p.z }, to: { x: p.x, y: p.y, z: p.z }, deploy: 1 });
     SS.sim.log(S, `${w.name} ${how}.`, SS.sim.team_rgb(S, w.team));
     S.placeIdx++; nextPlace(S);

@@ -261,6 +261,9 @@
       case 'sparks': if (e.mode === 'drill') S2('drill_loop', 0.7, 1, () => SFX.drill()); else S2('torch_loop', 0.7, 1, () => SFX.torch()); break;
       case 'girder': S2('girder_place', 1, 1, () => SFX.clank()); break;
       case 'pickup': S2('crate_pickup', 0.9, 1, () => SFX.pickup()); AU.voice('worm_pickup', S.active, 0.9, 0.2); break;
+      case 'lablong': S2('fanfare_win', 0.55, 1.3, () => SFX.fanfare()); break;                    // P50 Lab: long shot
+      case 'labperk': S2('crate_pickup', 0.9, 0.85, () => SFX.pickup()); break;                     // P50 Lab: a perk taken
+      case 'labstreak': if (e.streak > 0) S2('turn_start', 0.8, 1.35, () => SFX.chirp()); break;     // P50 Lab: a streak step
       case 'fuse': S2('fuse_tick', 0.6, 1, () => SFX.fuse()); break;
       case 'minearm': S2('mine_beep', 0.8, 1, () => SFX.beep()); break;
       case 'propbreak': S2(e.kind === 'barrel' ? 'metal_crunch' : 'wood_break', 0.8, 1, () => SFX.wood(0.7)); break;
