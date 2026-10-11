@@ -223,17 +223,19 @@
     LIGHTNING: { TURN_P: 0.6, NEAR: 35, W: M.pow(24 / 44, 3), ZAP_R: 3.9, ZAP_D: 16, K_TREE: 3, K_SPIRE: 1, K_BARREL: 1, K_WORM: 0.2, SPIRE_E: 2, BREAK_P: 0.5 },
 
     /* Settings the player can change (map menu). 'auto' = picked from the biome/seed. */
+    /* P68a: the 2D dimension (settings.dim = '2d', sim/dim2d.js): the slab is SZ m thick (NZ = SZ / H + 1 lattice slices, the middle one is the gameplay plane) */
+    DIM2: { SZ: 4, COUNT_K: 0.5, SEP_K: 0.5 },
     /* Settings (the sim's defaults; the menu starts from the PoC defaults: turnTime 45, sd on, ctl human / cpu).
      * P1: teams 2-4, worms per team 1-4, hp, turnTime (s, 0 = no limit), ctl[] per team 'human' | 'cpu' (null =
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p66a-he',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p68a-2d-crk',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
       blood: false, select: false, keepRope: false, rooms: false, time: 'day', art: 'painted', shape: 'island',
-      rotLock: true, labFlags: 0, mineFuse: 'default', teamBlood: false, toolCrates: 'normal',        // (contracts: W1 / W3 / W4 read them; the menu sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
+      rotLock: true, dim: '3d', labFlags: 0, mineFuse: 'default', teamBlood: false, toolCrates: 'normal',        // (contracts: W1 / W3 / W4 read them; the menu sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
       dTrees: 'medium', dRocks: 'medium', dBarrels: 'medium', dProps: 'medium', dCrates: 'medium', dMines: 'medium', dBunkers: 'medium', dTown: 'medium', dEggs: 'medium' },
 
     WIND_UNIT: 12, WIND_ACC: 230 * 9.81 / 520,   // PoC WIND_ACC 230 px/s2 per wind unit (12 m/s) on the projectile scale
@@ -524,6 +526,7 @@
     if (base <= 0) return base;
     const sc = SS.world && SS.world.size_of ? SS.world.size_of(st) / 96 : 1;      // P38: content grows with the map's AREA
     if (sc !== 1) base = Math.round(base * sc * sc);
+    if (st && st.dim === '2d') base = M.max(1, Math.round(base * SS.CFG.DIM2.COUNT_K));    // P68a: a slice has a line of ground, not an area
     if (lv === 2) return base;
     if (lv === 0) return 0;
     return lv === 1 ? M.max(1, Math.round(base * 0.5)) : Math.round(base * 2);
@@ -596,7 +599,7 @@
   SS.CFG.LIMITS = { WORMS: 16, PROJ: 512, PENDING: 256, FLAMES: 512, DEVICES: 64, HOLES: 16, STRIKES: 16, BULLETS: 64, ZAPS: 16, MOAIS: 16, FX: 256, PLANE_BODIES: 512, EVENTS: 4096, LOG: 7, LAB_METEORS: 8, WHIRLS: 4, WHIRL_RESP: 4 };
   /* P42 Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic */
   SS.CFG.LAB = {
-    FLAG: { BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32, PERKS: 64, STREAK: 128, LONGSHOT: 256, FATIGUE: 512 }, ALL: 1023,
+    FLAG: { BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32, PERKS: 64, STREAK: 128, LONGSHOT: 256, FATIGUE: 512, CRACKS: 1024 }, ALL: 2047,
     BANK_K: 0.2, BANK_MAX: 3, BANK_SPEED: 2,
     UNDER_RATIO: 0.5, UNDER_K: 1.35,
     GUST_T0: 6, GUST_T1: 12, GUST_DIR: 0.9, GUST_V0: -4, GUST_V1: 5, GUST_MAX: 11,
@@ -609,6 +612,29 @@
     LONG_M: 25, LONG2_M: 40, LONG_K: 1.25, LONG2_K: 1.5,
     FAT_M: 25, FAT_RAD: 0.1, FAT_STEP: 2
   };
+  /* P66b cracks (sim/cracks.js, lab flag CRACKS): persistent per-voxel damage W.crack (u8) + a structural load check.
+   * Units: kPa strength (MATS[].strength), kg, N, m. Bond capacity of one voxel face = H^2 x strength x K[direction] x (1 - damage). */
+  SS.CFG.CRACK = {
+    W_MIN: 0.05,                  // blasts below this charge (kg TNT) leave no cracks
+    BREAK: 200,                   // damage value (0..255) at which a voxel carries nothing (an open crack: no bond, blocks the support flood)
+    N0: 3, N_POW: 1.0, N_MAX: 7,  // sheets per blast: N0 + round(rand 0..2 + N_POW x W^1/3), at most N_MAX
+    R0_K: 2.5,                    // nominal crater radius = R0_K x W^1/3 (m)
+    LEN0: 0.9, LEN1: 1.5, LEN_MAX: 9, LEN_MIN: 0.7,   // sheet length = R0 x (LEN0 + rand x LEN1) x brittleness (m)
+    WIDTH_K: 0.65,                // sheet half width = length x WIDTH_K x (0.6..1)
+    WOB_K: 0.28,                  // out-of-plane wander amplitude = WOB_K x sqrt(length)
+    DMG: 255,                     // damage added at the crater end of a sheet (fades to 0 at the tip)
+    HALO_K: 1.9, HALO_DMG: 80,    // micro damage around the crater: radius HALO_K x R0, DMG at the wall
+    STRESS_K: 0.8,                // existing damage at the start of a sheet lengthens it by (1 + STRESS_K x damage / 255)
+    WEAK_K: 1.1,                  // later blasts: crater radius x (1 + WEAK_K x damage / 255) in damaged voxels
+    REGION_MAX: 56,               // structural region: at most this many lattice points per axis
+    W_DOWN: 1, W_UP: 3, W_SIDE: 64,   // route weights (distance from the ground): sideways dominates, so pieces form by horizontal reach
+    MAX_PASS: 2,                 // load check + detach passes per blast
+    G: 9.81, K_COMP: 30, K_SIDE: 3, K_TENS: 1, LEVER: 0.1,    // direction factors of a bond (compression, shear, tension), bending lever per metre
+    SIGMA_MAX: 3000,              // kPa cap of a bond
+    WORM_KG: 3000,                // load of a standing worm (game scale)
+    MIN_DAMAGE: 0.02,             // a damaged bond keeps at least this fraction
+    COMPS_MAX: 4096, PIECE_N: 320, PIECE_CRACK: 0.6, PIECE_MAX: 8   // collapse: voxels per piece, shrink at full damage, cap
+  };
   /* ---------- enums (P38 R7 / P8). The JS sim keeps strings as the enum NAMES (a C port compiles each list into an enum; the index is the value):
    *   phase: C.PH / C.PHASE_NAME  (S.phase is the name in JS);  weapon: C.WEAPON_KEYS (the wire carries index + 1);  weather: C.WEATHER;  biome: C.BIOMES[i].id;
    *   cause / damage source: C.CAUSE / C.DS (already integers);  settings: C.SETTING_ENUMS below: value -> index, 'auto' / 'random' -> -1 (the Settings struct
@@ -617,7 +643,7 @@
   SS.CFG.PHASE_NAME = ['play', 'attack', 'resolve', 'dying', 'place', 'over', 'perk'];
   SS.CFG.SETTING_ENUMS = {
     weather: ['clear', 'cloudy', 'rain', 'storm', 'snow', 'blizzard', 'ashfall', 'fog'], wind: ['calm', 'breeze', 'strong', 'gale'], lava: ['off', 'on'], skill: ['easy', 'normal', 'hard'],
-    time: ['day', 'dusk', 'night'], shape: ['islands', 'hills', 'caverns', 'canyon'], mapSize: ['normal', 'large'], placement: ['random', 'user'], toolCrates: ['off', 'low', 'normal', 'high'],
+    time: ['day', 'dusk', 'night'], shape: ['islands', 'hills', 'caverns', 'canyon'], mapSize: ['normal', 'large'], placement: ['random', 'user'], toolCrates: ['off', 'low', 'normal', 'high'], dim: ['3d', '2d'],
     ctl: ['human', 'cpu'], art: ['painted', 'vector'], slice: ['thin', 'thick'], biome: SS.CFG.BIOMES.map(b => b.id), density: SS.CFG.DENSITY.LEVELS };
   SS.CFG.setting_enc = (key, v) => { const L = SS.CFG.SETTING_ENUMS[key]; if (!L) return typeof v === 'number' ? v : -1; const i = L.indexOf(v); return i; };
   SS.CFG.setting_dec = (key, i, auto) => { const L = SS.CFG.SETTING_ENUMS[key]; return L && i >= 0 && i < L.length ? L[i] : auto; };

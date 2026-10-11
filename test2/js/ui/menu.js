@@ -44,6 +44,7 @@
   };
   /* row: k key, t label, o options (or null = toggle), n = numeric value, w = widget ('seg' | 'sel'), h = hint */
   const MATCH = [
+    { k: 'dim', t: 'Dimension', o: [['3d', '3D'], ['2d', '2D']], w: 'seg', h: '3D: turn the world to aim. 2D: a classic side-on slice, no rotation' },
     { k: 'teams', t: 'Teams', o: OPTS.teams, n: 1, w: 'seg', teams: 1 }, { k: 'worms', t: 'Worms per team', o: OPTS.worms, n: 1, w: 'seg' },
     { k: 'hp', t: 'Worm health', o: OPTS.hp, n: 1, w: 'seg' }, { k: 'turnTime', t: 'Turn time', o: OPTS.turnTime, n: 1, w: 'seg' },
     { k: 'skill', t: 'CPU skill', o: OPTS.skill, w: 'seg' }, { k: 'placement', t: 'Worm placement', o: OPTS.placement, w: 'seg' },
@@ -87,12 +88,13 @@
     { sec: 'Batch 2: perks, momentum, precision', id: 'PERKS', t: 'Perk draft', d: 'At the start of the match and every third round (rounds 1, 4, 7 ...) each team picks 1 of 3 random perks, press 1 / 2 / 3 or click a card: wide blasts (+15 % radius), padded boots (-20 % landing damage), spring legs (+20 % jump), thick skin (-15 % blast damage taken), crate magnet (2.5 x pickup reach), extra time (+10 s per turn). The CPU picks by a fixed ranking; online, the pick is a normal input.' },
     { id: 'STREAK', t: 'Streak', d: 'Damage an enemy with a blast during your turn and your team gains a streak step (up to x4): +10 % blast damage per step, shown on the team panel. A turn without a hit resets it. Rewards consistency, and the underdog has the other mechanic to catch up.' },
     { id: 'LONGSHOT', t: 'Long shot', d: 'A blast that hurts an enemy farther than 25 m from the shooter deals +25 % damage, farther than 40 m +50 %, with a LONG SHOT banner. Rewards sniping across the map and punishes camping at range.' },
-    { id: 'FATIGUE', t: 'Fatigue', d: 'Every metre a worm walks, swings or falls during its turn (up to 25 m) makes that same worm\'s NEXT shot sway: up to 5.7 degrees of random aim error. Stand still for a perfect aim, move for position: the HUD badge shows the current sway.' }
+    { id: 'FATIGUE', t: 'Fatigue', d: 'Every metre a worm walks, swings or falls during its turn (up to 25 m) makes that same worm\'s NEXT shot sway: up to 5.7 degrees of random aim error. Stand still for a perfect aim, move for position: the HUD badge shows the current sway.' },
+    { sec: 'Batch 3: terrain', id: 'CRACKS', t: 'Cracks', d: 'Blasts leave cracks in the ground, in 3D, that stay: they weaken the soil (later blasts dig wider there and the rubble breaks into smaller rocks) and can cut land loose. After every blast the game weighs the land around it (rock, soil, props, worms on top) against what still holds it: a ledge whose root was cut by the hole and the cracks, or a big block hanging on a thin neck, falls with whatever stands on it. Rock and ice crack far, soil less, sand and snow hardly. Cracks show as dark lines on the ground.' }
   ];
   MN.LAB = LAB;
   const labBits = () => LAB.reduce((n, r) => n + (((cur.labFlags | 0) & C.LAB.FLAG[r.id]) ? 1 : 0), 0);
   /* settings keys the host sends to net guests (js/main.js adds them to its whitelist) */
-  MN.NET_KEYS = ['rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags'].concat(D.KEYS);
+  MN.NET_KEYS = ['dim', 'rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags'].concat(D.KEYS);
 
   /* P38 R6 (R2/R3): saved settings, URL parameters and net starts are untrusted data (an old build, a foreign key, a hand edit):
    * coerce every field into its legal range / type so the form and the generator never see a hole. Pure (tools/dev/gen/robusttest.cjs).
@@ -125,6 +127,7 @@
       if (typeof v !== 'string' && typeof v !== 'number') { if (def[k] != null) o[k] = def[k]; else delete o[k]; }
     }
     for (const k of D.KEYS) if (o[k] != null && D.LEVELS.indexOf(o[k]) < 0) o[k] = def[k] != null && D.LEVELS.indexOf(def[k]) >= 0 ? def[k] : 'medium';
+    o.dim = o.dim === '2d' ? '2d' : '3d';                              // P68a: the dimension (sim/dim2d.js)
     for (const k of ['sd', 'collapse', 'blood', 'teamBlood', 'select', 'rooms', 'keepRope', 'rotLock']) if (o[k] != null && typeof o[k] !== 'boolean') o[k] = !!o[k] && o[k] !== '0' && o[k] !== 'off';
     return o;
   };

@@ -99,7 +99,7 @@
     for (const e of kinds) {
       if (!WPN.crate_room(S, e.kind === 'tool')) continue;                                        // (P38 R3: the caps; the oldest landed crate of the class makes room)
       for (let tries = 0; tries < 20; tries++) {
-        const x = rr(S, 6, w.SX - 6), z = rr(S, 6, w.SZ - 6), top = M.max(w.top_at(x, z), w.SEA);
+        const x = rr(S, 6, w.SX - 6), zr = rr(S, 6, w.SZ - 6), z = w.flat ? w.MZ : zr, top = M.max(w.top_at(x, z), w.SEA);
         if (w.dry && !sim().in_play(S, x, z)) continue;
         if (top < sim().surface_at(S, x, z) + 0.2) continue;                                      // not over the sea
         const y = M.min(w.SY - 1, top + rr(S, 10, 24));

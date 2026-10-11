@@ -142,7 +142,7 @@
   AL.populate = function (S, taken) {
     S.alien = blank(S);
     const w = W();
-    if (S.biome !== 'volcanic' || w.under || w.dry) return;
+    if (S.biome !== 'volcanic' || w.under || w.dry || w.flat) return;       // (P68a: no eggs in the 2D slab)
     const n = C.density_count(S.settings, 'dEggs', 4);
     if (n <= 0) return;
     let placed = 0;

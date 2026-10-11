@@ -290,7 +290,7 @@
     if (key === 'teleport') {
       // (P38 R1: PoC 10 < x < W - 10: not outside the map / the play area, and not on the very edge; refused before the charge is spent)
       const tw = P.to_world(S, s, y), EM = 10;     // m from every map border (PoC)
-      if (tw.x < EM || tw.z < EM || tw.x > W().SX - EM || tw.z > W().SZ - EM || !sim().in_play(S, tw.x, tw.z)) { sim().log(S, 'Out of bounds.', 0xffb27a); return false; }
+      if (tw.x < EM || !W().zin(tw.z, EM) || tw.x > W().SX - EM || !sim().in_play(S, tw.x, tw.z)) { sim().log(S, 'Out of bounds.', 0xffb27a); return false; }
       if (P.overlap2(S, s, y) > 0 || y < sim().surface_at(S, P.to_world(S, s, y).x, P.to_world(S, s, y).z) + 0.5 || y > W().SY - 1) { sim().log(S, 'No room there.', 0xffb27a); return false; }
       { const q = P.to_world(S, s, y); if (!WP.open_air(q.x, y, q.z)) { sim().log(S, 'No room there: sealed in rock.', 0xffb27a); return false; } }
       const from = { x: a.pos.x, y: a.pos.y, z: a.pos.z }, to = P.to_world(S, s, y);

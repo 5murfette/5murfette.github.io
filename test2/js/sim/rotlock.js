@@ -20,7 +20,7 @@
   const C = SS.CFG, M = SS.math;
   const RL = SS.rotlock = {};
 
-  RL.enabled = S => S.settings.rotLock !== false && S.settings.rotLock !== 0 && S.settings.rotLock !== 'off';
+  RL.enabled = S => !SS.world.flat && S.settings.rotLock !== false && S.settings.rotLock !== 0 && S.settings.rotLock !== 'off';
   RL.free = S => !RL.enabled(S) || !!(S.active && S.active.skills && S.active.skills.freerot > 0);
   RL.allowed = S => {
     if (S.phase === 'place') return true;

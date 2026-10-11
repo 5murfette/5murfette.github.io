@@ -193,8 +193,20 @@
       c = mix(c, vec3(0.16, 0.17, 0.19), bolt * 0.85) + bolt * 0.12;
       return c;
     }`;
+  /* P66b: crack damage (sim/cracks.js W.crack: one byte per lattice point, 3D texture tCrack, render/cracks.js) as dark jagged lines: the
+   * trilinear value crosses a threshold that wobbles with a fine noise (the sheet is 1-2 lattice points thick, so a plain threshold would be a
+   * smooth 0.5 m band); the faint halo of micro damage stays below it. uCrackOn 0 = the CRACKS lab flag is off: nothing is drawn. */
+  const CRACK_GLSL = /* glsl */`
+    uniform highp sampler3D tCrack; uniform float uCrackOn; uniform vec3 uCrackSize;
+    float crackMask(vec3 p, float n1, float n2) {
+      if (uCrackOn < 0.5) return 0.0;
+      float c = texture(tCrack, (p * 2.0 + 0.5) / uCrackSize).r;
+      float thr = 0.42 + 0.3 * (n1 - 0.5) + 0.12 * (n2 - 0.5);
+      return smoothstep(thr, thr + 0.07, c);
+    }`;
   const COMMON = /* glsl */`
-    uniform float uNL, uSL;   // P38: lattice columns per side / map side (m): textures and the water map are sized per map
+    uniform float uNL, uSL;
+    ${CRACK_GLSL}   // P38: lattice columns per side / map side (m): textures and the water map are sized per map
     ${FOAM_GLSL}
     ${PLATE_GLSL}
     float gMetal = 0.0;
@@ -344,6 +356,7 @@
       // P65k: freshly dug ground (the crater and its rim): moister, darker, redder subsoil under the weathered surface, drying out with distance from the pit
       col *= mix(vec3(1.0), vec3(0.6, 0.53, 0.47), scy4.b * scGate * (0.8 + 0.4 * nb));
       col = mix(col, vec3(0.045, 0.04, 0.038) + col * 0.12, sf.b * scGate * (0.65 + 0.35 * nb));
+      if (uCrackOn > 0.5 && distance(vT, vW) < 0.001) { vec2 ckn = texture(tNoise, vW.xz * 1.9 + vW.y * 1.3).rg; float ckm = crackMask(vW, ckn.x, ckn.y); col = mix(col, vec3(0.028, 0.024, 0.021), ckm * 0.92); rough = mix(rough, 0.97, ckm); }   // P66b: cracks
       // overhangs / cave ceilings: darker, cooler
       col *= mix(1.0, 0.6, (1.0 - smoothstep(-0.8, -0.2, up)));
       // rain (LV2; Lagarde 2013 "Water drop 2b"): water fills the pores of porous ground (darker; little film on top,
@@ -610,6 +623,7 @@
         uniform highp sampler2D tFar; uniform vec4 uFar; uniform vec2 uLat; uniform vec3 uLatR;   // D5 far strip: u0, du, n, on; lattice size; D6 disc
         uniform highp sampler3D tN3; uniform float uS0; uniform float uNL, uSL;
         varying vec3 vW;
+        ${CRACK_GLSL}
         ${FOAM_GLSL}
         ${PLATE_GLSL}
         ${TUFF_GLSL}
@@ -872,6 +886,7 @@
           if (capCv > 0.5) { col = mix(vec3(0.84, 0.87, 0.93) * (0.92 + 0.12 * nb), vec3(0.085, 0.08, 0.078) * (0.8 + 0.4 * nb), smoothstep(0.4, 0.6, capAsh)); cEmis = vec3(0.0); }
           col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uCapK.w) * uCapK.rgb;
           col *= conAO(vW);                                                                  // P65b: contact shade of worms / props reads on the cut line too
+          if (uCrackOn > 0.5) { vec4 ckn = n3(vW * 2.3); float ckm = crackMask(vW, ckn.r, ckn.g); col = mix(col, vec3(0.03, 0.026, 0.022), ckm * 0.92); }   // P66b: cracks cut by the section
           diffuseColor.rgb = col;
         `)
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += cEmis;')
@@ -889,7 +904,8 @@
     const W = SS.world;
     Object.assign(U, {
       tMats: { value: tx.mats }, tNoise: { value: tx.noise }, tSurf: { value: null }, tScY: { value: null }, tWater: { value: null },
-      tLavaS: { value: null }, uLavaOn: { value: 0 }, tCover: { value: null }, uDbgBack: { value: 0 },   // tools: 1 body / 2 all slab back faces magenta
+      tLavaS: { value: null }, uLavaOn: { value: 0 }, tCover: { value: null }, uDbgBack: { value: 0 },
+      tCrack: { value: SS.crackView ? SS.crackView.dummy() : null }, uCrackOn: { value: 0 }, uCrackSize: { value: new T.Vector3(1, 1, 1) },   // P66b (render/cracks.js)   // tools: 1 body / 2 all slab back faces magenta
       uCtxSolid: { value: 0 },  // D3: 1 = far context opaque, no ghost haze (dry worlds; set by view.js newWorld)
       uCtxHaze: { value: 1 },   // P29j: the slice-view setting: 1 (thin / thick) = the landscape behind the slab recedes into haze; 0 (full) = crisp
       uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHaze: { value: new T.Color(0xf3d2b0) }, uCaveAmb: { value: new T.Color(0, 0, 0) },

@@ -106,7 +106,7 @@
     if (!N) return;
     const rg = M.rng_make((Math.imul(S.settings.seed | 0, 7919) + 101) >>> 0), P = K.SPEC[SPN[sp]];
     for (let tries = 0; tries < 6000 && S.trees.length < N; tries++) {
-      const x = 6 + M.rng_next(rg) * (w.SX - 12), z = 6 + M.rng_next(rg) * (w.SZ - 12), top = w.topHeight(x, z);
+      const x = 6 + M.rng_next(rg) * (w.SX - 12), z = w.zpick(M.rng_next(rg), 6), top = w.topHeight(x, z);
       if (top < w.SEA + 1.2) continue;
       const i = Math.round(x / w.H), k = Math.round(z / w.H), c = k * w.NX + i;
       const m = w.mat_at(x, top - 0.2, z);
@@ -117,14 +117,14 @@
       if (m === C.MAT.LAVA || m === C.MAT.ICE || m === C.MAT.BEDROCK) continue;
       if (m === C.MAT.CONCRETE || m === C.MAT.STEEL || m === C.MAT.FOAM || m === C.MAT.OBSIDIAN) continue;   // P65f: no tree grows out of a slab / glass (volcanic ruins)
       let ok = true;
-      for (const [dx, dz] of [[0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8]]) if (Math.abs(w.topHeight(x + dx, z + dz) - top) > 0.5) ok = false;
+      for (const [dx, dz] of [[0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8]]) if (Math.abs(w.topHeight(x + dx, z + dz) - top) > (w.flat ? 1.2 : 0.5)) ok = false;
       if (!ok) continue;
       const F = w.features;
       if ((F.volcanoes || []).some(v => M.len2(x - v.x, z - v.z) < v.Rc + 4)) continue;
       if (SS.sim.near_lava && SS.sim.near_lava(S, x, z)) continue;
       if (S.water && S.water.h[c] > 0.004) continue;
-      if (taken.some(p => M.len2(p.x - x, p.z - z) < K.SEP)) continue;
-      if (S.worms.some(o => M.len2(o.pos.x - x, o.pos.z - z) < K.WORM_SEP) || S.bodies.some(o => M.len2(o.pos.x - x, o.pos.z - z) < 2 + o.rb)) continue;
+      if (taken.some(p => M.len2(p.x - x, p.z - z) < K.SEP * w.sepk)) continue;
+      if (S.worms.some(o => M.len2(o.pos.x - x, o.pos.z - z) < K.WORM_SEP * w.sepk) || S.bodies.some(o => M.len2(o.pos.x - x, o.pos.z - z) < (2 + o.rb) * w.sepk)) continue;
       const t = grow(rg, sp, x, top, z);
       // room for the crown: no rock in the trunk line or around the crown
       for (let yy = 1; yy < t.h && ok; yy += 0.8) if (w.sample(x, top + yy, z) > 0) ok = false;

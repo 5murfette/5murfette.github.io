@@ -51,14 +51,15 @@
   sim.snapshot = function (S) {
     const w = W();
     const dirty = {}; for (const m of DIRTY_MODS) if (SS[m] && SS[m].dirty_get) dirty[m] = SS[m].dirty_get();
-    return { S: structuredClone(S), d: w.d.slice(), mat: w.mat.slice(), heat: w.heat.slice(), top: w.top.slice(), topJ: w.topJ.slice(), sx: w.SX, sea: w.SEA, ver: w.version, dirty };   // R7-OK (replay snapshot: platform helper, never in a step)
+    return { S: structuredClone(S), d: w.d.slice(), mat: w.mat.slice(), heat: w.heat.slice(), top: w.top.slice(), topJ: w.topJ.slice(), crack: w.crack ? w.crack.slice() : null, sx: w.SX, sea: w.SEA, ver: w.version, dirty };   // R7-OK (replay snapshot: platform helper, never in a step)
   };
   sim.restore = function (S, snap) {
     const w = W(), c = structuredClone(snap.S);   // R7-OK
     for (const k of Object.keys(S)) if (!(k in c)) delete S[k];   // R7-OK
     Object.assign(S, c);
     if (snap.sx && snap.sx !== w.SX) w.resize(snap.sx, snap.sx);                  // P38: a snapshot of a map of another size
-    w.d.set(snap.d); w.mat.set(snap.mat); w.heat.set(snap.heat); w.top.set(snap.top); w.topJ.set(snap.topJ); w.SEA = snap.sea;   // (sudden death raises the sea)
+    w.d.set(snap.d); w.mat.set(snap.mat); w.heat.set(snap.heat); w.top.set(snap.top); w.topJ.set(snap.topJ); w.SEA = snap.sea;
+    w.crack = snap.crack ? snap.crack.slice() : null; if (SS.cracks) SS.cracks.bump(w);   // P66b   // (sudden death raises the sea)
     // quiet: the renderers rebuild everything, the sim modules get their own pending rects back (a whole-lattice
     // refresh re-derived every water column and the replay's water / floes drifted off the live run: review P36)
     w.mark_all(true); S.verBase = (S.verBase || 0) + (w.version - snap.ver);   // hash: version - verBase unchanged
@@ -122,6 +123,7 @@
     if (S.teams) for (const t of S.teams) if (t.ammo) for (const k of C.ARSENAL_ORDER) { const v = t.ammo[k]; mix(v === Infinity ? -7 : v || 0); }
     for (const w of S.worms) { mix(w.vel.x); mix(w.vel.y); mix(w.vel.z); mix(w.vs || 0); mix(w.vy || 0); mix(w.facing || 0); mix(w.hp0 || 0); mix(w.air ? 1 : 0); mix(w.dead ? 1 : 0); }
     if (S.settings) for (const k of HASH_SETTINGS) { const v = S.settings[k]; mix(typeof v === 'number' ? v : typeof v === 'boolean' ? (v ? 1 : 0) : typeof v === 'string' ? str(v) % 1000003 : -1); }
+    if (S.settings && S.settings.dim === '2d') mix(2002);                  // P68a: the dimension, only while it is 2D (3D hashes stay what they were)
     { const wd = W(), d = wd.d, mt = wd.mat; let t = 0, u = 0; for (let i = 0; i < d.length; i += 97) t += d[i]; for (let i = 3; i < mt.length; i += 101) u += mt[i]; mix(t); mix(u); mix(wd.SEA); mix(wd.SX); }
     return HH;
   };
@@ -199,7 +201,7 @@
   function caveSpot(S, minSep, taken, o) {
     const w = W();
     for (let tries = 0; tries < 6000; tries++) {
-      const x = 6 + rand(S) * (w.SX - 12), z = 6 + rand(S) * (w.SZ - 12);
+      const x = 6 + rand(S) * (w.SX - 12), z = w.zpick(rand(S), 6);
       let y = 2 + rand(S) * (w.SY - 6);
       if (w.sample(x, y, z) > 0) continue;
       while (y > 1 && w.sample(x, y - 0.1, z) <= 0) y -= 0.1;
@@ -224,7 +226,7 @@
     const w = W(), o = opts || {};
     if (w.under) return caveSpot(S, minSep, taken, o);
     for (let tries = 0; tries < 5000; tries++) {
-      const x = 8 + rand(S) * (w.SX - 16), z = 8 + rand(S) * (w.SZ - 16), top = w.topHeight(x, z);
+      const x = 8 + rand(S) * (w.SX - 16), z = w.zpick(rand(S), 8), top = w.topHeight(x, z);
       if (top < w.SEA + (o.minAlt || 1.5) || top > (o.maxAlt || 99)) continue;
       if (w.dry && sim.arena_r(x, z) > DRY.SPAWN_R) continue;                     // dry: everything starts in the play area
       const m = w.mat_at(x, top - 0.2, z);
@@ -239,7 +241,7 @@
       if (F.canals && F.canals.some(cn => cn.pts.some(q => M.len2(q[0] - x, q[2] - z) < 4 + (q[3] || 0)))) continue;
       if (nearLava(S, x, z)) continue;
       let clash = false;
-      for (let i = 0; i < taken.length; i++) if (M.len2(taken[i].x - x, taken[i].z - z) < minSep) { clash = true; break; }
+      for (let i = 0; i < taken.length; i++) if (M.len2(taken[i].x - x, taken[i].z - z) < minSep * w.sepk) { clash = true; break; }
       if (clash) continue;
       return { x, y: top, z };
     }
@@ -319,6 +321,7 @@
     if (SS.ai) SS.ai.init(S);
     if (SS.weapons) SS.weapons.init(S);                           // P2: holes, strikes, devices, crates, fuse ...
     if (SS.lab) SS.lab.init(S);                                   // P42: the Lab's state + RNG stream (settings.labFlags)
+    if (SS.cracks) SS.cracks.init(S);                             // P66b: the damage field (only with the CRACKS flag)
     SS.game.setup(S);                                              // P1: teams, rounds, sudden death (before subsystems / spawns)
     if (SS.weather) SS.weather.init(S);
     if (SS.water) SS.water.init(S);
@@ -333,11 +336,12 @@
       taken.push(spot);
       S.worms.push(sim.worm_make(i, team, names[i], hp0, spot));
     }
-    if (S.settings.rooms && !W().under) SS.game.rooms(S); else S.rooms = [];   // PoC buried rooms (option)
-    if (SS.struct) SS.struct.populate(S, taken);                  // M: steel bridges (before props / trees: they avoid the abutments)
-    if (SS.bunker) SS.bunker.populate(S, taken);                  // P29d: concrete bunkers (before props / trees too)
-    if (SS.derelict) SS.derelict.populate(S, taken);              // P37: the crashed derelict alien ship (voxel stamp)
-    if (SS.ruins) SS.ruins.populate(S, taken);                    // P37: volcanic ruined town + rocks (voxel stamps, before the props)
+    const flat = W().flat;                                         // P68a: the 2D slab has no room for the 3D structure stamps
+    if (S.settings.rooms && !W().under && !flat) SS.game.rooms(S); else S.rooms = [];   // PoC buried rooms (option)
+    if (SS.struct && !flat) SS.struct.populate(S, taken);                  // M: steel bridges (before props / trees: they avoid the abutments)
+    if (SS.bunker && !flat) SS.bunker.populate(S, taken);                  // P29d: concrete bunkers (before props / trees too)
+    if (SS.derelict && !flat) SS.derelict.populate(S, taken);              // P37: the crashed derelict alien ship (voxel stamp)
+    if (SS.ruins && !flat) SS.ruins.populate(S, taken);                    // P37: volcanic ruined town + rocks (voxel stamps, before the props)
     if (SS.alien) SS.alien.populate(S, taken);                    // P37: face-hugger eggs (after the ship: the nest)
     sim.unbury_worms(S, taken);                                          // P38 R1: lift a worm the hull / rubble stamps entombed (before the props use taken)
     if (SS.scatter) SS.scatter.populate(S, taken);
@@ -346,8 +350,10 @@
     if (S.settings.placement === 'user') SS.game.begin_placement(S);  // P13: the players place their worms first
     else sim.next_turn(S, true);
     S.verBase = W().version;
+    if (flat) SS.dim2d.constrain(S);
     const B = C.BIOMES.find(b => b.id === S.biome);
-    log(S, W().under ? `${B ? B.name.replace(/ isle| island/i, '') : S.biome} caves: a cave system in ${W().SX} m × ${W().SZ} m × 40 m of rock. Rotate with Q / E; the rope is your friend.`
+    if (flat) log(S, `${B ? B.name : S.biome}: a ${W().SX} m side-on slice (2D). No rotation: everyone fights on the same plane.`, 0xfff3b0);
+    else log(S, W().under ? `${B ? B.name.replace(/ isle| island/i, '') : S.biome} caves: a cave system in ${W().SX} m × ${W().SZ} m × 40 m of rock. Rotate with Q / E; the rope is your friend.`
       : `${B ? B.name : S.biome}: a ${W().SX} m × ${W().SZ} m × 40 m volume. Rotate with Q / E.`, 0xfff3b0);
   }
 
@@ -366,8 +372,8 @@
       if (o.dead || bodyFree(w, o.pos.x, o.pos.y, o.pos.z)) continue;
       let done = false;
       for (let r = 1.5; r <= 30 && !done; r += 1.5) for (let q = 0; q < 16 && !done; q++) {
-        const a = q * M.TAU / 16, x = o.pos.x + M.cos(a) * r, z = o.pos.z + M.sin(a) * r;
-        if (x < 6 || z < 6 || x > w.SX - 6 || z > w.SZ - 6) continue;
+        const a = q * M.TAU / 16, x = o.pos.x + M.cos(a) * r, z = w.flat ? o.pos.z : o.pos.z + M.sin(a) * r;
+        if (x < 6 || x > w.SX - 6 || !w.zin(z, 6)) continue;
         const top = w.topHeight(x, z), y = top + 0.55;
         if (top < w.SEA + 0.8 || (w.dry && !sim.in_play(S, x, z)) || nearLava(S, x, z) || w.mat_at(x, top - 0.2, z) === MAT.LAVA || !bodyFree(o, x, y, z)) continue;
         if (!(w.sample(x, y - 0.6, z) > 0)) continue;                               // stand on something
@@ -388,9 +394,9 @@
   function wedge_free(S, o) {
     const w = W(), st = WD.PIN_STEP, nmax = Math.round(WD.PIN_R / st);
     for (let n = 1; n <= nmax; n++) for (let iy = -n; iy <= n; iy++) for (let ix = -n; ix <= n; ix++) for (let iz = -n; iz <= n; iz++) {
-      if (M.max(Math.abs(ix), M.max(Math.abs(iy), Math.abs(iz))) !== n) continue;
+      if (M.max(Math.abs(ix), M.max(Math.abs(iy), Math.abs(iz))) !== n || (w.flat && iz !== 0)) continue;
       const x = o.pos.x + ix * st, y = o.pos.y + iy * st, z = o.pos.z + iz * st;
-      if (x < 2 || z < 2 || x > w.SX - 2 || z > w.SZ - 2 || y < 1 || y > w.SY - 2) continue;
+      if (x < 2 || x > w.SX - 2 || !w.zin(z, 2) || y < 1 || y > w.SY - 2) continue;
       if (!bodyFree(o, x, y, z) || w.sample(x, y - o.foot, z) > 0 || w.mat_at(x, y, z) === MAT.LAVA || nearLava(S, x, z)) continue;
       if (w.dry && !sim.in_play(S, x, z)) continue;
       return { x, y, z };
@@ -458,7 +464,7 @@
     // a worm hanging on a kept rope: the section turns to contain the rope, the worm swings on (in-plane rope again)
     if (w.rope) {
       const r = w.rope; w.rope = null;
-      if (M.len2(r.x - w.pos.x, r.z - w.pos.z) > 0.15) { S.theta = clamp_heading(S, M.atan2(r.z - w.pos.z, r.x - w.pos.x), S.theta); S.O = { x: w.pos.x, z: w.pos.z }; }
+      if (M.len2(r.x - w.pos.x, r.z - w.pos.z) > 0.15) { S.theta = W().flat ? 0 : clamp_heading(S, M.atan2(r.z - w.pos.z, r.x - w.pos.x), S.theta); S.O = { x: w.pos.x, z: w.pos.z }; }
       const q = P.to_plane(S, r), dd = P.dir(S);
       S.rope = SS.traverse.rope_make(q.s, r.y, r.len, Math.abs(q.t) < 0.5); w.air = true; w.vs = w.vel.x * dd.x + w.vel.z * dd.z; w.vy = w.vel.y;
     }
@@ -494,6 +500,7 @@
     S.target = SS.rotlock ? SS.rotlock.pick_start_target(S, w) || foes[0] : foes[0];
     S.theta = M.atan2(S.target.pos.z - w.pos.z, S.target.pos.x - w.pos.x);
     S.theta = clamp_heading(S, S.theta, S.theta);     // D6: a worm out in the hot sand faces a plane through the play area
+    if (W().flat) S.theta = 0;                        // P68a: the 2D plane never turns (+x is to the right)
     S.thetaGoal = null; w.facing = 1; S.tgt = null;   // (a target belongs to the old plane)
     // a worm that takes over in mid-air keeps its momentum (in the new plane)
     const dd = P.dir(S), vx = w.vel ? w.vel.x : 0, vz = w.vel ? w.vel.z : 0, vy = w.vel ? w.vel.y : 0;
@@ -507,6 +514,7 @@
     return WD.AIM_RATE;
   }
   function locked(S) {
+    if (W().flat) return true;                        // P68a: the 2D view never turns (no message: there is nothing to wait for)
     if (S.phase === 'place') return false;
     if (S.phase === 'play') {                         // P37-6: the rotation lock (sim/rotlock.js): a free window at the turn start, then fixed
       if (!SS.rotlock || SS.rotlock.allowed(S)) return false;
@@ -1590,5 +1598,6 @@
     const want = S.time - S.lastRotate < C.CTX_HOLD ? 1 : 0;
     S.ctx += M.clamp(want - S.ctx, -dt / C.CTX_FADE, dt / 0.25);
     S.inspect += M.clamp((inp.inspect || S.time < (S.forceInspect || 0) ? 1 : 0) - S.inspect, -dt / 0.35, dt / 0.35);   // (P37 W4: S.forceInspect = the force field's full 3D view)
+    if (W().flat) SS.dim2d.constrain(S);               // P68a: everything that can leave the plane goes back onto it (and no 3D inspection)
   };
 })(window.SS = window.SS || {});

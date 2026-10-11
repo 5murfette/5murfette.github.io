@@ -454,14 +454,14 @@
     const ap = P.to_plane(S, a.pos), team = { name: SS.sim.team_name(S, a.team), rgb: SS.sim.team_rgb(S, a.team) }, tc = css(team.rgb);
     const tg = S.target && !S.target.dead ? S.target : null;
     const wp = C.WEAPONS[S.weapon];
-    const brg = bearing(S.theta);
+    const brg = bearing(S.theta), flat = SS.world.flat;                // P68a: 2D = one fixed plane
     drawTop(S, a, team, tc); drawWeapons(S, a); drawOver(S);
     const vmax = wp.vmax || 28, pd = C.PROJ[S.weapon] || {};
     setHTML('hud', `
       <div class="power ${S.charging ? 'on' : ''}"><i style="width:${(S.power * 100).toFixed(0)}%"></i><span>${S.charging ? (vmax * Math.max(C.WORM_DYN.MIN_POWER, S.power)).toFixed(1) + ' m/s' : pd.W ? pd.W.toFixed(2) + ' kg TNT-eq' + (pd.mortar ? ' · burst ' + S.wa.mortarH + ' m (+ / −)' : pd.fuse ? ' · ' + (SS.weaponsA ? SS.weaponsA.fuse_of(S, S.weapon) : pd.fuseSet ? S.fuse : pd.fuse) + ' s fuse' + (pd.fuseSet ? ' (+ / −)' : '') : ' · contact fuse') : wp.kind === 'rope' ? 'reach ' + C.ROPE_MAX + ' m' : wp.name}</span></div>
-      <div class="hrow"><div class="compass"><div class="needle" style="transform:rotate(${brg}deg)"></div><span>${brg.toFixed(0).padStart(3, '0')}°</span></div>
+      <div class="hrow">${flat ? '' : `<div class="compass"><div class="needle" style="transform:rotate(${brg}deg)"></div><span>${brg.toFixed(0).padStart(3, '0')}°</span></div>`}
         <div class="facts">
-          <div>Section ${S.phase !== 'play' ? '<span class="lock">locked · attack resolving</span>' : SS.sim.heading_window && SS.sim.heading_window(S) ? '<span class="ok">turns only toward the play area or a worm</span>' : '<span class="ok">free to rotate</span>'}</div>
+          <div>${flat ? '2D slice <span class="ok">fixed side view</span>' : 'Section ' + (S.phase !== 'play' ? '<span class="lock">locked · attack resolving</span>' : SS.sim.heading_window && SS.sim.heading_window(S) ? '<span class="ok">turns only toward the play area or a worm</span>' : '<span class="ok">free to rotate</span>')}</div>
           <div>Aim ${Math.round(S.aim * 180 / Math.PI)}° · alt ${a.pos.y.toFixed(1)} m · s ${ap.s.toFixed(1)} m</div>
           <div>Target ${tg ? `<b>${esc(tg.name)}</b> ${M.v3_dist(tg.pos, a.pos).toFixed(1)} m · ${Math.abs(P.to_plane(S, tg.pos).t).toFixed(1)} m off` : '–'}</div>
           ${S.rope ? `<div>Rope ${S.rope.hooked ? 'hooked' : '<span class="lock">re-hooking…</span>'} · ${S.rope.len.toFixed(1)} m</div>` : ''}
@@ -574,6 +574,9 @@
     bx.putImageData(img, 0, 0);
   }
   function drawTopMap(S) {
+    const fig = topC.parentNode, hide = !!SS.world.flat;               // P68a: no plan view of a one-slice map
+    if (fig && fig.style && (fig.style.display === 'none') !== hide) fig.style.display = hide ? 'none' : '';
+    if (hide) return;
     const vs = SS.view.state;
     if (!vs.heightmap) return;
     // U: the worm's level in 3 m bands, with hysteresis (a worm bobbing at a band edge does not flicker the map)

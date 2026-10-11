@@ -604,6 +604,7 @@
         case 'lavabreach': SS.fx.lava(e.x, e.y, e.z, 1.2); break;
         case 'steam': SS.fx.steam(e.x, e.y, e.z, e.power); break;
         case 'rubble': for (let i = 0; i < e.pts.length; i += 3) SS.fx.dust(e.pts[i].x, e.pts[i].y, e.pts[i].z, 2, 0.5); break;
+        case 'crack': for (const q of e.pts) SS.fx.dust(q.x, q.y, q.z, 3, 0.5); break;                       // P66b: dust puffs out of the new cracks
         case 'collapse': SS.fx.dust(e.x, e.y, e.z, Math.min(14, 4 + e.pieces * 2), 1.2); break;
         case 'rebake': SS.fx.dust(e.x, e.y - 0.5, e.z, Math.min(12, 3 + (e.voxels / 60) | 0), 1.0); break;
         case 'bodyhit': SS.fx.dustAt(e.x, e.y, e.z, 4, 0.5); break;
@@ -678,6 +679,7 @@
     view.ctxA = ctxF; view.insp = insp;
     SS.section.update(S.O, n, insp);                                   // P46: the one section visibility rule (render/section.js)
     view.pxScale = renderer.domElement.height * camera.projectionMatrix.elements[5] * 0.5;
+    if (SS.crackView) SS.crackView.frame(S);                            // P66b: the crack damage texture (CRACKS lab flag)
     SS.terrain.frame(S, view, ctxF, insp);
     const wind = S.wind || null;
     SS.fx.env.wx = wind && wind.mean ? wind.mean.x : 0; SS.fx.env.wz = wind && wind.mean ? wind.mean.z : 0;

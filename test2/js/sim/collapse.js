@@ -18,7 +18,8 @@
     if (!stamp || stamp.length !== W.N) { stamp = new Uint32Array(W.N); stack = new Int32Array(W.N); visit = new Int32Array(BUDGET + 8); }
     if (counter > 4e9) { stamp.fill(0); counter = 1; }
   }
-  const supports = (W, o) => W.d[o] > 0 && W.mat[o] !== MAT.LAVA;
+  const CK_BREAK = C.CRACK.BREAK;
+  const supports = (W, o) => W.d[o] > 0 && W.mat[o] !== MAT.LAVA && !(W.crack && W.crack[o] >= CK_BREAK);   // P66b: an open crack carries nothing
   function anchored(W, o) {
     const j = Math.floor(o / W.NX) % W.NY;
     if (j <= 2) return true;
@@ -26,6 +27,11 @@
     if (W.mat[o] === MAT.STEEL) return true;                 // P2: a girder holds (PoC: steel is an anchor)
     return false;
   }
+
+  /* P66b (cracks.js): the scratch buffers and the stamp counter, shared so the structural check allocates nothing of its own */
+  K.BUDGET = BUDGET; K.anchored = anchored; K.supports = supports;
+  K.scratch = function (W) { ensure(W); return { stamp, stack, visit }; };
+  K.next_id = function () { return ++counter; };
 
   /* Full pass (generation): flood from every anchor, delete whatever is not reached. */
   K.remove_floating_all = function (W) {
@@ -85,7 +91,8 @@
    * Returns { pieces: [ChunkDesc], rubble: [{x,y,z,mat}] }. ChunkDesc carries a local density grid. */
   K.detach = function (W, comp, rng) {
     const NX = W.NX, NY = W.NY, SXY = NX * NY, H = W.H, n = comp.length;
-    const nPieces = M.clamp(Math.round(n / 320), 1, 6), seeds = [];
+    let nPieces = M.clamp(Math.round(n / 320), 1, 6); const seeds = [];
+    if (W.crack) nPieces = SS.cracks.piece_count(W, comp, nPieces);                // P66b: damaged ground shatters into more, smaller pieces
     for (let s = 0; s < nPieces; s++) {
       const o = comp[Math.floor(M.rng_next(rng) * n)];
       seeds.push([(o % NX) * H, (Math.floor(o / NX) % NY) * H, Math.floor(o / SXY) * H]);
@@ -149,6 +156,7 @@
       });
     }
     for (let q = 0; q < n; q++) { const o = comp[q]; W.d[o] = -0.6; W.mat[o] = MAT.AIR; W.heat[o] = 0; }
+    if (W.crack) SS.cracks.detached(W, comp);                                      // P66b: the fracture surface opens up, the piece takes its damage with it
     W.mark(bi0 - 1, bj0 - 1, bk0 - 1, bi1 + 1, bj1 + 1, bk1 + 1);
     return { pieces, rubble };
   };
@@ -199,7 +207,7 @@
       if (dv > W.d[o]) {
         if (dv > 0 && W.d[o] <= 0) {
           const m = g.mat[((Math.round(fz)) * g.ny + Math.round(fy)) * g.nx + Math.round(fx)];
-          W.mat[o] = m || g.mat.find(x => x) || MAT.ROCK; W.heat[o] = 0; added++;
+          W.mat[o] = m || g.mat.find(x => x) || MAT.ROCK; W.heat[o] = 0; if (W.crack) W.crack[o] = 0; added++;
         }
         W.d[o] = dv;
       }

@@ -40,6 +40,12 @@
     W.sizeVer++;
   };
   W.resize(96, 96);
+  /* P68a (sim/dim2d.js): a 2D map is a thin slab; W.flat = z-invariant lattice (mark copies the middle slice kz over all slices).
+   * zpick / zin are the z margins of spawn code: the real range in 3D, the slab's plane in 2D. */
+  W.flat = false; W.kz = -1;
+  W.zpick = (r, m) => (W.flat ? W.MZ : m + r * (W.SZ - 2 * m));
+  W.sepk = 1;                                       // spacing factor of spawn spots (a line of ground holds fewer than an area: dim2d sets it)
+  W.zin = (z, m) => W.flat || (z >= m && z <= W.SZ - m);
   W.version = 0;
   W.biome = 'temperate';
   W.under = false; W.dry = false;          // world kind flags (worldgen.G.begin sets them per map)
@@ -57,6 +63,7 @@
     i0 = M.max(0, i0); j0 = M.max(0, j0); k0 = M.max(0, k0);
     i1 = M.min(NX - 1, i1); j1 = M.min(NY - 1, j1); k1 = M.min(NZ - 1, k1);
     if (i1 < i0 || j1 < j0 || k1 < k0) return;
+    if (W.flat) { SS.dim2d.flatten(W, i0, j0, i1, j1); k0 = 0; k1 = NZ - 1; }     // P68a: the slab stays z-invariant
     if (W.frz) restore_frozen(i0, j0, k0, i1, j1, k1);
     W.version++;
     const CS = W.CS;
@@ -237,14 +244,17 @@
   };
   W.gen_begin = function (settings) {
     const sx = W.size_of(settings);
-    if (sx !== W.SX || !W.d) W.resize(sx, sx);
+    W.flat = false; W.kz = -1; W.sepk = 1;
+    if (sx !== W.SX || sx !== W.SZ || !W.d) W.resize(sx, sx);
+    W.crack = null;                          // P66b: the crack damage field belongs to a match (cracks.js init allocates it when the CRACKS flag is on)
     return SS.worldgen.begin(W, settings);
   };
   W.gen_step = function (job) {
     const p = SS.worldgen.step(job);
     if (p >= 1 && !job.finalized) {
       job.finalized = true;
-      W.update_tops(0, 0, NX - 1, NZ - 1);
+      if (job.settings && job.settings.dim === '2d' && SS.dim2d) SS.dim2d.crop(W);          // P68a: the finished map becomes a one-slice slab
+      W.update_tops(0, 0, W.NX - 1, W.NZ - 1);
       W.mark_all();
     }
     return p;

@@ -68,7 +68,7 @@
     const i0 = M.max(1, Math.floor((c.x - rBig) / H) - 1), i1 = M.min(NX - 2, Math.ceil((c.x + rBig) / H) + 1);
     const j0 = M.max(1, Math.floor((c.y - rBig) / H) - 1), j1 = M.min(NY - 2, Math.ceil((c.y + rBig) / H) + 1);
     const k0 = M.max(1, Math.floor((c.z - rBig) / H) - 1), k1 = M.min(NZ - 2, Math.ceil((c.z + rBig) / H) + 1);
-    const byMat = new Int32Array(C.MATS.length);
+    const byMat = new Int32Array(C.MATS.length), CK = w.crack;   // CK: P66b damage field (null with the CRACKS flag off)
     let removed = 0;
     if (i1 < i0 || j1 < j0 || k1 < k0) return { removed, byMat, box: null };       // wholly outside the lattice (dry far dunes)
     // pass 1: targets from the unedited field (air points must see the original neighbours)
@@ -80,7 +80,7 @@
       if (r > rBig + H) continue;
       const m = Mt[o];
       let rm;
-      if (D[o] > 0) { if (!ZCRIT[m]) continue; rm = ZCRIT[m] * w3; }
+      if (D[o] > 0) { if (!ZCRIT[m]) continue; rm = ZCRIT[m] * w3; if (CK && CK[o]) rm *= 1 + C.CRACK.WEAK_K * CK[o] / 255; }   // P66b: cracked ground gives way wider
       else {
         rm = 1e9;
         const nb = [o - 1, o + 1, o - NX, o + NX, o - SXY, o + SXY];
@@ -182,7 +182,8 @@
     if (SS.alien && SS.alien.blast) SS.alien.blast(S, c, Wkg, o.dmg);   // P37: the alien takes the blast too; eggs / huggers break
     if (SS.spatter) SS.spatter.blast(S, c, Wkg);             // LV4: loosen landed clots (before lava.blast throws new ones)
     if (SS.lava && SS.lava.blast) SS.lava.blast(S, c, Wkg);
-    if (S.settings.collapse && SS.collapse_hook && cr.removed > 0) SS.collapse_hook(S, cr.box);
+    const ckBox = SS.cracks && S.crk ? SS.cracks.blast(S, c, Wc, cr) : null;    // P66b: new cracks, the load check (CRACKS flag)
+    if (S.settings.collapse && SS.collapse_hook && (cr.removed > 0 || ckBox)) SS.collapse_hook(S, ckBox || cr.box);
     if (SS.struct && SS.struct.on_edit && cr.removed > 0) SS.struct.on_edit(S);    // an abutment undermined (or collapsed away)
     return ev;
   };

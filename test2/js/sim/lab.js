@@ -23,6 +23,8 @@
  *   LONGSHOT  sniping:    a blast that hurts an enemy worm more than 25 m (3D) from the shooter deals +25 %, more than 40 m +50 %, with a banner.
  *   FATIGUE   stamina:    the metres a worm walked / swung / fell while it was the active worm in its turn (max 25 m) make ITS next shot sway:
  *             a random aim error of up to +-0.1 rad (5.7 deg) x metres / 25, drawn at fire time from the Lab stream. Standing still = a fresh aim.
+ *   CRACKS    terrain:    (P66b, rules in sim/cracks.js) blasts leave persistent 3D cracks (W.crack) that weaken the ground; after a blast the land around it
+ *             is weighed (voxels, worms, bodies) against the bonds that still hold it, and a cut-off ledge or a block on a thin neck falls.
  * C layout: struct Lab { u32 rng; f32 gustT; i32 meteorN; Meteor met[LAB_METEORS]; u8 moon, bankN; f32 bankK; i32 evTick;
  *             u8 perks[4]; u8 streak[4]; u8 dealt; i8 curTeam; i16 draftRound; Draft draft; f32 moved[16], tired[16]; f32 lx, ly, lz; i16 lid; i32 longTick; };
  *           struct Draft { bool on, first; u8 n, idx, team, nopt; u8 order[4]; u8 opts[3]; f32 t; };
@@ -275,7 +277,7 @@
   };
 
   /* HUD badge text: the active mechanics; the live state (moon, underdog) in brackets */
-  const NAMES = [['BANK', 'Bank'], ['UNDERDOG', 'Underdog'], ['GUSTS', 'Gusts'], ['METEORS', 'Meteors'], ['CLOCK', 'Clock'], ['MOON', 'Moon'], ['PERKS', 'Perks'], ['STREAK', 'Streak'], ['LONGSHOT', 'Long shot'], ['FATIGUE', 'Fatigue']];
+  const NAMES = [['BANK', 'Bank'], ['UNDERDOG', 'Underdog'], ['GUSTS', 'Gusts'], ['METEORS', 'Meteors'], ['CLOCK', 'Clock'], ['MOON', 'Moon'], ['PERKS', 'Perks'], ['STREAK', 'Streak'], ['LONGSHOT', 'Long shot'], ['FATIGUE', 'Fatigue'], ['CRACKS', 'Cracks']];
   LB.badge = function (S) {
     const fl = LB.flags(S); if (!fl) return '';
     const out = [];
@@ -296,6 +298,7 @@
     const L = S.lab; mix(fl); mix(L.rng.s % 100003); mix(L.gustT); mix(L.moon ? 1 : 0); mix(L.met.length); mix(L.metN);
     for (const m of L.met) { mix(m.t); mix(m.x); mix(m.z); }
     if (S.wind) { mix(S.wind.speed); mix(S.wind.dir); }
+    if ((fl & F.FLAG.CRACKS) && SS.cracks) SS.cracks.hash(S, mix);                     // P66b: the damage field
     if (fl & (F.FLAG.PERKS | F.FLAG.STREAK | F.FLAG.FATIGUE)) {
       for (let i = 0; i < 4; i++) { mix(L.perks[i]); mix(L.streak[i]); }
       mix(L.dealt); mix(L.draftRound); mix(L.draft.on ? L.draft.idx + 1 : 0); mix(L.draft.t);
