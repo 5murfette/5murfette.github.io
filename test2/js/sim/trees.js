@@ -115,6 +115,7 @@
       const conifer = sp === 1 && (m === C.MAT.SOIL || m === C.MAT.SCREE || m === C.MAT.ROCK || m === C.MAT.SNOW) && top < w.SEA + 14;
       if (sp <= 1 ? !(st && st.fuel[c] > 0.35) && !conifer : w.topJ[c] <= 0) continue;
       if (m === C.MAT.LAVA || m === C.MAT.ICE || m === C.MAT.BEDROCK) continue;
+      if (m === C.MAT.CONCRETE || m === C.MAT.STEEL || m === C.MAT.FOAM || m === C.MAT.OBSIDIAN) continue;   // P65f: no tree grows out of a slab / glass (volcanic ruins)
       let ok = true;
       for (const [dx, dz] of [[0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8]]) if (Math.abs(w.topHeight(x + dx, z + dz) - top) > 0.5) ok = false;
       if (!ok) continue;

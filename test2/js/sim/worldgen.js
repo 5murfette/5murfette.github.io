@@ -790,7 +790,7 @@
   const RULES = {
     temperate(x, y, z, de, ny, col) {
       const n = nz(x, z, 21);
-      if (y > 24.5 + n * 3 && ny > 0.45 && de < 0.6 + n * 0.6) return MAT.SNOW;
+      if (y > 29 + n * 3 && ny > 0.6 && de < 0.3 + n * 0.25) return MAT.SNOW;
       if (y < SEA + 1.4 + n * 0.9 && ny > 0.55 && de < 1.6) return MAT.SAND;
       if (cliffMax[col] - y > 3.5 && ny > 0.6 && de < 0.7 && y < 18) return MAT.SCREE;
       // topsoil: thick on flats, thin on slopes, none on cliffs (bare rock)

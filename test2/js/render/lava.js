@@ -26,7 +26,21 @@
 
   const FRAG = /* glsl */`
     uniform vec3 uO, uN, uHaze; uniform float uBack, uAlpha, uTime, uVis, uCtxSolid, uCtxHaze; uniform vec4 uVent[3]; uniform sampler2D tNoise;
+    uniform sampler2D tWater; uniform float uWaterTex, uNL, uSL;
     varying vec3 vW; varying vec4 vL;
+    // P65f: how much the sea quenches this point (0 dry .. 1 under water or at the shoreline): water depth is read at the point and on two rings (0.5 / 1.1 m)
+    float quench(vec2 p, float y){
+      if (uWaterTex < 0.5) return 0.0;
+      vec4 w0 = texture(tWater, (p * 2.0 + 0.5) / uNL);
+      float k = w0.g > 0.01 ? 1.0 : 0.0;
+      if (k > 0.5) return 1.0;
+      for (int i = 0; i < 8; i++) {
+        float a = float(i) * 0.7854; vec2 d = vec2(cos(a), sin(a));
+        float g1 = texture(tWater, ((p + d * 0.5) * 2.0 + 0.5) / uNL).g, g2 = texture(tWater, ((p + d * 1.1) * 2.0 + 0.5) / uNL).g;
+        k = max(k, max(g1 > 0.01 ? 0.75 : 0.0, g2 > 0.01 ? 0.35 : 0.0));
+      }
+      return k;
+    }
     vec2 lh2(vec2 p){ p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
     // Voronoi: x = distance to the nearest site, y = F2 - F1 (~ distance to the crack), z = cell id
     vec3 voro(vec2 x){
@@ -141,7 +155,7 @@
     const m = new T.MeshStandardMaterial(opts);
     m.userData.sectionMargin = 0;
     m.onBeforeCompile = sh => {
-      Object.assign(sh.uniforms, { uO: U.uO, uN: U.uN, uHaze: U.uHaze, uBack: U.uBack, uAlpha: U.uAlpha, uTime: U.uTime, tNoise: U.tNoise, uCtxSolid: U.uCtxSolid, uCtxHaze: U.uCtxHaze }, OWN);
+      Object.assign(sh.uniforms, { tWater: U.tWater, uWaterTex: U.uWaterTex, uNL: U.uNL, uSL: U.uSL, uO: U.uO, uN: U.uN, uHaze: U.uHaze, uBack: U.uBack, uAlpha: U.uAlpha, uTime: U.uTime, tNoise: U.tNoise, uCtxSolid: U.uCtxSolid, uCtxHaze: U.uCtxHaze }, OWN);
       sh.vertexShader = 'attribute vec4 aL; varying vec3 vW; varying vec4 vL;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
         vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vL = aL;`);
       const clip = mode === 0 ? 'if (tD < -uBack) discard;' : mode === 3 ? 'if (tD < 0.0) discard;' : 'if (tD > -uBack) discard;';
@@ -152,6 +166,8 @@
         .replace('#include <map_fragment>', /* glsl */`
           float crustF, plate, relief;
           vec3 lEmis = lavaSurface(vW.xz, vL.zw * uVis, vL.y, vL.x, crustF, plate, relief);
+          float qk = quench(vW.xz, vW.y);                                                 // P65f: lava meeting the sea chills into a black, fractured pillow crust and stops glowing
+          if (qk > 0.001) { float hiss = smoothstep(0.3, 0.8, texture(tNoise, vW.xz * 0.35 + vec2(0.0, uTime * 0.03)).g); lEmis *= 1.0 - 0.92 * qk * (0.75 + 0.25 * hiss); crustF = mix(crustF, 1.0, qk); }
           // crust: dark basalt skin (no albedo on the open melt). LV2: a chilled glassy rind is wrinkled rock, not a
           // mirror: roughness 0.65-0.9 over the relief normals below (was 0.32-0.75: plates reflected the sky like glass)
           vec3 lCol = vec3(0.017, 0.017, 0.019) * (0.7 + 0.6 * plate) * crustF;

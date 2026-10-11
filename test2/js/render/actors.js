@@ -685,6 +685,17 @@
       const burning = burnNow;
       v.soot = M.clamp((v.soot || 0) + (burning ? dt * 0.22 : -dt * 0.012), 0, 0.75);          // charred skin while it burns, recovering very slowly
       if (v.soot > 0.001 || v.sootOn) { const k = 1 - v.soot * 0.78; v.mesh.material.color.setRGB(k, k * 0.93, k * 0.9); v.sootOn = v.soot > 0.001; }
+      {                                                                           // P65f: a worm in / on molten lava glows from the melt below (heat x immersion) and the skin blackens fast: char with an orange under-light
+        const sim = SS.sim, lcv = v.lcv || (v.lcv = { sub: 0, heat: 0, surf: 0 });
+        let tk = 0;
+        if (SS.lava && S.lava && !w.dead) { sim.lava_contact(S, w.pos.x, w.pos.y - C.WORM_H * 0.5, w.pos.z, lcv); tk = M.clamp(lcv.sub / 0.4, 0, 1) * lcv.heat; }
+        v.lavaK = (v.lavaK || 0) + (tk - (v.lavaK || 0)) * M.min(1, dt * (tk > v.lavaK ? 3 : 0.7));
+        if (v.lavaK > 0.004) {
+          const g = v.lavaK, em = v.mesh.material.emissive; em.r += 0.9 * g; em.g += 0.2 * g * (0.6 + 0.4 * Math.sin(viewTime * 5 + w.id)); em.b += 0.015 * g;
+          v.soot = M.clamp(v.soot + dt * 0.45 * g, 0, 0.88);
+          const k = 1 - v.soot * 0.78; v.mesh.material.color.setRGB(k, k * 0.93, k * 0.9); v.sootOn = true;
+        }
+      }
       if (v.wetK > 0 || v.wetOn) {                                                // P38 S1: below the surface: drawn after the water face, tinted by depth (a drowned worm no longer vanishes)
         wetMode(v, v.wetK > 0);
         if (v.wetK > 0) { const k0 = 1 - v.soot * 0.78, k = v.wetK; v.mesh.material.color.setRGB(k0 * (1 - 0.42 * k), k0 * 0.93 * (1 - 0.16 * k), k0 * 0.9 * (1 - 0.04 * k)); v.sootOn = true; v.mesh.material.emissive.add(WET_FILL.clone().multiplyScalar(k)); }
