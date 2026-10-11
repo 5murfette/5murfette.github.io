@@ -19,7 +19,7 @@
   const PARTS = 90; let pSeg = null, pTail = null, pHead = null, pEye = null, pCut = null; const parts = [];
   const BLOOD0 = [0.28, 0.005, 0.01], STAIN0 = new T.Color(0x5a0408);
   const rnd = (a, b) => a + Math.random() * (b - a);
-  const tmpC = new T.Color(), m4 = new T.Matrix4(), q = new T.Quaternion(), zAxis = new T.Vector3(0, 0, 1), nv = new T.Vector3(), sv = new T.Vector3(), pv = new T.Vector3();
+  const tv2 = new T.Vector3(), bv2 = new T.Vector3(), tmpC = new T.Color(), m4 = new T.Matrix4(), q = new T.Quaternion(), zAxis = new T.Vector3(0, 0, 1), nv = new T.Vector3(), sv = new T.Vector3(), pv = new T.Vector3();
   function stainAlpha() {
     // a ragged splat: a radial falloff with a noisy rim and a few satellite droplets
     const N = 64, d = new Uint8Array(N * N * 4);
@@ -84,6 +84,20 @@
     nv.set(-(n.x || 0), -(n.y || -1), -(n.z || 0)); if (nv.lengthSq() < 1e-6) nv.set(0, 1, 0); nv.normalize();
     // the density gradient points into the rock: the stain faces out of it
     if (W.sample(x + nv.x * 0.3, y + nv.y * 0.3, z + nv.z * 0.3) > W.sample(x, y, z)) nv.negate();
+    // P65b: a flat disc must lie on the ground over its whole rim: four rim points are tested against the surface plane (air just above it,
+    // rock just below it); on a ridge, a rim or a step it shrinks (x0.6, twice), and where it still hangs / sinks it is dropped
+    { const W2 = SS.world, ay = Math.abs(nv.y) < 0.9 ? 1 : 0; tv2.set(ay ? 0 : 1, ay, 0).cross(nv).normalize(); bv2.crossVectors(nv, tv2); let sc = 1, ok = false;
+      for (let it = 0; it < 3 && !ok; it++) {
+        let bad = 0;
+        for (let k = 0; k < 4; k++) {
+          const sg = k < 2 ? 1 : -1, ax = k & 1 ? tv2 : bv2, r = size * sc * 0.85 * sg;
+          const rx = x + ax.x * r, ry = y + ax.y * r, rz = z + ax.z * r;
+          if (W2.sample(rx + nv.x * 0.06, ry + nv.y * 0.06, rz + nv.z * 0.06) > 0 || W2.sample(rx - nv.x * 0.08, ry - nv.y * 0.08, rz - nv.z * 0.08) <= 0) bad++;
+        }
+        if (bad === 0 || (it === 2 && bad <= 1)) ok = true; else if (it < 2) sc *= 0.6;
+      }
+      if (!ok) return;
+      size *= sc; }
     q.setFromUnitVectors(zAxis, nv); q.multiply(new T.Quaternion().setFromAxisAngle(zAxis, Math.random() * 6.283));
     pv.set(x + nv.x * 0.015, y + nv.y * 0.015, z + nv.z * 0.015); sv.set(size, size * rnd(0.75, 1), 1);
     const i = nStain % STAINS; m4.compose(pv, q, sv); stains.setMatrixAt(i, m4); stainPos[i] = { x, y, z, nx: nv.x, ny: nv.y, nz: nv.z, s: size };

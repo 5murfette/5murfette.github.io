@@ -6,7 +6,7 @@
   'use strict';
   const T = window.THREE, C = SS.CFG, M = SS.math, P = SS.plane;
   const V = SS.view = {};
-  let renderer, scene, camera, tx, Q, sun, hemi, fill, sky, skyMat, water, heightTex, surfTex, blankTex, outline, outlineMat, motes, lamp, stars = null;
+  let renderer, scene, camera, tx, Q, sun, hemi, fill, sky, skyMat, water, heightTex, surfTex, scyTex, blankTex, outline, outlineMat, motes, lamp, stars = null;
   const view = {
     camT: null, camZ: 0, dir: { cur: null, since: 0 }, zoom: 19, time: 0, heightVer: 0, heightFor: -1, heightT: -99, heightmap: null, secWV: -1, secT: -99, edgeA: 0,
     pan: { s: 0, y: 0 }, orbit: { yaw: 0, tilt: 0 }, look: null, activeId: -1, surf: null, surfN: 0
@@ -59,6 +59,8 @@
     heightTex.magFilter = heightTex.minFilter = T.LinearFilter; heightTex.needsUpdate = true;
     surfTex = new T.DataTexture(new Uint8Array(NS * NS * 4), NS, NS, T.RGBAFormat);
     surfTex.magFilter = surfTex.minFilter = T.LinearFilter; surfTex.needsUpdate = true;
+    scyTex = new T.DataTexture(new Uint8Array(NS * NS * 4), NS, NS, T.RGBAFormat);        // P65b: where (height, half depth) the blast soot lies, so a wall does not wear a stripe down its whole column
+    scyTex.magFilter = scyTex.minFilter = T.NearestFilter; scyTex.needsUpdate = true;
 
 
     SS.terrain.init(scene, tx, Q);
@@ -70,7 +72,7 @@
       water.rotation.x = -Math.PI / 2; water.position.set(SS.world.MX, SS.world.SEA, SS.world.MZ); water.renderOrder = 6; scene.add(water);
     }
     if (SS.dunesView) SS.dunesView.init(scene);       // dry worlds: far dunes instead of the sea (Step D2)
-    SS.terrain.uniforms.tSurf.value = surfTex;
+    SS.terrain.uniforms.tSurf.value = surfTex; SS.terrain.uniforms.tScY.value = scyTex;
     SS.terrain.uniforms.tWater.value = SS.waterView ? SS.waterView.texture : blankTex;
     SS.terrain.uniforms.uWaterTex.value = SS.waterView ? 1 : 0;
     if (SS.lavaView) SS.lavaView.init(scene, tx, Q);
@@ -426,20 +428,27 @@
     return { buf, n };
   }
   /* P38-R8: blast scorch on any ground (the sim's char channel only knows grass cells): a render-only soot map, OR-ed into the char (b) channel of the uploaded surface texture */
-  let scorchMap = null, scorchDirty = false;
-  V.scorch = function (x, z, r, a) {
-    const n = NS, H = SS.world.H; if (!scorchMap || scorchMap.length !== n * n) scorchMap = new Uint8Array(n * n);
+  let scorchMap = null, scorchDirty = false, scorchY = null;
+  V.scorch = function (x, z, r, a, y) {
+    const n = NS, H = SS.world.H; if (!scorchMap || scorchMap.length !== n * n) { scorchMap = new Uint8Array(n * n); scorchY = new Uint8Array(n * n * 2); }
+    const yq = y == null ? 0 : Math.max(1, Math.min(255, Math.round(y * 4))), hq = Math.max(1, Math.min(255, Math.round((0.9 + 0.75 * r) * 8)));
     const ci = x / H, ck = z / H, rc = r / H, i0 = Math.max(0, Math.floor(ci - rc)), i1 = Math.min(n - 1, Math.ceil(ci + rc)), k0 = Math.max(0, Math.floor(ck - rc)), k1 = Math.min(n - 1, Math.ceil(ck + rc));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const d = Math.hypot(i - ci, k - ck) / rc; if (d >= 1) continue;
       const rag = 0.82 + 0.18 * Math.sin(i * 12.9898 + k * 78.233) * Math.sin(k * 4.1 + i * 2.3), an = Math.atan2(k - ck, i - ci);
       const ray = 0.62 + 0.38 * Math.sin(an * 7.0 + x * 3.7) * Math.sin(an * 3.0 - z * 2.9 + 1.0) + 0.12 * Math.sin(an * 17.0 + x), rim = 1 + 0.5 * Math.exp(-Math.pow((d - 0.62) / 0.16, 2));   // blast rays and a burnt rim around the crater edge
       const f = Math.min(1, Math.min(1, (1 - d) * 1.8 * Math.max(0.35, ray)) * rim) * a * rag;
-      const v = Math.round(255 * f); if (v > scorchMap[k * n + i]) scorchMap[k * n + i] = v;
+      const v = Math.round(255 * f); if (v > scorchMap[k * n + i]) { scorchMap[k * n + i] = v; scorchY[(k * n + i) * 2] = y == null ? 0 : yq; scorchY[(k * n + i) * 2 + 1] = y == null ? 0 : hq; }
     }
     scorchDirty = true;
   };
-  function applyScorch() { if (!scorchMap) return; const d = surfTex.image.data; for (let q = 0; q < scorchMap.length; q++) { const v = scorchMap[q]; if (v && v > d[q * 4 + 2]) d[q * 4 + 2] = v; } }
+  function applyScorch() {
+    const e = scyTex.image.data; e.fill(0);
+    if (!scorchMap) return;
+    const d = surfTex.image.data;
+    for (let q = 0; q < scorchMap.length; q++) { const v = scorchMap[q]; if (v && v > d[q * 4 + 2]) { d[q * 4 + 2] = v; e[q * 4] = scorchY[q * 2]; e[q * 4 + 1] = scorchY[q * 2 + 1]; } }
+    scyTex.needsUpdate = true;
+  }
   function uploadSurface(S) {
     const s = surfaceBuffer(S);
     view.surf = s.buf; view.surfN = s.n; view.surfVer = S.veg ? S.veg.surfVer : 0; view.surfUploads = (view.surfUploads | 0) + 1;
@@ -461,7 +470,7 @@
     view.sizeVer = W.sizeVer;
     if (NS !== W.NX) {
       NS = W.NX;
-      for (const t of [heightTex, surfTex]) { t.dispose(); t.image = { data: new Uint8Array(NS * NS * 4), width: NS, height: NS }; t.needsUpdate = true; }
+      for (const t of [heightTex, surfTex, scyTex]) { t.dispose(); t.image = { data: new Uint8Array(NS * NS * 4), width: NS, height: NS }; t.needsUpdate = true; }
     }
     if (SS.waterView && SS.waterView.resize) SS.waterView.resize();
     if (SS.weatherView && SS.weatherView.resize) SS.weatherView.resize();
@@ -471,7 +480,7 @@
     V.resizeWorld();
     clearActors();
     applyLook(S);
-    scorchMap = null; scorchDirty = false; uploadSurface(S);
+    scorchMap = null; scorchY = null; scorchDirty = false; uploadSurface(S);
     buildHeights();
     V.seaChanged(SS.world.SEA);                           // per world (dry worlds: below the floor): terrain, outer ocean, face
     SS.terrain.uniforms.uCtxSolid.value = 1;   // D3 (dry) + CX1 (all worlds): the far context is drawn solid
@@ -720,6 +729,7 @@
     }
     mp.needsUpdate = true;
 
+    if (SS.groundView) SS.groundView.begin();
     if (SS.actors.sync) SS.actors.sync(S, view, ctxA, insp, dt);
     if (SS.lavaView) SS.lavaView.frame(S, view);
     if (SS.bodyView) SS.bodyView.frame(S, view);
@@ -743,6 +753,7 @@
     for (const n of W4V) if (SS[n]) SS[n].frame(S, view, camera, dt);
     if (SS.ventsView) SS.ventsView.frame(S, view, camera, dt);
     if (SS.bloodView) SS.bloodView.frame(S, dt);
+    if (SS.groundView) SS.groundView.upload(S);
     SS.fx.update(dt, camera);
     if (SS.flameView) SS.flameView.update(S, dt, camera);
     {                                    // P65c: cloud shadows ride the wind aloft (2x the surface wind, like the cloud layer), only in daylight and where the sky is not overcast

@@ -266,17 +266,26 @@
     g.userData = { box, pivot, canopy, base, lines, seed: Math.random() * 10, kind };
     return g;
   }
+  let windX = 0, windZ = 0;
   const cv3 = new T.Vector3();
   const CRATE_CORNERS = [[0.3, 0.3], [0.3, -0.3], [-0.3, -0.3], [-0.3, 0.3]];      // (P38-R2: hoisted: 40 arrays per crate per frame)
   function crateFrame(m, c, t, dt) {
     const u = m.userData, flying = !c.landed && !c.thrown && !c.held;
-    u.pivot.visible = u.lines.visible = flying;
+    if (flying) u.wasFlying = true;
+    // P65b: after the landing the canopy sags: it deflates and slides off to one side over ~2.4 s (only a crate that came down on a parachute)
+    let sag = 0;
+    if (u.wasFlying && c.landed && !c.held && !c.thrown) { if (u.landT == null) u.landT = t; sag = Math.min(1, (t - u.landT) / 2.4); }
+    u.pivot.visible = flying || (sag > 0 && sag < 1); u.lines.visible = flying;
+    if (sag > 0 && sag < 1) {
+      const e = sag * sag * (3 - 2 * sag);
+      u.pivot.scale.set(1 + 0.4 * e, Math.max(0.04, 1 - 1.05 * e), 1 + 0.4 * e); u.pivot.position.set(Math.cos(u.seed) * 0.55 * e, 0.3 - 0.22 * e, Math.sin(u.seed) * 0.55 * e); u.pivot.rotation.set(0.3 * e, 0, 0.5 * e);
+    } else if (flying && u.pivot.scale.y !== 1) { u.pivot.scale.set(1, 1, 1); u.pivot.position.set(0, 0.3, 0); }
     if (c.held) { m.rotation.set(0.12 * Math.sin(t * 2.3 + u.seed), t * 0.6 + u.seed, 0.1 * Math.sin(t * 1.7)); return; }                       // P38-A4: in the gravity beam
     if (c.thrown) { m.rotation.set(t * (c.spin || 2) * 1.3 + u.seed, t * (c.spin || 2) + u.seed * 2, t * (c.spin || 2) * 0.7); return; }      // ... tumbling in flight
     if (!flying) { m.rotation.set(0, m.rotation.y, 0); return; }
     // pendulum: the canopy sways (wind + slow oscillation), the crate lags behind it under the lines
     const sw = Math.sin(t * 1.1 + u.seed) * 0.13 + Math.sin(t * 2.7 + u.seed * 2) * 0.04, sw2 = Math.sin(t * 0.9 + u.seed * 3) * 0.08;
-    u.pivot.rotation.set(sw2, 0, sw); m.rotation.z = -sw * 0.45; m.rotation.x = -sw2 * 0.45;
+    { const gust = 0.5 + 0.5 * Math.sin(t * 1.9 + u.seed * 4), wk = 0.03 * (1 + 0.5 * gust), cl = v => Math.max(-0.3, Math.min(0.3, v)); u.pivot.rotation.set(sw2 + cl(windZ * wk), 0, sw - cl(windX * wk)); } m.rotation.z = -sw * 0.45; m.rotation.x = -sw2 * 0.45;
     // canopy: breathing (inflate / deflate) + travelling ripples growing toward the rim
     const pa = u.canopy.geometry.attributes.position, b = u.base, br = 1 + 0.045 * Math.sin(t * 2.3 + u.seed);
     for (let i = 0; i < pa.count; i++) {
@@ -313,9 +322,14 @@
   AV.frame = function (S, view, camera, dt) {
     if (!scene) return;
     const t = view.time || 0, d = P.dir(S);
+    { const wm = S.wind && S.wind.mean; windX = wm ? wm.x : 0; windZ = wm ? wm.z : 0; }
     roomTorches(S, t);
     sync(live.devices, S.devices || [], o => deviceMesh(o.kind), (o, m) => {
       m.position.set(o.pos.x, o.pos.y + 0.1, o.pos.z); m.rotation.y = -o.theta;
+      if (SS.groundView) {                                                                                      // P65b: the pad lies on the slope (full lean up to 29 deg) with a contact shadow
+        const GR = SS.groundView; if (!m.userData.cf) m.userData.cf = GR.cf(o.pos.x * 3 + o.pos.z);
+        GR.seat(m.userData.cf, m, o.pos.x, o.pos.y, o.pos.z, -o.theta, 0.18, 0.15, 0.9, 0.5, dt, t, 0.1); GR.blob(o.pos.x, o.pos.y - 0.02, o.pos.z, 0.55, 1);
+      }
       // a spring trap burrows (seen by its team, by all while planted / once detected); sunk a little when buried
       m.visible = SS.view.shownAt(S, o.pos, 0.6) && (o.kind !== 'spring' || SS.view.trapVisible(S, o.team, o.planted, o.revealed));
       if (o.kind === 'spring') m.position.y -= Math.min(1, Math.max(0, (S.time - o.planted - 1) / 1.5)) * 0.12;
@@ -334,6 +348,10 @@
       m.position.set(c.pos.x, c.pos.y, c.pos.z); m.rotation.y = c.id * 0.7;
       m.visible = SS.view.shownAt(S, c.pos, 0.6);
       if (m.visible) crateFrame(m, c, t, dt);
+      if (m.visible && c.landed && !c.held && !c.thrown && SS.groundView) {                                  // P65b: a landed crate sits on the slope (leans up to 9 deg, sinks to its lowest corner) with a contact shadow
+        const GR = SS.groundView; if (!m.userData.cf) m.userData.cf = GR.cf(c.id);
+        GR.seat(m.userData.cf, m, c.pos.x, c.pos.y - 0.3, c.pos.z, c.id * 0.7, 0.3, 0.3, 0.75, 0.16, dt, t, 0.3); GR.blob(c.pos.x, c.pos.y - 0.32, c.pos.z, 0.7, 1);
+      }
     });
     sync(live.bullets, S.bullets || [], () => new T.Mesh(G.cyl(0.02, 0.02, 1.6, 5), new T.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false })), (b, m) => {
       const p = P.to_world(S, b.s, b.y); m.position.set(p.x, p.y, p.z);

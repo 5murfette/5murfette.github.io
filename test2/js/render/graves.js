@@ -184,7 +184,12 @@
       else { u.faceMat.color.setRGB(0.62, 0.6, 0.58); u.sideMat.color.setRGB(0.42, 0.41, 0.4); }
     }
     grp.position.set(g.x, g.y, g.z);
-    grp.rotation.y = Math.atan2(nrm.x, nrm.z);                               // the face (local +z) turns to the camera side
+    const yaw = Math.atan2(nrm.x, nrm.z);
+    grp.rotation.set(0, yaw, 0);                                             // the face (local +z) turns to the camera side
+    if (g.rest && SS.groundView) {                                           // P65b: the stone leans a little with the slope and sits in it (its base follows the ground), with a contact shadow
+      const GR = SS.groundView; if (!u.cf) u.cf = GR.cf(g.x * 7 + g.z);
+      GR.seat(u.cf, grp, g.x, g.y, g.z, yaw, 0.3, 0.14, 0.4, 0.14, dt, t); GR.blob(g.x, g.y - 0.02, g.z, 0.75, 1);
+    }
     const age = g.rest && g.landT >= 0 ? S.time - g.landT : -1;
     // grass and flowers grow (ease-out over ~4 s from 0.4 s after landing; a falling grave keeps none)
     const k = age < 0.4 ? 0 : Math.min(1, (age - 0.4) / 4), e = 1 - Math.pow(1 - k, 3);

@@ -531,6 +531,7 @@
         const w = want[i]; fl[i].position.set(w[0], w[1], w[2]); fl[i].scale.set(w[3], w[4], 1);
       }
     }
+    if (SS.groundView) for (const t of trees) if (t.alive && visT(tOf(t.x, t.z)) && t.seg.length) SS.groundView.blob(t.x, t.y - 0.05, t.z, t.seg[0].r0 * 3.2 + 0.45, 1);   // P65b: contact shade round the trunk base
     // grass fire: burning cells are flame sources of the fire system (render/fire.js heat field); only those inside the drawn slab (same rule as the shaders)
     if (SS.fireView) SS.fireView.vis = (x, z) => visT(tOf(x, z));
   };

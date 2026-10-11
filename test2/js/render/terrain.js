@@ -172,7 +172,7 @@
     ${PLATE_GLSL}
     float gMetal = 0.0;
     float fakeEnvK = 0.0;
-    uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tWater; uniform sampler2D tCover; uniform float uPlayR;
+    uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tScY; uniform sampler2D tWater; uniform sampler2D tCover; uniform float uPlayR;
     uniform vec3 uO, uN, uHaze, uGrassTint, uDryTint, uSunDir; uniform vec4 uCloudSh;
     // P65c: drifting cloud shadows (xy = how far the wind aloft has carried them, z = cover, w = strength): patches of the land lie in shade, the sun-lit rest keeps its colour
     float cloudShade(vec2 p){
@@ -308,7 +308,10 @@
       col = mix(col, vec3(0.085, 0.08, 0.078) * (0.8 + 0.4 * nb), ashC);
       rough = mix(rough, 0.95, ashC); RA = mix(RA, uRelief[10], ashC); GD = mix(GD, uGlint[10], ashC);
       // char / scorch
-      col = mix(col, vec3(0.045, 0.04, 0.038) + col * 0.12, sf.b * (0.65 + 0.35 * nb));
+      // P65b: blast soot is gated to the height it was made at (+- its radius): a wall keeps no stripe down the whole column
+      vec2 scy = texture(tScY, (vT.xz * 2.0 + 0.5) / uNL).rg * 255.0;
+      float scGate = scy.y > 0.0 ? 1.0 - smoothstep(0.55, 1.0, abs(vW.y - scy.x * 0.25) / (scy.y * 0.125)) : 1.0;
+      col = mix(col, vec3(0.045, 0.04, 0.038) + col * 0.12, sf.b * scGate * (0.65 + 0.35 * nb));
       // overhangs / cave ceilings: darker, cooler
       col *= mix(1.0, 0.6, (1.0 - smoothstep(-0.8, -0.2, up)));
       // rain (LV2; Lagarde 2013 "Water drop 2b"): water fills the pores of porous ground (darker; little film on top,
@@ -423,8 +426,22 @@
 
   /* P61: surface ambient occlusion from the world density volume: a few taps along the normal (solid within 0.4 / 1.0 / 2.2 m darkens:
    * crevices, the foot of a cliff, the ground under an overhang) plus a slight sideways spread so flat ground stays clean. */
+  const CON_AO = /* glsl */`
+    uniform vec4 uCon[24]; uniform int uNCon;
+    /* P65b contact shadows (render/ground.js): soft blobs round the feet of props / graves / devices; the distance is 3D, so the shade wraps the ground */
+    float conAO(vec3 p){
+      float a = 0.0;
+      for (int i = 0; i < 24; i++) {
+        if (i >= uNCon) break;
+        vec4 c = uCon[i]; vec3 d = (p - c.xyz) * vec3(1.0, 1.6, 1.0);
+        a += (1.0 - smoothstep(0.2 * c.w, c.w, length(d))) * step(0.01, c.w);
+      }
+      return 1.0 - 0.46 * min(a, 1.0);
+    }
+  `;
   const SURF_AO = /* glsl */`
     uniform highp sampler3D tVol; uniform vec3 uVolSize;
+    ${CON_AO}
     float aoSolid(vec3 p){ return texture(tVol, (p / 0.5 + 0.5) / uVolSize).r > 0.0 ? 1.0 : 0.0; }
     float surfAO(vec3 p, vec3 n){
       vec3 t = normalize(abs(n.y) > 0.9 ? cross(n, vec3(1.0, 0.0, 0.0)) : cross(n, vec3(0.0, 1.0, 0.0)));
@@ -478,7 +495,7 @@
           ${mode === 0 ? `if (!gl_FrontFacing) { col = texture(tMats, vec3(vT.xz*0.1 + vT.y*0.07, 14.0)).rgb * 0.35; tEmis = vec3(0.0);
             col = mix(col, vec3(0.88, 0.92, 0.97), smoothstep(0.2, 0.55, vMD.y));   // P37 W4: the inside of foam is white, not dark
             if (uDbgBack > ${body ? '0.5' : '1.5'}) { col = vec3(0.0); tEmis = vec3(4.0, 0.0, 4.0); } }` : ''}
-          ${mode === 0 && !body ? 'if (gl_FrontFacing && uDetail > 0.5) col *= surfAO(vW, nW);' : ''}
+          ${mode === 0 && !body ? 'if (gl_FrontFacing && uDetail > 0.5) col *= surfAO(vW, nW) * conAO(vW);' : ''}
           col *= cloudShade(vW.xz);
           diffuseColor.rgb = col;
           ${mode === 1 || mode === 3 ? /* glsl */`
@@ -800,13 +817,14 @@
           if (capLava) { float skinF; cEmis = lavaSection(pu, cLv.r - vW.y, vW.y - cLv.a, cLv.b, skinF); col = vec3(0.034, 0.03, 0.028) * skinF; }
           if (capCv > 0.5) { col = mix(vec3(0.84, 0.87, 0.93) * (0.92 + 0.12 * nb), vec3(0.085, 0.08, 0.078) * (0.8 + 0.4 * nb), smoothstep(0.4, 0.6, capAsh)); cEmis = vec3(0.0); }
           col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uCapK.w) * uCapK.rgb;
+          col *= conAO(vW);                                                                  // P65b: contact shade of worms / props reads on the cut line too
           diffuseColor.rgb = col;
         `)
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += cEmis;')
         // the cut face is an open section (nothing is drawn in front of it): light it from the sun's side of the
         // plane with a slight upward tilt (uCapN), so it reads the same whether the sun is in front or behind
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n normal = normalize((viewMatrix * vec4(uCapN, 0.0)).xyz);');
-      sh.fragmentShader = 'uniform vec3 uCapN; uniform vec4 uCapK;\n' + sh.fragmentShader;
+      sh.fragmentShader = 'uniform vec3 uCapN; uniform vec4 uCapK;\n' + CON_AO + sh.fragmentShader;
     };
     m.customProgramCacheKey = () => bspline ? 'cap5b' : 'cap5';
     return m;
@@ -816,7 +834,7 @@
     scene = sc; tx = textures; Q = quality;
     const W = SS.world;
     Object.assign(U, {
-      tMats: { value: tx.mats }, tNoise: { value: tx.noise }, tSurf: { value: null }, tWater: { value: null },
+      tMats: { value: tx.mats }, tNoise: { value: tx.noise }, tSurf: { value: null }, tScY: { value: null }, tWater: { value: null },
       tLavaS: { value: null }, tCover: { value: null }, uDbgBack: { value: 0 },   // tools: 1 body / 2 all slab back faces magenta
       uCtxSolid: { value: 0 },  // D3: 1 = far context opaque, no ghost haze (dry worlds; set by view.js newWorld)
       uCtxHaze: { value: 1 },   // P29j: the slice-view setting: 1 (thin / thick) = the landscape behind the slab recedes into haze; 0 (full) = crisp
@@ -827,6 +845,7 @@
       uNL: { value: W.NX }, uSL: { value: W.SX },
       uLatR: { value: new T.Vector3(48, 48, 0) },   // D6: dry worlds' lattice disc (x, z, r; r 0 = off, set per frame)
       uPlA: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uPlB: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uPlC: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uNPl: { value: 0 },   // P37 W4: plate registry
+      uCon: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uNCon: { value: 0 },   // P65b: contact shadows (render/ground.js)
       uMatP: { value: MATP.map(p => new T.Vector4(p[0], p[1], p[2], p[3])) },
       uMatTint: { value: TINT.map(c => new T.Vector3(c[0], c[1], c[2])) },
       uRelief: { value: RELIEF.map(c => new T.Vector4(c[0], c[1], c[2], c[3])) }, tRel: { value: tx.noise3 }, uGlint: { value: GLINT.slice() }

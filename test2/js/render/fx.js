@@ -311,7 +311,7 @@
     // camera shake: the charge (W^1/3) over the distance to the camera's focus (camDist = metres), none when far away
     const d = Math.max(0, camDist), amp = 0.62 * W3 / (1 + (d / (5 * W3 + 2)) * (d / (5 * W3 + 2)));
     shake = Math.min(huge ? 1.6 : 1.2, shake + (amp < 0.02 ? 0 : amp * (huge ? 1.5 : 1)));
-    if (SS.view && SS.view.scorch && hit && !env.under) SS.view.scorch(e.x, e.z, 0.6 + 0.55 * e.R, Math.min(1, 0.55 + 0.25 * W3) * mf.scorch * (1 - 0.7 * rain));
+    if (SS.view && SS.view.scorch && hit && !env.under) SS.view.scorch(e.x, e.z, 0.6 + 0.55 * e.R, Math.min(1, 0.55 + 0.25 * W3) * mf.scorch * (1 - 0.7 * rain), e.y);
   };
   FX.dust = function (x, y, z, cnt, size, col) {
     const c = hex(col == null ? 0xb8a080 : col);

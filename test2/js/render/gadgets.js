@@ -121,6 +121,10 @@
   function sentryFrame(S, s, m, t, view) {
     const u = m.userData;
     m.position.set(s.pos.x, s.pos.y, s.pos.z);
+    if (SS.groundView && s.state === 0) {                                 // P65b: the tripod leans with the slope (<= 11 deg) and sinks to its lowest foot; a contact shadow
+      const GR = SS.groundView; if (!u.cf) u.cf = GR.cf(s.id);
+      m.quaternion.identity(); GR.seat(u.cf, m, s.pos.x, s.pos.y, s.pos.z, 0, 0.36, 0.36, 0.55, 0.19, dtG, t); GR.blob(s.pos.x, s.pos.y - 0.02, s.pos.z, 0.8, 1);
+    }
     // tilt over about the base in the direction of the fall
     u.tilt.quaternion.setFromAxisAngle(tiltAx.set(Math.sin(s.tiltAz), 0, -Math.cos(s.tiltAz)), s.tilt);
     u.turret.rotation.set(0, -s.yaw, s.pitch, 'YZX');
@@ -156,12 +160,16 @@
     g.userData = { led, laser, lens };
     return g;
   }
-  const mBasis = new T.Matrix4(), vX = new T.Vector3(), vY = new T.Vector3(), vZ = new T.Vector3();
+  const vUp = new T.Vector3(0, 1, 0), mBasis = new T.Matrix4(), vX = new T.Vector3(), vY = new T.Vector3(), vZ = new T.Vector3();
   function claymoreFrame(S, c, m, t) {
     const u = m.userData;
     m.position.set(c.pos.x, c.pos.y, c.pos.z); m.scale.setScalar(1.5);
     vX.set(c.dir.x, c.dir.y, c.dir.z); vZ.set(c.pn.x, 0, c.pn.z); vY.crossVectors(vZ, vX).normalize(); vZ.crossVectors(vX, vY).normalize();
+    if (c.attach === 0 && c.nrm && c.nrm.y > 0.75) {                                       // P65b: lying on the ground: the case sits on the slope (its up = the ground normal), not upright on it
+      vY.set(c.nrm.x, c.nrm.y, c.nrm.z).lerp(vUp, 0.2).normalize(); vX.set(c.dir.x, 0, c.dir.z); vX.addScaledVector(vY, -vX.dot(vY)).normalize(); vZ.crossVectors(vX, vY);
+    }
     mBasis.makeBasis(vX, vY, vZ); m.quaternion.setFromRotationMatrix(mBasis);
+    if (c.attach === 0 && SS.groundView) SS.groundView.blob(c.pos.x, c.pos.y - 0.12, c.pos.z, 0.55, 1);
     const hid = !SS.view.trapVisible(S, c.team, c.planted, c.armed);                          // (visible to the planter's team, and to all while planted / armed)
     m.visible = SS.view.shownAt(S, c.pos, 0.7) && !hid;
     // the laser shows only while the view's section is (nearly) the planting section
@@ -298,8 +306,10 @@
     }
   }
 
+  let dtG = 0.016;
   GV.frame = function (S, view, camera, dt) {
     if (!scene) return;
+    dtG = dt || 0.016;
     const t = clock = view.time || 0;
     syncId(live.dogs, S.dogs || [], () => dogMesh(), (d, m) => { m.visible = SS.view.shownAt(S, P.to_world(S, d.s, d.y), 0.6); if (m.visible) dogFrame(S, d, m, t); });
     syncId(live.sentries, S.sentries || [], () => sentryMesh(), (s, m) => { m.visible = SS.view.shownAt(S, s.pos, 0.8); if (m.visible) sentryFrame(S, s, m, t, view); });

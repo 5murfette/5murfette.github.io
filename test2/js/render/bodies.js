@@ -255,7 +255,8 @@
   }
   BV.clear = function () { if (SS.models && SS.models.clear) SS.models.clear(); for (const [id, it] of items) drop(id, it); };
   BV.frame = function (S, view) {
-    if (SS.models && SS.models.update) SS.models.update(Math.min(0.05, view.time ? Math.max(0, view.time - time) : 1 / 60));
+    const dtF = Math.min(0.05, view.time ? Math.max(0, view.time - time) : 1 / 60);
+    if (SS.models && SS.models.update) SS.models.update(dtF);
     time = view.time || time + 1 / 60;
     const seen = new Set(), ctx = (view.ctxA || 0) > 0.004 && SS.terrain.uniforms.uBack.value < 200;
     const nearOn = (view.insp || 0) > 0.05 && SS.terrain.nearCtx();
@@ -277,6 +278,7 @@
       }
       if (b.prop === 'mine' && shown) shown = SS.view.trapVisible(S, b.team, b.planted, b.revealed || b.armed);   // buried mines
       it.g.visible = shown;
+      if (b.prop && shown && SS.groundView) SS.groundView.conform(b, it, dtF, time);        // P65b: lean / sink onto the ground + the contact shadow
       if (it.lamp) it.lamp.material.emissiveIntensity = b.disarmed ? 0 : b.armed ? (Math.sin(time * 18) > 0 ? 3.5 : 0.1) : (Math.sin(time * 2.5) > 0.6 ? 1.2 : 0.15);
       // burning prop: a flame above it (barrels flare harder towards the end of their burn)
       if (b.burn >= 0 && shown) {
@@ -315,5 +317,6 @@
   };
   BV.groupOf = id => { const it = items.get(id); return it ? it.g : null; };       // the live group of a body (view.js: a baked prop breaks into its chunks)
   BV.count = () => items.size;
+  BV.__items = () => items;                       // tools only (groundshot)
   BV.flameCount = () => [...items.values()].filter(it => it.flame).length + (SS.fireView ? SS.fireView.stats().cells : 0);
 })(window.SS = window.SS || {});
