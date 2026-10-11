@@ -9,7 +9,8 @@
   'use strict';
   const AU = SS.audio = {};
   const TAU = Math.PI * 2, clamp = (v, a, b) => (v < a ? a : v > b ? b : v), rand = Math.random;
-  let ctx = null, master = null, verbIn = null, muted = false, amb = null, charge = null, lastDrill = 0, lastOuch = 0, lastBounce = 0;
+  const AM = SS.amedia || null;
+  let meter = null, ctx = null, master = null, verbIn = null, muted = false, amb = null, charge = null, lastDrill = 0, lastOuch = 0, lastBounce = 0;
   const B = {};
   try { muted = localStorage.getItem('burrowBrawl3d.muted') === '1'; } catch (e) { /* private mode */ }
   function onePoleLP(a, k) { let y = 0; for (let i = 0; i < a.length; i++) { y += k * (a[i] - y); a[i] = y; } return a; }
@@ -65,9 +66,12 @@
   }
   function genIR(sec) { const sr = ctx.sampleRate, n = Math.floor(sr * sec), L = new Float32Array(n), R = new Float32Array(n); for (let i = 0; i < n; i++) { const e = Math.pow(1 - i / n, 3); L[i] = (rand() * 2 - 1) * e; R[i] = (rand() * 2 - 1) * e; } onePoleLP(L, 0.25); onePoleLP(R, 0.25); return toBuf(L, R); }
   AU.unlock = function () {
-    if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
-    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+    if (AM) AM.unlock();
+    if (ctx) { resume(); return; }
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { if (AM) AM.warn('AudioContext failed', String(e)); return; }
+    resume(); kick_silent();
     master = ctx.createGain(); master.gain.value = muted ? 0 : 0.6;
+    meter = ctx.createAnalyser(); meter.fftSize = 2048; master.connect(meter);
     const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4; master.connect(comp); comp.connect(ctx.destination);
     const verb = ctx.createConvolver(); verb.buffer = genIR(2.6); verbIn = ctx.createGain(); verbIn.gain.value = 0.35; verbIn.connect(verb); verb.connect(master);
     B.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate); { const d = B.noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = rand() * 2 - 1; }
@@ -76,10 +80,19 @@
       const loop = buf => { const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; const g = ctx.createGain(); g.gain.value = 0; s.connect(g); g.connect(master); s.start(); return g; };
       amb = { rain: loop(genRain(4)), wind: loop(genWind(8)), fire: loop(genFire(4)), lava: loop(genFire(3)) };
     }, 50);
+    preload_start();
   };
+  /* P54: the context must be resumed inside the gesture (Safari), and again whenever it is not running (tab hidden, iOS interruption);
+   * a one-sample silent buffer started in the gesture finishes the unlock on iOS. */
+  function resume() {
+    if (!ctx || ctx.state === 'running') return;
+    try { const p = ctx.resume(); if (p && p.catch) p.catch(e => { if (AM) AM.warn('ctx.resume rejected', String(e && e.name)); }); } catch (e) { /* */ }
+  }
+  function kick_silent() { try { const s = ctx.createBufferSource(); s.buffer = ctx.createBuffer(1, 1, 22050); s.connect(ctx.destination); s.start(0); } catch (e) { /* */ } }
+  if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', () => { if (!document.hidden) resume(); });
   // (iOS Safari unlocks audio only inside touchend / click handlers, not pointerdown)
   if (typeof addEventListener === 'function') for (const ev of ['pointerdown', 'keydown', 'touchend', 'click']) addEventListener(ev, () => AU.unlock(), { capture: true });
-  const ok = () => ctx && !muted && ctx.state === 'running';
+  const ok = () => { if (!ctx || muted) return false; if (ctx.state !== 'running') { resume(); return false; } return true; };
   /* P38-R2 polyphony cap: every synthesised source counts until it ends; a burst of events (a cluster, a shrapnel storm) cannot create
    * hundreds of nodes. Over the cap new one-shots are dropped (the oldest keep playing). */
   /* P38 R6 (R12): a context that was suspended / throttled while sources were scheduled never fires their onended, which pinned
@@ -174,7 +187,6 @@
    * HTMLAudio (decodeAudioData needs fetch, which file:// forbids): a small pool per file; volume x master; pitch jitter
    * through playbackRate (preservesPitch off). play(id, vol, rate) -> true when a sample played; else the caller's
    * synthesised fallback runs. Worm voice lines (voice()) have no fallback: silent until their files exist (P42b: the team banks 'id@t1'..'@t4'). */
-  const pools = {};
   /* R10: a recorded file counts only if the browser can decode its format (canPlayType). The sfx are Ogg Vorbis: a Safari without it used to get
    * an <audio> that failed silently while AU.play() still answered true, so the synthesised fallbacks never ran (no sound effects at all). */
   const MIME = { ogg: 'audio/ogg; codecs="vorbis"', oga: 'audio/ogg; codecs="vorbis"', opus: 'audio/ogg; codecs="opus"', m4a: 'audio/mp4; codecs="mp4a.40.2"', mp3: 'audio/mpeg', wav: 'audio/wav' };
@@ -199,16 +211,68 @@
   AU.has = id => { const l = SS.SFX_FILES && SS.SFX_FILES[id]; if (!l) return false; for (let i = 0; i < l.length; i++) if (resolve(l[i])) return true; return false; };
   /* jit = the random detune of this play (fraction of the speed): one-shots +-4 % (MU.JIT_SHOT), worm voices +-2 %
    * (MU.JIT_VOICE, platform/music.js); a caller that wants a wider spread passes its own. */
+  /* P54: two playback paths, one gesture-safe.
+   * - http(s): the file is fetched and decoded once (decodeAudioData; an Ogg the browser cannot decode falls back to the m4a sibling) and
+   *   played through an AudioBufferSourceNode on the master bus (detune = playbackRate). While a file is not decoded yet its first play
+   *   goes through the element pool below and the decode starts in the background.
+   * - file:// (fetch is forbidden) or a failed decode: an element of the unlocked pool (platform/amedia.js), never `new Audio()` outside
+   *   a gesture (Safari refuses that: total silence). */
+  const bufs = {}, loading = {}, nbuf = [], MAXBUF = 160;
+  const web = typeof location !== 'undefined' && /^https?:$/.test(location.protocol) && typeof fetch === 'function';
+  let mode_err = '', preloaded = 0;
+  function decode(data) {
+    return new Promise((res, rej) => { const r = ctx.decodeAudioData(data, res, rej); if (r && r.then) r.then(res, rej); });
+  }
+  function load_buf(f) {
+    if (!web || !ctx || bufs[f] || loading[f] || badFile[f]) return;
+    loading[f] = true;
+    fetch('assets/sfx/' + f).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); }).then(decode).then(b => {
+      bufs[f] = b; nbuf.push(f); delete loading[f];
+      if (nbuf.length > MAXBUF) delete bufs[nbuf.shift()];
+    }).catch(e => {
+      delete loading[f]; badFile[f] = true; if (AM) AM.stat.buf_failed++;
+      if (AM) AM.warn('decode/fetch failed', f + ' ' + String(e && (e.message || e.name)));
+      if (/\.ogg$/i.test(f) && !/HTTP|fetch|Network|Load failed/i.test(String(e && (e.message || e.name)))) canExt.ogg = false;
+    });
+  }
+  // the most used sounds are decoded right after the unlock (a bounded set; the rest on first use)
+  function preload_start() {
+    if (!web || preloaded) return; preloaded = 1;
+    const ids = [], want = /^(explosion|launch_|ui_|turn_start|crate_pickup|splash|worm_jump|worm_land|worm_hurt|charge)/, files = SS.SFX_FILES || {};
+    for (const id in files) if (want.test(id) && files[id].length) ids.push(id);
+    let k = 0;
+    const next = () => {
+      if (k >= ids.length || k > 90) return;
+      const l = files[ids[k++]], f = resolve(l[0]); if (f) load_buf(f);
+      setTimeout(next, 25);
+    };
+    setTimeout(next, 200);
+  }
+  function start_buf(b, vol, rate) {
+    const s = ctx.createBufferSource(); s.buffer = b; s.playbackRate.value = rate;
+    const g = ctx.createGain(); g.gain.value = vol; s.connect(g); g.connect(master); s.start(0);
+    if (AM) AM.stat.buf_started++;
+  }
+  /* jit = the random detune of this play (fraction of the speed): one-shots +-4 % (MU.JIT_SHOT), worm voices +-2 %
+   * (MU.JIT_VOICE, platform/music.js); a caller that wants a wider spread passes its own.
+   * -> true when a recording was started (or queued on the element); false -> the caller's synthesised fallback runs. */
   AU.play = function (id, vol, rate, jit) {
-    if (!ctx || muted || !AU.has(id)) return false;
-    const all = SS.SFX_FILES[id], files = all.map(resolve).filter(Boolean), f = files[(rand() * files.length) | 0], pool = pools[f] || (pools[f] = []);
-    let el = pool.find(a => a.paused || a.ended);
-    if (!el && pool.length < 6) { el = new Audio('assets/sfx/' + f); el.preload = 'auto'; el.addEventListener('error', () => { badFile[f] = true; const i = pool.indexOf(el); if (i >= 0) pool.splice(i, 1); }); pool.push(el); }
-    if (!el) return true;
+    if (muted || !(AM ? AM.gestured : ctx) || !AU.has(id)) return false;
+    const all = SS.SFX_FILES[id], files = all.map(resolve).filter(Boolean), f = files[(rand() * files.length) | 0];
+    const v = clamp((vol == null ? 1 : vol) * 0.85, 0, 1), r = clamp((rate || 1) * SS.music.jitter(rand(), jit == null ? SS.music.JIT_SHOT : jit), 0.5, 2);
+    if (web && ctx && ctx.state === 'running' && bufs[f]) { try { start_buf(bufs[f], v / 0.6, r); return true; } catch (e) { if (AM) AM.warn('buffer start failed', String(e)); } }
+    if (web) load_buf(f);
+    if (!AM) return false;
+    const el = AM.acquire('assets/sfx/' + f, { onerror: () => { badFile[f] = true; } });
+    if (!el) return false;
     try { el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; } catch (e) { /* */ }
-    el.volume = clamp((vol == null ? 1 : vol) * 0.85, 0, 1); el.playbackRate = clamp((rate || 1) * SS.music.jitter(rand(), jit == null ? SS.music.JIT_SHOT : jit), 0.5, 2);
-    el.currentTime = 0; const pr = el.play(); if (pr && pr.catch) pr.catch(() => { /* not allowed yet */ });
-    return true;
+    el.volume = v; el.playbackRate = r;
+    return AM.play(el);
+  };
+  AU.status = function () {
+    let rms = 0;
+    if (meter) { const d = new Float32Array(meter.fftSize); meter.getFloatTimeDomainData(d); let a = 0; for (let i = 0; i < d.length; i++) a += d[i] * d[i]; rms = Math.sqrt(a / d.length); }
+    return { path: web ? 'webaudio+pool' : 'pool', ctx: ctx ? ctx.state : 'none', muted, rms, decoded: nbuf.length, loading: Object.keys(loading).length, bad: Object.keys(badFile).length, media: AM ? AM.status() : null, buf_started: AM ? AM.stat.buf_started : 0, last_error: AM ? AM.stat.last_error : '' };
   };
   const S2 = (id, vol, rate, fallback) => { if (!AU.play(id, vol, rate) && fallback) fallback(); };
   /* worm voices (P42b): team identity comes from distinct voice BANKS, not from pitch (pitched-up voices sounded like chipmunks):
@@ -224,7 +288,7 @@
   };
   const hurtLine = e => e.src === SS.CFG.DS.BAT ? 'worm_bat_hit' : (SS.CFG.DS_FLAGS[e.src | 0] & SS.CFG.DSF.FX_HOT) ? 'worm_burn' : e.amount >= 25 ? 'worm_hurt_big' : 'worm_hurt_small';
   AU.onEvent = function (S, e) {
-    if (!ctx) return;
+    if (!ctx && !(AM && AM.gestured)) return;
     switch (e.type) {
       case 'explode': { const R = 44 * Math.cbrt(e.W || 1); if (e.wet != null && e.wet > 0.25) break; if (SS.music) SS.music.duck(SS.music.duck_gain(R));   // a charge under the water: its own sound is the 'waterblast' event (no second, dry boom)
         S2(R > 60 ? 'explosion_large' : R > 30 ? 'explosion_medium' : 'explosion_small', clamp(R / 60, 0.4, 1), 1, () => SFX.boom(R, e));
@@ -300,10 +364,14 @@
   function ambLoop(id, lvl) {
     if (!AU.has(id)) return false;
     let el = loops[id];
-    if (!el) { el = loops[id] = new Audio('assets/sfx/' + SS.SFX_FILES[id][0]); el.loop = true; el.volume = 0; }
+    if (!el) {
+      const f = resolve(SS.SFX_FILES[id][0]); if (!f || !AM) return false;
+      el = AM.acquire('assets/sfx/' + f, { keep: true, onerror: () => { badFile[f] = true; delete loops[id]; } }); if (!el) return false;
+      el.loop = true; el.volume = 0; loops[id] = el;
+    }
     const want = muted ? 0 : clamp(lvl, 0, 1) * 0.6;
     el.volume += (want - el.volume) * 0.05;
-    if (el.volume > 0.005 && el.paused) { const pr = el.play(); if (pr && pr.catch) pr.catch(() => { /* */ }); } else if (el.volume <= 0.005 && !el.paused) el.pause();
+    if (el.volume > 0.005 && el.paused) { AM.play(el); } else if (el.volume <= 0.005 && !el.paused) el.pause();
     return true;
   }
   /* P38-R2: ambient beds and the charge whine stop while the game is paused / a menu is open (AU.frame only runs while the game renders):

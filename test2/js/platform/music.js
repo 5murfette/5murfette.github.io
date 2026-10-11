@@ -95,6 +95,7 @@
     vol = clamp(+v || 0, 0, 1);
     try { localStorage.setItem(KEY, String(vol)); } catch (e) { /* */ }
   };
+  const gestured = () => (SS.amedia ? SS.amedia.gestured : gesture);
   const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
   function can_play(f) {
     const m = MU.mime_of(f); if (!m) return false;
@@ -104,17 +105,26 @@
   MU.has = id => !!files_of(id);
 
   /* ---------- decks and generations ---------- */
+  /* P54: elements come from the gesture-unlocked pool (platform/amedia.js); a bare `new Audio()` outside a gesture is refused by Safari.
+   * -> an element or null (not unlocked yet / pool empty: the caller retries on the next frame) */
   function new_el(file, deck) {
-    const el = new Audio(DIR + file); el.preload = 'auto'; el.volume = 0;
-    el.addEventListener('error', () => { failed[file] = true; deck.dead = true; });
-    return el;
+    const AM = SS.amedia, on_err = () => { failed[file] = true; deck.dead = true; };
+    if (AM) return AM.acquire(DIR + file, { onerror: on_err });
+    const el = new Audio(DIR + file); el.preload = 'auto'; el.volume = 0; el.addEventListener('error', on_err); return el;
+  }
+  function free_el(el) {
+    if (SS.amedia) SS.amedia.release(el); else { try { el.pause(); el.removeAttribute('src'); el.load(); } catch (e) { /* */ } }
   }
   function new_gen(deck, x0) {
     const g = { els: [], x: x0, spawned: false };
-    for (let i = 0; i < deck.files.length; i++) g.els.push(new_el(deck.files[i], deck));
+    for (let i = 0; i < deck.files.length; i++) {
+      const el = new_el(deck.files[i], deck);
+      if (!el) { for (const o of g.els) free_el(o); return null; }
+      g.els.push(el);
+    }
     deck.gens.push(g); return g;
   }
-  function kill_gen(g) { for (const el of g.els) { try { el.pause(); el.removeAttribute('src'); el.load(); } catch (e) { /* */ } } }
+  function kill_gen(g) { for (const el of g.els) free_el(el); }
   function make_deck(slot, cue, ids) {
     const files = [];
     for (const id of ids) { const f = id ? files_of(id) : null; if (f && !failed[f]) files.push(f); else if (files.length) break; }
@@ -123,18 +133,22 @@
     decks.push(d); return d;
   }
   function kill_deck(d) { for (const g of d.gens) kill_gen(g); d.gens.length = 0; }
-  function play_el(el) { if (!gesture || !el.paused) return; const p = el.play(); if (p && p.catch) p.catch(() => { /* not allowed yet: retried */ }); }
+  function play_el(el) {
+    if (!gestured() || !el.paused) return;
+    if (SS.amedia) { SS.amedia.play(el); return; }
+    const p = el.play(); if (p && p.catch) p.catch(() => { /* not allowed yet: retried */ });
+  }
   function update_deck(d, dt, master) {
     d.x = MU.step_to(d.x, d.want, dt, XFADE);
     if (d.dead) { d.want = 0; d.x = 0; return; }
-    if (!d.gens.length && d.want > 0 && gesture) new_gen(d, 1);
+    if (!d.gens.length && d.want > 0 && gestured()) new_gen(d, 1);
     const n = d.gens.length, lg = MU.layer_gains(d.files.length > 1 ? intensity : 0), dg = MU.eq_in(d.x) * master;
     for (let k = 0; k < n; k++) {
       const g = d.gens[k], nxt = k + 1 < n ? d.gens[k + 1] : null, e0 = g.els[0];
       for (const el of g.els) play_el(el);
       if (!nxt && !g.spawned) {
         const ph = MU.loop_phase(e0.currentTime, e0.duration, OVERLAP);
-        if (ph.spawn && d.want > 0) { g.spawned = true; new_gen(d, 0); }
+        if (ph.spawn && d.want > 0) { if (new_gen(d, 0)) g.spawned = true; }
       }
       if (nxt) nxt.x = clamp(nxt.els[0].currentTime / Math.min(OVERLAP, (e0.duration || OVERLAP * 4) * 0.25), 0, 1);
       const gg = (k === 0 && n === 1 ? 1 : MU.eq_in(g.x)) * (nxt ? MU.eq_out(nxt.x) : 1);
@@ -174,9 +188,10 @@
   MU.stinger = function (id) {
     const f = files_of(id); if (!f || failed[f]) return false;
     try {
-      if (sting_el) sting_el.pause();
-      const el = new_el(f, { dead: false }); sting_el = el; el.volume = clamp(vol * 0.9, 0, 1);
-      el.addEventListener('ended', () => { sting_until = now() + 0.8; });
+      if (sting_el) free_el(sting_el);
+      const el = new_el(f, { dead: false }); if (!el) return false; sting_el = el; el.volume = clamp(vol * 0.9, 0, 1);
+      const done = () => { sting_until = now() + 0.8; if (sting_el === el) sting_el = null; };
+      if (el._slot) el._slot.onended = done; else el.addEventListener('ended', done);
       play_el(el);
     } catch (e) { return false; }
     return true;
@@ -198,6 +213,7 @@
     ensure_cue(cue); ensure_tension(!!cue.tension && cue.base !== null);
     intensity = MU.approach(intensity, want_i, dt, 0.4, 2.5);
     duck = MU.approach(duck, 1, dt, 0.4, 0);
+    if (sting_el && sting_el._slot && !sting_el._slot.busy) sting_el = null;
     const stung = (sting_el && !sting_el.paused && !sting_el.ended) || sting_until > t;
     const hold_t = hold === 'pause' ? 0.3 : hold === 'menu' ? 0.6 : 1;
     hold_g = MU.approach(hold_g, hold_t, dt, 1.0, 0.5);
