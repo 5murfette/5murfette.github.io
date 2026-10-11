@@ -236,7 +236,7 @@
     const t0 = performance.now();
     const W = SS.world, st = S.lava, NX = W.NX, NZ = W.NZ, H = W.H, h = st.h, Tt = st.T, top = W.top;
     if (box) clearBox(box);
-    if (st.i1 < 0) { box = null; nV = nI = 0; geo.setDrawRange(0, 0); tex.needsUpdate = true; ms = performance.now() - t0; return; }
+    if (st.i1 < 0) { box = null; nV = nI = 0; geo.setDrawRange(0, 0); tex.needsUpdate = true; if (U.uLavaOn) U.uLavaOn.value = 0; ms = performance.now() - t0; return; }
     const i0 = Math.max(0, st.i0 - 1), i1 = Math.min(NX - 1, st.i1 + 1), k0 = Math.max(0, st.k0 - 1), k1 = Math.min(NZ - 1, st.k1 + 1);
     box = { i0, i1, k0, k1 };
     // active columns = wet ones + their 8 neighbours (the apron); vid = -2 marks active before numbering
@@ -282,7 +282,7 @@
       if (h[c] <= WET && h[c + 1] <= WET && h[c + NX] <= WET && h[c + NX + 1] <= WET) continue;
       idx[m++] = a; idx[m++] = d; idx[m++] = b; idx[m++] = b; idx[m++] = d; idx[m++] = e;
     }
-    nV = n; nI = m;
+    nV = n; nI = m; if (U.uLavaOn) U.uLavaOn.value = n > 0 ? 1 : 0;
     for (const [A, s] of [[posA, 3], [nrmA, 3], [datA, 4], [idxA, 1]]) { A.clearUpdateRanges(); A.addUpdateRange(0, (A === idxA ? m : n) * s); A.needsUpdate = true; }
     geo.setDrawRange(0, m);
     tex.needsUpdate = true;

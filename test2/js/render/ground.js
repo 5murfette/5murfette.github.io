@@ -74,6 +74,50 @@
   const wp = [0, 0, 0], tmpO = { x: 0, y: 0, z: 0 };
   function world(b, q, p, out) { SS.math.q_rot(q, p[0], p[1], p[2], tmpO); out[0] = b.pos.x + tmpO.x; out[1] = b.pos.y + tmpO.y; out[2] = b.pos.z + tmpO.z; return out; }
 
+  /* ---------- P65d: what holds a prop over a pit ----------
+   * The sim keeps a prop / grave / crate while a contact point under it still touches ground, but the drawn base is wider than that: next to a blast crater
+   * a corner can hang over the hole. Where a base corner (or the lowest hull corner of a lying prop) floats more than SK_GAP above the real ground, a small tapered
+   * post of the local soil / rock (a stub of the same ledge the prop is sitting on) is drawn from the corner down to the ground below it. The posts are one merged
+   * child mesh of the object (so they follow its lean, its visibility and the section clip), rebuilt only when a refit finds a new set. */
+  const SK_GAP = 0.13, SK_MAX = 4, SK_HALF = 0.2;
+  const SKC = { 2: [0.34, 0.31, 0.28], 3: [0.3, 0.21, 0.14], 4: [0.62, 0.52, 0.36], 5: [0.55, 0.42, 0.3], 6: [0.82, 0.86, 0.9], 7: [0.6, 0.72, 0.82], 8: [0.11, 0.1, 0.1], 10: [0.1, 0.09, 0.09], 11: [0.2, 0.19, 0.19], 12: [0.28, 0.26, 0.24], 15: [0.4, 0.39, 0.37], 16: [0.05, 0.05, 0.06] };
+  let skMat = null; const vtmp = new T.Vector3();
+  function skMaterial() { if (!skMat) { skMat = new T.MeshLambertMaterial({ vertexColors: true, flatShading: true }); skMat.userData.shared = true; } return skMat; }
+  function postsFrom(cf, list) {                       // list = [[x, topY, z, groundY], ...] (world)
+    const W = SS.world; const out = [];
+    list.sort((a, b) => (b[1] - b[3]) - (a[1] - a[3]));
+    for (let i = 0; i < list.length && out.length < SK_MAX; i++) {
+      const q = list[i], gap = q[1] - q[3]; if (gap < SK_GAP || gap > 1.6) continue;
+      const m = W && W.mat_at ? W.mat_at(q[0], q[3] - 0.25, q[2]) : 3, c = SKC[m] || SKC[3];
+      out.push([q[0], q[1], q[2], q[3], c]);
+    }
+    if (out.length || cf.posts) { cf.posts = out.length ? out : null; cf.pdirty = true; }
+  }
+  function buildPosts(cf, g) {
+    cf.pdirty = false;
+    if (!cf.posts) { if (cf.pmesh) cf.pmesh.visible = false; return; }
+    g.updateMatrixWorld(true);
+    const n = cf.posts.length, pos = new Float32Array(n * 8 * 3), col = new Float32Array(n * 8 * 3), idx = [];
+    for (let k = 0; k < n; k++) {
+      const q = cf.posts[k], hs = SK_HALF, hb = SK_HALF * 1.5, yb = q[3] - 0.2, h = (k * 0.37) % 1;
+      for (let c = 0; c < 8; c++) {
+        const top = c < 4, sx = (c & 1) ? 1 : -1, sz = (c & 2) ? 1 : -1, r = top ? hs : hb;
+        vtmp.set(q[0] + sx * r * (0.85 + 0.3 * ((c * 7 + k * 3) % 5) / 5), top ? q[1] + 0.03 : yb, q[2] + sz * r * (0.85 + 0.3 * ((c * 5 + k) % 5) / 5));
+        g.worldToLocal(vtmp);
+        const o = (k * 8 + c) * 3, sh = top ? 1 : 0.62 + 0.1 * h;
+        pos[o] = vtmp.x; pos[o + 1] = vtmp.y; pos[o + 2] = vtmp.z;
+        col[o] = q[4][0] * sh; col[o + 1] = q[4][1] * sh; col[o + 2] = q[4][2] * sh;
+      }
+      const b = k * 8;
+      for (const f of [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]]) { idx.push(b + f[0], b + f[1], b + f[2], b + f[0], b + f[2], b + f[3]); }
+    }
+    let geo = cf.pmesh ? cf.pmesh.geometry : null; if (geo) geo.dispose();
+    geo = new T.BufferGeometry(); geo.setAttribute('position', new T.BufferAttribute(pos, 3)); geo.setAttribute('color', new T.BufferAttribute(col, 3)); geo.setIndex(idx); geo.computeVertexNormals(); geo.userData.own = true;
+    if (!cf.pmesh) { cf.pmesh = new T.Mesh(geo, skMaterial()); cf.pmesh.frustumCulled = false; cf.pmesh.castShadow = false; cf.pmesh.receiveShadow = true; cf.pmesh.userData.skirt = true; g.add(cf.pmesh); }
+    else cf.pmesh.geometry = geo;
+    cf.pmesh.visible = true; cf.pn = n;
+  }
+
   /* fit a set of base points (world) to the ground: cf.tq = the lean about the base centre bc, cf.tdy = the sink (<= 0) that puts the
    * floating corners on the ground (the buried uphill ones stay buried), cf.piv = bc. false = no ground under a corner (kept as it was) */
   function fitBase(cf, ps, bc, lk, lm) {
@@ -89,11 +133,19 @@
     for (let i = 0; i < n; i++) { v1.set(ps[i][0] - bc[0], ps[i][1] - bc[1], ps[i][2] - bc[2]).applyQuaternion(cf.tq); const g = bc[1] + v1.y - hs[i]; mg = Math.max(mg, g); sg += g; }
     mg = Math.min(mg, sg / n + 0.15);
     cf.tdy = Math.max(-DY_MAX, Math.min(0, -mg - SINK)); cf.piv = bc; cf.slope = phi;
+    const L = [];                                                                                    // corners left hanging after the fit: posts under them (pulled 0.15 m toward the base centre)
+    for (let i = 0; i < n; i++) {
+      v1.set(ps[i][0] - bc[0], ps[i][1] - bc[1], ps[i][2] - bc[2]).applyQuaternion(cf.tq);
+      const dx = bc[0] - ps[i][0], dz = bc[2] - ps[i][2], dl = Math.hypot(dx, dz) || 1, k = Math.min(0.15, dl * 0.5) / dl;
+      L.push([ps[i][0] + dx * k, bc[1] + v1.y + cf.tdy, ps[i][2] + dz * k, hs[i]]);
+    }
+    postsFrom(cf, L);
     return true;
   }
-  function newCf(id) { return { lq: new T.Quaternion(), tq: new T.Quaternion(), dy: 0, tdy: 0, t: (id * 0.137) % REFIT, gy: null, piv: null, slope: 0 }; }
+  function newCf(id) { return { lq: new T.Quaternion(), tq: new T.Quaternion(), dy: 0, tdy: 0, t: (id * 0.137) % REFIT, gy: null, piv: null, slope: 0, posts: null, pdirty: false, pmesh: null, pn: 0 }; }
   /* ease the state and write it to the group g: (px, py, pz) + qb = the sim's position and orientation of the object */
   function applyCf(cf, g, px, py, pz, q, dt) {
+    if (cf.pdirty) buildPosts(cf, g);
     const k = 1 - Math.exp(-EASE * dt);
     cf.dy += (cf.tdy - cf.dy) * k; cf.lq.slerp(cf.tq, k);
     if (cf.piv && (cf.dy < -1e-4 || cf.lq.w < 0.99999)) {
@@ -128,6 +180,8 @@
       let mg = 1e9, lowY = 1e9;
       for (const p of H.pts) { const w = world(b, b.q, p, wp); if (w[1] > lowY + 0.45) continue; const g = GV.ground(w[0], w[1] + 0.2, w[2]); if (g == null) continue; if (w[1] < lowY) lowY = w[1]; mg = Math.min(mg, w[1] - g); }
       cf.tq.identity(); cf.tdy = mg > 0.02 && mg < 1 ? -Math.min(LOW_MAX, mg - 0.01) : 0; cf.piv = null;
+      const L = []; for (const p of H.pts) { const w = world(b, b.q, p, wp); if (w[1] > lowY + 0.45) continue; const g = GV.ground(w[0], w[1] + 0.2, w[2]); if (g != null) L.push([w[0] + (b.pos.x - w[0]) * 0.12, w[1] + cf.tdy, w[2] + (b.pos.z - w[2]) * 0.12, g]); }
+      postsFrom(cf, L);
     }
     nFit++;
   }

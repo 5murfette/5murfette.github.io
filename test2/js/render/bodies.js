@@ -237,7 +237,7 @@
   function drop(id, it) {
     scene.remove(it.g);
     for (const m of it.meshes) { m.geometry.dispose(); if (m === it.lamp) m.material.dispose(); }
-    it.g.traverse(o => { if (o.isMesh && o.material && o.material.userData && o.material.userData.ownMat) o.material.dispose(); });
+    it.g.traverse(o => { if (o.isMesh && o.material && o.material.userData && o.material.userData.ownMat) o.material.dispose(); if (o.isMesh && o.userData.skirt) o.geometry.dispose(); });
     if (it.flame) freeFlame(it.flame);
     items.delete(id);
   }
@@ -310,7 +310,7 @@
     const it = items.get(id); if (!it) return;
     if (!(level > 0)) { if (it.outs) { for (const m of it.outs) m.parent && m.parent.remove(m); it.outs = null; if (it.outMat) { it.outMat.dispose(); it.outMat = null; } } return; }
     if (!it.outs) {
-      it.outs = []; const mat = it.outMat = outlineMaterial().clone(), meshes = []; it.g.traverse(o => { if (o.isMesh && o.geometry && o.geometry.attributes.normal) meshes.push(o); });
+      it.outs = []; const mat = it.outMat = outlineMaterial().clone(), meshes = []; it.g.traverse(o => { if (o.isMesh && o.geometry && o.geometry.attributes.normal && !o.userData.skirt) meshes.push(o); });
       for (const o of meshes) { const m = new T.Mesh(o.geometry, mat); m.renderOrder = 9; m.castShadow = false; m.frustumCulled = false; o.add(m); it.outs.push(m); }
     }
     it.outMat.uniforms.uT.value = t || time; it.outMat.uniforms.uLevel.value = Math.min(1.6, level);

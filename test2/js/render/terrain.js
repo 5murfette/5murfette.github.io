@@ -172,7 +172,7 @@
     ${PLATE_GLSL}
     float gMetal = 0.0;
     float fakeEnvK = 0.0;
-    uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tScY; uniform sampler2D tWater; uniform sampler2D tCover; uniform float uPlayR;
+    uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tScY; uniform sampler2D tWater; uniform sampler2D tCover; uniform float uPlayR; uniform highp sampler2D tLavaS; uniform float uLavaOn;
     uniform vec3 uO, uN, uHaze, uGrassTint, uDryTint, uSunDir; uniform vec4 uCloudSh;
     // P65c: drifting cloud shadows (xy = how far the wind aloft has carried them, z = cover, w = strength): patches of the land lie in shade, the sun-lit rest keeps its colour
     float cloudShade(vec2 p){
@@ -365,6 +365,17 @@
         // crust: only a faint dull-red residual heat in the deepest cracks (it is cold rock; open lava is render/lava.js)
         emis = wl * pow(lf, 1.9) * 3.8 * pulse * vec3(1.0, 0.34, 0.06) + wc * pow(lf, 5.0) * 0.45 * vec3(1.0, 0.2, 0.03);
         col = mix(col, vec3(0.12, 0.06, 0.04), wl * 0.6);
+      }
+      // P65d: the ground within ~0.6 m of open lava is heated: a dull orange glow that dies off with the distance to the nearest lava column (no hard line where the lava meets the ground)
+      if (uLavaOn > 0.5) {
+        ivec2 lb = ivec2(floor(vW.xz / 0.5)), lmx = textureSize(tLavaS, 0) - 1; float lh = 0.0;
+        for (int j = -1; j <= 2; j++) for (int i = -1; i <= 2; i++) {
+          ivec2 lc = lb + ivec2(i, j); vec4 q = texelFetch(tLavaS, clamp(lc, ivec2(0), lmx), 0);
+          if (q.y > 0.012 && abs(vW.y - q.x) < 0.7) { vec2 d = vec2(lc) * 0.5 - vW.xz; lh = max(lh, exp(-dot(d, d) / 0.2) * smoothstep(0.012, 0.08, q.y)); }
+        }
+        float lpulse = 0.85 + 0.15 * sin(uTime * 0.9 + vT.x * 1.7 + vT.z * 1.3);
+        emis += lh * lh * 1.1 * lpulse * vec3(1.0, 0.27, 0.04) * (1.0 - wl);
+        col = mix(col, col * vec3(0.55, 0.45, 0.4), lh * 0.5);
       }
       // burning grass: glowing embers in the cover band (S.veg.surf a)
       if (sf.a > 0.01) emis += sf.a * sky * smoothstep(0.35, 0.7, nb + 0.25 * sin(uTime * 3.0 + vT.x * 2.0 + vT.z * 1.7)) * 1.4 * vec3(1.0, 0.3, 0.05);
@@ -835,7 +846,7 @@
     const W = SS.world;
     Object.assign(U, {
       tMats: { value: tx.mats }, tNoise: { value: tx.noise }, tSurf: { value: null }, tScY: { value: null }, tWater: { value: null },
-      tLavaS: { value: null }, tCover: { value: null }, uDbgBack: { value: 0 },   // tools: 1 body / 2 all slab back faces magenta
+      tLavaS: { value: null }, uLavaOn: { value: 0 }, tCover: { value: null }, uDbgBack: { value: 0 },   // tools: 1 body / 2 all slab back faces magenta
       uCtxSolid: { value: 0 },  // D3: 1 = far context opaque, no ghost haze (dry worlds; set by view.js newWorld)
       uCtxHaze: { value: 1 },   // P29j: the slice-view setting: 1 (thin / thick) = the landscape behind the slab recedes into haze; 0 (full) = crisp
       uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHaze: { value: new T.Color(0xf3d2b0) },

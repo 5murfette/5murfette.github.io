@@ -54,6 +54,7 @@
     scene.add(mesh);
   };
   SV.clear = function () { embers = []; sparks = []; trails.clear(); n = 0; if (mesh) mesh.visible = false; };
+  const enrm0 = { x: 0, y: 1, z: 0 };
   SV.onEvent = function (S, e) {
     if (e.type !== 'frag') return;
     // close (or make, for one stopped between two frames) the fragment's afterglow trail at its stop point
@@ -70,10 +71,24 @@
         sparks.push({ x: e.x - dx * 0.05, y: e.y - dy * 0.05, z: e.z - dz * 0.05, vx: rx / rl * v, vy: ry / rl * v, vz: rz / rl * v, t: 0, life: 0.25 + Math.random() * 0.45 });
       }
     }
-    if (e.kind === 'rock' || e.kind === 'body') embers.push({ x: e.x - dx * 0.03, y: e.y - dy * 0.03, z: e.z - dz * 0.03, t: 0, life: EMBER_T * (0.7 + 0.6 * Math.random()), h0: 0.8 + 0.2 * Math.random(), r: EMBER_R });
+    let ex = e.x - dx * 0.03, ey = e.y - dy * 0.03, ez = e.z - dz * 0.03;
+    if (e.kind === 'rock' && SS.world && SS.world.normal) { SS.world.normal(e.x, e.y, e.z, enrm0); ex = e.x + enrm0.x * 0.05; ey = e.y + enrm0.y * 0.05; ez = e.z + enrm0.z * 0.05; }   // sits ON the surface, not in it
+    if (e.kind === 'rock' || e.kind === 'body') embers.push({ x: ex, y: ey, z: ez, t: 0, life: EMBER_T * (0.7 + 0.6 * Math.random()), h0: 0.8 + 0.2 * Math.random(), r: EMBER_R });
     else if (e.kind === 'worm') embers.push({ x: e.x, y: e.y, z: e.z, t: 0, life: 0.25, h0: 0.55, r: 0.16 });
     if (embers.length > 400) embers.splice(0, embers.length - 400);
   };
+  /* P65d: a ricochet spark meets the real surface (density field): it bounces off the slope (reflection about the surface normal, 0.4 restitution)
+   * and when it has no bounce left it settles on the ground as a small ember that smoulders and fades (q.rest = 1 -> the caller turns it into one) */
+  const snrm = { x: 0, y: 1, z: 0 };
+  function hitSpark(q) {
+    const W = SS.world, gv = SS.groundView; if (!W || !gv || q.y > W.top_at(q.x, q.z) + 0.9) return false;
+    const gy = gv.ground(q.x, q.y + 0.1, q.z); if (gy == null || q.y >= gy + 0.02 || gy - q.y > 0.6) return false;
+    W.normal(q.x, gy + 0.03, q.z, snrm);
+    const vn = q.vx * snrm.x + q.vy * snrm.y + q.vz * snrm.z; q.y = gy + 0.02;
+    if (vn >= 0) return false;
+    if (-vn < 2.2) { q.rest = 1; q.y = gy + 0.03; return true; }
+    const k = -(1.4) * vn; q.vx = (q.vx + snrm.x * k) * 0.75; q.vy = (q.vy + snrm.y * k) * 0.75; q.vz = (q.vz + snrm.z * k) * 0.75; return true;
+  }
   const cam = new T.Vector3();
   const wOf = (x, y, z) => Math.max(0.018, MIN_PX * 0.5 * Math.hypot(x - cam.x, y - cam.y, z - cam.z) / pxScale);   // half width (m)
   // one camera-facing quad from a (tail) to b (head); half width from each end's distance to the camera (a ribbon
@@ -139,6 +154,8 @@
       const q = sparks[i]; q.t += ddt;
       if (q.t >= q.life) { sparks.splice(i, 1); continue; }
       q.vy -= 9.81 * ddt; q.x += q.vx * ddt; q.y += q.vy * ddt; q.z += q.vz * ddt;
+      hitSpark(q);
+      if (q.rest) { if (embers.length < 400) embers.push({ x: q.x, y: q.y, z: q.z, t: 0, life: 0.6 + 0.7 * q.life, h0: 0.5 * (1 - q.t / q.life) + 0.2, r: 0.035 }); sparks.splice(i, 1); continue; }
       const sp = Math.hypot(q.vx, q.vy, q.vz) || 1, L = Math.min(0.6, sp * 0.03), k = 1 - q.t / q.life;
       ribbon(q.x - q.vx / sp * L, q.y - q.vy / sp * L, q.z - q.vz / sp * L, q.x, q.y, q.z, 0.7, 0.95 * k * k, 0, 1);
     }

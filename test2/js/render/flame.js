@@ -37,7 +37,7 @@
     seed: mk(CAP_F), kind: mk(CAP_F), I: mk(CAP_F), ax: mk(CAP_F), ay: mk(CAP_F), az: mk(CAP_F), drag: mk(CAP_F), grow: mk(CAP_F) };
   const Sm = { x: mk(CAP_S), y: mk(CAP_S), z: mk(CAP_S), vx: mk(CAP_S), vy: mk(CAP_S), vz: mk(CAP_S), age: mk(CAP_S), life: mk(CAP_S), s0: mk(CAP_S), s1: mk(CAP_S),
     seed: mk(CAP_S), a: mk(CAP_S), glow: mk(CAP_S), tone: mk(CAP_S), rot: mk(CAP_S) };
-  const Em = { x: mk(CAP_E), y: mk(CAP_E), z: mk(CAP_E), vx: mk(CAP_E), vy: mk(CAP_E), vz: mk(CAP_E), age: mk(CAP_E), life: mk(CAP_E), s: mk(CAP_E), seed: mk(CAP_E), T0: mk(CAP_E) };
+  const Em = { x: mk(CAP_E), y: mk(CAP_E), z: mk(CAP_E), vx: mk(CAP_E), vy: mk(CAP_E), vz: mk(CAP_E), age: mk(CAP_E), life: mk(CAP_E), s: mk(CAP_E), seed: mk(CAP_E), T0: mk(CAP_E), m: mk(CAP_E) };
   const Bd = { x: mk(CAP_B), y: mk(CAP_B), z: mk(CAP_B), nx: mk(CAP_B), ny: mk(CAP_B), nz: mk(CAP_B), age: mk(CAP_B), life: mk(CAP_B), r: mk(CAP_B), seed: mk(CAP_B), I: mk(CAP_B) };
   let nF = 0, nS = 0, nE = 0, nB = 0;
   const KB = Object.keys(Bd);
@@ -92,25 +92,66 @@
     Sm.seed[i] = Math.random(); Sm.a[i] = a; Sm.glow[i] = glow; Sm.tone[i] = tone; Sm.rot[i] = rnd(0, 6.283);
   }
   FL.smoke = smoke;
-  function ember(x, y, z, vx, vy, vz, s, life, T0) {
+  function ember(x, y, z, vx, vy, vz, s, life, T0, heavy) {
     if (nE >= capE) return;
-    const i = nE++;
+    const i = nE++; Em.m[i] = heavy ? 1 : 0;
     Em.x[i] = x; Em.y[i] = y; Em.z[i] = z; Em.vx[i] = vx; Em.vy[i] = vy; Em.vz[i] = vz; Em.age[i] = 0; Em.life[i] = life; Em.s[i] = s; Em.seed[i] = Math.random(); Em.T0[i] = T0;
+  }
+  /* P65d: embers meet the real surface (density field, not the column top): a heavy spark bounces off the slope (reflected about the surface
+   * normal, 0.38 restitution), settles and smoulders (its remaining life is cut to <= 1.3 s, it sits on the ground and fades like a coal); a light
+   * ember drifting into a slope is slid up to the surface instead of burning inside the rock. Only embers within ~1 m of the coarse top are tested. */
+  const enrm = { x: 0, y: 1, z: 0 };
+  function hitEmber(i) {
+    const W = SS.world, gv = SS.groundView; if (!W || !gv) return;
+    const x = Em.x[i], z = Em.z[i]; if (Em.y[i] > W.top_at(x, z) + 1.0) return;
+    const gy = gv.ground(x, Em.y[i] + 0.1, z); if (gy == null) return;
+    const r = Em.s[i] * 0.5 + 0.02;
+    if (Em.y[i] >= gy + r || gy - Em.y[i] > 0.6) return;                                      // (a roof above it is not its floor)
+    if (Em.m[i] === 1) {
+      W.normal(x, gy + 0.03, z, enrm);
+      const vn = Em.vx[i] * enrm.x + Em.vy[i] * enrm.y + Em.vz[i] * enrm.z;
+      Em.y[i] = gy + r;
+      if (vn < 0) {
+        if (-vn < 1.3 || Em.age[i] > Em.life[i] * 0.6) { Em.m[i] = 2; Em.vx[i] = Em.vy[i] = Em.vz[i] = 0; if (Em.life[i] - Em.age[i] > 1.3) Em.life[i] = Em.age[i] + 1.3; }
+        else { const k = -(1 + 0.38) * vn; Em.vx[i] = (Em.vx[i] + enrm.x * k) * 0.7; Em.vy[i] += enrm.y * k; Em.vz[i] = (Em.vz[i] + enrm.z * k) * 0.7; Em.vy[i] *= 0.9; }
+      }
+    } else { Em.y[i] = gy + r; if (Em.vy[i] < 0) Em.vy[i] = 0; }
+  }
+  function restEmber(i, dt) {
+    const gv = SS.groundView, gy = gv ? gv.ground(Em.x[i], Em.y[i] + 0.1, Em.z[i]) : null;
+    if (gy == null || gy < Em.y[i] - 0.2 - Em.s[i]) { Em.m[i] = 1; return; }                    // the floor was blasted away: it falls again
+    Em.y[i] = gy + Em.s[i] * 0.5 + 0.02;
   }
   FL.ember = ember;
   /* a burst of sparks (something just caught fire): n embers thrown out and up */
   FL.sparks = function (x, y, z, n, sp) {
     const qn = Math.max(0.4, Q ? Q.particles : 1); n = Math.round(n * qn);
-    for (let i = 0; i < n; i++) { const d = rnd(0, 6.283), v = rnd(0.5, 1.0) * sp; ember(x, y, z, Math.cos(d) * v, rnd(1.5, 4.5) * sp * 0.5, Math.sin(d) * v, rnd(0.03, 0.07), rnd(0.8, 2.2), rnd(1700, 2200)); }
+    for (let i = 0; i < n; i++) { const d = rnd(0, 6.283), v = rnd(0.5, 1.0) * sp; ember(x, y, z, Math.cos(d) * v, rnd(1.5, 4.5) * sp * 0.5, Math.sin(d) * v, rnd(0.03, 0.07), rnd(0.8, 2.2), rnd(1700, 2200), 1); }
   };
   /* the glowing / charred bed: a disc lying on the ground (tilted to the surface normal from the density field), it glows while the
    * fire is young, cools to dull coals and ends as a charred patch that fades out */
   const nrmTmp = { x: 0, y: 1, z: 0 };
   function bed(x, y, z, r, life, I) {
     if (nB >= capB) return;
-    const i = nB++, W = SS.world;
+    const W = SS.world;
     nrmTmp.x = 0; nrmTmp.y = 1; nrmTmp.z = 0; if (W && W.normal) W.normal(x, y - 0.05, z, nrmTmp);
     if (nrmTmp.y < 0.35) { nrmTmp.x = 0; nrmTmp.y = 1; nrmTmp.z = 0; }
+    // P65d: the rim of the disc must lie on the surface (a bed on a ledge lip hung out over the drop): shrink it until 8 rim points are within 0.22 m of its plane
+    const gv = SS.groundView;
+    if (gv) {
+      let ok = false;
+      for (let tries = 0; tries < 3 && !ok; tries++) {
+        ok = true;
+        for (let a = 0; a < 8 && ok; a++) {
+          const rx = x + Math.cos(a * 0.7854) * r, rz = z + Math.sin(a * 0.7854) * r, g = gv.ground(rx, y + 0.3, rz);
+          const py = y - ((rx - x) * nrmTmp.x + (rz - z) * nrmTmp.z) / Math.max(0.35, nrmTmp.y);
+          if (g == null || Math.abs(g - py) > 0.22) ok = false;
+        }
+        if (!ok) r *= 0.68;
+      }
+      if (!ok) return;
+    }
+    const i = nB++;
     Bd.x[i] = x + nrmTmp.x * 0.035; Bd.y[i] = y + nrmTmp.y * 0.035; Bd.z[i] = z + nrmTmp.z * 0.035; Bd.nx[i] = nrmTmp.x; Bd.ny[i] = nrmTmp.y; Bd.nz[i] = nrmTmp.z;
     Bd.age[i] = 0; Bd.life[i] = life; Bd.r[i] = r; Bd.seed[i] = Math.random(); Bd.I[i] = I;
   }
@@ -146,7 +187,7 @@
     }
     for (let i = 0; i < Math.round(26 * W3 * qn * k); i++) {                                             // embers thrown out
       const d = rnd(0, 6.283), sp = rnd(2, 9) * (0.6 + 0.4 * W3);
-      ember(x, y + 0.2, z, Math.cos(d) * sp, rnd(2, 8), Math.sin(d) * sp, rnd(0.04, 0.09), rnd(1.0, 2.8), rnd(1700, 2300));
+      ember(x, y + 0.2, z, Math.cos(d) * sp, rnd(2, 8), Math.sin(d) * sp, rnd(0.04, 0.09), rnd(1.0, 2.8), rnd(1700, 2300), 1);
     }
     for (let i = 0; i < Math.round(8 * W3 * qn * k); i++) {                                              // the dark rolling column the ball turns into, lit from below
       const a = rnd(0, 6.283), rr = rnd(0, Rf * 0.5);
@@ -519,8 +560,13 @@
         integ[i] = 1; Em.age[i] = age;
         const t = age * 4 + Em.seed[i] * 50;
         Em.vx[i] += ((wx * 0.6 - Em.vx[i]) * 0.8 + Math.sin(t * 1.9 + Em.y[i]) * 3.0) * dt; Em.vz[i] += ((wz * 0.6 - Em.vz[i]) * 0.8 + Math.sin(t * 1.5 - Em.y[i] + 2.0) * 3.0) * dt;
-        Em.vy[i] += (1.1 - 0.5 * Em.vy[i] * 0.2) * dt * (age < life * 0.8 ? 1 : 0.2) - 0.0;
-        Em.x[i] += Em.vx[i] * dt; Em.y[i] += Em.vy[i] * dt; Em.z[i] += Em.vz[i] * dt;
+        if (Em.m[i] === 2) { restEmber(i, dt); }
+        else {
+          if (Em.m[i] === 1) { const dr = Math.exp(-0.5 * dt); Em.vx[i] *= dr; Em.vz[i] *= dr; Em.vy[i] = Em.vy[i] * dr - 9.0 * dt; }    // a heavy spark: ballistic
+          else Em.vy[i] += (1.1 - 0.5 * Em.vy[i] * 0.2) * dt * (age < life * 0.8 ? 1 : 0.2) - 0.0;
+          Em.x[i] += Em.vx[i] * dt; Em.y[i] += Em.vy[i] * dt; Em.z[i] += Em.vz[i] * dt;
+          hitEmber(i);
+        }
         const o = cnt * 4; cnt++;
         aE[o] = Em.x[i]; aE[o + 1] = Em.y[i]; aE[o + 2] = Em.z[i]; aE[o + 3] = Em.s[i];
         bE[o] = age / life; bE[o + 1] = Em.seed[i]; bE[o + 2] = Em.T0[i]; bE[o + 3] = 0;
