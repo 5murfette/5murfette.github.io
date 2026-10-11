@@ -94,21 +94,25 @@
   function rocket(type) {
     const d = ROCKETS[type], L = d.L, R = d.R, g = new T.Group(), roll = new T.Group(); g.add(roll);
     const y0 = -L / 2, yN = y0 + L * 0.62;                    // motor from the tail to 62 %, then the warhead
-    // motor: nozzle lip, boat-tail, body tube
-    roll.add(mesh(lathe([[R * 0.55, y0], [R * 0.72, y0 + L * 0.03], [R * 0.9, y0 + L * 0.08], [R, y0 + L * 0.14], [R, yN]], 22), MAT[d.body]));
-    // warhead: a tangent ogive + a fuze tip
-    roll.add(mesh(lathe(ogive(R * 1.02, L * 0.34, yN, 12), 22), MAT[d.nose]));
-    roll.add(mesh(new T.SphereGeometry(R * 0.2, 10, 8), MAT[d.tip], yN + L * 0.34 - R * 0.05));
-    // stripe band where the warhead meets the motor, and a raised ring behind it
-    const band = mesh(new T.CylinderGeometry(R * 1.035, R * 1.035, L * 0.035, 22), MAT[d.band], yN - L * 0.03); band.rotation.z = -PI / 2; roll.add(band);
-    const ring = mesh(new T.CylinderGeometry(R * 1.06, R * 1.06, L * 0.02, 22), MAT.dark, y0 + L * 0.3); ring.rotation.z = -PI / 2; roll.add(ring);
-    // nozzle bell (open, dark inside)
-    const nz = mesh(new T.CylinderGeometry(R * 0.55, R * 0.42, L * 0.05, 16, 1, true), MAT.nozzle, y0 - L * 0.02); nz.rotation.z = -PI / 2; roll.add(nz);
-    // four swept tail fins, canted 4 deg (the roll), trailing edge flush with the tail
-    const fg = finGeo(L * 0.24, L * 0.1, R * 1.5, L * 0.1, Math.max(0.004, R * 0.08));
-    for (let k = 0; k < 4; k++) {
-      const arm = new T.Group(); arm.rotation.x = k * PI / 2 + PI / 4; roll.add(arm);
-      const f = mesh(fg, MAT.dark, y0 + L * 0.02, R * 0.92, 0); f.rotation.y = 0.07; arm.add(f);
+    const bk = type === 'bazooka' && SS.models && SS.models.mesh('proj_rocket');          // P65e: the baked olive rocket (nose +x, fins and nozzle included)
+    if (bk) roll.add(bk);
+    else {
+      // motor: nozzle lip, boat-tail, body tube
+      roll.add(mesh(lathe([[R * 0.55, y0], [R * 0.72, y0 + L * 0.03], [R * 0.9, y0 + L * 0.08], [R, y0 + L * 0.14], [R, yN]], 22), MAT[d.body]));
+      // warhead: a tangent ogive + a fuze tip
+      roll.add(mesh(lathe(ogive(R * 1.02, L * 0.34, yN, 12), 22), MAT[d.nose]));
+      roll.add(mesh(new T.SphereGeometry(R * 0.2, 10, 8), MAT[d.tip], yN + L * 0.34 - R * 0.05));
+      // stripe band where the warhead meets the motor, and a raised ring behind it
+      const band = mesh(new T.CylinderGeometry(R * 1.035, R * 1.035, L * 0.035, 22), MAT[d.band], yN - L * 0.03); band.rotation.z = -PI / 2; roll.add(band);
+      const ring = mesh(new T.CylinderGeometry(R * 1.06, R * 1.06, L * 0.02, 22), MAT.dark, y0 + L * 0.3); ring.rotation.z = -PI / 2; roll.add(ring);
+      // nozzle bell (open, dark inside)
+      const nz = mesh(new T.CylinderGeometry(R * 0.55, R * 0.42, L * 0.05, 16, 1, true), MAT.nozzle, y0 - L * 0.02); nz.rotation.z = -PI / 2; roll.add(nz);
+      // four swept tail fins, canted 4 deg (the roll), trailing edge flush with the tail
+      const fg = finGeo(L * 0.24, L * 0.1, R * 1.5, L * 0.1, Math.max(0.004, R * 0.08));
+      for (let k = 0; k < 4; k++) {
+        const arm = new T.Group(); arm.rotation.x = k * PI / 2 + PI / 4; roll.add(arm);
+        const f = mesh(fg, MAT.dark, y0 + L * 0.02, R * 0.92, 0); f.rotation.y = 0.07; arm.add(f);
+      }
     }
     // canard flaps near the nose (guided rockets): deflected by update() with the turn rate
     const flaps = [];
@@ -306,7 +310,10 @@
     } else if (id === 'mine') { const b = add(new T.Mesh(new T.SphereGeometry(3 * K, 12, 8), MAT.dark), 5); b.scale.y = 0.6; add(new T.Mesh(new T.SphereGeometry(0.8 * K, 6, 5), MAT.red), 5, 1.8); }
     else if (id === 'magnet') { add(new T.Mesh(new T.TorusGeometry(3 * K, 1.1 * K, 8, 16, PI), MAT.red), 5, 0).rotation.z = PI / 2; for (const y of [-3, 3]) add(box(2, 2.2, 2.2, MAT.steel), 4.2, y); }
     else if (id === 'spring') { add(cyl(4, 4, 1.4, MAT.dark), 5); for (let i = 0; i < 3; i++) add(new T.Mesh(new T.TorusGeometry(2.6 * K, 0.45 * K, 6, 12), MAT.steel), 5 + 1.2 + i * 1.1).rotation.y = PI / 2; }
-    else if (id === 'boulder') add(new T.Mesh(new T.DodecahedronGeometry(3.4 * K, 0), MAT.stone), 5.5);
+    else if (id === 'boulder') {
+      const bk = SS.models && SS.models.mesh('held_boulder');          // P65e: the baked mossy rock (0.3 m)
+      if (bk) { bk.position.x = 5.5 * K; bk.scale.setScalar(0.9); g.add(bk); } else add(new T.Mesh(new T.DodecahedronGeometry(3.4 * K, 0), MAT.stone), 5.5);
+    }
     else if (id === 'sheep') { const b = add(new T.Mesh(new T.SphereGeometry(3 * K, 10, 8), MAT.wool), 5); b.scale.set(1.3, 1, 1); add(new T.Mesh(new T.SphereGeometry(1.5 * K, 8, 6), MAT.black), 8.6, 1); }
     else if (BUILD[id]) { const k = BUILD[id](); k.position.x = 5 * K; k.scale.setScalar(0.85); g.add(k); }
     else if (SS.gadgetView && SS.gadgetView.heldModel) { const k = SS.gadgetView.heldModel(id); if (k) g.add(k); }          // P37 W4: dog, sentry, claymore, force field, gravity gun, punch

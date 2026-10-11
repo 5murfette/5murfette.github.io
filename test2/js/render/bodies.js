@@ -171,7 +171,7 @@
       } else meshes.push(std(geo, mats.boulder));
     } else if (b.prop === 'car') carMesh(b, meshes, g);
     else if (SS.CFG.PROPS.JUNK[b.prop]) junkMesh(b, meshes, g);
-    else if (SS.CFG.PROPS.STONE[b.prop]) stoneMesh(b, meshes);
+    else if (SS.CFG.PROPS.STONE[b.prop]) { const bk = SS.models && SS.models.mesh('prop_' + b.prop); if (bk) g.add(bk); else stoneMesh(b, meshes); }   // P65e: baked weathered stone
     else meshes.push(std(new T.BoxGeometry(1, 1, 1), mats.prop));
     for (const m of meshes) g.add(m);
   }

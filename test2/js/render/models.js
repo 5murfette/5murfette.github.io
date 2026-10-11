@@ -63,10 +63,24 @@
     return t;
   }
 
+  /* a small procedural sky / ground gradient (equirectangular canvas) the metal parts reflect: the game scene has no environment map, a
+   * metallic model would render black without one. Lazy, shared, flagged shared. */
+  let ENV = null;
+  function envTex() {
+    if (ENV || typeof document === 'undefined') return ENV;
+    const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64; const c = cv.getContext('2d');
+    const g = c.createLinearGradient(0, 0, 0, 64); g.addColorStop(0, '#6d9bd6'); g.addColorStop(0.42, '#d8dce0'); g.addColorStop(0.5, '#b8b2a4'); g.addColorStop(0.56, '#4a443c'); g.addColorStop(1, '#241f1b');
+    c.fillStyle = g; c.fillRect(0, 0, 128, 64);
+    const sun = c.createRadialGradient(36, 14, 0, 36, 14, 12); sun.addColorStop(0, 'rgba(255,248,225,1)'); sun.addColorStop(1, 'rgba(255,248,225,0)'); c.fillStyle = sun; c.fillRect(0, 0, 128, 64);
+    ENV = new T.CanvasTexture(cv); ENV.mapping = T.EquirectangularReflectionMapping; if (T.SRGBColorSpace) ENV.colorSpace = T.SRGBColorSpace; ENV.userData.shared = true;
+    return ENV;
+  }
+
   function material(tx, color, rough, metal, side, hasUv2) {
     const o = { color: 0xffffff, roughness: rough, metalness: metal, side: side };
     if (tx.basecolor) o.map = texture(tx.basecolor, true); else o.color = color;
     if (tx.normal) o.normalMap = texture(tx.normal, false);
+    if (tx.orm) { o.roughnessMap = o.metalnessMap = texture(tx.orm, false); o.envMap = envTex(); o.envMapIntensity = 0.85; }       // glTF packing: G = roughness, B = metalness (the scalars multiply)
     if (tx.ao) { o.aoMap = texture(tx.ao, false); o.aoMap.channel = hasUv2 ? 1 : 0; }
     const mat = new T.MeshStandardMaterial(o);
     mat.userData.shared = true;
@@ -88,7 +102,7 @@
 
   function build(id) {
     const m = SS.MODELS[id], side = m.double ? T.DoubleSide : T.FrontSide, tm = m.texmeta || {};
-    const outer = material(m.tex || {}, m.color === undefined ? 0xffffff : m.color, 0.7, 0.0, side, !!m.uv2 && tm.aoUv === 'uv2');
+    const pbr = m.pbr || {}, outer = material(m.tex || {}, m.color === undefined ? 0xffffff : m.color, pbr.roughness === undefined ? 0.7 : pbr.roughness, pbr.metalness || 0.0, side, !!m.uv2 && tm.aoUv === 'uv2');
     const b = { geo: geometry(m), mat: outer, inner: null, parts: null };
     if (m.inner) b.inner = material(m.inner.tex || {}, m.inner.color, m.inner.roughness, m.inner.metalness, T.DoubleSide, false);
     return (built[id] = b);
