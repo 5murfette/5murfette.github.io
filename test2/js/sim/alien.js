@@ -27,9 +27,12 @@
  *            kills it, a blast, a bite, a fall) bursts a XENO out at its place: AL.burst (hook in sim.js kill()). If there is no dry
  *            ground for it (the host died in water / lava / the void), or the alien cap is reached, the embryo dies with the host
  *            (event embryo_lost). A worm the alien eats takes its embryo with it (no second alien).
- *   Xeno     hp 200 (XENO_HP), range 5 m (XENO_RANGE), a chain of NN nodes (follow-the-leader, segment SEG x size, hugging the
- *            ground). 6 born (BORN_T: rises out of the host), 0 idle (circles of radius CIRC m round its home at IDLE_V, hisses every
- *            HISS0..HISS1 s), 1 strike (slither at STRIKE_V toward the worm it sees: clear 3D sight within range of its head; gives up after
+ *   Xeno     hp 200 (XENO_HP), range 5 m (XENO_RANGE). A SNAKE (P48): the head slithers over the ground (turn-rate limited heading + a lateral wave
+ *            of the heading, WAVE_* rad / LAM_* m of track; snaps to the surface HOVER x size above it, falls under gravity where the ground is gone,
+ *            climbs <= 1.4 m/m, slides round obstacles) and the NN nodes (SEG x size apart) FOLLOW ITS TRACK (a ring of breadcrumbs X.tr), each exactly
+ *            on the ground at its place: nothing swims up and down. The coil of a wrap / bite / meal moves the nodes itself. 6 born (BORN_T: squeezed
+ *            out of the host, crawls off), 0 idle (patrols legs of PATROL m along the section just behind the plane, a U-turn at each end, at IDLE_V; every HISS0..HISS1 s it
+ *            stops and hisses for HISS_T), 1 strike (rears up WIND_T s, then slithers at STRIKE_V toward the worm it sees: clear 3D sight within range of its head; gives up after
  *            LOSE_T s without sight or XENO_STUCK_T s without progress), 2 wrap (WRAP_T: coils round the worm), 3 bite (the worm's HP -> 0:
  *            instant death, head off), 4 eat (EAT_T), then kills++, hp += 50 (hpMax too), range += 2, size x 1.12 and back to idle at that
  *            spot. Water drowns it (WATER_DPS), lava (LAVA_DPS) and flames (FLAME_DPS) burn it, a missing floor drops it, a blast hurts it (AL.blast); it is no
@@ -41,7 +44,7 @@
  *   (nest) when there is one, the rest on dry ground 6-24 m from the ship / the town, >= 7 m from worms.
  * State S.alien = { rng, nextId, air[], eggs[], huggers[], xenos[], acid[], spot, spotN } (plain data, in snapshots):
  *   Egg { id, x, y, z (the base), yaw, st, t0, vy }          Hugger { id, x, y, z, vx, vy, vz, yaw, st, t0, host, round0, turn0, t, tg, bd, bt, why }
- *   Xeno { id, hp, hpMax, size, range, kills, st, t0, yaw, home{x,z}, phi, target, hiss, lastSee, bd, bt, coolT, hurtT, fall, born, n[NN] of {x,y,z} }
+ *   Xeno { id, hp, hpMax, size, range, kills, st, t0, yaw, home{x,z}, phi, target, hiss, lastSee, bd, bt, coolT, hurtT, fall, born, vy, ph, wa, pauseT, pa, tr[2 TRN], th, tn, n[NN] of {x,y,z} }
  *   Acid { x, y, z, vx, vy, vz, st (0 fly, 1 pool), t0, life, r, depth, tick }
  *   spot { key, kind (0 none, 1 worm, 2 hugger, 3 xeno, 4 point), id, x, y, z, until, d, zk, p }: what the camera director shows
  *   Worm fields (sim.worm_make): hug (hugger id on its face, -1 / null none), embryo (bool), embT (sim time of the implantation), embNext
@@ -50,10 +53,11 @@
  *   alien_born, alien_hiss, alien_strike, alien_wrap, alien_bite, alien_eat, alien_hurt, alien_burst, acid_land, acid_hit.
  * C layout: struct Egg { i32 id; vec3 p; f32 yaw, t0, vy; u8 st; }; struct Hugger { i32 id; vec3 p, v; f32 yaw, t0, t, bd, bt; u8 st, why;
  *   i16 host, tg; i32 round0, turn0; }; struct Xeno { i32 id; f32 hp, hpMax, size, range; i32 kills; u8 st; f32 t0, yaw, phi, hiss, lastSee, coolT, hurtT, fall, born;
- *   vec2 home; i16 target; vec3 n[12]; }; struct Acid { vec3 p, v; u8 st; f32 t0, life, r, depth, tick; }; struct Spot { i32 key; u8 kind, p; i16 id;
+ *   vec2 home; i16 target; f32 vy, ph, wa, pauseT, pa; i16 th, tn; vec2 tr[300]; vec3 n[12]; }; struct Acid { vec3 p, v; u8 st; f32 t0, life, r, depth, tick; }; struct Spot { i32 key; u8 kind, p; i16 id;
  *   vec3 pos; f32 until, d, zk; };   pools: fixed caps MAX_EGG 12, MAX_HUG 12, MAX_XENO 8, MAX_ACID 96.
  * API: populate(S, taken), step(S, dt), blast(S, c, Wkg, dmg), burst(S, w) (sim.kill hook), busy(S), ai_foes(S, a), ai_value(S, c, Wkg, dmg),
- *   camera(S), stats(S), spawn_xeno(S, x, y, z, hp), spawn_hugger(S, x, y, z, st), infection(S, w, out), egg_progress(S, e), face_target(w, out),
+ *   camera(S), stats(S), spawn_xeno(S, x, y, z, hp), spawn_hugger(S, x, y, z, st), infection(S, w, out), egg_progress(S, e), face_target(w, out), ground_y(x, yref, z, steps) (render too),
+ *   track_fill(X, ds, count, out) (the snake's track, sampled for the renderer),
  *   hash(S, mix). */
 (function (SS) {
   'use strict';
@@ -64,8 +68,8 @@
     TRIG_R: 3.0, LAND_R: 7.0, OPEN_T: 120, EGG_BLAST_R: 3.2, EGG_RELEASE_P: 0.6, EGG_FALL_BREAK: 9, MAX_EGG: 12, MAX_HUG: 12, MAX_XENO: 8, MAX_ACID: 96,
     EMERGE_T: 0.9, RUN_V: 3.4, LEAP_R: 2.6, LEAP_T: 0.35, HIT_R: 0.6, HIT_MISS: 1.1, DEAD_T: 25, HUG_MAX_T: 300, FACE_Y: 0.25,
     PARA_T: 60, PARA_HP: 20,
-    XENO_HP: 200, XENO_RANGE: 5, NN: 12, SEG: 0.3, CIRC: 1.3, IDLE_V: 1.1, HISS0: 3.5, HISS1: 7, STRIKE_V: 10, LOSE_T: 2.5, WRAP_T: 0.9, EAT_T: 2.6,
-    GROW_HP: 50, GROW_RANGE: 2, GROW_SIZE: 1.12, BORN_T: 1.4, WATER_DPS: 45, LAVA_DPS: 140, FLAME_DPS: 30, FALL_T: 1.5, HURT_GATE: 0.5,
+    XENO_HP: 200, XENO_RANGE: 5, NN: 12, SEG: 0.3, CIRC: 1.3, PATROL: 1.9, PAT_R: 0.4, PAT_T: -0.55, IDLE_V: 0.9, HOVER: 0.09, TRN: 300, CRUMB: 0.04, TURN: 2.6, TURN_S: 6, WAVE_IDLE: 0.85, WAVE_RUN: 0.5, LAM_IDLE: 1.5, LAM_RUN: 2.0, WIND_T: 0.5, HISS_T: 1.3, DROP_MAX: 3, HISS0: 3.5, HISS1: 7, STRIKE_V: 10, LOSE_T: 2.5, WRAP_T: 0.9, EAT_T: 2.6,
+    GROW_HP: 50, GROW_RANGE: 2, GROW_SIZE: 1.12, BORN_T: 2.0, WATER_DPS: 45, LAVA_DPS: 140, FLAME_DPS: 30, FALL_T: 1.5, HURT_GATE: 0.5,
     N_ACID: 40, ACID_HIT: 12, ACID_DPS: 2, ACID_BURN: 4, ACID_POOL_R: 0.9, ACID_POOL_DPS: 5,
     ACID_EAT: 0.05, ACID_DEPTH: 1.6, ACID_LIFE: 32, ACID_TICK: 0.5, ACID_R0: 0.32,
     PROG: 0.3, HUG_STUCK_T: 8, XENO_STUCK_T: 6, XENO_COOL: 20,       // P38 R1: no closer than PROG m in HUG_STUCK_T s: the hugger dies; XENO_STUCK_T s: the alien gives up and ignores prey for XENO_COOL s
@@ -345,8 +349,9 @@
   AL.spawn_xeno = function (S, x, y, z, hp) {
     const A = S.alien;
     if (A.xenos.length >= K.MAX_XENO) return null;
-    const X = { id: A.nextId++, hp: hp || K.XENO_HP, hpMax: hp || K.XENO_HP, size: 0.6, range: K.XENO_RANGE, kills: 0, st: 6, t0: S.time, yaw: rnd(S) * M.TAU, home: { x, z }, phi: rnd(S) * M.TAU, target: -1, hiss: S.time + 1.5 + rnd(S) * 2, lastSee: S.time, bd: 0, bt: null, coolT: 0, hurtT: -9, fall: 0, born: S.time, n: [] };
+    const X = { id: A.nextId++, hp: hp || K.XENO_HP, hpMax: hp || K.XENO_HP, size: 0.6, range: K.XENO_RANGE, kills: 0, st: 6, t0: S.time, yaw: (S.theta || 0) + (rnd(S) < 0.5 ? 0 : Math.PI), home: { x, z }, phi: rnd(S) * M.TAU, target: -1, hiss: S.time + 1.5 + rnd(S) * 2, lastSee: S.time, bd: 0, bt: null, coolT: 0, hurtT: -9, fall: 0, born: S.time, vy: 0, ph: 0, wa: 0, pauseT: 0, pa: S.theta || 0, tr: [], th: 0, tn: 1, n: [] };
     for (let i = 0; i < K.NN; i++) X.n.push({ x, y, z });
+    for (let i = 0; i < K.TRN * 2; i++) X.tr.push(i & 1 ? z : x);
     A.xenos.push(X);
     SS.sim.emit(S, 'alien_born', { id: X.id, x, y, z });
     return X;
@@ -381,23 +386,86 @@
     S.slowUntil = S.time + K.SLOW_T;
   };
   const xhead = X => X.n[0];
+  /* ---- the snake's body (P48): the head slithers (a lateral wave in its heading, the track is a sine on the ground), the body FOLLOWS THE TRACK
+   * of the head: X.tr is a ring of breadcrumbs (x, z) the head left, X.th the newest, X.tn the count; node i of X.n sits i x SEG x size along
+   * that track and ON the ground there (surface + HOVER x size: exact, no lerp: no swimming up and down). The coil (wrap / bite / eat) drives the
+   * nodes by itself; when it ends the track is rebuilt from the nodes. */
+  function trailPush(X, x, z) {
+    X.th = (X.th + 1) % K.TRN; X.tr[X.th * 2] = x; X.tr[X.th * 2 + 1] = z; if (X.tn < K.TRN) X.tn++;
+  }
+  function trailReset(X, x, z) { X.tn = 0; X.th = K.TRN - 1; trailPush(X, x, z); }
+  function trailFromNodes(X) {                                   // after the coil: the track is the nodes, tail first
+    const n = X.n; trailReset(X, n[n.length - 1].x, n[n.length - 1].z);
+    for (let i = n.length - 2; i >= 0; i--) trailPush(X, n[i].x, n[i].z);
+    X.yaw = M.atan2(n[0].z - n[1].z, n[0].x - n[1].x);
+  }
+  /* the point s metres behind the head along the track (the live head is the zero point); a track shorter than s ends at its oldest crumb */
+  const TP = { x: 0, z: 0 };
+  function bodyFollow(S, X) {
+    const n = X.n, hd = n[0], seg = K.SEG * X.size;
+    const ci = (X.th) * 2; if (M.len2(X.tr[ci] - hd.x, X.tr[ci + 1] - hd.z) > 1.2) trailReset(X, hd.x, hd.z);        // (teleported / blasted head: the track starts again)
+    let k = X.th, cnt = 0, px = hd.x, pz = hd.z, acc = 0, i = 1;
+    while (i < n.length) {
+      const cx = X.tr[k * 2], cz = X.tr[k * 2 + 1], dl = M.len2(cx - px, cz - pz);
+      const want = i * seg;
+      if (acc + dl >= want && dl > 1e-9) { const f = (want - acc) / dl; TP.x = px + (cx - px) * f; TP.z = pz + (cz - pz) * f; place(S, X, n[i], TP.x, TP.z); i++; continue; }
+      acc += dl; px = cx; pz = cz; cnt++;
+      if (cnt >= X.tn) { while (i < n.length) { place(S, X, n[i], px, pz); i++; } break; }
+      k = (k + K.TRN - 1) % K.TRN;
+    }
+  }
+  /* the track sampled for the renderer: out[2 i], out[2 i + 1] = the (x, z) of the point i x ds metres behind the head (a short track ends at its oldest crumb) */
+  AL.track_fill = function (X, ds, cnt, out) {
+    const hd = X.n[0]; let k = X.th, c = 0, px = hd.x, pz = hd.z, acc = 0, i = 0;
+    while (i < cnt) {
+      const cx = X.tr[k * 2], cz = X.tr[k * 2 + 1], dl = M.len2(cx - px, cz - pz), want = i * ds;
+      if (acc + dl >= want && (dl > 1e-9 || want === acc)) { const f = dl > 1e-9 ? (want - acc) / dl : 0; out[i * 2] = px + (cx - px) * f; out[i * 2 + 1] = pz + (cz - pz) * f; i++; continue; }
+      acc += dl; px = cx; pz = cz; c++;
+      if (c >= X.tn) { while (i < cnt) { out[i * 2] = px; out[i * 2 + 1] = pz; i++; } break; }
+      k = (k + K.TRN - 1) % K.TRN;
+    }
+    return out;
+  };
+  AL.ground_y = ground_y;
+  function place(S, X, nd, x, z) {                               // a body node on the ground at (x, z)
+    const gy = ground_y(x, nd.y, z);
+    nd.x = x; nd.z = z; if (gy > -1e8) nd.y = gy + K.HOVER * X.size;
+  }
+  /* the head stays on the ground: snaps to the surface (HOVER above: a descent of up to snap m in one step follows the slope), falls under gravity where the ground is gone / drops away faster */
+  function hold(S, X, dt, snap) {
+    const h = xhead(X), gy = ground_y(h.x, h.y, h.z, 100), g = grav(S);
+    if (gy < -1e8) { X.vy -= g * dt; h.y += X.vy * dt; return; }
+    const ty = gy + K.HOVER * X.size;
+    if (h.y > ty + (snap || 0.15)) { X.vy -= g * dt; h.y += X.vy * dt; if (h.y <= ty) { h.y = ty; X.vy = 0; } } else { h.y = ty; X.vy = 0; }
+  }
+  /* one step of slithering towards the heading `want` at speed v: turns at most `turn` rad/s, the heading wobbles by wa x sin(ph) (ph runs with the
+   * distance travelled: wavelength lam), steps round obstacles; true when it moved */
+  function slither(S, X, want, v, wa, lam, turn, dt, noWater) {
+    const h = xhead(X), step = v * dt, da = M.wrap_angle(want - X.yaw), tmax = turn * dt;
+    X.yaw += da > tmax ? tmax : da < -tmax ? -tmax : da;
+    X.wa += (wa - X.wa) * smin(1, 5 * dt);
+    const inF = fieldAt(S, h.x, h.y, h.z), w0 = X.wa * M.sin(X.ph), g0 = h.y - K.HOVER * X.size;
+    for (let q = 0; q < ANG.length; q++) {
+      const a = X.yaw + w0 + ANG[q], nx = h.x + M.cos(a) * step, nz = h.z + M.sin(a) * step, gy = ground_y(nx, h.y, nz);
+      if (gy < -1e8 || gy - g0 > step * 1.4 + 0.06 || g0 - gy > K.DROP_MAX) continue;
+      if (noWater && hazard(S, nx, gy, nz)) continue;
+      if (noWater && !inF && fieldAt(S, nx, gy, nz)) continue;
+      h.x = nx; h.z = nz; if (q) X.yaw = a - w0; X.ph += step * M.TAU / lam;
+      const ci = X.th * 2; if (M.len2(h.x - X.tr[ci], h.z - X.tr[ci + 1]) >= K.CRUMB) trailPush(X, h.x, h.z);
+      hold(S, X, dt, step * 2.2 + 0.1); return true;
+    }
+    hold(S, X, dt); return false;
+  }
   function chain(S, X, dt, coilAt) {
-    const n = X.n, seg = K.SEG * X.size;
-    if (coilAt) {                                                // wrapped round a worm: a rising spiral
+    const n = X.n;
+    if (coilAt) {                                                // wrapped round a worm: a spiral, the head on top, the tail at the bottom
       for (let i = 0; i < n.length; i++) {
-        const a = X.phi + i * 0.95, r = 0.34 * (1 - i / (n.length * 2)), tx = coilAt.x + M.cos(a) * r, tz = coilAt.z + M.sin(a) * r, ty = coilAt.y - 0.2 + i * 0.1;
+        const a = X.phi + i * 0.95, r = 0.3 + 0.04 * (i & 1), tx = coilAt.x + M.cos(a) * r, tz = coilAt.z + M.sin(a) * r, ty = coilAt.y + 0.38 - i * 0.055;
         const k = smin(1, 14 * dt); n[i].x += (tx - n[i].x) * k; n[i].y += (ty - n[i].y) * k; n[i].z += (tz - n[i].z) * k;
       }
       return;
     }
-    for (let i = 1; i < n.length; i++) {
-      const a = n[i - 1], b = n[i];
-      let dx = b.x - a.x, dz = b.z - a.z, dy = b.y - a.y, l = M.len3(dx, dy, dz);
-      if (l < 1e-6) { dx = -M.cos(X.yaw); dz = -M.sin(X.yaw); dy = 0; l = 1; }
-      b.x = a.x + dx / l * seg; b.z = a.z + dz / l * seg; b.y = a.y + dy / l * seg;
-      const gy = ground_y(b.x, b.y, b.z);
-      if (gy > -1e8) b.y += (gy + 0.1 * X.size - b.y) * smin(1, 18 * dt);
-    }
+    bodyFollow(S, X);
   }
   function foeInRange(S, X) {
     const h = xhead(X), hp = { x: h.x, y: h.y + 0.25, z: h.z };
@@ -411,7 +479,7 @@
     }
     return best;
   }
-  const idle = (X, h) => { X.st = 0; X.home.x = h.x; X.home.z = h.z; X.target = -1; X.bt = null; };
+  const idle = (S, X, h) => { if (X.st >= 2 && X.st <= 4) { trailFromNodes(X); const gy = ground_y(h.x, h.y, h.z, 100); if (gy > -1e8) { h.y = gy + K.HOVER * X.size; X.vy = 0; } } X.phi = 1; X.pa = S.theta; X.st = 0; X.home.x = h.x; X.home.z = h.z; X.target = -1; X.bt = null; };
   /* water drowns it, lava and flames burn it, no floor drops it: the hp loss (the cry of pain is gated) */
   function xenoHazard(S, X, dt) {
     const h = xhead(X); let dmg = 0;
@@ -435,32 +503,43 @@
         case 6:                                                  // hatched: rests, growing out of the corpse
           X.size = 0.6 + 0.4 * M.sat((S.time - X.t0) / K.BORN_T);
           if (S.time - X.t0 >= K.BORN_T) { X.st = 0; X.size = 1; X.hiss = S.time + 0.4; }
+          slither(S, X, X.yaw, 0.7 * X.size, K.WAVE_IDLE, K.LAM_IDLE * X.size, K.TURN, dt, true);
           chain(S, X, dt, null); break;
         case 0: {                                                // idle: circles round home, hisses; looks for prey
-          X.phi += K.IDLE_V / K.CIRC * dt;
-          crawl(S, h, X.home.x + M.cos(X.phi) * K.CIRC, X.home.z + M.sin(X.phi) * K.CIRC, K.IDLE_V * X.size, dt, true);
+          if (S.time < X.pauseT) hold(S, X, dt);                  // (rearing up and hissing: it holds still)
+          else {
+            // it patrols along the section (the line the player sees it on) just BEHIND the plane, so it reads as lying on the ground beyond the cut edge: legs of PATROL m
+            // to either side of home, a U-turn at each end (the line is pulled at most 1 m sideways towards t = PAT_T per leg end)
+            const pn = SS.plane.nrm(S);
+            let lx = X.home.x + M.cos(X.pa) * X.phi * K.PATROL, lz = X.home.z + M.sin(X.pa) * X.phi * K.PATROL;
+            const tt = (lx - S.O.x) * pn.x + (lz - S.O.z) * pn.z, sh = M.clamp(K.PAT_T - tt, -1, 1); lx += pn.x * sh; lz += pn.z * sh;
+            if (M.len2(lx - h.x, lz - h.z) < K.PAT_R) { X.phi = -X.phi; X.pa = S.theta; }
+            slither(S, X, M.atan2(lz - h.z, lx - h.x), K.IDLE_V * X.size, K.WAVE_IDLE, K.LAM_IDLE * X.size, K.TURN, dt, true);
+          }
           chain(S, X, dt, null);
-          if (S.time >= X.hiss) { X.hiss = S.time + K.HISS0 + rnd(S) * (K.HISS1 - K.HISS0); SS.sim.emit(S, 'alien_hiss', { id: X.id, x: h.x, y: h.y + 0.3, z: h.z }); }
+          if (S.time >= X.hiss) { X.hiss = S.time + K.HISS0 + rnd(S) * (K.HISS1 - K.HISS0); X.pauseT = S.time + K.HISS_T; SS.sim.emit(S, 'alien_hiss', { id: X.id, x: h.x, y: h.y + 0.3, z: h.z }); }
           const o = S.time >= (X.coolT || 0) ? foeInRange(S, X) : null;
           if (o) { X.st = 1; X.target = o.id; X.lastSee = S.time; X.t0 = S.time; X.bt = null; SS.sim.emit(S, 'alien_strike', { id: X.id, x: h.x, y: h.y + 0.3, z: h.z, wormId: o.id }); SS.sim.log(S, 'The alien hisses and strikes!', 0xa6ff3a); }
           break;
         }
         case 1: {                                                // strike: slither to the target
-          if (!target || !livingWorm(target)) { idle(X, h); break; }
+          if (!target || !livingWorm(target)) { idle(S, X, h); break; }
           const hd = { x: target.pos.x, y: target.pos.y + 0.28, z: target.pos.z }, hp = { x: h.x, y: h.y + 0.25, z: h.z };
           if (seen(hp, hd)) X.lastSee = S.time;
-          if (S.time - X.lastSee > K.LOSE_T) { idle(X, h); break; }
+          if (S.time - X.lastSee > K.LOSE_T) { idle(S, X, h); break; }
           // (P38 R1: no progress toward the prey for XENO_STUCK_T s - a pit, a wall: it gives up and leaves it be for XENO_COOL s)
           { const dd = M.len2(h.x - target.pos.x, h.z - target.pos.z);
             if (X.bt == null || dd < X.bd - K.PROG) { X.bd = dd; X.bt = S.time; }
-            else if (S.time - X.bt > K.XENO_STUCK_T) { idle(X, h); X.coolT = S.time + K.XENO_COOL; break; } }
-          crawl(S, h, target.pos.x, target.pos.z, K.STRIKE_V * M.pow(X.size, 0.5), dt, true);
+            else if (S.time - X.bt > K.XENO_STUCK_T) { idle(S, X, h); X.coolT = S.time + K.XENO_COOL; break; } }
+          { const aim = M.atan2(target.pos.z - h.z, target.pos.x - h.x);
+            if (S.time - X.t0 < K.WIND_T) { slither(S, X, aim, 0, 0, K.LAM_RUN, K.TURN_S, dt, true); }       // (rears up and hisses first: the front third lifts, it faces the prey)
+            else slither(S, X, aim, K.STRIKE_V * M.pow(X.size, 0.5), K.WAVE_RUN, K.LAM_RUN * X.size, K.TURN_S, dt, true); }
           chain(S, X, dt, null);
           if (M.len2(h.x - target.pos.x, h.z - target.pos.z) < 0.9 && Math.abs(h.y - target.pos.y) < 1.8) { X.st = 2; X.t0 = S.time; SS.sim.emit(S, 'alien_wrap', { id: X.id, x: target.pos.x, y: target.pos.y, z: target.pos.z, wormId: target.id }); }
           break;
         }
         case 2: {                                                // wrap
-          if (!target || !livingWorm(target)) { idle(X, h); break; }
+          if (!target || !livingWorm(target)) { idle(S, X, h); break; }
           X.phi += 9 * dt; h.x = target.pos.x; h.y = target.pos.y + 0.3; h.z = target.pos.z;
           chain(S, X, dt, { x: target.pos.x, y: target.pos.y, z: target.pos.z });
           if (S.time - X.t0 >= K.WRAP_T) {
@@ -481,7 +560,7 @@
           if (X.st === 4 && S.time - X.t0 >= K.EAT_T) {
             X.kills++; X.hpMax += K.GROW_HP; X.hp += K.GROW_HP; X.range += K.GROW_RANGE; X.size *= K.GROW_SIZE;
             if (target && target.dead) target.grave = null;     // eaten: no tombstone
-            idle(X, h); X.hiss = S.time + 1;
+            idle(S, X, h); X.hiss = S.time + 1;
           }
           break;
         }
@@ -622,7 +701,7 @@
     const A = S.alien; if (!A) return;
     for (const e of A.eggs) { mix(e.st); mix(e.t0); if (e.vy) { mix(e.y); mix(e.vy); } }
     for (const q of A.huggers) { mix(q.st); mix(q.x); mix(q.y); mix(q.z); if (q.st === 3 || q.st === 2) { mix(q.host); mix(q.turn0 | 0); } }
-    for (const q of A.xenos) { mix(q.hp); mix(q.st); mix(q.n[0].x); mix(q.n[0].z); mix(q.kills); mix(q.size); }
+    for (const q of A.xenos) { mix(q.hp); mix(q.st); mix(q.n[0].x); mix(q.n[0].y); mix(q.n[0].z); mix(q.kills); mix(q.size); mix(q.yaw); mix(q.ph); mix(q.n[q.n.length - 1].x); mix(q.n[q.n.length - 1].z); }
     mix(A.acid.length); for (const a of A.acid) { mix(a.x); mix(a.y); mix(a.z); }
     for (const o of S.worms) if (o.embryo || (o.hug != null && o.hug >= 0)) { mix(o.embryo ? 1 : 0); mix(o.hug | 0); mix(o.embNext || 0); }
   };

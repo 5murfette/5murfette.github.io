@@ -118,7 +118,12 @@
     return (b.parts = r);
   }
 
-  MD.init = function (sc) { scene = sc; };
+  /* the textures are data URIs decoded on the event loop: build every model at init so a prop / grave / crate that first
+   * appears mid-match is never drawn untextured (black) for its first frames */
+  MD.init = function (sc) {
+    scene = sc;
+    if (SS.MODELS) for (const id in SS.MODELS) if (!built[id]) build(id);
+  };
   MD.clear = function () { for (const d of debris) if (d.g.parent) d.g.parent.remove(d.g); debris.length = 0; };
 
   /* deterministic per-break random stream (the break event's body id), so replays look the same */

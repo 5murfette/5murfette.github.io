@@ -17,12 +17,13 @@
   const T = window.THREE, AV = SS.alienView = SS.alienView || {};
   let scene = null, tex = null, renderer = null, root = null, env = null, tNow = 0;
   const eggs = new Map(), hugs = new Map(), xenos = new Map();     // (render-only maps: id -> object)
-  let LT = null, GEO = null, M = null, dropMesh = null, poolMesh = null, poolHalo = null;
+  let GOO_T = null, LT = null, GEO = null, M = null, dropMesh = null, poolMesh = null, poolHalo = null;
   const rnd = (a, b) => a + Math.random() * (b - a);
   const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   AV.res = () => ({ env, tex, root, renderer });
   AV.clock = () => tNow;
   AV.xenoView = id => xenos.get(id);
+  AV.eggView = id => eggs.get(id);
   AV.huggerView = id => hugs.get(id);                              // (tools / tests: the render object of a hugger)
 
   /* ---------- textures ---------- */
@@ -109,6 +110,37 @@
   }
   AV.geos = () => { geos(); return GEO; };
 
+  /* ---------- draped discs (P48): a polar grid laid ON the terrain (every vertex at the real ground height under it), so a pool / skirt follows a slope ---------- */
+  const DR_R = 5, DR_S = 22;
+  function drapeMake(mat) {
+    const nv = 1 + DR_R * DR_S, pos = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = [];
+    uv[0] = uv[1] = 0.5;
+    for (let r = 0; r < DR_R; r++) for (let k = 0; k < DR_S; k++) { const a = k / DR_S * 6.2832, f = (r + 1) / DR_R, i = 1 + r * DR_S + k; uv[i * 2] = 0.5 + 0.5 * f * Math.cos(a); uv[i * 2 + 1] = 0.5 + 0.5 * f * Math.sin(a); }
+    const ring = (r, k) => 1 + r * DR_S + (k % DR_S);
+    for (let k = 0; k < DR_S; k++) idx.push(0, ring(0, k + 1), ring(0, k));
+    for (let r = 0; r < DR_R - 1; r++) for (let k = 0; k < DR_S; k++) { const a = ring(r, k), b = ring(r, k + 1), c = ring(r + 1, k), d = ring(r + 1, k + 1); idx.push(a, b, c, b, d, c); }
+    const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(pos, 3).setUsage(T.DynamicDrawUsage)); g.setAttribute('uv', new T.BufferAttribute(uv, 2)); g.setIndex(idx);
+    const m = new T.Mesh(g, mat); m.frustumCulled = false; root.add(m); return { m, g, R: 0, y0: 1e9 };
+  }
+  function drapeFit(d, cx, cy, cz, R, lift) {
+    const AL = SS.alien, pa = d.g.getAttribute('position'); d.R = R; d.y0 = cy;
+    const put = (i, x, z) => { let gy = AL.ground_y(x, cy + 0.5, z, 26); if (gy < -1e8 || Math.abs(gy - cy) > 1.2) gy = cy; pa.setXYZ(i, x, gy + lift, z); };
+    put(0, cx, cz);
+    for (let r = 0; r < DR_R; r++) for (let k = 0; k < DR_S; k++) { const a = k / DR_S * 6.2832, f = (r + 1) / DR_R * R; put(1 + r * DR_S + k, cx + Math.cos(a) * f, cz + Math.sin(a) * f); }
+    pa.needsUpdate = true; d.g.computeVertexNormals(); d.g.computeBoundingSphere();
+  }
+  const NRM = { x: 0, y: 1, z: 0 };
+  function groundNormal(x, y, z, out) {                                // the mean of five SDF gradients on the ground round (x, z): the slope under an egg
+    let sx = 0, sy = 0, sz = 0; const W = SS.world;
+    for (const [dx, dz] of [[0, 0], [0.3, 0], [-0.3, 0], [0, 0.3], [0, -0.3]]) { const gy = SS.alien.ground_y(x + dx, y + 0.4, z + dz, 20); W.normal(x + dx, (gy > -1e8 ? gy : y) + 0.03, z + dz, NRM); sx += NRM.x; sy += NRM.y; sz += NRM.z; }
+    const l = Math.hypot(sx, sy, sz) || 1; out.set(sx / l, sy / l, sz / l); return out;
+  }
+  function gooTexture() {                                              // a flat wet puddle with a soft rim (alpha in the grey value)
+    const N = 128, c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d'), gr = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
+    gr.addColorStop(0, '#fff'); gr.addColorStop(0.55, '#fff'); gr.addColorStop(0.8, '#777'); gr.addColorStop(1, '#000'); g.fillStyle = gr; g.fillRect(0, 0, N, N);
+    const t = new T.CanvasTexture(c); return t;
+  }
+
   /* ---------- eggs ---------- */
   function makeEgg(e) {
     const g = new T.Group(), root_ = new T.Group(); g.add(root_);
@@ -135,11 +167,12 @@
     const pg = new T.BufferGeometry(); pg.setAttribute('position', new T.BufferAttribute(new Float32Array([0, 0.75, 0]), 3));
     const halo = new T.Points(pg, gm); halo.frustumCulled = false; g.add(halo);
     // the pool of lime light on the ground round the egg
-    const pm = new T.MeshBasicMaterial({ map: LT, color: 0x7fe02a, transparent: true, opacity: 0, depthWrite: false, blending: T.AdditiveBlending, fog: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
-    const pool = new T.Mesh(GEO.disc, pm); pool.position.y = 0.05; pool.scale.setScalar(1.9); pool.renderOrder = 3; g.add(pool);
-    const goo = new T.Mesh(GEO.goo, M.goo); goo.position.y = 0.03; goo.scale.set(0.9, 1, 0.9); goo.visible = false; g.add(goo);
-    g.position.set(e.x, e.y, e.z); g.rotation.y = e.yaw; root.add(g);
-    return { g, root: root_, body, rim, lin, pet, core, fing, halo, gm, pool, pm, goo, ph: Math.random() * 6.28, shape: rnd(0.9, 1.1) };
+    const pm = new T.MeshBasicMaterial({ map: LT, color: 0x7fe02a, transparent: true, opacity: 0, depthWrite: false, blending: T.AdditiveBlending, fog: false, side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+    const pool = drapeMake(pm); pool.m.renderOrder = 3;
+    const gm2 = M.goo.clone(); gm2.userData.shared = false; gm2.alphaMap = GOO_T; gm2.side = T.DoubleSide; gm2.polygonOffset = true; gm2.polygonOffsetFactor = -2; gm2.polygonOffsetUnits = -2; gm2.depthWrite = false;
+    const goo = drapeMake(gm2); goo.m.renderOrder = 2;
+    g.position.set(e.x, e.y, e.z); root.add(g);
+    return { g, root: root_, body, rim, lin, pet, core, fing, halo, gm, pool, pm, goo, ph: Math.random() * 6.28, shape: rnd(0.9, 1.1), yaw: e.yaw, nrm: new T.Vector3(0, 1, 0), fitT: -9, qy: new T.Quaternion().setFromAxisAngle(UPV, e.yaw) };
   }
   function frameEgg(S, e, o) {
     const AL = SS.alien, p = AL.egg_progress(S, e), st = e.st;
@@ -165,7 +198,7 @@
     const cc = st === 3 ? 0.3 : 0.55 + 0.45 * p; o.core.material.color.setRGB((0.4 + 0.25 * pulse) * cc * 1.3, cc * 1.25, 0.12 * cc);
     o.gm.opacity = 0.55 * lit * (0.5 + 0.5 * pulse) * (0.7 + 0.6 * flare); o.gm.size = 0.9 + 1.7 * (st === 3 ? 0.3 : p) + 0.5 * flare;
     o.pm.opacity = (st === 4 ? 0 : st === 3 ? 0.1 : 0.05 + 0.6 * p * p) * (0.7 + 0.5 * pulse);
-    o.pool.scale.setScalar(1.5 + 1.3 * p);
+    o.pool.m.visible = o.pm.opacity > 0.004;
     // fingers over the rim
     const fk = st === 1 ? sm(0.93, 1, p) : 0;
     for (let k = 0; k < 4; k++) {
@@ -175,7 +208,21 @@
       f.fg.scale.setScalar(fk);
     }
     // the husk and the spent egg: a puddle of goo
-    o.goo.visible = st === 4 || st === 3; if (o.goo.visible) o.goo.scale.set(1, 1, 1).multiplyScalar(st === 4 ? 0.72 : 0.5);
+    o.gooR = st === 4 ? 0.95 : st === 3 ? 0.78 : 0.56;
+  }
+  /* the egg sits in the ground: it leans halfway between upright and the surface normal, sinks a little (more on a slope), and the pool of light and the slime skirt are
+   * draped on the actual terrain (refitted twice a second: a blast or the acid may change the ground under it) */
+  const UPV = new T.Vector3(0, 1, 0), qa = new T.Quaternion(), vb = new T.Vector3();
+  function settleEgg(S, e, o, p) {
+    if (tNow - o.fitT > 0.5 + 0.05 * (e.id % 5) || (o.fitY !== e.y)) {
+      o.fitT = tNow; o.fitY = e.y;
+      groundNormal(e.x, e.y, e.z, o.nrm);
+      const lean = Math.min(1, 0.55 + 0.1 * Math.min(1, (1 - o.nrm.y) * 3)); vb.copy(UPV).multiplyScalar(1 - lean * 0.6).addScaledVector(o.nrm, lean * 0.6).normalize();
+      o.lean = vb.clone(); o.tilt = Math.acos(Math.min(1, o.nrm.y));
+      drapeFit(o.pool, e.x, e.y, e.z, 1.5 + 1.3 * p, 0.035); drapeFit(o.goo, e.x, e.y, e.z, o.gooR || 0.6, 0.02);
+    }
+    qa.setFromUnitVectors(UPV, o.lean || UPV); o.g.quaternion.copy(qa).multiply(o.qy);
+    o.g.position.set(e.x, e.y - (0.025 + 0.4 * Math.tan(0.5 * (o.tilt || 0)) * 0.7), e.z);
   }
 
   /* ---------- acid ---------- */
@@ -246,7 +293,7 @@
     if (!scene) return;
     clearAll();
     if (!env) env = studioEnv();
-    geos(); LT = lightTexture();
+    geos(); LT = lightTexture(); if (GOO_T) GOO_T.dispose(); GOO_T = gooTexture();
     if (M.skin.envMap !== env) { M.skin.envMap = env; M.lining.envMap = env; M.skin.needsUpdate = M.lining.needsUpdate = true; }
     root = new T.Group(); root.frustumCulled = false; scene.add(root);
     makeAcid();
@@ -261,8 +308,8 @@
   AV.frame = function (S, view, camera, dt) {
     if (!root || !S.alien) return;
     dt = dt || 0.016; tNow += dt;
-    const A = S.alien;
-    for (const e of A.eggs) { let o = eggs.get(e.id); if (!o) { o = makeEgg(e); eggs.set(e.id, o); } o.g.position.y = e.y; frameEgg(S, e, o); }
+    const A = S.alien, AL_ = SS.alien;
+    for (const e of A.eggs) { let o = eggs.get(e.id); if (!o) { o = makeEgg(e); eggs.set(e.id, o); } frameEgg(S, e, o); settleEgg(S, e, o, AL_.egg_progress(S, e)); }
     for (const [id, o] of hugs) if (!A.huggers.some(h => h.id === id)) { detach(o); o.segs.dispose(); o.balls.dispose(); o.claws.dispose(); hugs.delete(id); }
     for (const h of A.huggers) {
       let o = hugs.get(h.id); if (!o) { o = AV.hugMake(root); hugs.set(h.id, o); }
