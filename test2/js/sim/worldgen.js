@@ -23,7 +23,7 @@
    * (F.isl, its own rng: the rest of the layout keeps its random sequence), the old fine wobble, and a 2D noise term
    * that cuts coves and pushes out headlands; the edge is softly capped below ISL_MAX (inside the play circle,
    * never a coast drawn by the circle itself) and kept above 0.6 x base (room for spawns and props). */
-  const ISL_MAX = 44.5;        // m: no coast farther than this from the centre (the play circle; lattice edge at 48)
+  let ISL_MAX = 44.5;          // m: no coast farther than this from the centre (the play circle W.PR; lattice edge at SX / 2); set in begin
   const CLIFF_S = 2.2;         // sea-cliff face slope (65°): the cliff band = (h − SEA + 0.4) / CLIFF_S, up to ~15 m
   const BEACH_S = 0.12;        // beach face slope (~7°: sand / shingle foreshore), also the shoreface below the water
   const BEACH_W = 4;           // m: dry beach width before the backshore rises
@@ -41,34 +41,34 @@
    * blend by cliffiness c (headland offset, angular noise, per-biome bias cb). The old rule (h − k0·distance beyond a
    * radius) let 25 m hills run 26 m past the edge: the islands filled the lattice square and met its border. */
   function coast(h, x, z, base, wob, cb) {
-    const e = falloff(x, z, base, wob, true), d = e + Math.max(0, h - W.SEA + 0.4) / CLIFF_S, u = -e;
+    const e = falloff(x, z, base, wob, true), d = e + M.max(0, h - W.SEA + 0.4) / CLIFF_S, u = -e;
     let P;
     if (u <= 0) P = W.SEA + BEACH_S * u - 0.02 * u * u;
     else {
-      const ur = M.clamp(u - BEACH_W, 0, BEACH_R), ul = Math.max(0, u - BEACH_W - BEACH_R);
-      P = W.SEA + BEACH_S * Math.min(u, BEACH_W + BEACH_R) + (BACK_S - BEACH_S) * ur * ur / (2 * BEACH_R)
+      const ur = M.clamp(u - BEACH_W, 0, BEACH_R), ul = M.max(0, u - BEACH_W - BEACH_R);
+      P = W.SEA + BEACH_S * M.min(u, BEACH_W + BEACH_R) + (BACK_S - BEACH_S) * ur * ur / (2 * BEACH_R)
         + ul * BACK_S;
     }
     if (d <= 0 && h <= P) return h;
     const hc = d <= 0 ? h : h - d * CLIFF_S;
-    const hb = Math.min(h, P);
-    const a = M.atan2(z - 48, x - 48);
+    const hb = M.min(h, P);
+    const a = M.atan2(z - W.MZ, x - W.MX);
     let c = 0.5 + cb + coastHead / 5 + 1.8 * (M.noise2(M.cos(a) * 2.6 + 1.7, M.sin(a) * 2.6 - 4.2, seed + 131) - 0.5);
     c = M.clamp(c, 0, 1); c = c * c * (3 - 2 * c);
     return hb + (hc - hb) * c;
   }
   function falloff(x, z, base, wob, signed) {
-    const dx = x - 48, dz = z - 48, r = M.len2(dx, dz), a = M.atan2(dz, dx), I = F.isl;
+    const dx = x - W.MX, dz = z - W.MZ, r = M.len2(dx, dz), a = M.atan2(dz, dx), I = F.isl;
     let edge = base + wob * (M.noise2(M.cos(a) * 1.8 + 7.3, M.sin(a) * 1.8 + 3.1, seed + 99) - 0.5) * 2;
     if (I) {
       let lobes = 0;
       for (let k = 0; k < 4; k++) lobes += I.A[k] * M.cos((k + 1) * a + I.P[k]);
       edge += base * lobes * I.k + 8 * I.k * (fbm2(x / 13, z / 13, 77, 3) - 0.5);
       if (edge > ISL_MAX - 5) edge = ISL_MAX - 5 * M.exp(-(edge - (ISL_MAX - 5)) / 5);
-      edge = Math.max(edge, 0.6 * base);
+      edge = M.max(edge, 0.6 * base);
     }
     coastHead = edge - base;
-    return signed ? r - edge : Math.max(0, r - edge);
+    return signed ? r - edge : M.max(0, r - edge);
   }
 
   /* desert dunes + mesas without the island edge (pure in x, z for a given seed; also the far ring, Step D).
@@ -108,13 +108,13 @@
     else { const q = (pf - aS) / (1 - aS); g = 1 - 1.5 * q + 0.5 * q * q * q; }
     const dune = DUNE_H * lamL * mod * g * (1 + 0.6 * L) / sc;
     const sandTop = bed + 1.5 + dune + 2.5 * (L ? M.lerp(fbm2(x / 18, z / 18, 4, 3), 0.5, L) : fbm2(x / 18, z / 18, 4, 3));
-    const fade = sat((M.len2(x - 48, z - 48) - MESA_R0) / MESA_W);
+    const fade = sat((M.len2(x - W.MX, z - W.MZ) - MESA_R0) / MESA_W);
     const m = fade >= 1 ? 0 : fbm2(x / (16 * sc), z / (16 * sc), 6, 3) - 0.5 * fade;
     let h = sandTop, sand = sandTop - bed;
     if (m > 0.6) {
       let mh = 10 + 14 * sat((m - 0.6) / 0.12);
       const tq = Math.floor(mh / 4) * 4; mh = tq + 4 * sm(sat(((mh - tq) / 4 - 0.5) / 0.25));
-      if (mh > h) { h = mh; sand = Math.max(0, 0.6 - (mh - sandTop) * 0.3); }
+      if (mh > h) { h = mh; sand = M.max(0, 0.6 - (mh - sandTop) * 0.3); }
     }
     desertSand = sand;
     return h;
@@ -125,23 +125,23 @@
     temperate(x, z) {
       let h = 3 + 22 * sat((fbm2(x / 30, z / 30, 1, 4) - 0.28) / 0.44);
       const tq = Math.floor(h / 3) * 3; h = tq + 3 * sm(sat((h - tq) / 3 * 1.7 - 0.35));
-      h += Math.max(0, 1 - Math.abs(fbm2(x / 17, z / 17, 7, 3) - 0.5) * 7) * 5;
-      const cv = Math.abs((x - 48) * F.ca + (z - 48) * F.sa + 10 * (M.noise2(x / 22, z / 22, seed + 3) - 0.5));
-      h -= Math.max(0, 7 - cv) * 1.4;
-      return coast(h, x, z, 39, 4, 0);
+      h += M.max(0, 1 - Math.abs(fbm2(x / 17, z / 17, 7, 3) - 0.5) * 7) * 5;
+      const cv = Math.abs((x - W.MX) * F.ca + (z - W.MZ) * F.sa + 10 * (M.noise2(x / 22, z / 22, seed + 3) - 0.5));
+      h -= M.max(0, 7 - cv) * 1.4;
+      return coast(h, x, z, 39 * W.SC, 4, 0);
     },
     alpine(x, z) {
       const rd = M.ridge2(x / 34, z / 34, seed + 1, 4);
       let h = 2 + 33 * M.pow(rd, 1.7) + 5 * fbm2(x / 16, z / 16, 2, 3);
-      h = Math.min(h, 34);
-      return coast(h, x, z, 38, 5, 0.2);       // fjord-like: mostly rock walls
+      h = M.min(h, 34);
+      return coast(h, x, z, 38 * W.SC, 5, 0.2);       // fjord-like: mostly rock walls
     },
     canyon(x, z) {
       let h = 5 + 22 * sat((fbm2(x / 28, z / 28, 1, 4) - 0.25) / 0.45);
       const st = 4.5, tq = Math.floor(h / st) * st; h = tq + st * sm(sat(((h - tq) / st - 0.55) / 0.2));
       const cn = Math.abs(fbm2(x / 22, z / 22, 5, 3) - 0.5), cd = sat(1 - cn / 0.055);
       h = M.lerp(h, 3.9 + 2.2 * fbm2(x / 9, z / 9, 6, 2), M.pow(cd, 0.7));
-      return coast(h, x, z, 40, 4, 0.25);        // sandstone sea cliffs
+      return coast(h, x, z, 40 * W.SC, 4, 0.25);        // sandstone sea cliffs
     },
     desert(x, z, col) {
       const h = desertH(x, z);
@@ -157,11 +157,11 @@
         let cone = v.Hv * M.pow(1 - r / v.Rb, v.ex);
         cone -= M.pow(1 - Math.abs(M.sin(th * 7 + 3 * fbm2(x / 15, z / 15, 4, 2))), 5) * sat(r / 12) * sat((v.Rb - r) / 10) * 2.4;
         cone += M.exp(-M.pow((r - v.Rc - 0.6) / 1.4, 2)) * 1.2;               // crater lip
-        if (r < v.Rc + 1.5) cone = Math.min(cone, v.floor - v.base + (v.rim - v.floor) * M.pow(sat(r / (v.Rc + 1.5)), 2.2));
-        h = Math.max(h, cone + v.base);
+        if (r < v.Rc + 1.5) cone = M.min(cone, v.floor - v.base + (v.rim - v.floor) * M.pow(sat(r / (v.Rc + 1.5)), 2.2));
+        h = M.max(h, cone + v.base);
       }
       }
-      return coast(h, x, z, 42, 4, 0);
+      return coast(h, x, z, 42 * W.SC, 4, 0);
     }
   };
 
@@ -184,30 +184,31 @@
     const fv = settings && settings.volcanoes, forced = fv != null && fv !== 'auto' && fv !== '' && !isNaN(+fv);
     if (forced) n = M.clamp(+fv | 0, 0, 3);
     else if (VR() < 0.7) { n = 1; if (VR() < 0.35) { n = 2; if (VR() < 0.17) n = 3; } }
-    const sz = [[36, 44, 28, 34], [24, 32, 18, 26], [19, 25, 14, 20]][Math.max(0, n - 1)];
+    if (!forced && W.SC > 1 && n >= 1 && n < 3 && VR() < 0.5) n++;                // P38: a bigger island carries one more cone half of the time (no draw on the normal map)
+    const sz = [[36, 44, 28, 34], [24, 32, 18, 26], [19, 25, 14, 20]][M.max(0, n - 1)];
     F.volcanoes = [];
     if (n === 1) {                                                             // the classic cone near the centre
-      const v = { x: 48 + RR(-5, 5), z: 48 + RR(-5, 5), Rb: forced ? 44 : VRR(sz[0], sz[1]), Hv: forced ? 34 : VRR(sz[2], sz[3]), ex: 1.3, base: 2 };
+      const v = { x: W.MX + RR(-5, 5) * W.SC, z: W.MZ + RR(-5, 5) * W.SC, Rb: (forced ? 44 : VRR(sz[0], sz[1])) * W.SC, Hv: forced ? 34 : VRR(sz[2], sz[3]), ex: 1.3, base: 2 };
       v.Rc = M.clamp(v.Rb * 0.13, 3.4, 5.6);
       const q = R(); v.nCanals = q < 0.3 ? 0 : q < 0.7 ? 1 : 2;
       F.volcanoes.push(v);
     } else for (let t = 0; t < 400 && F.volcanoes.length < n; t++) {
-      const Rb = VRR(sz[0], sz[1]), Hv = VRR(sz[2], sz[3]), a = VR() * M.TAU, d = VRR(8, 26);
-      const x = 48 + M.cos(a) * d, z = 48 + M.sin(a) * d;
+      const Rb = VRR(sz[0], sz[1]), Hv = VRR(sz[2], sz[3]), a = VR() * M.TAU, d = VRR(8, 26) * W.SC;
+      const x = W.MX + M.cos(a) * d, z = W.MZ + M.sin(a) * d;
       if (F.volcanoes.some(o => M.len2(o.x - x, o.z - z) < (o.Rb + Rb) * 0.5)) continue;
       const q = VR();
       F.volcanoes.push({ x, z, Rb, Hv, Rc: M.clamp(Rb * 0.13, 3.4, 5.6), ex: 1.3, base: 2, nCanals: q < 0.3 ? 0 : q < 0.7 ? 1 : 2 });
     }
     for (const v of F.volcanoes) {
       v.rim = v.Hv * M.pow(1 - v.Rc / v.Rb, v.ex) + 1.2 + v.base;                                     // rim/floor/lake are true heights
-      v.floor = v.rim - Math.min(5.2, v.Rc * 0.95); v.lake = v.floor + 1.9;
+      v.floor = v.rim - M.min(5.2, v.Rc * 0.95); v.lake = v.floor + 1.9;
     }
     F.volcano = F.volcanoes[0] || null;                       // (compat: the first / biggest one)
   }
   const nearVolcano = (x, z, pad) => F.volcanoes && F.volcanoes.some(v => M.len2(x - v.x, z - v.z) < v.Rc + pad);
   function gradH(i, k) {
-    const a = hgt[k * NX + Math.max(0, i - 1)], b = hgt[k * NX + Math.min(NX - 1, i + 1)];
-    const c = hgt[Math.max(0, k - 1) * NX + i], d = hgt[Math.min(NZ - 1, k + 1) * NX + i];
+    const a = hgt[k * NX + M.max(0, i - 1)], b = hgt[k * NX + M.min(NX - 1, i + 1)];
+    const c = hgt[M.max(0, k - 1) * NX + i], d = hgt[M.min(NZ - 1, k + 1) * NX + i];
     return [(b - a) / (2 * H), (d - c) / (2 * H)];
   }
   /* trace one canal from the crater lake down to the sea: [{x, z, level, w}] every 0.5 m */
@@ -217,15 +218,15 @@
     const path = [];
     for (let s = 0; s < 400; s++) {
       const i = clamp(Math.round(x / H), 1, NX - 2), k = clamp(Math.round(z / H), 1, NZ - 2);
-      const g = gradH(i, k), gl = M.len2(g[0], g[1]) || 1;
-      const radial = [x - v.x, z - v.z], rl = M.len2(radial[0], radial[1]) || 1;
+      const g = gradH(i, k), gl = M.nz(M.len2(g[0], g[1]), 1);
+      const radial = [x - v.x, z - v.z], rl = M.nz(M.len2(radial[0], radial[1]), 1);
       const mx = (M.noise2(s * 0.05, seedK * 7.1, seed + 41) - 0.5) * 1.6;
       // inside the crater/rim the descent points into the bowl: leave radially through the breach first
       const wg = rl < v.Rc + 3.5 ? 0 : 0.9;
       let nx = -g[0] / gl * wg + radial[0] / rl * 0.7 + (-dz) * mx, nz = -g[1] / gl * wg + radial[1] / rl * 0.7 + dx * mx;
-      let nl = M.len2(nx, nz) || 1; nx /= nl; nz /= nl;
+      let nl = M.nz(M.len2(nx, nz), 1); nx /= nl; nz /= nl;
       const outward = (nx * radial[0] + nz * radial[1]) / rl;                     // never turn back towards the vent
-      if (outward < 0.3) { nx += radial[0] / rl * (0.3 - outward) * 1.5; nz += radial[1] / rl * (0.3 - outward) * 1.5; nl = M.len2(nx, nz) || 1; nx /= nl; nz /= nl; }
+      if (outward < 0.3) { nx += radial[0] / rl * (0.3 - outward) * 1.5; nz += radial[1] / rl * (0.3 - outward) * 1.5; nl = M.nz(M.len2(nx, nz), 1); nx /= nl; nz /= nl; }
       dx = dx * 0.7 + nx * 0.3; dz = dz * 0.7 + nz * 0.3; const dl = M.len2(dx, dz); dx /= dl; dz /= dl;
       x += dx * 0.5; z += dz * 0.5;
       if (x < 2 || z < 2 || x > W.SX - 2 || z > W.SZ - 2) break;
@@ -233,8 +234,8 @@
       // the design lava level keeps falling: slope >= 0.12 through the notch, >= 0.1 on the plain (Bingham lava
       // stalls and spills on flatter ground); low-slope stretches get a wider bed (the same discharge runs shallower)
       level -= rl < v.Rc + 3.5 ? 0.06 : 0.05;
-      if (rl > v.Rc + 0.6) level = Math.min(level, ground - 0.55);           // not inside the bowl: the rim crest is the control section
-      path.push({ x, z, level: Math.max(level, SEA + CANAL.DEPTH + 0.05), w: 1.4 + 0.5 * sat(s / 60) + 0.8 * sat((0.35 - gl) / 0.25) });
+      if (rl > v.Rc + 0.6) level = M.min(level, ground - 0.55);           // not inside the bowl: the rim crest is the control section
+      path.push({ x, z, level: M.max(level, SEA + CANAL.DEPTH + 0.05), w: 1.4 + 0.5 * sat(s / 60) + 0.8 * sat((0.35 - gl) / 0.25) });
       if (ground < SEA + 0.3 && path.length > 8) break;                       // reached the shore: the bed stays above the sea,
                                                                               // the lava leaves the canal end down the beach
     }
@@ -253,9 +254,9 @@
     const cl = new Float32Array(NC), cw = new Float32Array(NC), cs = new Float32Array(NC), cp = new Int8Array(NC).fill(-1);
     paths.forEach((path, pi) => {
       for (let q = 0; q + 1 < path.length; q++) {
-        const a = path[q], b = path[q + 1], R0 = Math.max(a.w, b.w) + 4.5;
-        const i0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - R0) / H)), i1 = Math.min(NX - 1, Math.ceil((Math.max(a.x, b.x) + R0) / H));
-        const k0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - R0) / H)), k1 = Math.min(NZ - 1, Math.ceil((Math.max(a.z, b.z) + R0) / H));
+        const a = path[q], b = path[q + 1], R0 = M.max(a.w, b.w) + 4.5;
+        const i0 = M.max(0, Math.floor((M.min(a.x, b.x) - R0) / H)), i1 = M.min(NX - 1, Math.ceil((M.max(a.x, b.x) + R0) / H));
+        const k0 = M.max(0, Math.floor((M.min(a.z, b.z) - R0) / H)), k1 = M.min(NZ - 1, Math.ceil((M.max(a.z, b.z) + R0) / H));
         const ex = b.x - a.x, ez = b.z - a.z, el = ex * ex + ez * ez || 1;
         for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
           const px = i * H, pz = k * H, u = clamp(((px - a.x) * ex + (pz - a.z) * ez) / el, 0, 1);
@@ -273,7 +274,7 @@
       const col = k * NX + i, x = i * H, z = k * H, dd = canalD[col];
       for (const o of F.volcanoes) {
         const ro = M.len2(x - o.x, z - o.z);
-        if (ro < o.Rc + 1.5) F.lavaInit[col] = Math.max(F.lavaInit[col], o.lake);  // lake (lava.js floods it from the vent)
+        if (ro < o.Rc + 1.5) F.lavaInit[col] = M.max(F.lavaInit[col], o.lake);  // lake (lava.js floods it from the vent)
         if (ro < o.Rc + 2.5) lavaZone[col] = 1;
       }
       if (dd > 30) continue;
@@ -284,19 +285,19 @@
       const h0 = hgt[col];
       // inside the crater and through the rim: carve only (a V-notch); outside: exact channel + levees
       const lw = sat((r - v.Rc - 2) / 2);
-      const carved = Math.min(h0, dd < cIn ? prof : crest + (dd - cIn) * CANAL.NOTCH);
-      const built = dd < cIn ? prof : Math.max(h0, prof);
+      const carved = M.min(h0, dd < cIn ? prof : crest + (dd - cIn) * CANAL.NOTCH);
+      const built = dd < cIn ? prof : M.max(h0, prof);
       hgt[col] = carved + (built - carved) * lw;
       if (dd < cOut + 1) lavaZone[col] = 1;
-      if (dd < w * CANAL.FILL_W && cp[col] >= 0 && cs[col] <= fills[cp[col]]) F.lavaInit[col] = Math.max(F.lavaInit[col], Math.min(lv - 0.2, h0 + 2));   // ~0.5 m deep (near the steady flow)
+      if (dd < w * CANAL.FILL_W && cp[col] >= 0 && cs[col] <= fills[cp[col]]) F.lavaInit[col] = M.max(F.lavaInit[col], M.min(lv - 0.2, h0 + 2));   // ~0.5 m deep (near the steady flow)
     }
-    F.canals = paths.map((p, pi) => ({ pts: p.map(q => [+q.x.toFixed(2), +q.level.toFixed(2), +q.z.toFixed(2), +q.w.toFixed(2)]), fill: +(fills[pi] / Math.max(1, p.length - 1)).toFixed(2) }));
+    F.canals = paths.map((p, pi) => ({ pts: p.map(q => [+q.x.toFixed(2), +q.level.toFixed(2), +q.z.toFixed(2), +q.w.toFixed(2)]), fill: +(fills[pi] / M.max(1, p.length - 1)).toFixed(2) }));
   }
 
   /* overhang band (spec.band): floating-looking ledges grown out of the hillside between 14 and 26 m; density, or
    * -9 outside the band */
   function bandD(x, y, z, r) {
-    const band = Math.max(0, 14 - y, y - 26) * 1.6 + Math.max(0, r - 30) * 0.8;
+    const band = M.max(M.max(0, 14 - y), y - 26) * 1.6 + M.max(0, r - 30) * 0.8;
     return band < 5 ? (M.fbm3(x / 10, y / 6.5, z / 10, seed + 5, 2) - 0.64) * 9 - band : -9;
   }
 
@@ -315,7 +316,7 @@
       if (spec.band) for (let u = -1; u <= 1; u++) for (let v = -1; v <= 1; v++) {
         if (!u && !v) continue;
         const xx = x - uz * u * e, yy = y + v * e, zz = z + ux * u * e;
-        if (yy > 10 && yy < 31 && bandD(xx, yy, zz, M.len2(xx - 48, zz - 48)) > -0.2) return false;
+        if (yy > 10 && yy < 31 && bandD(xx, yy, zz, M.len2(xx - W.MX, zz - W.MZ)) > -0.2) return false;
       }
     }
     return true;
@@ -325,12 +326,12 @@
   function landmarks(nSp, nBr, spec) {
     const sp = [];
     for (let t = 0; t < 600 && sp.length < nSp; t++) {
-      const x = RR(18, 78), z = RR(18, 78), h = hgt[Math.round(z / H) * NX + Math.round(x / H)];
-      if (h < SEA + 3 || M.len2(x - 48, z - 48) > 32) continue;
+      const x = RR(W.MX - 30 * W.SC, W.MX + 30 * W.SC), z = RR(W.MZ - 30 * W.SC, W.MZ + 30 * W.SC), h = hgt[Math.round(z / H) * NX + Math.round(x / H)];
+      if (h < SEA + 3 || M.len2(x - W.MX, z - W.MZ) > 32 * W.SC) continue;
       if (nearVolcano(x, z, 7)) continue;
       if (canalD && canalD[Math.round(z / H) * NX + Math.round(x / H)] < 7) continue;     // keep canals free (lava under a spire)
       if (sp.some(s => M.len2(s[0] - x, s[1] - z) < 12)) continue;
-      sp.push([x, z, RR(spec.r0, spec.r1), Math.min(34, h + RR(spec.h0, spec.h1))]);
+      sp.push([x, z, RR(spec.r0, spec.r1), M.min(34, h + RR(spec.h0, spec.h1))]);
     }
     const br = [];
     for (let a = 0; a < sp.length && br.length < nBr; a++) for (let b = a + 1; b < sp.length && br.length < nBr; b++) {
@@ -362,23 +363,23 @@
     const D = W.d, Mt = W.mat;
     const sp = F.spires, br = F.bridges;
     let bandLo = 99, bandHi = -99;
-    for (const b of br) { bandLo = Math.min(bandLo, b[0][1], b[1][1]) - 3; bandHi = Math.max(bandHi, b[0][1], b[1][1]) + 3; }
+    for (const b of br) { bandLo = M.min(M.min(bandLo, b[0][1]), b[1][1]) - 3; bandHi = M.max(M.max(bandHi, b[0][1]), b[1][1]) + 3; }
     for (let k = kA; k < kB; k++) {
       const z = k * H;
       for (let i = 0; i < NX; i++) {
-        const x = i * H, col = k * NX + i, h = hgt[col], r = M.len2(x - 48, z - 48);
+        const x = i * H, col = k * NX + i, h = hgt[col], r = M.len2(x - W.MX, z - W.MZ);
         const near = sp.filter(s => M.len2(x - s[0], z - s[1]) < s[2] + 5);
         const edge = i === 0 || k === 0 || i === NX - 1 || k === NZ - 1;
-        const caveOK = !W.dry || (Math.min(i, k, NX - 1 - i, NZ - 1 - k) * H > BORDER_SOLID && r < C.DRY.LAT_R - BORDER_SOLID);   // D4/D6: the cut at the disc's edge matches the solid far ground
+        const caveOK = !W.dry || (M.min(M.min(M.min(i, k), NX - 1 - i), NZ - 1 - k) * H > BORDER_SOLID && r < C.DRY.LAT_R - BORDER_SOLID);   // D4/D6: the cut at the disc's edge matches the solid far ground
         for (let j = 0; j < NY; j++) {
           const y = j * H, o = (k * NY + j) * NX + i;
           let d = (h - y) * ginv[col], m = 0;
           for (const s of near) {
             if (y > s[3] + 1) continue;
             const hd = M.len2(x - s[0], z - s[1]);
-            const rad = s[2] + Math.max(0, 7 - y) * 0.25 + (M.fbm3(x * 0.41 + y * 0.12, y * 0.3, z * 0.41 - x * 0.09, seed + 11, 2) - 0.5) * 1.0;
+            const rad = s[2] + M.max(0, 7 - y) * 0.25 + (M.fbm3(x * 0.41 + y * 0.12, y * 0.3, z * 0.41 - x * 0.09, seed + 11, 2) - 0.5) * 1.0;
             const q = hd / rad, top = s[3] - q * q * rad * spec.dome + (M.noise2(x * 0.7, z * 0.7, seed + 17) - 0.5) * 0.5 * spec.dome;
-            const sd = Math.min(rad - hd, top - y);
+            const sd = M.min(rad - hd, top - y);
             if (sd > d) { d = sd; m = spec.spireMat || 0; }
           }
           if (y > bandLo && y < bandHi) for (const b of br) {
@@ -387,19 +388,19 @@
           }
           // Every term below is continuous (max/min of continuous fields) so the iso-surface stays smooth:
           // overhang band: floating-looking ledges grown out of the hillside between 14 and 26 m
-          if (spec.band && y > 10 && y < 31) d = Math.max(d, bandD(x, y, z, r));
+          if (spec.band && y > 10 && y < 31) d = M.max(d, bandD(x, y, z, r));
           // caves: thin noise shells above 4 m. `CAVE_WALL - d` keeps >= CAVE_WALL m of rock (d ~ signed distance) to
           // every outside surface, including cliffs, spires and bridges; a vertical-only limit left sub-voxel sheets
           // on steep walls that meshed as a waffle of holes.
           if (spec.caves && caveOK && y > 2.5 && d > CAVE_WALL * 0.5) {
-            let cv = Math.max((Math.abs(M.fbm3(x / 17, y / 8.5, z / 17, seed + 9, 2) - 0.5) - spec.caves * 1.15) * 16, 4 - y, CAVE_WALL - d, 8.5 - h);
+            let cv = M.max(M.max(M.max((Math.abs(M.fbm3(x / 17, y / 8.5, z / 17, seed + 9, 2) - 0.5) - spec.caves * 1.15) * 16, 4 - y), CAVE_WALL - d), 8.5 - h);
             // user 2026-10-08: no caves in the volcano's core (a hollow under the crater let a holed floor turn the lake
             // into a free-standing lava tube); the core holds the rock-walled feeding conduit (stampConduit)
-            for (const vo of F.volcanoes || []) cv = Math.max(cv, (vo.Rc + 7 - M.len2(x - vo.x, z - vo.z)) * 0.5);
+            for (const vo of F.volcanoes || []) cv = M.max(cv, (vo.Rc + 7 - M.len2(x - vo.x, z - vo.z)) * 0.5);
             if (cv < d) { d = cv; m = 0; }
           }
-          d = Math.max(d, 1.2 - y);
-          if (edge && y > 1.2 && !W.dry) d = Math.min(d, -1);                 // islands: a closed rim; dry: dunes to the border
+          d = M.max(d, 1.2 - y);
+          if (edge && y > 1.2 && !W.dry) d = M.min(d, -1);                 // islands: a closed rim; dry: dunes to the border
           D[o] = clamp(d, -3, 3); Mt[o] = d > 0 ? m : 0; W.heat[o] = 0;
         }
       }
@@ -429,9 +430,9 @@
         if (!s && (slit(v, a, b) || slit(v, c, e) || slit(v, f, g))) opp = 6;
         if (opp < 5) continue;
         const mean = (a + b + c + e + f + g) / 6;
-        if (s) { D[o] = Math.min(-0.05, mean * 0.5); Mt[o] = 0; W.heat[o] = 0; }
+        if (s) { D[o] = M.min(-0.05, mean * 0.5); Mt[o] = 0; W.heat[o] = 0; }
         else {
-          D[o] = Math.max(0.05, mean * 0.5);
+          D[o] = M.max(0.05, mean * 0.5);
           // material/heat of the most solid neighbour (0 before the material pass: assigned later)
           let best = o - 1, bd = a;
           if (b > bd) { bd = b; best = o + 1; } if (c > bd) { bd = c; best = o - NX; } if (e > bd) { bd = e; best = o + NX; }
@@ -477,7 +478,7 @@
     for (const e of spare.slice(0, 2 + M.rng_int(rng, 2))) edges.push(e);
     for (const [i, j] of edges) {
       const a = ch[i], b = ch[j], L = M.len2(b.x - a.x, b.z - a.z), r = RR(1.4, 2.1);
-      const steps = Math.max(3, Math.round(L / 3.5)), nx = -(b.z - a.z) / (L || 1), nz = (b.x - a.x) / (L || 1), amp = RR(1, 3.5), ph = RR(0, 6.28);
+      const steps = M.max(3, Math.round(L / 3.5)), nx = -(b.z - a.z) / (L || 1), nz = (b.x - a.x) / (L || 1), amp = RR(1, 3.5), ph = RR(0, 6.28);
       let prev = { x: a.x, y: a.y - a.ry * 0.45, z: a.z };
       for (let s = 1; s <= steps; s++) {
         const t = s / steps, wv = M.sin(t * Math.PI) * amp * M.sin(t * 2 * Math.PI + ph);
@@ -493,8 +494,8 @@
     const D = W.d, Mt = W.mat, SY = W.SY;
     D.fill(3); Mt.fill(0);
     const carve = (x0, y0, z0, x1, y1, z1, sdf) => {
-      const i0 = Math.max(1, Math.floor(x0 / H)), i1 = Math.min(NX - 2, Math.ceil(x1 / H)), j0 = Math.max(2, Math.floor(y0 / H)), j1 = Math.min(NY - 3, Math.ceil(y1 / H));
-      const k0 = Math.max(1, Math.floor(z0 / H)), k1 = Math.min(NZ - 2, Math.ceil(z1 / H));
+      const i0 = M.max(1, Math.floor(x0 / H)), i1 = M.min(NX - 2, Math.ceil(x1 / H)), j0 = M.max(2, Math.floor(y0 / H)), j1 = M.min(NY - 3, Math.ceil(y1 / H));
+      const k0 = M.max(1, Math.floor(z0 / H)), k1 = M.min(NZ - 2, Math.ceil(z1 / H));
       for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
         const o = (k * NY + j) * NX + i, d = sdf(i * H, j * H, k * H);
         if (d < D[o]) D[o] = d;
@@ -506,19 +507,19 @@
       carve(c.x - c.rx - m, c.y - c.ry - m, c.z - c.rz - m, c.x + c.rx + m, c.y + c.ry + m, c.z + c.rz + m, (x, y, z) => {
         const dy = y - c.y, ry = dy < 0 ? c.ry * 0.62 : c.ry;                 // flatter floor
         const e = M.len3((x - c.x) / c.rx, dy / ry, (z - c.z) / c.rz);
-        return (e - 1) * Math.min(c.rx, ry, c.rz) + wob(x, y, z);
+        return (e - 1) * M.min(M.min(c.rx, ry), c.rz) + wob(x, y, z);
       });
     }
     for (const [a, b, r] of UF.tu) {
       const m = r + 1.2;
-      carve(Math.min(a.x, b.x) - m, Math.min(a.y, b.y) - m, Math.min(a.z, b.z) - m, Math.max(a.x, b.x) + m, Math.max(a.y, b.y) + m, Math.max(a.z, b.z) + m,
+      carve(M.min(a.x, b.x) - m, M.min(a.y, b.y) - m, M.min(a.z, b.z) - m, M.max(a.x, b.x) + m, M.max(a.y, b.y) + m, M.max(a.z, b.z) + m,
         (x, y, z) => M.seg_dist(x, y, z, [a.x, a.y, a.z], [b.x, b.y, b.z]) - r + wob(x, y, z) * 0.7);
     }
     for (const q of UF.ni) carve(q.x - q.r - 1, q.y - q.r - 1, q.z - q.r - 1, q.x + q.r + 1, q.y + q.r + 1, q.z + q.r + 1, (x, y, z) => M.len3(x - q.x, y - q.y, z - q.z) - q.r + wob(x, y, z));
     for (let o = 0; o < D.length; o++) D[o] = D[o] > 3 ? 3 : D[o] < -3 ? -3 : D[o];
     // the lattice's outer shell and the bottom stay solid; the top layer is the (unreachable) roof
     for (let k = 0; k < NZ; k++) for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
-      if (i === 0 || k === 0 || i === NX - 1 || k === NZ - 1 || j < 2 || j * H > SY - 1) { const o = (k * NY + j) * NX + i; D[o] = Math.max(D[o], 1); }
+      if (i === 0 || k === 0 || i === NX - 1 || k === NZ - 1 || j < 2 || j * H > SY - 1) { const o = (k * NY + j) * NX + i; D[o] = M.max(D[o], 1); }
     }
     for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) { hgt[k * NX + i] = SY - 0.5; }
   }
@@ -557,24 +558,24 @@
     const wallAt = (X, Y, Z) => POCKET_WALL * (0.8 + 0.5 * M.noise3(X / 2.3, Y / 2.3, Z / 2.3, seed + 79));
     const caveAir = (o, i, j, k) => !W.under && D[o] <= 0 && j * H < hgt[k * NX + i] - 0.6;   // U: never plug the cave system
     for (let p = 0, tries = 0; p < n && tries < 400; tries++) {
-      const x = RR(14, 82), z = RR(14, 82), col = Math.round(z / H) * NX + Math.round(x / H), h = hgt[col];
+      const x = RR(W.MX - 34 * W.SC, W.MX + 34 * W.SC), z = RR(W.MZ - 34 * W.SC, W.MZ + 34 * W.SC), col = Math.round(z / H) * NX + Math.round(x / H), h = hgt[col];
       if (h < 9 || lavaZone[col]) continue;
       if (F.pockets.some(q => M.len2(q.x - x, q.z - z) < 12)) continue;
-      const rx = RR(2.2, 3.6), ry = RR(1.5, 2.3), rz = RR(2.2, 3.6), cy = W.under ? RR(5, W.SY - 8) : Math.max(SEA + ry + 1.2, h - RR(4.5, 8));
+      const rx = RR(2.2, 3.6), ry = RR(1.5, 2.3), rz = RR(2.2, 3.6), cy = W.under ? RR(5, W.SY - 8) : M.max(SEA + ry + 1.2, h - RR(4.5, 8));
       if (cy + ry > h - 1.8) continue;
       // is the column solid at the pocket centre (not inside a cave)?
       if (W.d[(Math.round(z / H) * NY + Math.round(cy / H)) * NX + Math.round(x / H)] <= 0.5) continue;
       const P = { x, y: cy, z, rx, ry, rz, vein: [] };
       // vein (dike): wiggly tapering tube from the pocket roof towards the surface, stopping POCKET_ROOF under it
-      let vx = x, vy = cy + ry * 0.8, vz = z; const top = Math.max(vy + 0.5, h - POCKET_ROOF);
+      let vx = x, vy = cy + ry * 0.8, vz = z; const top = M.max(vy + 0.5, h - POCKET_ROOF);
       P.vein.push([vx, vy, vz]);
       for (let s = 1; s <= 6; s++) { vx += RR(-0.7, 0.7); vz += RR(-0.7, 0.7); vy = cy + ry * 0.8 + (top - cy - ry * 0.8) * s / 6; P.vein.push([vx, vy, vz]); }
-      const ext = Math.max(rx, rz) + 2 + RW * H;
-      const i0 = Math.max(RW + 1, Math.floor((x - ext) / H)), i1 = Math.min(NX - 2 - RW, Math.ceil((x + ext) / H));
-      const k0 = Math.max(RW + 1, Math.floor((z - ext) / H)), k1 = Math.min(NZ - 2 - RW, Math.ceil((z + ext) / H));
-      const j0 = Math.max(3, Math.floor((cy - ry - 1.5) / H)), j1 = Math.min(NY - 2 - RW, Math.ceil((top + 1) / H));
+      const ext = M.max(rx, rz) + 2 + RW * H;
+      const i0 = M.max(RW + 1, Math.floor((x - ext) / H)), i1 = M.min(NX - 2 - RW, Math.ceil((x + ext) / H));
+      const k0 = M.max(RW + 1, Math.floor((z - ext) / H)), k1 = M.min(NZ - 2 - RW, Math.ceil((z + ext) / H));
+      const j0 = M.max(3, Math.floor((cy - ry - 1.5) / H)), j1 = M.min(NY - 2 - RW, Math.ceil((top + 1) / H));
       // 1. candidate lava voxels: inside the pocket / vein shape, rock or cave air, a full roof above
-      const cand = new Set();
+      const cand = [], candMask = new Uint8Array(NX * NY * NZ);                // (membership: a lattice mask, the list keeps the scan order)
       for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
         const o = (k * NY + j) * NX + i, X = i * H, Y = j * H, Z = k * H;
         if (!(D[o] > 0 || caveAir(o, i, j, k))) continue;
@@ -584,7 +585,7 @@
         const wob = (M.noise3(X / 1.5, Y / 1.5, Z / 1.5, seed + 77) - 0.5) * 0.3;
         if (!(e < 1 + wob * 0.3 || vd < vr + wob * 0.4)) continue;
         if (Y > hgt[k * NX + i] - wallAt(X, Y, Z) - 0.4) continue;
-        cand.add(o);
+        cand.push(o); candMask[o] = 1;
       }
       // 2. keep a candidate only if its whole wall can stand: every voxel within the wall distance is rock, cave air
       //    (to be plugged) or lava
@@ -595,13 +596,13 @@
         for (let dk = -RW; dk <= RW && okW; dk++) for (let dj = -RW; dj <= RW && okW; dj++) for (let di = -RW; di <= RW; di++) {
           if ((di * di + dj * dj + dk * dk) * H * H > wl * wl) continue;
           const q = o + dk * SXY + dj * NX + di;
-          if (D[q] > 0 || cand.has(q) || caveAir(q, i + di, j + dj, k + dk)) continue;
+          if (D[q] > 0 || candMask[q] || caveAir(q, i + di, j + dj, k + dk)) continue;
           okW = false; break;
         }
         if (okW) lava.push(o);
       }
       if (lava.length < 40) continue;
-      const isLava = new Set(lava);
+      const isLava = new Uint8Array(NX * NY * NZ); for (let q = 0; q < lava.length; q++) isLava[lava[q]] = 1;
       // 3. the wall: plug cave air (density ~ wall distance left, a smooth new cave surface), basalt, chilled margin
       for (const o of lava) {
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY), wl = wallAt(i * H, j * H, k * H);
@@ -609,13 +610,13 @@
           const d = Math.sqrt(di * di + dj * dj + dk * dk) * H;
           if (d > wl || d === 0) continue;
           const q = o + dk * SXY + dj * NX + di;
-          if (isLava.has(q)) continue;
-          if (D[q] <= 0) D[q] = Math.min(0.6, Math.max(0.05, wl - d));
-          else if (D[q] < wl - d) D[q] = Math.min(Math.max(D[q], wl - d), 1.5);
+          if (isLava[q]) continue;
+          if (D[q] <= 0) D[q] = M.min(0.6, M.max(0.05, wl - d));
+          else if (D[q] < wl - d) D[q] = M.min(M.max(D[q], wl - d), 1.5);
           Mt[q] = MAT.CRUST;                     // glassy chilled margin + baked contact zone (dark on the cut face)
         }
       }
-      for (const o of lava) { Mt[o] = MAT.LAVA; W.heat[o] = 250; D[o] = Math.max(D[o], 0.6); }
+      for (const o of lava) { Mt[o] = MAT.LAVA; W.heat[o] = 250; D[o] = M.max(D[o], 0.6); }
       P.vox = lava.length;
       F.vents.push({ x: vx, y: h, z: vz, kind: 'fumarole' });
       F.pockets.push(P); p++;
@@ -627,19 +628,19 @@
    * it breaches a walled lava body (lava.js breach) instead of a free column of the 2.5D layer */
   function stampConduit(v, vi) {
     const D = W.d, Mt = W.mat, SXY = NX * NY, c0 = Math.round(v.z / H) * NX + Math.round(v.x / H);
-    const yTop = hgt[c0] - 1.0, R0 = Math.max(0.7, v.Rc * 0.18), WALL = 1.2, MARGIN = 0.45, ext = R0 + WALL + 1;
-    const i0 = Math.max(2, Math.floor((v.x - ext - 1) / H)), i1 = Math.min(NX - 3, Math.ceil((v.x + ext + 1) / H));
-    const k0 = Math.max(2, Math.floor((v.z - ext - 1) / H)), k1 = Math.min(NZ - 3, Math.ceil((v.z + ext + 1) / H));
+    const yTop = hgt[c0] - 1.0, R0 = M.max(0.7, v.Rc * 0.18), WALL = 1.2, MARGIN = 0.45, ext = R0 + WALL + 1;
+    const i0 = M.max(2, Math.floor((v.x - ext - 1) / H)), i1 = M.min(NX - 3, Math.ceil((v.x + ext + 1) / H));
+    const k0 = M.max(2, Math.floor((v.z - ext - 1) / H)), k1 = M.min(NZ - 3, Math.ceil((v.z + ext + 1) / H));
     let n = 0;
     const axis = y => [v.x + (M.noise2(y * 0.11, 3.1 + vi, seed + 91) - 0.5) * 1.2, v.z + (M.noise2(y * 0.11, 7.7 + vi, seed + 92) - 0.5) * 1.2];
     for (let j = Math.ceil(3 / H); j * H <= yTop; j++) {
       const y = j * H, [cx, cz] = axis(y);
-      const R = R0 * (0.85 + 0.3 * M.noise2(y * 0.3, 1.3 + vi, seed + 93)) + Math.max(0, 6 - y) * 0.12;    // a little wider at the root
+      const R = R0 * (0.85 + 0.3 * M.noise2(y * 0.3, 1.3 + vi, seed + 93)) + M.max(0, 6 - y) * 0.12;    // a little wider at the root
       for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
         const o = (k * NY + j) * NX + i, r = M.len2(i * H - cx, k * H - cz);
-        if (r < R && y < yTop - 0.2) { Mt[o] = MAT.LAVA; W.heat[o] = 250; D[o] = Math.max(D[o], 0.6); n++; }
+        if (r < R && y < yTop - 0.2) { Mt[o] = MAT.LAVA; W.heat[o] = 250; D[o] = M.max(D[o], 0.6); n++; }
         else if (r < R + WALL + (y > yTop - 0.6 ? 0.6 : 0)) {
-          D[o] = Math.max(D[o], Math.min(1.5, R + WALL - r + 0.3));
+          D[o] = M.max(D[o], M.min(1.5, R + WALL - r + 0.3));
           Mt[o] = r < R + MARGIN ? MAT.CRUST : MAT.BASALT;
         }
       }
@@ -648,7 +649,7 @@
     // pockets (ellipsoids), all walled; a pocket must stay >= 1.6 m under the flank (sealed: no damage until breached)
     const branches = [];
     for (let b = 0, nb = 1 + M.rng_int(rng, 3), tries = 0; b < nb && tries < 30; tries++) {
-      const yb = RR(4, Math.max(5, yTop * 0.65)), a = R() * M.TAU, L = RR(4, Math.min(10, v.Rb * 0.32)), dy = RR(-1.5, 2.5);
+      const yb = RR(4, M.max(5, yTop * 0.65)), a = R() * M.TAU, L = RR(4, M.min(10, v.Rb * 0.32)), dy = RR(-1.5, 2.5);
       const [bx, bz] = axis(yb), ex = bx + M.cos(a) * L, ez = bz + M.sin(a) * L, ey = yb + dy;
       const rx = RR(1.6, 2.8), ry = RR(1.1, 1.8), rz = RR(1.6, 2.8);
       const ground = hgt[clamp(Math.round(ez / H), 0, NZ - 1) * NX + clamp(Math.round(ex / H), 0, NX - 1)];
@@ -656,16 +657,16 @@
       branches.push({ a: [bx, yb, bz], b: [ex, ey, ez], rx, ry, rz }); b++;
     }
     for (const br of branches) {
-      const bi0 = Math.max(2, Math.floor((Math.min(br.a[0], br.b[0]) - 4.5) / H)), bi1 = Math.min(NX - 3, Math.ceil((Math.max(br.a[0], br.b[0]) + 4.5) / H));
-      const bk0 = Math.max(2, Math.floor((Math.min(br.a[2], br.b[2]) - 4.5) / H)), bk1 = Math.min(NZ - 3, Math.ceil((Math.max(br.a[2], br.b[2]) + 4.5) / H));
-      const bj0 = Math.max(2, Math.floor((Math.min(br.a[1], br.b[1]) - 3.5) / H)), bj1 = Math.min(NY - 3, Math.ceil((Math.max(br.a[1], br.b[1]) + 3.5) / H));
+      const bi0 = M.max(2, Math.floor((M.min(br.a[0], br.b[0]) - 4.5) / H)), bi1 = M.min(NX - 3, Math.ceil((M.max(br.a[0], br.b[0]) + 4.5) / H));
+      const bk0 = M.max(2, Math.floor((M.min(br.a[2], br.b[2]) - 4.5) / H)), bk1 = M.min(NZ - 3, Math.ceil((M.max(br.a[2], br.b[2]) + 4.5) / H));
+      const bj0 = M.max(2, Math.floor((M.min(br.a[1], br.b[1]) - 3.5) / H)), bj1 = M.min(NY - 3, Math.ceil((M.max(br.a[1], br.b[1]) + 3.5) / H));
       const n0 = n;
       for (let k = bk0; k <= bk1; k++) for (let j = bj0; j <= bj1; j++) for (let i = bi0; i <= bi1; i++) {
         const X = i * H, Y = j * H, Z = k * H, o = (k * NY + j) * NX + i;
         const dDike = M.seg_dist(X, Y, Z, br.a, br.b) - 0.45, e = M.len3((X - br.b[0]) / br.rx, (Y - br.b[1]) / br.ry, (Z - br.b[2]) / br.rz);
-        const dPocket = (e - 1) * Math.min(br.rx, br.ry, br.rz), d = Math.min(dDike, dPocket);
-        if (d < 0) { Mt[o] = MAT.LAVA; W.heat[o] = 250; D[o] = Math.max(D[o], 0.6); n++; }
-        else if (d < WALL && Mt[o] !== MAT.LAVA) { D[o] = Math.max(D[o], Math.min(1.5, WALL - d + 0.3)); Mt[o] = d < MARGIN ? MAT.CRUST : MAT.BASALT; }
+        const dPocket = (e - 1) * M.min(M.min(br.rx, br.ry), br.rz), d = M.min(dDike, dPocket);
+        if (d < 0) { Mt[o] = MAT.LAVA; W.heat[o] = 250; D[o] = M.max(D[o], 0.6); n++; }
+        else if (d < WALL && Mt[o] !== MAT.LAVA) { D[o] = M.max(D[o], M.min(1.5, WALL - d + 0.3)); Mt[o] = d < MARGIN ? MAT.CRUST : MAT.BASALT; }
       }
       F.pockets.push({ x: br.b[0], y: br.b[1], z: br.b[2], rx: br.rx, ry: br.ry, rz: br.rz, vein: [br.a, br.b], volcano: vi, vox: n - n0 });
     }
@@ -676,7 +677,7 @@
   function placeFumaroles() {
     const add = (x, z) => { const c = clamp(Math.round(z / H), 0, NZ - 1) * NX + clamp(Math.round(x / H), 0, NX - 1), h = hgt[c]; if (h < SEA + 1.2 || lavaZone[c] || (canalD && canalD[c] < 3)) return false; F.vents.push({ x, y: h, z, kind: 'fumarole' }); return true; };
     for (const v of F.volcanoes) for (let q = 0, n = 2 + M.rng_int(rng, 3), t = 0; q < n && t < 40; t++) { const a = R() * M.TAU, r = RR(v.Rc + 3, v.Rb * 0.5); if (add(v.x + M.cos(a) * r, v.z + M.sin(a) * r)) q++; }
-    for (let q = 0, n = 1 + M.rng_int(rng, 3), t = 0; q < n && t < 60; t++) if (add(RR(16, 80), RR(16, 80))) q++;
+    for (let q = 0, n = Math.round((1 + M.rng_int(rng, 3)) * W.SC * W.SC), t = 0; q < n && t < 60 * W.SC; t++) if (add(RR(W.MX - 32 * W.SC, W.MX + 32 * W.SC), RR(W.MZ - 32 * W.SC, W.MZ + 32 * W.SC))) q++;
   }
   function stampIceShelf() {
     // distance-to-land on the column grid (two-pass chamfer), ice where the sea is shallow near shore
@@ -684,18 +685,18 @@
     for (let c = 0; c < NC; c++) dist[c] = hgt[c] > SEA - 0.2 ? 0 : 1e9;
     for (let pass = 0; pass < 2; pass++) for (let kk = 0; kk < NZ; kk++) for (let ii = 0; ii < NX; ii++) {
       const k = pass ? NZ - 1 - kk : kk, i = pass ? NX - 1 - ii : ii, c = k * NX + i, s = pass ? 1 : -1;
-      if (i + s >= 0 && i + s < NX) dist[c] = Math.min(dist[c], dist[c + s] + H);
-      if (k + s >= 0 && k + s < NZ) dist[c] = Math.min(dist[c], dist[c + s * NX] + H);
+      if (i + s >= 0 && i + s < NX) dist[c] = M.min(dist[c], dist[c + s] + H);
+      if (k + s >= 0 && k + s < NZ) dist[c] = M.min(dist[c], dist[c + s * NX] + H);
     }
     const a0 = R() * M.TAU;
     for (let k = 1; k < NZ - 1; k++) for (let i = 1; i < NX - 1; i++) {
       const c = k * NX + i, x = i * H, z = k * H;
-      const ang = M.atan2(z - 48, x - 48), sector = M.cos(ang - a0);
+      const ang = M.atan2(z - W.MZ, x - W.MX), sector = M.cos(ang - a0);
       const reach = 4 + 6 * sat(sector * 1.5) + 2 * (M.noise2(x / 6, z / 6, seed + 61) - 0.5);
       if (dist[c] <= 0 || dist[c] > reach) continue;
       const topY = SEA + 0.32 - dist[c] * 0.02, botY = SEA - 0.75;
       for (let j = Math.floor(botY / H); j <= Math.ceil(topY / H); j++) {
-        const o = (k * NY + j) * NX + i, y = j * H, v = Math.min(topY - y, y - botY);
+        const o = (k * NY + j) * NX + i, y = j * H, v = M.min(topY - y, y - botY);
         if (v > W.d[o]) { W.d[o] = clamp(v, -3, 3); if (v > 0) W.mat[o] = MAT.ICE; }
       }
     }
@@ -721,7 +722,7 @@
         if (D[o] <= 0) continue;
         if (D[o - 1] > 0 && D[o + 1] > 0 && D[o - NX] > 0 && D[o + NX] > 0 && D[o - SXY] > 0 && D[o + SXY] > 0) continue;
         const gx = D[o + 1] - D[o - 1], gy = D[o + NX] - D[o - NX], gz = D[o + SXY] - D[o - SXY];
-        sLay[o] = 1; sNy[o] = Math.round(clamp(-gy / (M.len3(gx, gy, gz) || 1), -1, 1) * 127);
+        sLay[o] = 1; sNy[o] = Math.round(clamp(-gy / (M.nz(M.len3(gx, gy, gz), 1)), -1, 1) * 127);
         cur = push(cur, nc++, o);
       }
     }
@@ -752,9 +753,9 @@
         if (Mt[o]) continue;
         const L = sLay[o];
         let de, ny;
-        if (L === 1) { de = Math.min(v, H); ny = sNy[o] / 127; }
-        else if (L > 1) { de = Math.max(v, (L - 1) * H + 0.25); ny = sNy[o] / 127; }
-        else { de = Math.max(SL_MAX * H, dv); ny = 1; }
+        if (L === 1) { de = M.min(v, H); ny = sNy[o] / 127; }
+        else if (L > 1) { de = M.max(v, (L - 1) * H + 0.25); ny = sNy[o] / 127; }
+        else { de = M.max(SL_MAX * H, dv); ny = 1; }
         Mt[o] = rule(x, j * H, z, de, ny, col, dv);
       }
     }
@@ -774,7 +775,7 @@
     const out = new Float32Array(NX * NZ), r = Math.round(rad / H);
     for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) {
       let m = -9;
-      for (let dk = -r; dk <= r; dk += 2) for (let di = -r; di <= r; di += 2) { const ii = clamp(i + di, 0, NX - 1), kk = clamp(k + dk, 0, NZ - 1); m = Math.max(m, hgt[kk * NX + ii]); }
+      for (let dk = -r; dk <= r; dk += 2) for (let di = -r; di <= r; di += 2) { const ii = clamp(i + di, 0, NX - 1), kk = clamp(k + dk, 0, NZ - 1); m = M.max(m, hgt[kk * NX + ii]); }
       out[k * NX + i] = m;
     }
     return out;
@@ -847,7 +848,7 @@
    * Valid for the last generated world; -1e9 when it is not dry. */
   G.far_height = function (x, z) {
     if (!W || !W.dry) return -1e9;
-    const lod = sat((M.len2(x - 48, z - 48) - 90) / 130);           // 0 within 90 m of the centre (the lattice and its seam)
+    const lod = sat((M.len2(x - W.MX, z - W.MZ) - 90) / 130);           // 0 within 90 m of the centre (the lattice and its seam)
     return desertH(x, z, lod);
   };
 
@@ -857,7 +858,7 @@
    * strata continue across the border (the border columns are the raw function, stage 0). */
   G.far_layers = function (x, z, out) {
     if (!W || !W.dry) { out[0] = -1e9; out[1] = 0; return out; }
-    const lod = sat((M.len2(x - 48, z - 48) - 90) / 130);
+    const lod = sat((M.len2(x - W.MX, z - W.MZ) - 90) / 130);
     out[0] = desertH(x, z, lod); out[1] = desertSand;
     return out;
   };
@@ -876,11 +877,11 @@
     return 'islands';
   };
   function applyShape(shape) {
-    const r = M.rng_make(((seed * 31 + 7) >>> 0) || 1), NC = NX * NZ;
+    const r = M.rng_make(((Math.imul(seed, 31) + 7) >>> 0) || 1), NC = NX * NZ;
     if (shape === 'hills') {
       const ph = M.rng_next(r) * 100;
       for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) {
-        const x = i * H, z = k * H, e = Math.min(i, k, NX - 1 - i, NZ - 1 - k) * H;
+        const x = i * H, z = k * H, e = M.min(M.min(M.min(i, k), NX - 1 - i), NZ - 1 - k) * H;
         const roll = SEA + 2.5 + 7 * M.fbm2(x / 22 + ph, z / 22, seed + 11, 4) + 3 * M.sin(x / 13 + ph) * M.sin(z / 17);
         const c = k * NX + i, want = M.lerp(SEA - 3, roll, sm(M.clamp((e - 3) / 9, 0, 1)));
         if (want > hgt[c]) hgt[c] = M.lerp(hgt[c], want, 0.85);
@@ -889,15 +890,15 @@
       // a gentle S-curve through the map centre at a random heading; U-shaped section 9-12 m wide down to SEA - 1.5
       const a = M.rng_next(r) * Math.PI, dx = M.cos(a), dz = M.sin(a), amp = 6 + M.rng_next(r) * 6, wl = 40 + M.rng_next(r) * 30, half = 4.5 + M.rng_next(r) * 1.5;
       for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) {
-        const x = i * H - 48, z = k * H - 48, along = x * dx + z * dz, across = -x * dz + z * dx - amp * M.sin(along / wl * Math.PI * 2);
+        const x = i * H - W.MX, z = k * H - W.MZ, along = x * dx + z * dz, across = -x * dz + z * dx - amp * M.sin(along / wl * Math.PI * 2);
         const d = Math.abs(across), floor = SEA - 1.5, c = k * NX + i;
-        if (d < half) hgt[c] = Math.min(hgt[c], floor + 0.6 * (d / half) * (d / half));
-        else if (d < half + 6) hgt[c] = Math.min(hgt[c], M.lerp(floor + 0.6, hgt[c], sm((d - half) / 6) * 0.25 + 0.75 * M.pow((d - half) / 6, 0.5)));
+        if (d < half) hgt[c] = M.min(hgt[c], floor + 0.6 * (d / half) * (d / half));
+        else if (d < half + 6) hgt[c] = M.min(hgt[c], M.lerp(floor + 0.6, hgt[c], sm((d - half) / 6) * 0.25 + 0.75 * M.pow((d - half) / 6, 0.5)));
       }
     }
   }
   G.begin = function (world, settings) {
-    W = world; NX = W.NX; NY = W.NY; NZ = W.NZ; H = W.H;
+    W = world; NX = W.NX; NY = W.NY; NZ = W.NZ; H = W.H; ISL_MAX = W.PR;
     const biome = SPEC[settings.biome] ? settings.biome : 'temperate';
     G.shape = G.shape_of(settings);                                    // PoC "Terrain shape": islands | hills | caverns | canyon
     W.under = !!(settings.under && settings.under !== '0' && settings.under !== 'off') || G.shape === 'caverns';   // U: underground map (caves)
@@ -937,29 +938,29 @@
         // function, exactly far_height from its edge outward, so the lattice meets the analytic far dunes (render
         // grid, sim ground beyond the disc) without a step
         if (raw) for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) {
-          const e = Math.min(C.DRY.LAT_R - M.len2(i * H - C.DRY.CX, k * H - C.DRY.CZ), Math.min(i, k, NX - 1 - i, NZ - 1 - k) * H);
+          const e = M.min(C.DRY.LAT_R - M.len2(i * H - C.DRY.CX, k * H - C.DRY.CZ), M.min(M.min(M.min(i, k), NX - 1 - i), NZ - 1 - k) * H);
           if (e < BORDER_BAND) { const c = k * NX + i; hgt[c] = e <= 0 ? raw[c] : M.lerp(raw[c], hgt[c], sm(e / BORDER_BAND)); }
         }
         // 1/|grad(h - y)|: turns h - y into an approximate signed distance (smooth meshes on steep slopes)
         ginv = new Float32Array(NC);
         for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) { const g = gradH(i, k); ginv[k * NX + i] = g[0] * g[0] + g[1] * g[1]; }
         { const bl = boxBlur(ginv, 1.5); for (let c = 0; c < NC; c++) ginv[c] = 1 / Math.sqrt(1 + bl[c]); }   // smooth, so neighbours agree
-        landmarks(spec.sp[0], spec.sp[1], spec);
+        landmarks(Math.round(spec.sp[0] * W.SC * W.SC), Math.round(spec.sp[1] * W.SC * W.SC), spec);
         job.stage = 1; job.k = 0; job.label = 'Filling the volume';
         return 0.06;
       }
       case 1: { // volume fill, a slab of rows per call
         if (job.under) { underFill(biome); job.k = NZ; despeckleAll(); job.stage = 2; job.label = 'Lava and veins'; return 0.56; }
-        fill(spec, job.k, Math.min(NZ, job.k + ROWS)); job.k += ROWS;
+        fill(spec, job.k, M.min(NZ, job.k + ROWS)); job.k += ROWS;
         if (job.k >= NZ) { despeckleAll(); job.stage = 2; job.label = 'Lava, ice and veins'; }
-        return 0.06 + 0.5 * Math.min(1, job.k / NZ);
+        return 0.06 + 0.5 * M.min(1, job.k / NZ);
       }
       case 2: {
         const bdef = C.BIOMES.find(b => b.id === biome);
         const set = job.settings.lava;
         job.lava = set === 'on' ? true : set === 'off' ? false : R() < bdef.lavaChance;
         // volcanic: 3-4 loose magma bodies (sills) + the conduit trees' own branch pockets
-        if (job.lava) stampPockets(biome === 'volcanic' ? 3 + M.rng_int(rng, 2) : 1 + M.rng_int(rng, 2));
+        if (job.lava) stampPockets(Math.round((biome === 'volcanic' ? 3 + M.rng_int(rng, 2) : 1 + M.rng_int(rng, 2)) * W.SC * W.SC));
         if (job.lava && biome === 'volcanic') F.volcanoes.forEach((v, vi) => stampConduit(v, vi));
         if (biome === 'volcanic') placeFumaroles();
         if (biome === 'alpine' && !job.under) stampIceShelf();
@@ -974,9 +975,9 @@
         return 0.6;
       }
       case 3: { // materials, slab by slab
-        materials(RULES[biome], job.k, Math.min(NZ - 1, job.k + ROWS)); job.k += ROWS;
+        materials(RULES[biome], job.k, M.min(NZ - 1, job.k + ROWS)); job.k += ROWS;
         if (job.k >= NZ - 1) { materialEdges(); job.stage = 4; job.label = 'Checking structural support'; }
-        return 0.6 + 0.3 * Math.min(1, job.k / NZ);
+        return 0.6 + 0.3 * M.min(1, job.k / NZ);
       }
       case 4: { // nothing may start floating (buoyant ice touching the sea counts as supported)
         despeckleAll();
@@ -989,6 +990,41 @@
       }
       default: return 1;
     }
+  };
+  /* P37 W5: map preview for the menu. Runs ONLY stage 0 (the 2D heightfield + volcanoes + canals + shape) into a
+   * private dummy world and returns it downsampled; the module state (the real world, its features, the rng) is saved
+   * and restored, so it is safe while a game is running behind the menu. Same (biome, seed, shape, volcanoes) as the
+   * real generator, so the preview IS the map's surface (caves / strata / props are not part of it).
+   * C: void worldgen_preview(const Settings*, int n, float* h, u8* lava, PreviewInfo*).
+   * out = { n, sea, under, dry, h: Float32Array(n*n) (y per sample, row = z), lava: Uint8Array(n*n) (1 = open lava),
+ *   caves (underground maps only): { SX, SZ, SY, ch[{x,y,z,rx,ry,rz}], tu[[x0,y0,z0,x1,y1,z1,r]], ni[{x,y,z,r}] } = the cave plan,
+   *   volcanoes: [{x, z, Rc, Rb}], biome, shape } */
+  G.preview = function (settings, n) {
+    const sv = { W, NX, NY, NZ, H, SEA, ISL_MAX, rng, seed, hgt, ginv, lavaZone, canalD, extra, F, shape: G.shape };
+    const real = W || SS.world, sx = real.size_of ? real.size_of(settings) : real.SX;   // P38: the preview has the size of the map it previews
+    const dummy = { NX: Math.round(sx / real.H) + 1, NY: real.NY, NZ: Math.round(sx / real.H) + 1, H: real.H, SX: sx, SZ: sx, SY: real.SY, MX: sx / 2, MZ: sx / 2, PR: sx / 2 - 3.5, SC: sx / 96, SEA: 3, SEA_WET: real.SEA_WET, dry: false, under: false, features: {} };
+    const out = { n, sx, sea: 3, under: false, dry: false, h: new Float32Array(n * n), lava: new Uint8Array(n * n), volcanoes: [], biome: 'temperate', shape: 'islands' };
+    try {
+      const job = G.begin(dummy, settings);
+      out.biome = job.biome; out.shape = G.shape; out.under = job.under; out.dry = dummy.dry; out.sea = dummy.SEA;
+      if (job.under) {                                                // P38-A4: the cave plan (chambers, tunnels, niches), no lattice
+        const uf0 = UF; G.step(job);
+        out.caves = { SX: dummy.SX, SZ: dummy.SZ, SY: dummy.SY, ch: UF.ch.map(c => ({ x: c.x, y: c.y, z: c.z, rx: c.rx, ry: c.ry, rz: c.rz })), tu: UF.tu.map(t => [t[0].x, t[0].y, t[0].z, t[1].x, t[1].y, t[1].z, t[2]]), ni: UF.ni.map(q => ({ x: q.x, y: q.y, z: q.z, r: q.r })) };
+        UF = uf0;
+      } else {
+        G.step(job);                                                  // stage 0: heightfield
+        const h = hgt, li = F.lavaInit, NXs = dummy.NX, NZs = dummy.NZ;
+        for (let k = 0; k < n; k++) for (let i = 0; i < n; i++) {
+          const x = M.min(NXs - 1, Math.round(i / (n - 1) * (NXs - 1))), z = M.min(NZs - 1, Math.round(k / (n - 1) * (NZs - 1))), c = z * NXs + x;
+          out.h[k * n + i] = h[c]; if (li && li[c] > 0 && li[c] >= h[c] - 0.05) out.lava[k * n + i] = 1;
+        }
+        out.volcanoes = (F.volcanoes || []).map(v => ({ x: v.x, z: v.z, Rc: v.Rc, Rb: v.Rb }));
+      }
+    } finally {
+      W = sv.W; NX = sv.NX; NY = sv.NY; NZ = sv.NZ; H = sv.H; SEA = sv.SEA; ISL_MAX = sv.ISL_MAX; rng = sv.rng; seed = sv.seed; hgt = sv.hgt; ginv = sv.ginv;
+      lavaZone = sv.lavaZone; canalD = sv.canalD; extra = sv.extra; F = sv.F; G.shape = sv.shape;
+    }
+    return out;
   };
   G.generate = function (world, settings) { const job = G.begin(world, settings); while (G.step(job) < 1); };
 })(window.SS = window.SS || {});

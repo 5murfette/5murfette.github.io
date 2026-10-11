@@ -42,13 +42,19 @@
   /* chain the unordered segments: every crossing point is shared by the two cells on either side of its lattice edge
    * (exactly equal floats), so endpoints are matched by a quantised key; grid-border points end open chains */
   function chains(seg) {
-    const ns = seg.length / 4, map = new Map(), used = new Uint8Array(ns);
+    const ns = seg.length / 4, used = new Uint8Array(ns), nk = ns * 2;
     const key = (s, y) => Math.round(s * 1024) * 262147 + Math.round(y * 1024);
-    for (let i = 0; i < ns; i++) for (let e = 0; e < 2; e++) {
-      const k = key(seg[i * 4 + e * 2], seg[i * 4 + e * 2 + 1]), v = map.get(k);
-      if (v === undefined) map.set(k, [i * 2 + e]); else v.push(i * 2 + e);
-    }
-    const other = (k, ref) => { const v = map.get(k); for (const r of v) if ((r >> 1) !== (ref >> 1) && !used[r >> 1]) return r; return -1; };
+    // the endpoint table: every endpoint (2 * segment + end) sorted by (key, endpoint): a lookup is a binary search for the first
+    // endpoint of a key, then the run of equal keys in ascending endpoint order (what a hash map of push-lists gave). C: qsort with this total order
+    const keys = new Float64Array(nk), ord = new Array(nk);
+    for (let q = 0; q < nk; q++) { keys[q] = key(seg[(q >> 1) * 4 + (q & 1) * 2], seg[(q >> 1) * 4 + (q & 1) * 2 + 1]); ord[q] = q; }
+    ord.sort((a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : a - b));
+    const other = (k, ref) => {
+      let lo = 0, hi = nk;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (keys[ord[mid]] < k) lo = mid + 1; else hi = mid; }
+      for (let q = lo; q < nk && keys[ord[q]] === k; q++) { const r = ord[q]; if ((r >> 1) !== (ref >> 1) && !used[r >> 1]) return r; }
+      return -1;
+    };
     const pts = [], chain = [], closed = [];
     for (let i0 = 0; i0 < ns; i0++) {
       if (used[i0]) continue;
@@ -98,7 +104,7 @@
         face[p] = ny > 0.45 ? F.UP : ny < -0.45 ? F.DOWN : F.WALL;
         base[p] = matClass(W.mat_at(x - ns * 0.3 * d.x, y - ny * 0.3, z - ns * 0.3 * d.z));
       }
-      const i = Math.max(0, Math.min(NX - 1, Math.round(x / H))), k = Math.max(0, Math.min(NZ - 1, Math.round(z / H))), c = k * NX + i;
+      const i = M.max(0, M.min(NX - 1, Math.round(x / H))), k = M.max(0, M.min(NZ - 1, Math.round(z / H))), c = k * NX + i;
       const out = W.far && W.outside(x, z);                          // dry worlds (D4): the far dunes beyond the lattice
       const top = face[p] !== F.DOWN && (out || y > W.top[c] - 0.6);  // the column's topmost surface (grass, lava live there)
       let k0 = base[p];

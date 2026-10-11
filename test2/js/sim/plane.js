@@ -26,13 +26,15 @@
     return l < 1e-6 ? { s: 0, y: 1 } : { s: -gs / l, y: -gy / l };
   };
 
-  /* ---------- solid bodies on the plane: S.planeBodies = [{s, y, kind, hs, hy, r, ref}] (2D cross-sections) ----------
-   * kind 0 = disc radius r centred at (s,y); kind 1 = box half extents (hs, hy). Rebuilt each step by sim. */
+  /* ---------- solid bodies on the plane: S.planeBodies = [PlaneBody] (2D cross-sections) ----------
+   * kind 0 = disc radius r centred at (s,y); kind 1 = box half extents (hs, hy). Rebuilt each step by sim.
+   * C: struct PlaneBody { f32 s, y, hs, hy, r; u8 kind, ice; i32 body (the rigid body's id, -1), tree, seg (tree id / segment), struct (bridge id), i16 worm (worm id: a worm's disc, -1) } */
+  P.pb_add = (PB, kind, s, y, hs, hy, r, body, tree, seg, st, worm, ice) => { if (PB.length >= SS.CFG.LIMITS.PLANE_BODIES) return; PB.push({ s, y, kind, hs, hy, r, body, tree, seg, struct: st, worm, ice }); };
   P.body_at2 = (S, s, y, noWorms) => {                     // noWorms: skip the worm discs (projectiles test worms apart)
     const B = S.planeBodies;
     for (let i = 0; i < B.length; i++) {
       const b = B[i], ds = s - b.s, dy = y - b.y;
-      if (noWorms && b.worm) continue;
+      if (noWorms && b.worm >= 0) continue;
       if (b.kind === 0) { if (ds * ds + dy * dy < b.r * b.r) return i; }
       else if (Math.abs(ds) < b.hs && Math.abs(dy) < b.hy) return i;
     }
@@ -40,7 +42,7 @@
   };
   P.body_normal2 = (S, i, s, y) => {
     const b = S.planeBodies[i], ds = s - b.s, dy = y - b.y;
-    if (b.kind === 0) { const l = M.len2(ds, dy) || 1; return { s: ds / l, y: dy / l }; }
+    if (b.kind === 0) { const l = M.nz(M.len2(ds, dy), 1); return { s: ds / l, y: dy / l }; }
     const px = b.hs - Math.abs(ds), py = b.hy - Math.abs(dy);
     return px < py ? { s: Math.sign(ds) || 1, y: 0 } : { s: 0, y: Math.sign(dy) || 1 };
   };
@@ -60,7 +62,7 @@
       const o = ax[i][0], v = ax[i][1], L = ax[i][2];
       if (Math.abs(v) < 1e-6) continue;
       const a = -o / v, b = (L - o) / v;
-      s0 = Math.max(s0, Math.min(a, b)); s1 = Math.min(s1, Math.max(a, b));
+      s0 = M.max(s0, M.min(a, b)); s1 = M.min(s1, M.max(a, b));
     }
     return [Math.floor(s0) - 1, Math.ceil(s1) + 1];
   };

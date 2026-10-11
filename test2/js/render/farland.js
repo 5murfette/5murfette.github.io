@@ -20,6 +20,7 @@
   'use strict';
   const T = window.THREE, M = SS.math;
   const FL = SS.farView = {};
+  FL.setSea = function (sea) { U.uSea.value = sea; };   // P37-5: the far ocean follows the sudden-death sea level
   const R_IN = 520, R_OUT = 60000, NA = 512, GROW = 1.016, RE = 6371e3;   // LS4: 1.028 -> 1.016 (radial step 1.6 % of r: a 250 m islet at 8 km was one dome)
   // per biome: land share (mask threshold), heights (m), mountain ranges, palette (linear-ish sRGB 0..1), cones
   const BIOME = {
@@ -28,7 +29,7 @@
     canyon:    { thr: 0.55, h: 300, peak: 700, ridge: 0.2, mesa: true, cliff: 1, isl: [60, 220], sand: [0.78, 0.6, 0.42], low: [0.62, 0.36, 0.22], mid: [0.55, 0.3, 0.18], rock: [0.6, 0.38, 0.26], snow: 9e9 },
     volcanic:  { thr: 0.6, h: 260, peak: 1400, ridge: 0.25, cones: true, cliff: 0.6, isl: [40, 260], sand: [0.16, 0.15, 0.14], low: [0.12, 0.13, 0.1], mid: [0.1, 0.09, 0.09], rock: [0.14, 0.12, 0.11], snow: 9e9 }
   };
-  let renderer = null, rt = null, farScene = null, farCam = null, quad = null, mesh = null, mat = null, on = false, mainScene = null;
+  let farScale = 0.5, farT = -99, farOK = false, renderer = null, rt = null, farScene = null, farCam = null, quad = null, mesh = null, mat = null, on = false, mainScene = null;
   const U = {
     tLut: { value: null }, uSun: { value: new T.Vector3(0, 1, 0) }, uSunC: { value: new T.Vector3(1, 1, 1) }, uAmb: { value: new T.Vector3(0.3, 0.35, 0.45) },
     uVis: { value: 40000 }, uSea: { value: 3 }, uCam: { value: new T.Vector3() }, uFog: { value: new T.Color() }, uFogD: { value: 0.0026 },
@@ -103,8 +104,11 @@
     renderer = rend; mainScene = scene;
     farScene = new T.Scene();
     farCam = new T.PerspectiveCamera(42, 1, 30, 150000);
+    // P38-R4: the pass is soft haze, distant relief and clouds: it renders at Q.farScale of the canvas, without MSAA (it was full size
+    // with 4 samples: ~200 MB and 1.5 ms at 2x), and only when the view moved or every FAR_DT s (clouds drift)
+    farScale = Q && Q.farScale ? Q.farScale : 0.5;
     const sz = rend.getDrawingBufferSize(new T.Vector2());
-    rt = new T.WebGLRenderTarget(sz.x, sz.y, { type: T.HalfFloatType, samples: Q && Q.name === 'low' ? 0 : 4 });
+    rt = new T.WebGLRenderTarget(Math.max(1, Math.round(sz.x * farScale)), Math.max(1, Math.round(sz.y * farScale)), { type: T.HalfFloatType, samples: 0 });
     // the polar mesh (radii growing x GROW from R_IN), heights filled per map by look()
     const rad = []; for (let r = R_IN; r < R_OUT; r *= GROW) rad.push(r); rad.push(R_OUT);
     const NR = rad.length, N = NR * NA, pos = new Float32Array(N * 3), aH = new Float32Array(N), aN = new Float32Array(N * 3);
@@ -120,6 +124,7 @@
     g.setAttribute('position', new T.BufferAttribute(pos, 3)); g.setAttribute('aH', new T.BufferAttribute(aH, 1)); g.setAttribute('aN', new T.BufferAttribute(aN, 3));
     g.setIndex(new T.BufferAttribute(idx, 1));
     mat = new T.ShaderMaterial({ uniforms: U, vertexShader: VERT, fragmentShader: FRAG, side: T.FrontSide });
+    SS.section.exempt(mat, 'far landscape (beyond the world)');
     mesh = new T.Mesh(g, mat); mesh.frustumCulled = false; farScene.add(mesh);
     FL.rad = rad;
     const qm = new T.ShaderMaterial({
@@ -128,6 +133,7 @@
       vertexShader: 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 1.0, 1.0); }',
       fragmentShader: QUAD_F
     });
+    SS.section.exempt(qm, 'far landscape: full-screen composite quad');
     quad = new T.Mesh(new T.PlaneGeometry(2, 2), qm); quad.frustumCulled = false; quad.renderOrder = -9.5; quad.visible = false; scene.add(quad);
     const prevBR = scene.onBeforeRender;
     scene.onBeforeRender = function (r, sc, cam, target) { if (prevBR) prevBR.call(this, r, sc, cam, target); FL.before(r, cam, target); };
@@ -135,11 +141,17 @@
   FL.scene = () => farScene;
 
   /* render the far world for this camera (main camera or any free camera that sees layer 0) */
-  const sz = new T.Vector2();
+  const sz = new T.Vector2(), lastPos = new T.Vector3(), lastQ = new T.Quaternion(), POS_EPS = 0.5, ROT_EPS = 2e-8, FAR_DT = 0.08;
+  let lastFov = 0, lastAsp = 0, viewT = 0;
+  FL.dirty = function () { farOK = false; };                // (a new look, a weather change: the next frame renders the pass)
   FL.before = function (r, cam, target) {
     if (!on || !quad.visible || !cam.isPerspectiveCamera || !cam.layers.test(farCam.layers)) return;
     if (target) { if (target.isWebGLCubeRenderTarget) return; sz.set(target.width, target.height); } else r.getDrawingBufferSize(sz);
-    if (rt.width !== sz.x || rt.height !== sz.y) rt.setSize(sz.x, sz.y);
+    sz.set(Math.max(1, Math.round(sz.x * farScale)), Math.max(1, Math.round(sz.y * farScale)));
+    if (rt.width !== sz.x || rt.height !== sz.y) { rt.setSize(sz.x, sz.y); farOK = false; }
+    // unchanged view (position within POS_EPS m, orientation within ROT_EPS, fov / aspect) and rendered less than FAR_DT s ago: keep the image
+    if (farOK && farT - viewT < 0 && viewT - farT < FAR_DT && cam.fov === lastFov && cam.aspect === lastAsp && cam.position.distanceToSquared(lastPos) < POS_EPS * POS_EPS && 1 - Math.abs(cam.quaternion.dot(lastQ)) < ROT_EPS) return;
+    farOK = true; farT = viewT; lastFov = cam.fov; lastAsp = cam.aspect; lastPos.copy(cam.position); lastQ.copy(cam.quaternion);
     farCam.position.copy(cam.position); farCam.quaternion.copy(cam.quaternion);
     farCam.fov = cam.fov; farCam.aspect = cam.aspect; farCam.zoom = cam.zoom; farCam.view = cam.view ? Object.assign({}, cam.view) : null;
     farCam.updateProjectionMatrix(); farCam.updateMatrixWorld();
@@ -227,6 +239,7 @@
     on = true; quad.visible = true; mesh.visible = !SS.world.dry;
     if (SS.world.dry) return;
     const B = BIOME[S.biome] || BIOME.temperate, W = SS.world;
+    mesh.position.set(W.MX - 48, 0, W.MZ - 48);   // P38: the polar mesh (built about 48, 48) follows the map centre
     seed = ((S.settings.seed | 0) * 9137 + 71) | 0;
     const t0 = performance.now(), plume = [];
     // per-seed variation (own rng: the cone list below keeps its sequence)
@@ -273,9 +286,11 @@
     if (vs && vs.tod === 'night' && vs.moonDir) { U.uSun.value.set(vs.moonDir[0], vs.moonDir[1], vs.moonDir[2]).normalize(); U.uSunC.value.set(0.16, 0.2, 0.32); U.uAmb.value.set(0.035, 0.045, 0.075); }
     if (SS.cloudView) U.uVis.value = SS.cloudView.uniforms.uVis.value;
     FL.buildMs = +(performance.now() - t0).toFixed(1);
+    farOK = false;
   };
   /* per frame: the main water's fog (weather changes it) */
-  FL.frame = function () {
+  FL.frame = function (t) {
+    if (t !== undefined) viewT = t;
     if (!on || !SS.waterView || !SS.waterView.fog) return;
     const f = SS.waterView.fog(); U.uFog.value.copy(f.color); U.uFogD.value = f.density;
   };

@@ -30,7 +30,7 @@
     for (let q = 0; q < 8; q++) {
       if (c[q] <= 0) continue;
       const m = mats[q]; if (!m) continue;
-      const wv = Math.min(c[q], 1) + 0.05;
+      const wv = M.min(c[q], 1) + 0.05;
       if (m === LAVA) { const h = heats[q] / 255; wtmp[LAVA - 1] += wv * h; wtmp[CRUST - 1] += wv * (1 - h); }
       else if (m <= 12) wtmp[m - 1] += wv;
       else xtmp[m - 13] += wv;                               // P7 / P29d: steel / foam / concrete: the extra weights (mD), painted procedurally
@@ -53,18 +53,20 @@
   function addWeightsWide(o, D, MT, HT, NX, NY, NZ, i, j, k, u, v, w) {
     wtmp.fill(0); xtmp.fill(0);
     let xs = 0, cs = 0;                                      // steel / foam share of the cell corners (as before)
-    for (let q = 0; q < 8; q++) { if (c[q] <= 0) continue; const m = MT_c[q], wv = Math.min(c[q], 1) + 0.05; cs += wv; if (m > 12) { xtmp[m - 13] += wv; xs += wv; } }
+    for (let q = 0; q < 8; q++) { if (c[q] <= 0) continue; const m = MT_c[q], wv = M.min(c[q], 1) + 0.05; cs += wv; if (m > 12) { xtmp[m - 13] += wv; xs += wv; } }
     const SXY = NX * NY, R2 = WIDE_R * WIDE_R * 4;           // (lattice units: H = 0.5 m)
     let tot = 0;
+    for (let q = 0; q < 4; q++) { const ex = q - 1 - u, ey = q - 1 - v, ez = q - 1 - w; sq0[q] = ex * ex; sq1[q] = ey * ey; sq2[q] = ez * ez; }   // (per-axis squares: the same sums as before)
     for (let dk = -1; dk <= 2; dk++) { const kk = k + dk; if (kk < 0 || kk >= NZ) continue;
       for (let dj = -1; dj <= 2; dj++) { const jj = j + dj; if (jj < 0 || jj >= NY) continue;
+        if (sq1[dj + 1] + sq2[dk + 1] >= R2) continue;
         for (let di = -1; di <= 2; di++) { const ii = i + di; if (ii < 0 || ii >= NX) continue;
           const of = (kk * NY + jj) * NX + ii, dv = D[of];
           if (dv <= 0) continue;
           const m = MT[of]; if (!m || m > 12) continue;
-          const ex = di - u, ey = dj - v, ez = dk - w, d2 = ex * ex + ey * ey + ez * ez;
+          const d2 = sq0[di + 1] + sq1[dj + 1] + sq2[dk + 1];
           if (d2 >= R2) continue;
-          const f = 1 - Math.sqrt(d2 / R2), wv = f * f * (Math.min(dv, 1) + 0.05);
+          const f = 1 - Math.sqrt(d2 / R2), wv = f * f * (M.min(dv, 1) + 0.05);
           if (m === LAVA) { const h = HT[of] / 255; wtmp[LAVA - 1] += wv * h; wtmp[CRUST - 1] += wv * (1 - h); }
           else wtmp[m - 1] += wv;
           tot += wv;
@@ -72,10 +74,10 @@
     const xshare = cs > 0 ? xs / cs : 0, nat = 1 - xshare;
     if (tot <= 0) { wtmp[1] = 1; tot = 1; }
     if (nat <= 0) { wtmp.fill(0); wtmp[1] = 1e-3 * tot; }   // a pure steel / foam vertex: rock underneath, overpainted
-    for (let s = 0; s < 12; s++) o.w.push(Math.round(wtmp[s] / tot * Math.max(nat, 0.004) * 255));
+    for (let s = 0; s < 12; s++) o.w.push(Math.round(wtmp[s] / tot * M.max(nat, 0.004) * 255));
     o.x.push(cs > 0 ? Math.round(xtmp[0] / cs * 255) : 0, cs > 0 ? Math.round(xtmp[1] / cs * 255) : 0, cs > 0 ? Math.round(xtmp[2] / cs * 255) : 0, cs > 0 ? Math.round(xtmp[3] / cs * 255) : 0);
   }
-  const MT_c = new Uint8Array(8);
+  const MT_c = new Uint8Array(8), sq0 = new Float64Array(4), sq1 = new Float64Array(4), sq2 = new Float64Array(4);
 
   /* Surface-nets vertex for one cell whose 8 corner values are in c[]. Returns [x,y,z] in cell units + gradient.
    * O1: the mass point of the edge crossings is then pulled onto the cell's trilinear iso-surface (Newton along the
@@ -121,7 +123,7 @@
       gx += wt * (D[xp] - D[xm]); gy += wt * (D[yp] - D[ym]); gz += wt * (D[zp] - D[zm]);
     }
     const l = M.len3(gx, gy, gz);
-    if (l < 1e-6) { gq[0] = vtx[3]; gq[1] = vtx[4]; gq[2] = vtx[5]; const l2 = M.len3(gq[0], gq[1], gq[2]) || 1; gq[0] /= l2; gq[1] /= l2; gq[2] /= l2; }
+    if (l < 1e-6) { gq[0] = vtx[3]; gq[1] = vtx[4]; gq[2] = vtx[5]; const l2 = M.nz(M.len3(gq[0], gq[1], gq[2]), 1); gq[0] /= l2; gq[1] /= l2; gq[2] /= l2; }
     else { gq[0] = gx / l; gq[1] = gy / l; gq[2] = gz / l; }
     return gq;
   }
@@ -129,7 +131,7 @@
   /* depth below the nearest air above (world lattice column walk), metres, capped */
   function columnDepth(W, x, y, z, cap) {
     const H = W.H, i = M.clamp(Math.round(x / H), 0, W.NX - 1), k = M.clamp(Math.round(z / H), 0, W.NZ - 1);
-    let j = Math.max(0, Math.ceil(y / H));
+    let j = M.max(0, Math.ceil(y / H));
     const capJ = j + Math.ceil(cap / H);
     let o = (k * W.NY + j) * W.NX + i;
     while (j < W.NY && j < capJ && W.d[o] > 0) { j++; o += W.NX; }
@@ -138,16 +140,30 @@
     return M.clamp((j - 1 + f) * H - y, 0, cap);
   }
 
+  G.skipLayers = true;                                  // (tests: false = the plain full scan, the output must be identical)
+  let layBuf = new Uint8Array(64);
+  function layFlags(n) { if (layBuf.length < n) layBuf = new Uint8Array(n * 2); return layBuf; }
   /* Full-resolution mesh of world chunk (cx,cy,cz). */
   G.chunk = function (cx, cy, cz) {
     const W = SS.world, NX = W.NX, NY = W.NY, NZ = W.NZ, CS = W.CS, H = W.H, D = W.d, MT = W.mat, HT = W.heat, SXY = NX * NY;
     const i0 = cx * CS, j0 = cy * CS, k0 = cz * CS;
     const i1 = cx === W.CX - 1 ? NX : i0 + CS, j1 = cy === W.CY - 1 ? NY : j0 + CS, k1 = cz === W.CZ - 1 ? NZ : k0 + CS;
-    const ci0 = Math.max(0, i0 - 1), ci1 = Math.min(NX - 2, i1), cj0 = Math.max(0, j0 - 1), cj1 = Math.min(NY - 2, j1), ck0 = Math.max(0, k0 - 1), ck1 = Math.min(NZ - 2, k1);
+    const ci0 = M.max(0, i0 - 1), ci1 = M.min(NX - 2, i1), cj0 = M.max(0, j0 - 1), cj1 = M.min(NY - 2, j1), ck0 = M.max(0, k0 - 1), ck1 = M.min(NZ - 2, k1);
     const sx = ci1 - ci0 + 1, sy = cj1 - cj0 + 1, sz = ck1 - ck0 + 1;
     const cell = new Int32Array(sx * sy * sz).fill(-1);
     const o = Out(), mats = new Uint8Array(8), heats = new Uint8Array(8);
-    for (let k = ck0; k <= ck1; k++) for (let j = cj0; j <= cj1; j++) for (let i = ci0; i <= ci1; i++) {
+    /* P38-R4: a j-layer of the lattice nodes that is all solid (or all air) over the chunk's footprint, next to another such layer
+     * of the same sign, holds no surface cell and no quad: both passes skip those rows (layer flags: lay[j - cj0] bit 0 = some node
+     * solid, bit 1 = some node air). C: u8 lay[CS + 3]. */
+    const nl = cj1 - cj0 + 2, lay = layFlags(nl);
+    for (let j = cj0; j <= cj1 + 1; j++) {
+      let f = 0;
+      for (let k = ck0; k <= ck1 + 1 && f !== 3; k++) { let of = (k * NY + j) * NX + ci0; for (let i = ci0; i <= ci1 + 1; i++, of++) f |= D[of] > 0 ? 1 : 2; }
+      lay[j - cj0] = f;
+    }
+    for (let k = ck0; k <= ck1; k++) for (let j = cj0; j <= cj1; j++) {
+      const fa = lay[j - cj0], fb = lay[j - cj0 + 1]; if (G.skipLayers && (fa | fb) !== 3 && (fa | fb) !== 0) continue;
+      for (let i = ci0; i <= ci1; i++) {
       const b = (k * NY + j) * NX + i;
       let mask = 0;
       for (let q = 0; q < 8; q++) {
@@ -166,11 +182,14 @@
       // depth = solid above the vertex; a vertex more than 0.6 m below its column's top (cave floor, ledge under an
       // overhang) is not sky-exposed either: the grass cover and grass-fire glow live on the topmost surface only
       const ct = W.top[M.clamp(Math.round(z / H), 0, NZ - 1) * NX + M.clamp(Math.round(x / H), 0, NX - 1)] - y;
-      o.dp.push(Math.max(columnDepth(W, x, y, z, 6), ct > 0.6 ? Math.min(6, ct) : 0));
+      o.dp.push(M.max(columnDepth(W, x, y, z, 6), ct > 0.6 ? M.min(6, ct) : 0));
+      }
     }
     const cid = (i, j, k) => (i < ci0 || j < cj0 || k < ck0 || i > ci1 || j > cj1 || k > ck1) ? -1 : cell[((k - ck0) * sy + (j - cj0)) * sx + (i - ci0)];
     const dims = [NX, NY, NZ], p = [0, 0, 0], r = [0, 0, 0];
-    for (let k = k0; k < k1; k++) for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) {
+    for (let k = k0; k < k1; k++) for (let j = j0; j < j1; j++) {
+      const fa = lay[j - cj0], fb = j + 1 <= cj1 + 1 ? lay[j - cj0 + 1] : 3; if ((fa | fb) !== 3 && (fa | fb) !== 0) continue;
+      for (let i = i0; i < i1; i++) {
       const b = (k * NY + j) * NX + i, v0 = D[b] > 0;
       p[0] = i; p[1] = j; p[2] = k;
       for (let a = 0; a < 3; a++) {
@@ -185,6 +204,7 @@
         r[u]--; const Dd = cid(r[0], r[1], r[2]);
         if (A < 0 || B < 0 || Cc < 0 || Dd < 0) continue;
         if (v0) o.ix.push(A, B, Cc, A, Cc, Dd); else o.ix.push(A, Dd, Cc, A, Cc, B);
+      }
       }
     }
     return finish(o);
@@ -253,7 +273,7 @@
     // dry worlds: SEC_FAR beyond the lattice and always around the rotation centre (the worm) too (D6: it used to
     // be the lattice ± 24 m only: a negative length when the line missed the lattice -> RangeError -> freeze)
     if (W.far) {
-      r[0] = Math.min(r[0], 0) - SEC_FAR; r[1] = Math.max(r[1], 0) + SEC_FAR;
+      r[0] = M.min(r[0], 0) - SEC_FAR; r[1] = M.max(r[1], 0) + SEC_FAR;
       // ... and out to every living worm near the plane (a worm blasted far out on the hot sand stays on the drawn
       // section, D6), never beyond FAR_R
       const ws = S.worms || [];
@@ -263,7 +283,7 @@
         const ex = w.pos.x - Ox0, ez = w.pos.z - Oz0;
         if (Math.abs(-ex * d.z + ez * d.x) > 4) continue;
         const sw = ex * d.x + ez * d.z;
-        r[0] = Math.max(-SS.CFG.DRY.FAR_R, Math.min(r[0], sw - 8)); r[1] = Math.min(SS.CFG.DRY.FAR_R, Math.max(r[1], sw + 8));
+        r[0] = M.max(-SS.CFG.DRY.FAR_R, M.min(r[0], sw - 8)); r[1] = M.min(SS.CFG.DRY.FAR_R, M.max(r[1], sw + 8));
       }
     }
     const s0 = r[0], ns = Math.round((r[1] - s0) / H) + 1, ny = W.NY, Ox = S.O.x, Oz = S.O.z;
@@ -298,10 +318,10 @@
     // convex blend of the nodes of the cells it crosses: if none has the other sign, no hidden crossing (rigorous)
     function mixedNodes(sA, sB, j, pos) {
       const xa = Ox + sA * d.x, xb = Ox + sB * d.x, za = Oz + sA * d.z, zb = Oz + sB * d.z;
-      if (Math.min(xa, xb) < 0 || Math.min(za, zb) < 0 || Math.max(xa, xb) > W.SX || Math.max(za, zb) > W.SZ) return false;
+      if (M.min(xa, xb) < 0 || M.min(za, zb) < 0 || M.max(xa, xb) > W.SX || M.max(za, zb) > W.SZ) return false;
       if (W.outside(xa, za) || W.outside(xb, zb)) return false;     // D6: beyond the disc of a dry world W.far rules
-      const ia = Math.floor(Math.min(xa, xb) / H), ib = Math.min(W.NX - 1, Math.floor(Math.max(xa, xb) / H) + 1);
-      const ka = Math.floor(Math.min(za, zb) / H), kb = Math.min(W.NZ - 1, Math.floor(Math.max(za, zb) / H) + 1), D = W.d;
+      const ia = Math.floor(M.min(xa, xb) / H), ib = M.min(W.NX - 1, Math.floor(M.max(xa, xb) / H) + 1);
+      const ka = Math.floor(M.min(za, zb) / H), kb = M.min(W.NZ - 1, Math.floor(M.max(za, zb) / H) + 1), D = W.d;
       for (let k = ka; k <= kb; k++) for (let i = ia; i <= ib; i++) if ((D[(k * W.NY + j) * W.NX + i] > 0) !== pos) return true;
       return false;
     }
@@ -312,8 +332,8 @@
       const xa = Ox + sA * d.x, xb = Ox + sB * d.x, za = Oz + sA * d.z, zb = Oz + sB * d.z, pos = a > 0;
       let n = 0; bp[n++] = 0;
       const ca = Math.floor(xa / H), cb = Math.floor(xb / H), ka = Math.floor(za / H), kb = Math.floor(zb / H);
-      if (ca !== cb) bp[n++] = ((Math.max(ca, cb)) * H - xa) / (xb - xa);
-      if (ka !== kb) { const t = ((Math.max(ka, kb)) * H - za) / (zb - za); if (n === 2 && t < bp[1]) { bp[2] = bp[1]; bp[1] = t; n++; } else bp[n++] = t; }
+      if (ca !== cb) bp[n++] = ((M.max(ca, cb)) * H - xa) / (xb - xa);
+      if (ka !== kb) { const t = ((M.max(ka, kb)) * H - za) / (zb - za); if (n === 2 && t < bp[1]) { bp[2] = bp[1]; bp[1] = t; n++; } else bp[n++] = t; }
       bp[n++] = 1;
       let best = 0, bs = 0, f0 = a;
       for (let q = 0; q + 1 < n; q++) {

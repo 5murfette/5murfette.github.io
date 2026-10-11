@@ -58,7 +58,7 @@
       const x = A.x + (B.x - A.x) * t, z = A.z + (B.z - A.z) * t, y = A.y + (B.y - A.y) * t + 0.15;
       const g = w.top_at(x, z); n++;
       if (y - g >= K.GAP_MIN) low++;
-      gap += Math.min(8, y - g);
+      gap += M.min(8, y - g);
       // clear passage: no rock through the truss (both side planes) or just under the deck
       for (const s of [-1, 1]) {
         const vx = -(B.z - A.z) / L * s * K.WIDTH / 2, vz = (B.x - A.x) / L * s * K.WIDTH / 2;
@@ -68,14 +68,14 @@
     }
     if (n < 4 || low < 0.6 * n) return -1;
     for (const p of avoid) if (segd(p, { x: A.x, y: p.y, z: A.z }, { x: B.x, y: p.y, z: B.z }) < 3) return -1;
-    return (gap / n) * Math.min(L, 16) * (1 + 0.5 * wet / n);
+    return (gap / n) * M.min(L, 16) * (1 + 0.5 * wet / n);
   }
   let S_ref = null;
   function findSpans(S, taken) {
     const w = W(), pts = [], out = [];
-    const cx = w.dry ? C.DRY.CX : 48, cz = w.dry ? C.DRY.CZ : 48;
-    for (let z = 10; z <= 86; z += K.GRID) for (let x = 10; x <= 86; x += K.GRID) {
-      if (M.len2(x - cx, z - cz) > K.PLACE_R) continue;
+    const cx = w.dry ? C.DRY.CX : w.MX, cz = w.dry ? C.DRY.CZ : w.MZ;
+    for (let z = cz - 38 * w.SC; z <= cz + 38 * w.SC; z += K.GRID) for (let x = cx - 38 * w.SC; x <= cx + 38 * w.SC; x += K.GRID) {
+      if (M.len2(x - cx, z - cz) > K.PLACE_R * w.SC) continue;
       const p = ledge(x, z); if (p) pts.push(p);
     }
     const cand = [];
@@ -96,7 +96,7 @@
   /* ---------- building a Warren through-truss from A to B ---------- */
   function build(S, A, B, look) {
     const L = M.len2(B.x - A.x, B.z - A.z), ux = (B.x - A.x) / L, uz = (B.z - A.z) / L, vx = -uz, vz = ux;
-    const n = Math.max(3, Math.round(L / K.PANEL)), p = L / n, h = M.clamp(L / 10, K.DEPTH_MIN, K.DEPTH_MAX), hw = K.WIDTH / 2;
+    const n = M.max(3, Math.round(L / K.PANEL)), p = L / n, h = M.clamp(L / 10, K.DEPTH_MIN, K.DEPTH_MAX), hw = K.WIDTH / 2;
     const st = { id: S.structId = (S.structId || 0) + 1, kind: 'truss', look, n, L, h, ux, uz, A: { x: A.x, y: A.y, z: A.z }, B: { x: B.x, y: B.y, z: B.z }, nodes: [], mem: [], ver: 1, fallen: false };
     const node = (x, y, z) => { st.nodes.push({ x, y, z, anchor: 0 }); return st.nodes.length - 1; };
     const yAt = t => A.y + (B.y - A.y) * t + K.DECK_LIFT;
@@ -169,9 +169,9 @@
     let Ix = 0, Iy = 0, Iz = 0;
     for (const m of ms) {
       const a = st.nodes[m.a], b = st.nodes[m.b], Lm = len(a, b);
-      const r = m.kind === 3 ? 0.12 : Math.max(0.08, m.h / 2);
+      const r = m.kind === 3 ? 0.12 : M.max(0.08, m.h / 2);
       const lanes = m.kind === 3 ? [-0.6, 0, 0.6] : [0];
-      const step = m.kind === 3 ? 0.6 : Math.max(0.25, r * 1.6), k = Math.max(1, Math.ceil(Lm / step));
+      const step = m.kind === 3 ? 0.6 : M.max(0.25, r * 1.6), k = M.max(1, Math.ceil(Lm / step));
       for (const ln of lanes) for (let q = 0; q <= k; q++) {
         const t = q / k, x = a.x + (b.x - a.x) * t - cx, y = a.y + (b.y - a.y) * t - cy, z = a.z + (b.z - a.z) * t - cz;
         const lx = ln * -st.uz, lz = ln * st.ux;           // deck lanes across the bridge
@@ -184,7 +184,7 @@
     }
     const bd = SS.bodies.add_shape(S, 'struct', { x: cx, y: cy, z: cz }, mass, { x: Ix, y: Iy, z: Iz }, pts, C.MAT.ROCK);
     bd.members = mem; bd.look = st.look; bd.mu = 0.5; bd.e = 0.1;
-    if (kick) { const d = M.len3(cx - kick.x, cy - kick.y, cz - kick.z) || 1, dv = Math.min(3, kick.J / mass); bd.vel.x = (cx - kick.x) / d * dv; bd.vel.y = (cy - kick.y) / d * dv; bd.vel.z = (cz - kick.z) / d * dv; }
+    if (kick) { const d = M.nz(M.len3(cx - kick.x, cy - kick.y, cz - kick.z), 1), dv = M.min(3, kick.J / mass); bd.vel.x = (cx - kick.x) / d * dv; bd.vel.y = (cy - kick.y) / d * dv; bd.vel.z = (cz - kick.z) / d * dv; }
     return bd;
   }
   function check(S, st, kick) {
@@ -220,8 +220,8 @@
         const a = st.nodes[m.a], b = st.nodes[m.b], ds = segd(c, a, b), r = m.kind === 3 ? 0.004 : m.h / 2;
         if (ds > reach) continue;
         // blast momentum on the member (for the release kick): Kinney-Graham impulse x frontal area
-        Jsum += SS.blast.impulse(Math.max(0.2, ds - r), Wkg) * len(a, b) * (m.kind === 3 ? m.w * 0.5 : m.h);
-        const eff = M.exp(-Math.max(0, ds - r) / K.CUT_L);
+        Jsum += SS.blast.impulse(M.max(0.2, ds - r), Wkg) * len(a, b) * (m.kind === 3 ? m.w * 0.5 : m.h);
+        const eff = M.exp(-M.max(0, ds - r) / K.CUT_L);
         if (eff < 0.02) continue;
         const P = 0.375 * m.A * IN2 * 0.4536;                       // kg TNT to cut it (FM 5-25: 3/8 A lb, A in in²)
         const reachD = m.kind === 3 ? ds < K.DECK_R : true;
@@ -234,6 +234,29 @@
       }
       if (changed) st.ver++;
       check(S, st, { x: c.x, y: c.y, z: c.z, J: Jsum });
+    }
+  };
+  /* P38-A4: acid on steel. An acid spot of radius r at c weakens every member within r + ACID_REACH (a splash creeps along the
+   * steel; the effect falls off linearly with the distance): a member is cut after S_PER_MM seconds per mm of wall at the full
+   * effect (chord 6 mm: 6 s, diagonal 5 s, deck plate 8 s); then the bridge is checked as after a blast (no impulse). */
+  const AC = ST.ACID = { S_PER_MM: 1.0, REACH: 0.5 };
+  const WALL_MM = [6, 5, 6, 8];
+  ST.acid = function (S, c, r, dt) {
+    if (!S.structs || !S.structs.length) return;
+    for (const st of S.structs) {
+      if (st.fallen || segd(c, st.A, st.B) > r + AC.REACH + st.h + K.WIDTH) continue;
+      let changed = false;
+      for (const m of st.mem) {
+        if (!m.on) continue;
+        const a = st.nodes[m.a], b = st.nodes[m.b], ds = segd(c, a, b) - (m.kind === 3 ? 0 : m.h / 2) - r;
+        if (ds > AC.REACH) continue;
+        m.dmg += dt * M.clamp(1 - M.max(0, ds) / AC.REACH, 0, 1) / (WALL_MM[m.kind] * AC.S_PER_MM);
+        if (m.dmg >= 1) {
+          m.on = 0; m.cut = 1; changed = true;
+          SS.sim.emit(S, 'steelcut', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2, kind: m.kind, id: st.id, acid: 1 });
+        }
+      }
+      if (changed) { st.ver++; check(S, st, { x: c.x, y: c.y, z: c.z, J: 0 }); }
     }
   };
   /* terrain edits (a crater under an abutment) */
@@ -253,18 +276,18 @@
         const half = m.kind === 3 ? m.w / 2 : m.w / 2 + 0.02, rad = m.kind === 3 ? 0.06 : m.h / 2;
         // the deck plate is wide across the bridge: its extent on the plane depends on the crossing angle
         const ext = m.kind === 3 ? half * Math.abs(st.ux * n.x + st.uz * n.z) + 0.05 : half;
-        if (Math.min(ta, tb) > ext || Math.max(ta, tb) < -ext) continue;
+        if (M.min(ta, tb) > ext || M.max(ta, tb) < -ext) continue;
         // clip the member to the slab |t| <= ext
         let u0 = 0, u1 = 1;
-        if (Math.abs(tb - ta) > 1e-6) { const ua = (-ext - ta) / (tb - ta), ub = (ext - ta) / (tb - ta); u0 = Math.max(0, Math.min(ua, ub)); u1 = Math.min(1, Math.max(ua, ub)); }
+        if (Math.abs(tb - ta) > 1e-6) { const ua = (-ext - ta) / (tb - ta), ub = (ext - ta) / (tb - ta); u0 = M.max(0, M.min(ua, ub)); u1 = M.min(1, M.max(ua, ub)); }
         if (u1 < u0) continue;
         const sA = (a.x + (b.x - a.x) * u0 - ox) * d.x + (a.z + (b.z - a.z) * u0 - oz) * d.z, yA = a.y + (b.y - a.y) * u0;
         const sB = (a.x + (b.x - a.x) * u1 - ox) * d.x + (a.z + (b.z - a.z) * u1 - oz) * d.z, yB = a.y + (b.y - a.y) * u1;
         const ls = Math.abs(sB - sA), ly = Math.abs(yB - yA);
-        if (ly <= 0.25 * ls + 0.05) PB.push({ s: (sA + sB) / 2, y: (yA + yB) / 2, kind: 1, hs: ls / 2 + rad * 0.5, hy: rad + ly / 2, r: 0, ref: null, struct: st.id });
+        if (ly <= 0.25 * ls + 0.05) P.pb_add(PB, 1, (sA + sB) / 2, (yA + yB) / 2, ls / 2 + rad * 0.5, rad + ly / 2, 0, -1, -1, -1, st.id, -1, false);
         else {
-          const k = Math.max(1, Math.ceil(M.len2(ls, ly) / Math.max(0.1, rad)));
-          for (let q = 0; q <= k; q++) { const t = q / k; PB.push({ s: sA + (sB - sA) * t, y: yA + (yB - yA) * t, kind: 0, hs: 0, hy: 0, r: rad + 0.02, ref: null, struct: st.id }); }
+          const k = M.max(1, Math.ceil(M.len2(ls, ly) / M.max(0.1, rad)));
+          for (let q = 0; q <= k; q++) { const t = q / k; P.pb_add(PB, 0, sA + (sB - sA) * t, yA + (yB - yA) * t, 0, 0, rad + 0.02, -1, -1, -1, st.id, -1, false); }
         }
       }
     }
@@ -296,8 +319,8 @@
     }
     if (s1 < s0) return;
     const yAt = al => a.y + (b.y - a.y) * al + K.DECK_LIFT + 0.004, y0 = yAt(al0), y1 = yAt(al1), TH = 0.05;
-    const yTop = Math.max(y0, y1), yBot = Math.min(y0, y1) - TH;
-    PB.push({ s: (s0 + s1) / 2, y: (yTop + yBot) / 2, kind: 1, hs: (s1 - s0) / 2, hy: (yTop - yBot) / 2, r: 0, ref: null, struct: st.id });
+    const yTop = M.max(y0, y1), yBot = M.min(y0, y1) - TH;
+    SS.plane.pb_add(PB, 1, (s0 + s1) / 2, (yTop + yBot) / 2, (s1 - s0) / 2, (yTop - yBot) / 2, 0, -1, -1, -1, st.id, -1, false);
   }
 
   /* the deck surface under (x, z) at or below yTop + 0.05 (worms in 3D stand on it), -1e9 = none. A deck panel that was
@@ -309,7 +332,7 @@
       if (st.fallen) continue;
       const rx = x - st.A.x, rz = z - st.A.z, t = rx * st.ux + rz * st.uz, lat = -rx * st.uz + rz * st.ux;
       if (t < 0 || t > st.L || Math.abs(lat) > K.WIDTH / 2 - 0.05) continue;
-      const i = Math.min(st.n - 1, Math.floor(t / st.L * st.n)), dm = st.mem.find(m => m.kind === 3 && m.i === i);
+      const i = M.min(st.n - 1, Math.floor(t / st.L * st.n)), dm = st.mem.find(m => m.kind === 3 && m.i === i);
       if (!dm || !dm.on) continue;
       const y = st.A.y + (st.B.y - st.A.y) * t / st.L + K.DECK_LIFT + 0.004;
       if (y <= yTop + 0.05 && y > best) best = y;
@@ -319,7 +342,7 @@
   /* is a standing structure within r (horizontally) of (x, z) with its deck below yTop? (tree / prop placement) */
   ST.near = function (S, x, z, r, yTop) {
     for (const st of S.structs || []) {
-      if (st.fallen || Math.min(st.A.y, st.B.y) > yTop) continue;
+      if (st.fallen || M.min(st.A.y, st.B.y) > yTop) continue;
       if (segd({ x, y: 0, z }, { x: st.A.x, y: 0, z: st.A.z }, { x: st.B.x, y: 0, z: st.B.z }) < r + K.WIDTH / 2) return true;
     }
     return false;

@@ -121,13 +121,13 @@
     const U = m.userData.uniforms = {
       uTime: { value: 0 }, tNoise: { value: tx.noise }, tSurf: { value: null }, uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHalf: { value: C.HALF }, uBack: { value: C.HALF },
       uWind: { value: new T.Vector3(1, 0, 0) }, uWhirl: { value: [new T.Vector4(), new T.Vector4(), new T.Vector4(), new T.Vector4()] },
-      uBase: { value: new T.Color(0.09, 0.22, 0.05) }, uTip: { value: new T.Color(0.55, 0.78, 0.25) }, uDryTip: { value: new T.Color(0.78, 0.66, 0.36) }, uSnow: { value: 0 }
+      uBase: { value: new T.Color(0.09, 0.22, 0.05) }, uTip: { value: new T.Color(0.55, 0.78, 0.25) }, uDryTip: { value: new T.Color(0.78, 0.66, 0.36) }, uSnow: { value: 0 }, uAcid: { value: Array.from({ length: 8 }, () => new T.Vector4(0, 0, 0, 0)) }
     };
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
       sh.vertexShader = /* glsl */`
-        uniform float uTime, uHalf, uBack, uSnow; uniform sampler2D tNoise, tSurf; uniform vec3 uO, uN, uWind; uniform vec4 uWhirl[4];
-        varying float vH; varying vec3 vTint; varying vec4 vSurf;
+        uniform float uTime, uHalf, uBack, uSnow; uniform sampler2D tNoise, tSurf; uniform vec3 uO, uN, uWind; uniform vec4 uWhirl[4]; uniform vec4 uAcid[8];
+        varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid;
       ` + sh.vertexShader
         .replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
           vH = position.y;
@@ -145,8 +145,12 @@
             w += vec2(-r.y, r.x) / d * f * 0.12;
           }
           vec2 sway = w * vH * vH;
+          float ac = 0.0;                                      // P44: acid pools (xz, r, strength): the grass inside is burnt and flattened
+          for (int i = 0; i < 8; i++) { vec4 a = uAcid[i]; if (a.w <= 0.0) continue; float d = length(ip.xz - a.xy) / max(a.z, 0.05); ac = max(ac, a.w * (1.0 - smoothstep(0.75, 1.45, d))); }
+          vAcid = ac;
           transformed *= keep;
-          transformed.y *= 1.0 - uSnow * 0.6;
+          transformed.y *= (1.0 - uSnow * 0.6) * (1.0 - 0.75 * ac);
+          transformed.z += ac * vH * 0.25;
           vTint = vec3(1.0);
           #ifdef USE_INSTANCING_COLOR
             vTint = instanceColor;
@@ -162,7 +166,7 @@
             vec4 worldPosition = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
           #endif`);
       // back faces keep the up-facing blade normal: DoubleSide would flip it downwards (black blades seen from behind)
-      sh.fragmentShader = 'uniform vec3 uBase, uTip, uDryTip; uniform float uTime; varying float vH; varying vec3 vTint; varying vec4 vSurf;\n' + sh.fragmentShader
+      sh.fragmentShader = 'uniform vec3 uBase, uTip, uDryTip; uniform float uTime; varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid;\n' + sh.fragmentShader
         .replace('#include <normal_fragment_begin>', T.ShaderChunk.normal_fragment_begin.replace('gl_FrontFacing ? 1.0 : - 1.0', '1.0'))
         .replace('#include <color_fragment>', /* glsl */`#include <color_fragment>
           vec3 tip = mix(uTip, uDryTip, smoothstep(0.35, 0.85, vSurf.g)) * vTint;
@@ -170,11 +174,12 @@
           if (vTint.r > 1.5) c = mix(uBase, vec3(1.0, 0.86, 0.2), smoothstep(0.6, 0.95, vH) + 0.3 * vH);
           if (vTint.b > 1.5) c = mix(uBase, vec3(0.98, 0.95, 1.0), smoothstep(0.6, 0.95, vH) + 0.3 * vH);
           c = mix(c, vec3(0.06, 0.05, 0.04), smoothstep(0.1, 0.5, vSurf.b));          // scorched
+          c = mix(c, mix(vec3(0.07, 0.05, 0.025), vec3(0.22, 0.2, 0.05), vH), smoothstep(0.0, 0.7, vAcid));   // burnt: dark brown, a sickly yellow tip
           diffuseColor.rgb = c;`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           totalEmissiveRadiance += vSurf.a * vec3(3.0, 1.0, 0.2) * smoothstep(0.3, 1.0, vH) * (0.7 + 0.3 * sin(uTime * 13.0 + vH * 9.0));`);
     };
-    m.customProgramCacheKey = () => 'grass3';
+    m.customProgramCacheKey = () => 'grass4';
     return m;
   };
 

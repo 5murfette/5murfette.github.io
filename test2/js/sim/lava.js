@@ -42,8 +42,8 @@
     st.vents = [];
     for (const v of F.volcanoes || (F.volcano ? [F.volcano] : [])) {
       const vent = [], lake = [], R = v.Rc + 1;
-      for (let k = Math.max(0, Math.floor((v.z - R) / H)); k <= Math.min(NZ - 1, Math.ceil((v.z + R) / H)); k++)
-        for (let i = Math.max(0, Math.floor((v.x - R) / H)); i <= Math.min(NX - 1, Math.ceil((v.x + R) / H)); i++) {
+      for (let k = M.max(0, Math.floor((v.z - R) / H)); k <= M.min(NZ - 1, Math.ceil((v.z + R) / H)); k++)
+        for (let i = M.max(0, Math.floor((v.x - R) / H)); i <= M.min(NX - 1, Math.ceil((v.x + R) / H)); i++) {
           const r = M.len2(i * H - v.x, k * H - v.z), c = k * NX + i;
           if (r <= L.VENT_R) vent.push(c);
           if (r <= v.Rc) lake.push(c);
@@ -85,8 +85,8 @@
   }
   function grow(st, i0, i1, k0, k1) {
     const w = W();
-    st.i0 = Math.max(0, Math.min(st.i0, i0)); st.i1 = Math.min(w.NX - 1, Math.max(st.i1, i1));
-    st.k0 = Math.max(0, Math.min(st.k0, k0)); st.k1 = Math.min(w.NZ - 1, Math.max(st.k1, k1));
+    st.i0 = M.max(0, M.min(st.i0, i0)); st.i1 = M.min(w.NX - 1, M.max(st.i1, i1));
+    st.k0 = M.max(0, M.min(st.k0, k0)); st.k1 = M.min(w.NZ - 1, M.max(st.k1, k1));
   }
   /* add volume V (m^3) of temperature Tin to column c */
   function addLava(st, c, V, Tin) {
@@ -124,9 +124,9 @@
     const wh = S.water ? S.water.h : null, wb = S.water ? S.water.b : null, WET = C.WATER ? C.WATER.WET : 0.004;
     const h = st.h, T = st.T, eta = st.eta, s = st.s, kf = st.kf, yl = st.yl, out = st.out, qx = st.qx, qz = st.qz, dV = st.dV, dE = st.dE;
     // B = wet box + 1 ring (cells that can change this step)
-    const i0 = Math.max(0, st.i0 - 1), i1 = Math.min(NX - 1, st.i1 + 1), k0 = Math.max(0, st.k0 - 1), k1 = Math.min(NZ - 1, st.k1 + 1);
+    const i0 = M.max(0, st.i0 - 1), i1 = M.min(NX - 1, st.i1 + 1), k0 = M.max(0, st.k0 - 1), k1 = M.min(NZ - 1, st.k1 + 1);
     // 1. surface, reset accumulators; E = B + 1 more ring for the gradient
-    const e0 = Math.max(0, i0 - 1), e1 = Math.min(NX - 1, i1 + 1), f0 = Math.max(0, k0 - 1), f1 = Math.min(NZ - 1, k1 + 1);
+    const e0 = M.max(0, i0 - 1), e1 = M.min(NX - 1, i1 + 1), f0 = M.max(0, k0 - 1), f1 = M.min(NZ - 1, k1 + 1);
     for (let k = f0; k <= f1; k++) for (let i = e0, c = k * NX + e0; i <= e1; i++, c++) eta[c] = top[c] + h[c];
     for (let k = k0; k <= k1; k++) for (let i = i0, c = k * NX + i0; i <= i1; i++, c++) { out[c] = 0; qx[c] = 0; qz[c] = 0; dV[c] = 0; dE[c] = 0; }
     // 2. per wet column: |grad eta| (a dry wall above the surface gives no gradient; a cliff counts as a drop of at most
@@ -134,7 +134,7 @@
     for (let k = k0; k <= k1; k++) for (let i = i0, c = k * NX + i0; i <= i1; i++, c++) {
       const hc = h[c];
       if (hc <= HMIN) continue;
-      const ec = eta[c], drop = ec - Math.max(hc, H);
+      const ec = eta[c], drop = ec - M.max(hc, H);
       let eE = i < NX - 1 ? eta[c + 1] : ec, eW = i > 0 ? eta[c - 1] : ec, eS = k < NZ - 1 ? eta[c + NX] : ec, eN = k > 0 ? eta[c - NX] : ec;
       if (i < NX - 1 && h[c + 1] <= HMIN && eE > ec) eE = ec; if (eE < drop) eE = drop;
       if (i > 0 && h[c - 1] <= HMIN && eW > ec) eW = ec; if (eW < drop) eW = drop;
@@ -156,9 +156,9 @@
         const u = ea >= eb ? c : b, d = ea >= eb ? ea - eb : eb - ea;
         const hu = h[u];
         if (hu <= HMIN || d <= 0) continue;
-        const he = Math.min(hu, eta[u] - Math.max(top[c], top[b]));
+        const he = M.min(hu, eta[u] - M.max(top[c], top[b]));
         if (he <= HMIN) continue;
-        const sl = Math.min(d, Math.max(hu, H)) / H, se = s[u] > sl ? s[u] : sl;
+        const sl = M.min(d, M.max(hu, H)) / H, se = s[u] > sl ? s[u] : sl;
         const r = yl[u] / (se * he);
         if (r >= 1) continue;
         let Q = kf[u] * he * he * he * (1 - 1.5 * r + 0.5 * r * r * r) * sl * H;
@@ -213,7 +213,7 @@
     st.stats.vmax = vmax;
     if (steamC >= 0 && st.t - st.steamT > 0.5) {
       st.steamT = st.t; st.stats.steam++;
-      const sx = (steamC % NX) * H, sz = Math.floor(steamC / NX) * H, sy = S.water && SS.water ? Math.max(top[steamC], SS.water.surface(S, sx, sz)) : SEA;
+      const sx = (steamC % NX) * H, sz = Math.floor(steamC / NX) * H, sy = S.water && SS.water ? M.max(top[steamC], SS.water.surface(S, sx, sz)) : SEA;
       if (!st.quiet && SS.sim) SS.sim.emit(S, 'steam', { x: sx, y: sy, z: sz, power: steamP });
     }
   }
@@ -232,7 +232,7 @@
       for (let q = 0; q < lk.length; q++) { const c = lk[q]; if (h[c] > L.HMIN) { m += top[c] + h[c]; n++; } }
       m = n ? m / n : -1e9;
       if (m < vt.level) {
-        const V = Math.min(L.VENT_Q * dt, n ? (vt.level - m) * A * n : L.VENT_Q * dt), dv = V / cells.length;
+        const V = M.min(L.VENT_Q * dt, n ? (vt.level - m) * A * n : L.VENT_Q * dt), dv = V / cells.length;
         for (let q = 0; q < cells.length; q++) addLava(st, cells[q], dv, 1);
         st.stats.vented += V;
         const c0 = cells[0], c1 = cells[cells.length - 1];
@@ -249,7 +249,7 @@
       while (src.ci < src.cav.length && w.d[src.cav[src.ci]] > 0) src.ci++;
       if (src.next >= src.vox.length) { finish(src); continue; }
       // spill level: the spill point, or the open lava already standing there (it backs up to the pocket's level)
-      const spill = Math.max(src.js, h[src.c] > L.HMIN ? Math.floor((top[src.c] + h[src.c]) / H) : 0);
+      const spill = M.max(src.js, h[src.c] > L.HMIN ? Math.floor((top[src.c] + h[src.c]) / H) : 0);
       const filling = src.ci < src.cav.length, lvl = filling ? src.cavP[src.ci] : spill;
       const jp = jOf(src.vox[src.next]);
       if (filling ? jp <= lvl : lvl > 1e8) { finish(src); continue; }                  // levels equal / nowhere to go
@@ -268,7 +268,7 @@
           w.set_solid(q, 0.6, MAT.LAVA, 250); box(q);
         } else if (src.js < 1e8 && j >= spill) out += H3;                         // (the spill level, also once the cavity just filled)
         else { src.acc = 0; break; }
-        w.set_air(o, Math.min(w.d[o], -0.25)); box(o);
+        w.set_air(o, M.min(w.d[o], -0.25)); box(o);
         src.next++; src.acc -= H3; src.moved += H3; st.stats.drained += H3;
       }
       if (out > 0) { addLava(st, src.c, out, 1); const i = src.c % NX, k = Math.floor(src.c / NX); grow(st, i, i, k, k); }
@@ -286,8 +286,8 @@
     if (!st.claimed) st.claimed = new Int32Array(w.N);
     const cl = st.claimed, open = [], sid = st.sources.length + 1;
     const busy = o => cl[o] > 0 && st.sources[cl[o] - 1] && !st.sources[cl[o] - 1].done;   // held by a still-active source
-    const i0 = Math.max(1, box.i0 - 1), i1 = Math.min(NX - 2, box.i1 + 1), j0 = Math.max(1, box.j0 - 1), j1 = Math.min(NY - 2, box.j1 + 1);
-    const k0 = Math.max(1, box.k0 - 1), k1 = Math.min(NZ - 2, box.k1 + 1);
+    const i0 = M.max(1, box.i0 - 1), i1 = M.min(NX - 2, box.i1 + 1), j0 = M.max(1, box.j0 - 1), j1 = M.min(NY - 2, box.j1 + 1);
+    const k0 = M.max(1, box.k0 - 1), k1 = M.min(NZ - 2, box.k1 + 1);
     for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const o = (k * NY + j) * NX + i;
       if (Mt[o] !== MAT.LAVA || D[o] <= 0 || busy(o)) continue;
@@ -318,9 +318,9 @@
     // LV1: where can the lava go? Priority flood over the air reachable from the opened voxels, by fill level
     // p = max(j, parent's p) (the level the lava must reach to get there; buckets per j, deterministic): enclosed
     // air is filled lowest-first (cav); the first open-sky voxel (above its column's top solid) is the spill point.
-    const jTop = jOf(vox[0]), seen = new Set(), bk_ = [];
+    const jTop = jOf(vox[0]), seen = new Uint8Array(w.N), bk_ = [];
     for (let j = 0; j < NY; j++) bk_.push([]);
-    const push = (q, p) => { if (q < 0 || q >= w.N || seen.has(q) || D[q] > 0) return; const qi = q % NX, qk = Math.floor(q / SXY); if (qi < 1 || qk < 1 || qi > NX - 2 || qk > NZ - 2) return; seen.add(q); bk_[Math.max(p, jOf(q))].push(q); };
+    const push = (q, p) => { if (q < 0 || q >= w.N || seen[q] || D[q] > 0) return; const qi = q % NX, qk = Math.floor(q / SXY); if (qi < 1 || qk < 1 || qi > NX - 2 || qk > NZ - 2) return; seen[q] = 1; bk_[M.max(p, jOf(q))].push(q); };
     for (const o of open) for (const q of [o - 1, o + 1, o - NX, o + NX, o - SXY, o + SXY]) push(q, jOf(o) < jOf(q) ? jOf(q) : jOf(o));
     const cav = [], cavP = [];
     let js = 1e9, sc = bk * NX + bi;
@@ -360,10 +360,10 @@
     if (!lkVox) { lkVox = new Int32Array(CAP); lkSeen = new Int32Array(LK_HASH); lkCnt = new Int32Array(NY + 1); lkOrd = new Int32Array(CAP); }
     // cave air: an air voxel under its own column's highest solid (inside the lattice, off the border)
     const cave = o => { const i = o % NX, k = Math.floor(o / SXY); return i > 0 && k > 0 && i < NX - 1 && k < NZ - 1 && D[o] <= 0 && Math.floor(o / NX) % NY < topJ[k * NX + i]; };
-    for (let k = Math.max(1, st.k0); k <= Math.min(NZ - 2, st.k1); k++) for (let i = Math.max(1, st.i0); i <= Math.min(NX - 2, st.i1); i++) {
+    for (let k = M.max(1, st.k0); k <= M.min(NZ - 2, st.k1); k++) for (let i = M.max(1, st.i0); i <= M.min(NX - 2, st.i1); i++) {
       const c = k * NX + i;
       if (h[c] <= L.HMIN) continue;
-      const ys = top[c] + h[c], jb = Math.max(1, topJ[c] + 1), je = Math.min(NY - 2, Math.floor(ys / H));
+      const ys = top[c] + h[c], jb = M.max(1, topJ[c] + 1), je = M.min(NY - 2, Math.floor(ys / H));
       let jl = -1, seed = -1;
       for (let j = jb; j <= je && jl < 0; j++) {
         const o = (k * NY + j) * NX + i;
@@ -391,7 +391,7 @@
       for (let q = 0; q < nv; q++) lkCnt[Math.floor(lkVox[q] / NX) % NY + 1]++;
       for (let j = 1; j <= NY; j++) lkCnt[j] += lkCnt[j - 1];
       for (let q = 0; q < nv; q++) { const j = Math.floor(lkVox[q] / NX) % NY; lkOrd[lkCnt[j]++] = lkVox[q]; }
-      const nf = Math.min(nv, Math.floor(excess / H3));
+      const nf = M.min(nv, Math.floor(excess / H3));
       if (nf <= 0) continue;
       let bi0 = NX, bi1 = -1, bj0 = NY, bj1 = -1, bk0 = NZ, bk1 = -1;
       for (let q = 0; q < nf; q++) {
@@ -420,7 +420,7 @@
         h[c] = 0; T[c] = 0; continue;
       }
       if (T[c] >= L.T_SOLID) continue;
-      const y1 = w.top[c] + hc, j0 = Math.max(1, w.topJ[c]), j1 = Math.min(NY - 2, Math.floor(y1 / H) + 1);
+      const y1 = w.top[c] + hc, j0 = M.max(1, w.topJ[c]), j1 = M.min(NY - 2, Math.floor(y1 / H) + 1);
       for (let j = j0; j <= j1; j++) {
         const o = (k * NY + j) * NX + i, v = y1 - j * H;
         if (v <= D[o]) continue;
@@ -447,12 +447,12 @@
     const ws = S.water; if (!st.hasVox || !ws) return;
     const w = W(), NX = w.NX, NY = w.NY, NZ = w.NZ, SXY = NX * NY, H = w.H, D = w.d, Mt = w.mat, Ht = w.heat;
     const wh = ws.h, bed = ws.bed || ws.b, WET = C.WATER ? C.WATER.WET : 0.004;
-    const kA = st.qRow, kB = Math.min(NZ - 2, kA + L.QV_ROWS - 1);
+    const kA = st.qRow, kB = M.min(NZ - 2, kA + L.QV_ROWS - 1);
     st.qRow = kB >= NZ - 2 ? 1 : kB + 1;
     let n = 0, sx = 0, sy = 0, sz = 0, bi0 = 1e9, bi1 = -1, bj0 = 1e9, bj1 = -1, bk0 = 1e9, bk1 = -1;
-    for (let k = Math.max(1, kA); k <= kB; k++) for (let i = 1; i < NX - 1; i++) {
+    for (let k = M.max(1, kA); k <= kB; k++) for (let i = 1; i < NX - 1; i++) {
       const c = k * NX + i; if (wh[c] <= WET) continue;
-      const ys = bed[c] + wh[c], jb = Math.max(1, Math.floor(bed[c] / H) - 1), je = Math.min(NY - 2, Math.floor(ys / H));
+      const ys = bed[c] + wh[c], jb = M.max(1, Math.floor(bed[c] / H) - 1), je = M.min(NY - 2, Math.floor(ys / H));
       for (let j = jb; j <= je; j++) {
         const o = (k * NY + j) * NX + i; if (D[o] > 0) continue;              // a water-filled cell (air under the surface)
         for (let q = 0; q < 6; q++) {
@@ -462,7 +462,7 @@
           const ni = nb % NX, nj = Math.floor(nb / NX) % NY, nk = Math.floor(nb / SXY);
           if (ni < bi0) bi0 = ni; if (ni > bi1) bi1 = ni; if (nj < bj0) bj0 = nj; if (nj > bj1) bj1 = nj; if (nk < bk0) bk0 = nk; if (nk > bk1) bk1 = nk;
           sx += ni * H; sy += ys; sz += nk * H;
-          wh[c] = Math.max(0, wh[c] - L.QV_BOIL);                                 // boiled off
+          wh[c] = M.max(0, wh[c] - L.QV_BOIL);                                 // boiled off
         }
       }
     }
@@ -470,7 +470,7 @@
     w.mark(bi0, bj0, bk0, bi1, bj1, bk1); ws.ver++;
     st.stats.quenched = (st.stats.quenched || 0) + n;
     if (st.hiss.length >= L.HISS_MAX) st.hiss.shift();
-    st.hiss.push({ x: sx / n, y: sy / n, z: sz / n, t: L.STEAM_T, p: Math.min(6, 1 + n * 0.5), next: 0 });
+    st.hiss.push({ x: sx / n, y: sy / n, z: sz / n, t: L.STEAM_T, p: M.min(6, 1 + n * 0.5), next: 0 });
   }
   // the steam of fresh quench contacts: a 'steam' event every 0.3 s while it lasts, fading
   function hiss(S, st, dt) {
@@ -488,8 +488,8 @@
     if (S.lastCrater) breach(S, st, S.lastCrater);
     const w = W(), NX = w.NX, NZ = w.NZ, H = w.H, A = H * H, h = st.h, T = st.T, top = w.top;
     const R = L.SPLASH_K * SS.blast.crater_radius(MAT.LAVA, Wkg), R2 = 1.8 * R;
-    const i0 = Math.max(0, Math.floor((c.x - R2) / H)), i1 = Math.min(NX - 1, Math.ceil((c.x + R2) / H));
-    const k0 = Math.max(0, Math.floor((c.z - R2) / H)), k1 = Math.min(NZ - 1, Math.ceil((c.z + R2) / H));
+    const i0 = M.max(0, Math.floor((c.x - R2) / H)), i1 = M.min(NX - 1, Math.ceil((c.x + R2) / H));
+    const k0 = M.max(0, Math.floor((c.z - R2) / H)), k1 = M.min(NZ - 1, Math.ceil((c.z + R2) / H));
     let Vs = 0, Es = 0;
     const ring = [];
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
@@ -513,14 +513,14 @@
   /* LV4: a clot of V m3 at lava temperature Tin falls back into (or is remelted by) the lava at x, z */
   LV.deposit = function (S, x, z, V, Tin) {
     const st = S.lava, w = W(); if (!st || w.outside(x, z) || !(V > 0)) return;
-    const i = Math.min(w.NX - 1, Math.max(0, Math.round(x / w.H))), k = Math.min(w.NZ - 1, Math.max(0, Math.round(z / w.H)));
+    const i = M.min(w.NX - 1, M.max(0, Math.round(x / w.H))), k = M.min(w.NZ - 1, M.max(0, Math.round(z / w.H)));
     addLava(st, k * w.NX + i, V, Tin); grow(st, i, i, k, k);
   };
 
   /* ---------- queries ---------- */
   function bil(S, arr, x, z) {
     const w = W(), NX = w.NX, NZ = w.NZ, H = w.H;
-    const fx = Math.max(0, Math.min(NX - 1.001, x / H)), fz = Math.max(0, Math.min(NZ - 1.001, z / H));
+    const fx = M.max(0, M.min(NX - 1.001, x / H)), fz = M.max(0, M.min(NZ - 1.001, z / H));
     const i = Math.floor(fx), k = Math.floor(fz), u = fx - i, v = fz - k, c = k * NX + i;
     return (arr[c] * (1 - u) + arr[c + 1] * u) * (1 - v) + (arr[c + NX] * (1 - u) + arr[c + NX + 1] * u) * v;
   }
@@ -533,7 +533,7 @@
     if (!st) return null;
     const NX = W().NX, A = W().H * W().H;
     let vol = 0, cells = 0, Tsum = 0;
-    for (let k = Math.max(0, st.k0); k <= st.k1; k++) for (let i = st.i0; i <= st.i1; i++) { const c = k * NX + i; if (st.h[c] > 0) { vol += st.h[c] * A; cells++; Tsum += st.T[c] * st.h[c] * A; } }
+    for (let k = M.max(0, st.k0); k <= st.k1; k++) for (let i = st.i0; i <= st.i1; i++) { const c = k * NX + i; if (st.h[c] > 0) { vol += st.h[c] * A; cells++; Tsum += st.T[c] * st.h[c] * A; } }
     return Object.assign({ vol, cells, Tmean: vol > 0 ? Tsum / vol : 0, sources: st.sources.length, box: [st.i0, st.i1, st.k0, st.k1] }, st.stats);
   };
 })(window.SS = window.SS || {});

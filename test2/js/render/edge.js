@@ -30,7 +30,7 @@
   'use strict';
   const T = THREE;
   const EV = SS.edgeView = { enabled: true };
-  const SHOW_DELAY = 0.45, FADE = 0.5, REFRESH = 0.4;
+  const SHOW_DELAY = 0.45, FADE = 0.5, REFRESH = 0.4, REBUILD_MIN = 0.35, EDGE_LAG = 0.1;
   let Q = null, tx = null, meshO = null, meshT = null, dens = 1, step = 0.05, bseg = 3, K = null, FACE = null;
   const U = { uTime: { value: 0 }, uDir: { value: new T.Vector3(1, 0, 0) }, uWind: { value: 0 } };
   const st = { mpp: 0.018, zoomB: 19, sec: null, shown: false, showT: -99, births: new Map(), prev: null, refreshT: -99, vegVer: -1, waterVer: -1, lavaVer: -1,
@@ -873,12 +873,16 @@
     const still = EV.enabled && S.section && S.time - S.lastRotate >= SHOW_DELAY && S.thetaGoal == null && S.section.O.x === S.O.x && S.section.O.z === S.O.z;
     if (!still) { if (st.shown) hide(); return (EV.alpha = 0); }
     const sec = S.section;
-    if (sec !== st.sec) {
+    if (sec !== st.sec && st.pend !== sec) { st.pend = sec; st.pendT = view.time; }
+    // (P38-R4: a shown edge follows world edits at most every REBUILD_MIN s and not in the frame of the blast (EDGE_LAG s later, when the terrain
+    // remesh and the effects are done): its build is up to 12 ms)
+    if (sec !== st.sec && !(st.shown && st.sec && (view.time - st.refreshT < REBUILD_MIN || view.time - st.pendT < EDGE_LAG))) {
       if (!sec.edge) SS.edge.build(S, sec);
       rebuild(S, view, sec, !st.shown);
       st.refreshT = view.time;
       st.vegVer = S.veg ? S.veg.surfVer : 0; st.waterVer = S.water ? S.water.ver : 0; st.lavaVer = S.lava ? S.lava.ver : 0;
     } else if (Math.abs(Math.log((view.zoom || 19) / st.zoomB)) > 0.33) {
+      if (!sec.edge) SS.edge.build(S, sec);               // (P38-R8: a fresh section after a blast has no edge yet: this branch crashed on it when the zoom had changed)
       rebuild(S, view, sec, false);                     // zoomed far: re-derive the pixel-minimum line widths
     } else if (view.time - st.refreshT > REFRESH) {
       const vv = S.veg ? S.veg.surfVer : 0, wv = S.water ? S.water.ver : 0, lv = S.lava ? S.lava.ver : 0;

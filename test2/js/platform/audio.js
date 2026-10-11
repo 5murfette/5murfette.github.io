@@ -80,31 +80,43 @@
   // (iOS Safari unlocks audio only inside touchend / click handlers, not pointerdown)
   if (typeof addEventListener === 'function') for (const ev of ['pointerdown', 'keydown', 'touchend', 'click']) addEventListener(ev, () => AU.unlock(), { capture: true });
   const ok = () => ctx && !muted && ctx.state === 'running';
+  /* P38-R2 polyphony cap: every synthesised source counts until it ends; a burst of events (a cluster, a shrapnel storm) cannot create
+   * hundreds of nodes. Over the cap new one-shots are dropped (the oldest keep playing). */
+  /* P38 R6 (R12): a context that was suspended / throttled while sources were scheduled never fires their onended, which pinned
+   * nVoices at the cap for good (a silent game). The count is therefore also reset when nothing ended for VOICE_STALE_MS of wall time. */
+  const MAX_VOICES = 40, VOICE_STALE_MS = 6000; let nVoices = 0, lastEnded = 0;
+  const take = src => {
+    const now = performance.now();
+    if (nVoices >= MAX_VOICES) { if (now - lastEnded < VOICE_STALE_MS) return false; nVoices = 0; }
+    if (nVoices === 0) lastEnded = now;
+    nVoices++; src.onended = () => { if (nVoices > 0) nVoices--; lastEnded = performance.now(); }; return true;
+  };
+  AU.voices = () => nVoices; AU.voices_set = n => { nVoices = n; lastEnded = performance.now() - VOICE_STALE_MS - 1; };
   function env(g, t, a, peak, dec) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + a + dec); }
   function out(pan, wet) { const p = ctx.createStereoPanner(); p.pan.value = clamp(pan || 0, -1, 1); p.connect(master); if (wet) { const s = ctx.createGain(); s.gain.value = wet; p.connect(s); s.connect(verbIn); } return p; }
   function noise(dur, type, f0, q, peak, f1, rate, delay, pan) {
     if (!ok()) return; const t = ctx.currentTime + (delay || 0);
-    const s = ctx.createBufferSource(); s.buffer = B.noise; s.loop = true; s.playbackRate.value = rate || 1;
+    const s = ctx.createBufferSource(); if (!take(s)) return; s.buffer = B.noise; s.loop = true; s.playbackRate.value = rate || 1;
     const f = ctx.createBiquadFilter(); f.type = type; f.frequency.setValueAtTime(f0, t); if (f1) f.frequency.exponentialRampToValueAtTime(f1, t + dur); f.Q.value = q;
     const g = ctx.createGain(); env(g, t, 0.006, peak, dur);
     s.connect(f); f.connect(g); g.connect(pan ? out(pan) : master); s.start(t, rand() * 1.5); s.stop(t + dur + 0.1);
   }
   function tone(type, f0, f1, dur, peak, a, delay) {
     if (!ok()) return; const t = ctx.currentTime + (delay || 0); a = a || 0.005;
-    const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f0, t); if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const o = ctx.createOscillator(); if (!take(o)) return; o.type = type; o.frequency.setValueAtTime(f0, t); if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
     const g = ctx.createGain(); env(g, t, a, peak, dur); o.connect(g); g.connect(master); o.start(t); o.stop(t + a + dur + 0.05);
   }
   function voice(f, dur, vib, formants, peak, delay, f1) {
     if (!ok()) return; const t = ctx.currentTime + (delay || 0);
-    const o2 = ctx.createGain(); o2.gain.setValueAtTime(0.0001, t); o2.gain.exponentialRampToValueAtTime(peak, t + 0.04); o2.gain.setValueAtTime(peak, t + dur * 0.7); o2.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const o2 = ctx.createGain(); const oc = ctx.createOscillator(); if (!take(oc)) return; o2.gain.setValueAtTime(0.0001, t); o2.gain.exponentialRampToValueAtTime(peak, t + 0.04); o2.gain.setValueAtTime(peak, t + dur * 0.7); o2.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o2.connect(master);
     const fs = formants.map(([fr, q]) => { const b = ctx.createBiquadFilter(); b.type = 'bandpass'; b.frequency.value = fr; b.Q.value = q; b.connect(o2); return b; });
-    const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f, t); if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const o = oc; o.type = 'sawtooth'; o.frequency.setValueAtTime(f, t); if (f1) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
     const l = ctx.createOscillator(); l.frequency.value = vib[0]; const lg = ctx.createGain(); lg.gain.value = vib[1]; l.connect(lg); lg.connect(o.frequency);
     for (const b of fs) o.connect(b);
     o.start(t); l.start(t); o.stop(t + dur + 0.05); l.stop(t + dur + 0.05);
   }
-  function playBuf(buf, gain, rate, pan, wet) { if (!ok() || !buf) return; const s = ctx.createBufferSource(); s.buffer = buf; s.playbackRate.value = rate; const g = ctx.createGain(); g.gain.value = gain; s.connect(g); g.connect(out(pan, wet)); s.start(); }
+  function playBuf(buf, gain, rate, pan, wet) { if (!ok() || !buf) return; const s = ctx.createBufferSource(); if (!take(s)) return; s.buffer = buf; s.playbackRate.value = rate; const g = ctx.createGain(); g.gain.value = gain; s.connect(g); g.connect(out(pan, wet)); s.start(); }
   // stereo pan / distance gain of a world point for the current camera
   function where(p) {
     const cam = SS.view && SS.view.camera && SS.view.camera(); if (!cam || !p) return { pan: 0, k: 1 };
@@ -123,13 +135,13 @@
     hole() { tone('sine', 38, 90, 3, 0.5, 0.4); noise(3, 'bandpass', 200, 1.5, 0.3, 1600, 0.6); },
     torch() { const n = performance.now(); if (n - lastDrill < 70) return; lastDrill = n; noise(0.09, 'bandpass', 700 + rand() * 300, 0.7, 0.16); noise(0.06, 'highpass', 3500, 0.5, 0.05); },
     drill() { const n = performance.now(); if (n - lastDrill < 90) return; lastDrill = n; tone('square', 85 + rand() * 20, 70, 0.08, 0.08); noise(0.08, 'bandpass', 1200, 1, 0.18); },
-    ouch() { const n = performance.now(); if (n - lastOuch < 250) return; lastOuch = n; voice(420 + rand() * 120, 0.22, [9, 15], [[750, 4], [1300, 5]], 0.22, 0, 300); },
+    ouch() { const n = performance.now(); if (n - lastOuch < 250) return; lastOuch = n; voice(300 + rand() * 90, 0.22, [9, 15], [[650, 4], [1150, 5]], 0.22, 0, 215); },
     splash(s) { noise(0.5 + s * 0.3, 'bandpass', 900, 0.8, Math.min(0.7, 0.2 + s * 0.4), 300); tone('sine', 600, 1600, 0.05, 0.08 * s); },
     whoosh(s) { noise(0.6, 'bandpass', 400, 1.2, 0.3 * (s || 1), 2400); },
     bounce(s) { const n = performance.now(); if (n - lastBounce < 60) return; lastBounce = n; tone('triangle', 240 + rand() * 60, 160, 0.08, 0.15 * s + 0.04); },
     shotgun() { playBuf(B.boom && B.boom[0], 0.45, 2.4, 0, 0.3); noise(0.25, 'highpass', 1500, 0.5, 0.6, 400); tone('square', 140, 50, 0.1, 0.2); },
     launch(k) { if (k === 'rocket') noise(0.6, 'bandpass', 500, 1, 0.45, 2400); else if (k === 'boulder') { tone('sine', 120, 60, 0.25, 0.4); noise(0.3, 'lowpass', 500, 1, 0.4); } else { tone('sine', 300, 180, 0.15, 0.25); noise(0.15, 'bandpass', 900, 1, 0.2, 2000); } },
-    jump() { voice(380, 0.14, [6, 8], [[700, 4], [1100, 5]], 0.12, 0, 520); },
+    jump() { voice(290, 0.14, [6, 8], [[640, 4], [1000, 5]], 0.12, 0, 400); },
     thwip() { tone('sine', 900, 200, 0.16, 0.25); noise(0.12, 'highpass', 3000, 0.7, 0.2); },
     clink() { tone('triangle', 1800, 1200, 0.08, 0.2); },
     bat() { noise(0.09, 'bandpass', 1800, 2.5, 0.7, 900); tone('triangle', 520, 180, 0.12, 0.35); tone('sine', 120, 60, 0.18, 0.4); },
@@ -149,50 +161,77 @@
     fuse() { noise(0.8, 'highpass', 4000, 0.5, 0.15); },
     plane() { if (!ok()) return; const t = ctx.currentTime, o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain(); o.type = 'sawtooth'; o.frequency.setValueAtTime(64, t); o.frequency.linearRampToValueAtTime(78, t + 2.2); o.frequency.linearRampToValueAtTime(58, t + 4.5); f.type = 'lowpass'; f.frequency.value = 600; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 1.8); g.gain.exponentialRampToValueAtTime(0.0001, t + 4.5); o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + 4.6); },
     baa() { voice(300 + rand() * 40, 0.6, [7, 28], [[900, 3], [1600, 4]], 0.5); },
-    chirp() { const n = 2 + (rand() * 3 | 0), b = 500 + rand() * 400; for (let i = 0; i < n; i++) voice(b * (0.8 + rand() * 0.5), 0.07, [12, 10], [[800, 3], [1500, 4]], 0.07, i * 0.08, b * (0.7 + rand() * 0.6)); },
+    chirp() { const n = 2 + (rand() * 3 | 0), b = 380 + rand() * 300; for (let i = 0; i < n; i++) voice(b * (0.8 + rand() * 0.5), 0.07, [12, 10], [[800, 3], [1500, 4]], 0.07, i * 0.08, b * (0.7 + rand() * 0.6)); },
     fanfare() { [392, 523, 659, 784, 659, 784].forEach((f, i) => tone('triangle', f, f, i === 5 ? 0.6 : 0.15, 0.22, 0.005, i * 0.14)); },
     splat() { noise(0.35, 'lowpass', 1100, 1, 0.7, 180); noise(0.2, 'bandpass', 420, 3, 0.45, 160, 1, 0.03); tone('sine', 120, 50, 0.2, 0.4); },
-    chargeStart() { if (!ok()) return; const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'triangle'; o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(900, t + 1.2); g.gain.value = 0.07; o.connect(g); g.connect(master); o.start(t); o.stop(t + 1.3); charge = o; },
-    chargeStop() { if (charge) { try { charge.stop(); } catch (e) { /* */ } charge = null; } }
+    chargeStart() { if (!ok()) return; const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'triangle'; o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(900, t + 1.2); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.07, t + 0.04); o.connect(g); g.connect(master); o.start(t); o.stop(t + 1.3); charge = { o, g }; },
+    chargeStop() { if (charge) { try { const t = ctx.currentTime; charge.g.gain.cancelScheduledValues(t); charge.g.gain.setValueAtTime(charge.g.gain.value, t); charge.g.gain.linearRampToValueAtTime(0.0001, t + 0.05); charge.o.stop(t + 0.06); } catch (e) { /* */ } charge = null; } }
   };
   AU.sfx = SFX;
+  AU.synth = { tone, noise, voice, playBuf, where, ok, clamp, rand, S2: (id, vol, rate, fb) => S2(id, vol, rate, fb) };   // P37: platform/audioa.js (W3) and audio_b.js (W4) build the new weapons' sounds from these
   const ROCKETS = { bazooka: 1, homing: 1 };
   /* ---------- recorded / generated samples (assets/sfx/manifest.js, ids = docs/SOUND_PROMPTS.md) ----------
    * HTMLAudio (decodeAudioData needs fetch, which file:// forbids): a small pool per file; volume x master; pitch jitter
    * through playbackRate (preservesPitch off). play(id, vol, rate) -> true when a sample played; else the caller's
-   * synthesised fallback runs. Worm voice lines (voice()) have no fallback: silent until their files exist. */
+   * synthesised fallback runs. Worm voice lines (voice()) have no fallback: silent until their files exist (P42b: the team banks 'id@t1'..'@t4'). */
   const pools = {};
-  AU.has = id => !!(SS.SFX_FILES && SS.SFX_FILES[id] && SS.SFX_FILES[id].length);
-  AU.play = function (id, vol, rate) {
+  /* R10: a recorded file counts only if the browser can decode its format (canPlayType). The sfx are Ogg Vorbis: a Safari without it used to get
+   * an <audio> that failed silently while AU.play() still answered true, so the synthesised fallbacks never ran (no sound effects at all). */
+  const MIME = { ogg: 'audio/ogg; codecs="vorbis"', oga: 'audio/ogg; codecs="vorbis"', opus: 'audio/ogg; codecs="opus"', m4a: 'audio/mp4; codecs="mp4a.40.2"', mp3: 'audio/mpeg', wav: 'audio/wav' };
+  const canExt = {}; let probe = null; const badFile = {};
+  function playable(f) {
+    if (badFile[f]) return false;
+    const x = f.slice(f.lastIndexOf('.') + 1).toLowerCase();
+    if (canExt[x] === undefined) {
+      let r = true;
+      try { if (MIME[x]) { probe = probe || new Audio(); const q = probe.canPlayType(MIME[x]); r = q === 'probably' || q === 'maybe'; } } catch (e) { r = true; }       // (no Audio: assume yes)
+      canExt[x] = r;
+    }
+    return canExt[x];
+  }
+  /* P42b: every .ogg / .opus sound has an AAC .m4a sibling when the manifest sets SS.SFX_M4A (tools/dev/gen/sfxm4a.py):
+   * a browser that cannot decode Ogg (older Safari) plays the sibling instead of falling back to the synth / silence */
+  function resolve(f) {
+    if (playable(f)) return f;
+    if (SS.SFX_M4A && /\.(ogg|opus)$/i.test(f)) { const g = f.replace(/\.(ogg|opus)$/i, '.m4a'); if (playable(g)) return g; }
+    return null;
+  }
+  AU.has = id => { const l = SS.SFX_FILES && SS.SFX_FILES[id]; if (!l) return false; for (let i = 0; i < l.length; i++) if (resolve(l[i])) return true; return false; };
+  /* jit = the random detune of this play (fraction of the speed): one-shots +-4 % (MU.JIT_SHOT), worm voices +-2 %
+   * (MU.JIT_VOICE, platform/music.js); a caller that wants a wider spread passes its own. */
+  AU.play = function (id, vol, rate, jit) {
     if (!ctx || muted || !AU.has(id)) return false;
-    const files = SS.SFX_FILES[id], f = files[(rand() * files.length) | 0], pool = pools[f] || (pools[f] = []);
+    const all = SS.SFX_FILES[id], files = all.map(resolve).filter(Boolean), f = files[(rand() * files.length) | 0], pool = pools[f] || (pools[f] = []);
     let el = pool.find(a => a.paused || a.ended);
-    if (!el && pool.length < 6) { el = new Audio('assets/sfx/' + f); el.preload = 'auto'; pool.push(el); }
+    if (!el && pool.length < 6) { el = new Audio('assets/sfx/' + f); el.preload = 'auto'; el.addEventListener('error', () => { badFile[f] = true; const i = pool.indexOf(el); if (i >= 0) pool.splice(i, 1); }); pool.push(el); }
     if (!el) return true;
     try { el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; } catch (e) { /* */ }
-    el.volume = clamp((vol == null ? 1 : vol) * 0.85, 0, 1); el.playbackRate = clamp((rate || 1) * (0.94 + rand() * 0.12), 0.5, 2);
+    el.volume = clamp((vol == null ? 1 : vol) * 0.85, 0, 1); el.playbackRate = clamp((rate || 1) * SS.music.jitter(rand(), jit == null ? SS.music.JIT_SHOT : jit), 0.5, 2);
     el.currentTime = 0; const pr = el.play(); if (pr && pr.catch) pr.catch(() => { /* not allowed yet */ });
     return true;
   };
   const S2 = (id, vol, rate, fallback) => { if (!AU.play(id, vol, rate) && fallback) fallback(); };
-  // worm voices: one character per team (the same lines pitched: 0.92 / 1.0 / 1.1 / 1.22), throttled per worm
-  const VOICE_RATE = [0.92, 1.0, 1.1, 1.22], lastVoice = new Map();
+  /* worm voices (P42b): team identity comes from distinct voice BANKS, not from pitch (pitched-up voices sounded like chipmunks):
+   * SS.SFX_FILES['worm_hurt_small@t1'] ... '@t4' (team 1..4) when delivered, else the shared id at pitch 1.0. Detune only +-2 %.
+   * Throttled per worm. */
+  const lastVoice = new Map();
   AU.voice = function (id, w, vol, minGap) {
     if (!w) return false;
     const t = ctx ? ctx.currentTime : 0, l = lastVoice.get(w.id) || -9;   // (by id: a replay restore replaces the worm objects)
     if (t - l < (minGap == null ? 0.6 : minGap)) return false;
-    if (!AU.play(id, vol == null ? 0.9 : vol, VOICE_RATE[(w.team | 0) % 4])) return false;
+    if (!AU.play(SS.music.bank_id(AU.has, id, w.team), vol == null ? 0.9 : vol, 1, SS.music.JIT_VOICE)) return false;
     lastVoice.set(w.id, t); return true;
   };
-  const hurtLine = e => e.why === 'a baseball bat' ? 'worm_bat_hit' : /fire|lava|oil|burn|hot/.test(e.why || '') ? 'worm_burn' : e.amount >= 25 ? 'worm_hurt_big' : 'worm_hurt_small';
+  const hurtLine = e => e.src === SS.CFG.DS.BAT ? 'worm_bat_hit' : (SS.CFG.DS_FLAGS[e.src | 0] & SS.CFG.DSF.FX_HOT) ? 'worm_burn' : e.amount >= 25 ? 'worm_hurt_big' : 'worm_hurt_small';
   AU.onEvent = function (S, e) {
     if (!ctx) return;
     switch (e.type) {
-      case 'explode': { const R = 44 * Math.cbrt(e.W || 1); S2(R > 60 ? 'explosion_large' : R > 30 ? 'explosion_medium' : 'explosion_small', clamp(R / 60, 0.4, 1), 1, () => SFX.boom(R, e));
+      case 'explode': { const R = 44 * Math.cbrt(e.W || 1); if (e.wet != null && e.wet > 0.25) break; if (SS.music) SS.music.duck(SS.music.duck_gain(R));   // a charge under the water: its own sound is the 'waterblast' event (no second, dry boom)
+        S2(R > 60 ? 'explosion_large' : R > 30 ? 'explosion_medium' : 'explosion_small', clamp(R / 60, 0.4, 1), 1, () => SFX.boom(R, e));
         // a gasp from the worm on turn when a blast goes off close to it
         const a = S.active; if (a && !a.dead && Math.hypot(a.pos.x - e.x, a.pos.y - e.y, a.pos.z - e.z) < 7) AU.voice('worm_flinch', a, 0.7, 1.5); break; }
       case 'waterblast': S2('explosion_water', 1, 1, () => SFX.boomWater(44 * Math.cbrt(e.W || 1))); break;
-      case 'fire': S2(ROCKETS[e.weapon] ? 'launch_rocket' : 'launch_throw', 0.9, 1, () => SFX.launch(ROCKETS[e.weapon] ? 'rocket' : 'thrown')); if (rand() < 0.35) AU.voice('worm_attack', S.active, 0.8); break;
+      case 'fire': if (AU.ext && AU.ext(S, e)) break; S2(ROCKETS[e.weapon] ? 'launch_rocket' : 'launch_throw', 0.9, 1, () => SFX.launch(ROCKETS[e.weapon] ? 'rocket' : 'thrown')); if (rand() < 0.35) AU.voice('worm_attack', S.active, 0.8); break;
       case 'use': if (e.weapon === 'boulder') S2('launch_boulder', 1, 1, () => SFX.launch('boulder')); else if (e.weapon === 'skip') { S2('ui_click', 0.6, 1, () => SFX.click()); AU.voice('worm_skip', S.active, 0.8); } break;
       case 'bounce': S2('bounce_metal', clamp((e.speed || 3) / 10, 0.1, 1), 1, () => SFX.bounce(clamp((e.speed || 3) / 10, 0.1, 1))); break;
       case 'splash': S2(e.size > 0.9 ? 'splash_big' : 'splash_small', Math.min(1, e.size || 0.6), 1, () => SFX.splash(Math.min(1.5, e.size || 0.6))); break;
@@ -205,13 +244,20 @@
       case 'switch': AU.voice('worm_select', e.worm, 0.9, 0.2); break;
       case 'rope_fire': S2('rope_fire', 0.7, 1, () => SFX.thwip()); break;
       case 'rope_hook': S2('rope_hook', 0.8, 1, () => SFX.clink()); break;
+      case 'rope_release': if ((e.speed || 0) > 4) S2('rope_release', 0.6, 1, () => SFX.whoosh(Math.min(1, e.speed / 25))); break;
+      case 'rope_knock': S2('body_hit', 0.6, 1, () => SFX.thud(0.6)); break;
+      case 'chute_open': S2('chute_open', 0.8, 1, () => SFX.whoosh(0.8)); break;
+      case 'chute_cut': S2('chute_cut', 0.5, 1, () => SFX.whoosh(0.4)); break;
+      case 'zip_fire': S2('zip_fire', 0.7, 1, () => SFX.thwip()); break;
+      case 'zip_hook': S2('zip_hook', 0.8, 1, () => SFX.clink()); break;
+      case 'zip_leave': S2('zip_leave', 0.5, 1, () => SFX.whoosh(0.4)); break;
       case 'zap': S2('electric_zap', 0.9, 1, () => SFX.zap()); break;
       case 'hole': S2('blackhole_open', 1, 1, () => SFX.hole()); break;
       case 'teleport': S2('teleport_beam', 0.9, 1, () => SFX.teleport()); AU.voice('worm_teleport', e.worm, 0.8, 0.2); break;
       case 'plane': S2('airstrike_plane', 1, 1, () => SFX.plane()); break;
       case 'baa': S2('sheep_baa', 0.9, 1, () => SFX.baa()); break;
       case 'swing': if (e.hit) S2('bat_hit', 1, 1, () => SFX.bat()); else S2('swing_whoosh', 0.8, 1, () => SFX.whoosh(0.8)); break;
-      case 'shot': if (e.from) S2(e.weapon === 'sniper' ? 'sniper_shot' : 'shotgun_shot', 1, 1, () => SFX.shotgun()); break;
+      case 'shot': if (e.from && !(e.weapon === 'handgun' && AU.ext && AU.ext(S, e))) S2(e.weapon === 'sniper' ? 'sniper_shot' : 'shotgun_shot', 1, 1, () => SFX.shotgun()); break;
       case 'sparks': if (e.mode === 'drill') S2('drill_loop', 0.7, 1, () => SFX.drill()); else S2('torch_loop', 0.7, 1, () => SFX.torch()); break;
       case 'girder': S2('girder_place', 1, 1, () => SFX.clank()); break;
       case 'pickup': S2('crate_pickup', 0.9, 1, () => SFX.pickup()); AU.voice('worm_pickup', S.active, 0.9, 0.2); break;
@@ -228,7 +274,7 @@
       case 'spring': S2('spring_launch', 1, 1, () => SFX.bounce(1)); AU.voice('worm_fall_scream', e.worm, 1, 0); break;
       case 'scramble': S2('scrambler_buzz', 0.8, 1, () => SFX.click()); break;
       case 'shatter': S2('ice_shatter', 0.8, 1, () => SFX.crunch(0.4)); break;
-      case 'steelcut': S2('metal_cut', 0.8, 1, () => SFX.metal(0.8)); break;
+      case 'steelcut': if (!e.acid) S2('metal_cut', 0.8, 1, () => SFX.metal(0.8)); break;      // (acid: audio_c.js plays acid_steel instead)
       case 'airburst': S2('explosion_air', 0.9, 1, () => SFX.boom(20, e)); break;
       case 'gib': S2('gib_splat', 1, 1, () => SFX.splat()); break;
       case 'dying': if (!AU.voice('worm_dying', e.worm, 1, 0) && !AU.has('worm_dying')) SFX.ouch(); break;
@@ -242,7 +288,9 @@
       case 'moai': S2('moai_whoosh', 1, 1, () => SFX.whoosh(1)); break;
       case 'lavabreach': S2('lava_breach', 1, 1, null); break;
       case 'oilfire': case 'propfire': case 'grassfire': case 'treefire': S2('fire_ignite', 0.7, 1, null); break;
+      default: if (AU.ext) AU.ext(S, e);                                   // P37-W3 events (platform/audioa.js)
     }
+    if (AU.extra) AU.extra(S, e);
   };
   // looping ambient samples: one <audio loop> per id, its volume eased toward the wanted level
   const loops = {};
@@ -255,10 +303,21 @@
     if (el.volume > 0.005 && el.paused) { const pr = el.play(); if (pr && pr.catch) pr.catch(() => { /* */ }); } else if (el.volume <= 0.005 && !el.paused) el.pause();
     return true;
   }
+  /* P38-R2: ambient beds and the charge whine stop while the game is paused / a menu is open (AU.frame only runs while the game renders):
+   * main.js calls hold(on) every frame (cheap: acts on a change only). */
+  let held = false;
+  AU.hold = function (on) {
+    on = !!on; if (on === held) return; held = on;
+    if (on) {
+      for (const id in loops) if (!loops[id].paused) loops[id].pause();
+      if (amb && ctx) for (const k in amb) amb[k].gain.setTargetAtTime(0, ctx.currentTime, 0.05);
+      SFX.chargeStop(); wasCharging = false;
+    }
+  };
   let wasCharging = false;
   const screamed = new WeakSet();   // (audio state stays off the sim objects)
   AU.frame = function (S) {
-    if (!ctx) return;
+    if (!ctx || held) return;
     if (S.charging && !wasCharging) { if (!AU.play('charge_power', 0.7)) SFX.chargeStart(); } else if (!S.charging && wasCharging) SFX.chargeStop();
     wasCharging = !!S.charging;
     // a worm falling fast screams once per fall (the scared face in render/actors.js)

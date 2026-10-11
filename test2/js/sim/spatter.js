@@ -27,8 +27,9 @@
   const C = SS.CFG, M = SS.math, K = C.SPATTER, NS = K.NS, SIG = 5.670e-8;
   const SP = SS.spatter = {};
   const W = () => SS.world;
-  const rng = S => { if (!S.spatRng) S.spatRng = M.rng_make(Math.imul((S.settings && S.settings.seed) | 0, 2246822519) + 0x5a7 >>> 0); return M.rng_next(S.spatRng); };
-  const gauss = S => { const u = Math.max(1e-9, rng(S)), v = rng(S); return Math.sqrt(-2 * M.log(u)) * M.cos(6.283185 * v); };
+  const rng = S => M.rng_next(S.spatRng);
+  SP.init = function (S) { S.spatRng = M.rng_make((Math.imul(S.settings.seed | 0, 2246822519) + 0x5a7) >>> 0); };
+  const gauss = S => { const u = M.max(1e-9, rng(S)), v = rng(S); return Math.sqrt(-2 * M.log(u)) * M.cos(6.283185 * v); };
   const RCP = K.RHO * K.CP;
   const ce = T => K.CP + (T > K.T_SOL && T < K.T_LIQ ? K.LAT / (K.T_LIQ - K.T_SOL) : 0);   // J/kgK incl. latent heat
   const vol = r => 4.18879 * r * r * r;
@@ -50,10 +51,10 @@
       let g = 0;
       if (i > 0) g += K.K * A[i - 1] / dc[i - 1];
       if (i < NS - 1) g += K.K * A[i] / dc[i];
-      else g += Math.min(K.K / hs, 600 + K.EG * 0.8) * A[i] * 1.25;    // skin film (radiation ~600 W/m2K at 1150 C, fresh contact)
-      rate = Math.max(rate, g / (RCP * V[i]));
+      else g += M.min(K.K / hs, 600 + K.EG * 0.8) * A[i] * 1.25;    // skin film (radiation ~600 W/m2K at 1150 C, fresh contact)
+      rate = M.max(rate, g / (RCP * V[i]));
     }
-    return { V, A, dc, hs, nsub: Math.max(1, Math.ceil(rate * K.TDT / 0.45)) };
+    return { V, A, dc, hs, nsub: M.max(1, Math.ceil(rate * K.TDT / 0.45)) };
   }
 
   function make_room(S) {
@@ -77,7 +78,7 @@
   SP.spawn = function (S, c, Wkg, Vs, Tn, R) {
     if (!S.spat) S.spat = [];
     if (!(Vs > 0.004)) return 0;
-    const w = W(), budget = K.FRAC * Vs, T0 = K.T_LAUNCH - K.T_DROP * (1 - M.clamp(Tn, 0, 1)), vk = M.pow(Math.max(Wkg, 0.05), 1 / 6);
+    const w = W(), budget = K.FRAC * Vs, T0 = K.T_LAUNCH - K.T_DROP * (1 - M.clamp(Tn, 0, 1)), vk = M.pow(M.max(Wkg, 0.05), 1 / 6);
     let Vf = 0, n = 0;
     while (n < K.N_MAX && (Vf < budget || n < K.N_MIN)) {
       if (!make_room(S)) break;
@@ -87,7 +88,7 @@
       const rr = 0.7 * R * Math.sqrt(rng(S)), aa = rng(S) * 6.283185;
       const x = c.x + rr * M.cos(aa), z = c.z + rr * M.sin(aa);
       const ls = SS.lava ? SS.lava.surface_at(S, x, z) : -1;
-      let y = (ls > 0 && ls > c.y - R ? ls : Math.max(c.y, w.top_at(x, z))) + r + 0.05;
+      let y = (ls > 0 && ls > c.y - R ? ls : M.max(c.y, w.top_at(x, z))) + r + 0.05;
       for (let k = 0; k < 10 && w.sample(x, y, z) > 0; k++) y += 0.1;
       // direction: steep cone leaning away from the blast centre
       const th = K.TH0 + (K.TH1 - K.TH0) * rng(S);
@@ -98,7 +99,7 @@
       Vf += vol(r); n++;
     }
     if (n) SS.sim.emit(S, 'spatter', { x: c.x, y: c.y, z: c.z, n, V: Vf });
-    return Math.min(Vf, Vs);
+    return M.min(Vf, Vs);
   };
 
   /* ---------- landing ---------- */
@@ -122,7 +123,7 @@
       if (w.sample(mx, my, mz) > 0) { bx = mx; by = my; bz = mz; } else { ax = mx; ay = my; az = mz; }
     }
     w.normal(ax, ay, az, tn);
-    const vn = Math.max(0, -(b.vx * tn.x + b.vy * tn.y + b.vz * tn.z)) || vn0;
+    const vn = M.max(0, -(b.vx * tn.x + b.vy * tn.y + b.vz * tn.z)) || vn0;
     b.x = ax; b.y = ay; b.z = az; b.nx = tn.x; b.ny = tn.y; b.nz = tn.z;
     land(S, b, 'rock', vn);
     b.st = 1;
@@ -138,7 +139,7 @@
   function cool(S, b, dt) {
     const g = b.geo, T = b.T, h = dt / b.nsub, TA = K.T_AIR, TAK4 = M.pow(TA + 273.15, 4);
     const hc = b.st === 0 ? K.HC_FLY : K.HC, As = g.A[NS - 1] * b.af, fc = b.st === 0 ? 0 : b.fc;
-    const hg = fc > 0 ? K.EG / Math.sqrt(Math.PI * Math.max(S.time - b.tl, 0.5)) : 0;
+    const hg = fc > 0 ? K.EG / Math.sqrt(Math.PI * M.max(S.time - b.tl, 0.5)) : 0;
     let Ts = b.Ts;
     for (let s = 0; s < b.nsub; s++) {
       const To = T[NS - 1];
@@ -167,13 +168,13 @@
         const o = body_of(S, b.bid);
         if (!o) { b.st = 0; b.age = 0; b.hit = -1; b.vx = b.vy = b.vz = 0; continue; }    // the body is gone: falls again
         M.q_rot(o.q, b.lx, b.ly, b.lz, tq); b.x = o.pos.x + tq.x; b.y = o.pos.y + tq.y; b.z = o.pos.z + tq.z;
-        const l = M.len3(tq.x, tq.y, tq.z) || 1; b.nx = tq.x / l; b.ny = tq.y / l; b.nz = tq.z / l;
+        const l = M.nz(M.len3(tq.x, tq.y, tq.z), 1); b.nx = tq.x / l; b.ny = tq.y / l; b.nz = tq.z / l;
         continue;
       }
       if (b.st !== 0) continue;
       if (b.age > K.LIFE) { A.splice(i, 1); continue; }
       let sp = M.len3(b.vx, b.vy, b.vz);
-      const n = Math.max(1, Math.ceil(sp * dt / K.SUB)), h = dt / n, KD = 3 * 1.2 * 0.5 / (8 * K.RHO * b.r);
+      const n = M.max(1, Math.ceil(sp * dt / K.SUB)), h = dt / n, KD = 3 * 1.2 * 0.5 / (8 * K.RHO * b.r);
       let gone = false;
       for (let s = 0; s < n && !gone; s++) {
         const px = b.x, py = b.y, pz = b.z;
@@ -187,11 +188,11 @@
           const ex = b.x - wm.pos.x, ey = b.y - wm.pos.y, ez = b.z - wm.pos.z, R = K.WORM_R + b.r;
           if (ex * ex + ey * ey + ez * ez > R * R) continue;
           const heat = M.clamp((b.Ts - 500) / 650, 0, 1);
-          const hp = Math.min(K.BURN_MAX, Math.round(K.BURN_HP * heat * M.pow(b.D / K.D50, 1.5)));
+          const hp = M.min(K.BURN_MAX, Math.round(K.BURN_HP * heat * M.pow(b.D / K.D50, 1.5)));
           b.hit = wm.id;
           SS.sim.emit(S, 'spatland', { id: b.id, x: b.x, y: b.y, z: b.z, kind: 'worm', Ts: b.Ts, D: b.D });
-          if (hp >= 1 || heat > 0.2) { wm.burnT = S.time; SS.sim.hurt(S, wm, Math.max(1, hp), 'lava spatter'); }
-          b.vx *= 0.15; b.vz *= 0.15; b.vy = Math.min(b.vy, 0);
+          if (hp >= 1 || heat > 0.2) { wm.burnT = S.time; SS.sim.hurt(S, wm, M.max(1, hp), C.DS.LAVA_SPATTER); }
+          b.vx *= 0.15; b.vz *= 0.15; b.vy = M.min(b.vy, 0);
           break;
         }
         // open lava: merges back
@@ -205,20 +206,20 @@
           const it = SS.ice.top_at(S, b.x, b.z);
           if (it > -1e8 && b.y - b.r < it && py - b.r >= it - 0.1) {
             b.x = b.x; b.y = it; b.nx = 0; b.ny = 1; b.nz = 0;
-            land(S, b, 'ice', Math.max(0, -b.vy)); b.st = 1; b.y = it + b.c * 0.85;
-            SS.sim.emit(S, 'steam', { x: b.x, y: it, z: b.z, power: Math.min(1, 0.1 + b.D * 3) });
+            land(S, b, 'ice', M.max(0, -b.vy)); b.st = 1; b.y = it + b.c * 0.85;
+            SS.sim.emit(S, 'steam', { x: b.x, y: it, z: b.z, power: M.min(1, 0.1 + b.D * 3) });
             gone = true; break;
           }
         }
         if (b.y < SS.sim.surface_at(S, b.x, b.z)) {
           land(S, b, 'water', 0);
-          SS.sim.emit(S, 'steam', { x: b.x, y: SS.sim.surface_at(S, b.x, b.z), z: b.z, power: Math.min(1, 0.2 + b.D * 4) });
+          SS.sim.emit(S, 'steam', { x: b.x, y: SS.sim.surface_at(S, b.x, b.z), z: b.z, power: M.min(1, 0.2 + b.D * 4) });
           A.splice(i, 1); gone = true; break;
         }
         for (const o of S.bodies) {
           const bx = b.x - o.pos.x, by = b.y - o.pos.y, bz = b.z - o.pos.z, r = o.rb * 0.8 + b.r * 0.5;
           if (bx * bx + by * by + bz * bz >= r * r) continue;
-          const vn = Math.max(0, -(b.vx * bx + b.vy * by + b.vz * bz) / (M.len3(bx, by, bz) || 1));
+          const vn = M.max(0, -(b.vx * bx + b.vy * by + b.vz * bz) / (M.nz(M.len3(bx, by, bz), 1)));
           land(S, b, 'body', vn); b.st = 2; b.bid = o.id;
           M.q_rot_inv(o.q, bx, by, bz, tq); b.lx = tq.x; b.ly = tq.y; b.lz = tq.z;
           gone = true; break;

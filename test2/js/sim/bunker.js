@@ -59,13 +59,14 @@
   BK.populate = function (S, taken) {
     S.bunkers = [];
     const w = W();
-    if (!K || !(K.N > 0) || w.under) return;
+    const NB0 = K ? [0, 1, K.N, K.N + 1][C.density_level(S.settings, 'dBunkers')] : 0, NB = NB0 > 1 ? Math.round(NB0 * w.SC * w.SC) : NB0;   // (P38: more on a bigger map)   // P37 W5: none / low / medium (= K.N) / high
+    if (!K || !(NB > 0) || w.under) return;
     const sea = w.SEA, seed = (S.settings.seed | 0) >>> 0;
     // flat ground first; steep maps (alpine) get a second pass at 2.5 x FLAT (the footing reaches the low side)
-    for (const flat of [K.FLAT, K.FLAT * 2.5]) if (S.bunkers.length < K.N) place(S, taken, flat, sea, seed);
+    for (const flat of [K.FLAT, K.FLAT * 2.5]) if (S.bunkers.length < NB) place(S, taken, flat, sea, seed, NB);
     if (S.bunkers.length) SS.sim.log(S, `${S.bunkers.length} concrete bunker${S.bunkers.length > 1 ? 's' : ''} on the map: get in through the back door, shoot through the slit.`, 0xc8ccd0);
   };
-  function place(S, taken, flat, sea, seed) {
+  function place(S, taken, flat, sea, seed, NB) {
     const w = W(), cands = [];
     for (let z = K.EDGE; z <= w.SZ - K.EDGE; z += 4) for (let x = K.EDGE; x <= w.SX - K.EDGE; x += 4) {
       if (w.dry && SS.sim.arena_r(x, z) > S.playR - K.R_OUT - 2) continue;
@@ -77,10 +78,10 @@
     }
     cands.sort((a, b) => a.v - b.v || a.z - b.z || a.x - b.x);                      // total order
     for (const c of cands) {
-      if (S.bunkers.length >= K.N) break;
+      if (S.bunkers.length >= NB) break;
       if (S.bunkers.some(b => M.len2(b.x - c.x, b.z - c.z) < K.APART)) continue;
       if (taken.some(t => M.len2(t.x - c.x, t.z - c.z) < K.CLEAR)) continue;   // (the first pass's bunkers are taken too)
-      const y0 = (c.g.lo + c.g.hi) / 2 + 0.05, phi = M.atan2(48 - c.z, 48 - c.x);   // the embrasure faces the map centre
+      const y0 = (c.g.lo + c.g.hi) / 2 + 0.05, phi = M.atan2(W().MZ - c.z, W().MX - c.x);   // the embrasure faces the map centre
       const b = { x: c.x, z: c.z, y0, phi, foot: K.FOUND + (y0 - c.g.lo) + 0.3 };
       stamp(b);
       S.bunkers.push({ x: b.x, z: b.z, y0: b.y0, phi: b.phi });
@@ -91,9 +92,9 @@
   /* write the shell into the lattice: concrete where conc > 0, air where the bunker cuts (cavity, door, window) */
   function stamp(b) {
     const w = W(), H = w.H, NX = w.NX, NY = w.NY, NZ = w.NZ, R = K.R_OUT + 2.8;
-    const i0 = Math.max(1, Math.floor((b.x - R) / H)), i1 = Math.min(NX - 2, Math.ceil((b.x + R) / H));
-    const k0 = Math.max(1, Math.floor((b.z - R) / H)), k1 = Math.min(NZ - 2, Math.ceil((b.z + R) / H));
-    const j0 = Math.max(1, Math.floor((b.y0 - b.foot - 1) / H)), j1 = Math.min(NY - 2, Math.ceil((b.y0 + K.H_WALL + K.R_OUT) / H));
+    const i0 = M.max(1, Math.floor((b.x - R) / H)), i1 = M.min(NX - 2, Math.ceil((b.x + R) / H));
+    const k0 = M.max(1, Math.floor((b.z - R) / H)), k1 = M.min(NZ - 2, Math.ceil((b.z + R) / H));
+    const j0 = M.max(1, Math.floor((b.y0 - b.foot - 1) / H)), j1 = M.min(NY - 2, Math.ceil((b.y0 + K.H_WALL + K.R_OUT) / H));
     for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const o = (k * NY + j) * NX + i;
       shape(b, i * H - b.x, j * H - b.y0, k * H - b.z, tmp);

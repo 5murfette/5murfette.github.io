@@ -25,14 +25,24 @@
   const tp = v3(), tn = v3(), tr = v3(), tq = v3();
 
   /* ---------- creation ---------- */
-  function make(S, kind, pos, mass, Ib, pts, mat) {
+  /* The body struct (P38 R7 / P3): every field of every body kind exists from the start with its default (before, props, boulders, logs, floating bodies
+   * and gadget targets added ~30 fields lazily). C: struct Body gets the fields below; `half` (box), `r` (ball), `grid` / `com0` / `voxels` (chunk),
+   * `log` (tree log: a fixed-size segment list) are per-kind unions. prop = the prop kind ('' = none; C: enum Prop, 0 = none). Time stamps are S.time. */
+  B.body_make = function (S, kind, pos, mass, Ib, pts, mat) {
     let rb = 0;
-    for (let i = 0; i < pts.length; i += 4) rb = Math.max(rb, M.len3(pts[i], pts[i + 1], pts[i + 2]) + pts[i + 3]);
+    for (let i = 0; i < pts.length; i += 4) rb = M.max(rb, M.len3(pts[i], pts[i + 1], pts[i + 2]) + pts[i + 3]);
     const md = C.MATS[mat] || C.MATS[MAT.ROCK];
     const b = {
       id: S.bodyId = (S.bodyId || 0) + 1, kind, pos: { x: pos.x, y: pos.y, z: pos.z }, q: M.q_ident(), vel: v3(), w: v3(),
       mass, invM: 1 / mass, Ib: { x: Ib.x, y: Ib.y, z: Ib.z }, pts, np: pts.length / 4, rb, mat, mu: md.mu || 0.6,
-      e: kind === 'chunk' ? 0.12 : 0.25, sleepT: 0, age: 0, asleep: false, grid: null, com0: null, acc: null
+      e: kind === 'chunk' ? 0.12 : 0.25, sleepT: 0, age: 0, asleep: false, grid: null, com0: null, acc: null,
+      // kind data
+      half: null, r: 0, voxels: 0, log: null, moai: false, members: null, look: null,
+      // props (scatter.js add): wreck / fire / mine state, trap owner, paint
+      prop: '', wreck: false, burn: -1, burnT: 0, det: -1, armed: false, disarmed: false, team: -1, planted: -99, revealed: false, armAt: 0, dropped: false, fuseSet: null,
+      vol: 0, metal: false, paint: 0, shapeId: 0, thrown: 0, held: false,
+      // contact / sleep / fluids (bodies.js step, ice.js, water, lava)
+      acidT: 0, restP: null, restQ: null, touchAge: 0, wp: null, wpS: 0, wet: false, inLava: 0, floatT: 0, iceLock: false, seaY: -99, splashT: -9
     };
     b.acc = new Float32Array(b.np * 2);
     S.bodies.push(b);
@@ -46,32 +56,34 @@
       B.remove(S, S.bodies[k]);
     }
     return b;
-  }
+  };
   /* detached terrain piece from SS.collapse.detach (local grid, com, mass, inertia about com, shell points) */
   B.from_piece = function (S, p) {
-    const b = make(S, 'chunk', p.com, p.mass, p.inertia, p.pts, p.mat);
+    const b = B.body_make(S, 'chunk', p.com, p.mass, p.inertia, p.pts, p.mat);
     b.grid = p.grid; b.com0 = { x: p.com.x, y: p.com.y, z: p.com.z }; b.voxels = p.voxels;
     return b;
   };
   B.add_box = function (S, pos, half, mass, mat) {
-    const pts = [], r = Math.min(half.x, half.y, half.z) * 0.35;
+    const pts = [], r = M.min(M.min(half.x, half.y), half.z) * 0.35;
     for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) for (let d = -1; d <= 1; d++) {
       if (!a && !c && !d) continue;
       pts.push(a * (half.x - r), c * (half.y - r), d * (half.z - r), r);
     }
     const Ib = { x: mass * (half.y * half.y + half.z * half.z) / 3, y: mass * (half.x * half.x + half.z * half.z) / 3, z: mass * (half.x * half.x + half.y * half.y) / 3 };
-    const b = make(S, 'box', pos, mass, Ib, new Float32Array(pts), mat);
+    const b = B.body_make(S, 'box', pos, mass, Ib, new Float32Array(pts), mat);
     b.half = { x: half.x, y: half.y, z: half.z };
     return b;
   };
   B.add_ball = function (S, pos, r, mass, mat) {
     const I = 0.4 * mass * r * r;
-    const b = make(S, 'ball', pos, mass, { x: I, y: I, z: I }, new Float32Array([0, 0, 0, r]), mat);
+    const b = B.body_make(S, 'ball', pos, mass, { x: I, y: I, z: I }, new Float32Array([0, 0, 0, r]), mat);
     b.r = r;
     return b;
   };
   /* generic body from shell spheres (props: barrels, mines, boulders); Ib = principal inertia in body space */
-  B.add_shape = function (S, kind, pos, mass, Ib, pts, mat) { return make(S, kind, pos, mass, Ib, new Float32Array(pts), mat); };
+  /* a body by id (linear scan; S.bodies <= C.BODY.MAX = 64): null when it is gone. Entities that point at a body store its id (moai, held / grabbed, plane section). */
+  B.by_id = function (S, id) { const L = S.bodies; for (let i = 0; i < L.length; i++) if (L[i].id === id) return L[i]; return null; };
+  B.add_shape = function (S, kind, pos, mass, Ib, pts, mat) { return B.body_make(S, kind, pos, mass, Ib, new Float32Array(pts), mat); };
   B.remove = function (S, b) { const i = S.bodies.indexOf(b); if (i >= 0) S.bodies.splice(i, 1); };
 
   /* ---------- helpers ---------- */
@@ -90,7 +102,7 @@
   function contact(x, y, z, r, n) {
     const pen = sdf(x, y, z, n) + r;
     if (pen <= 0) return 0;
-    return W().sample(x - n.x * r, y - n.y * r, z - n.z * r) > 0 ? Math.max(pen, 0.005) : 0;
+    return W().sample(x - n.x * r, y - n.y * r, z - n.z * r) > 0 ? M.max(pen, 0.005) : 0;
   }
   // world inverse inertia times v (R diag(1/Ib) R^T v) -> out
   function invI(b, vx, vy, vz, out) {
@@ -128,21 +140,21 @@
     const sea = SS.sim.surface_at ? SS.sim.surface_at(S, b.pos.x, b.pos.z) : w.SEA;
     let sub = 0;
     if (b.pos.y < sea + b.rb * 0.5) {
-      sub = M.clamp((sea - (b.pos.y - b.rb * 0.5)) / Math.max(0.2, b.rb), 0, 1);
-      const rho = b.mass / Math.max(1e-3, bodyVol(b));
+      sub = M.clamp((sea - (b.pos.y - b.rb * 0.5)) / M.max(0.2, b.rb), 0, 1);
+      const rho = b.mass / M.max(1e-3, bodyVol(b));
       if (!b.wet && sub > 0.05) {
         // entering the water: splash and a dip in the surface (stronger for heavy, fast bodies); the dip itself can
         // briefly un-wet the body, so one splash per second at most
         b.wet = true;
         const sp = -b.vel.y;
-        if (sp > 1.5 && S.time - (b.splashT === undefined ? -9 : b.splashT) > 1) {
+        if (sp > 1.5 && S.time - b.splashT > 1) {
           b.splashT = S.time;
-          const r = Math.max(0.5, b.rb * 1.2), amp = Math.min(0.5, 0.02 * sp * M.cbrt(b.mass));
+          const r = M.max(0.5, b.rb * 1.2), amp = M.min(0.5, 0.02 * sp * M.cbrt(b.mass));
           if (SS.water && SS.water.disturb) SS.water.disturb(S, b.pos.x, b.pos.z, r, -amp);
-          SS.sim.emit(S, 'splash', { x: b.pos.x, y: sea, z: b.pos.z, size: Math.min(1.6, 0.3 + 0.08 * sp * M.cbrt(b.mass / 20)), body: b.id });
+          SS.sim.emit(S, 'splash', { x: b.pos.x, y: sea, z: b.pos.z, size: M.min(1.6, 0.3 + 0.08 * sp * M.cbrt(b.mass / 20)), body: b.id });
         }
       }
-      b.vel.y += G * Math.min(1.5, 1000 / rho) * sub * dt;
+      b.vel.y += G * M.min(1.5, 1000 / rho) * sub * dt;
       // drag toward the local water velocity (floating props drift with the flow, waves push wreckage around):
       // linear (WATER_DRAG) + quadratic 0.5 rho_w Cd A |v| v / m, integrated implicitly (a 25 kg crate hitting the
       // water at 7 m/s stops within centimetres, a rock keeps going)
@@ -159,10 +171,10 @@
     if (SS.lava && S.lava) {
       const ls = SS.lava.surface_at(S, b.pos.x, b.pos.z);
       if (ls > 0 && b.pos.y < ls + b.rb * 0.5 && b.pos.y + b.rb > w.top_at(b.pos.x, b.pos.z) - 0.5) {   // (not in a cave under the column)
-        subL = M.clamp((ls - (b.pos.y - b.rb * 0.5)) / Math.max(0.2, b.rb), 0, 1);
-        const rho = b.mass / Math.max(1e-3, bodyVol(b));
+        subL = M.clamp((ls - (b.pos.y - b.rb * 0.5)) / M.max(0.2, b.rb), 0, 1);
+        const rho = b.mass / M.max(1e-3, bodyVol(b));
         const LA = C.LAVA, cool = M.clamp(1 - SS.lava.temp_at(S, b.pos.x, b.pos.z), 0, 1);
-        b.vel.y += G * Math.min(LA.BUOY_MAX, LA.RHO / rho) * subL * dt;
+        b.vel.y += G * M.min(LA.BUOY_MAX, LA.RHO / rho) * subL * dt;
         SS.lava.vel_at(S, b.pos.x, b.pos.z, lvb); lvb.x *= 1.5; lvb.z *= 1.5;
         const k = M.exp(-3 * Math.PI * LA.MU_SURF * M.exp(LA.NU_K * cool) * 2 * b.rb / b.mass * subL * dt);   // Stokes, implicit
         b.vel.x = lvb.x + (b.vel.x - lvb.x) * k; b.vel.y *= k; b.vel.z = lvb.z + (b.vel.z - lvb.z) * k;
@@ -193,7 +205,7 @@
       c.rs = b.pts[i * 4 + 3];
       // tangent basis: t1 ⟂ n (from the axis least aligned with n), t2 = n × t1
       let ax = Math.abs(tn.x) < 0.6 ? 1 : 0, ay = ax ? 0 : 1;
-      let t1x = ay * tn.z, t1y = -ax * tn.z, t1z = ax * tn.y - ay * tn.x; const tl = M.len3(t1x, t1y, t1z) || 1;
+      let t1x = ay * tn.z, t1y = -ax * tn.z, t1z = ax * tn.y - ay * tn.x; const tl = M.nz(M.len3(t1x, t1y, t1z), 1);
       t1x /= tl; t1y /= tl; t1z /= tl;
       c.t1x = t1x; c.t1y = t1y; c.t1z = t1z;
       c.t2x = tn.y * t1z - tn.z * t1y; c.t2y = tn.z * t1x - tn.x * t1z; c.t2z = tn.x * t1y - tn.y * t1x;
@@ -207,7 +219,7 @@
         const vn = vx * c.nx + vy * c.ny + vz * c.nz;
         const target = c.vn0 < -1 ? -b.e * c.vn0 : 0;     // no velocity bias: penetration is projected out below
         let jn = (target - vn) / kEff(b, c.rx, c.ry, c.rz, c.nx, c.ny, c.nz);
-        const acc = Math.max(0, c.jn + jn); jn = acc - c.jn; c.jn = acc;
+        const acc = M.max(0, c.jn + jn); jn = acc - c.jn; c.jn = acc;
         applyImpulse(b, c.rx, c.ry, c.rz, jn * c.nx, jn * c.ny, jn * c.nz);
         // friction (B1): a 2D impulse in the fixed tangent basis, the ACCUMULATED vector clamped to the cone |jt| <= mu jn.
         // (Accumulating one scalar along a direction re-taken every iteration let the summed impulse leave the cone and
@@ -289,28 +301,28 @@
       }
       if (hit < 0) continue;
       // closing speed of the body toward the worm
-      const l = M.len3(dx, dy, dz) || 1, nx = dx / l, ny = dy / l, nz = dz / l;
+      const l = M.nz(M.len3(dx, dy, dz), 1), nx = dx / l, ny = dy / l, nz = dz / l;
       const vc = b.vel.x * nx + b.vel.y * ny + b.vel.z * nz - ((wm.vel && wm.vel.x || 0) * nx + (wm.vel && wm.vel.y || 0) * ny + (wm.vel && wm.vel.z || 0) * nz);
       if (vc < K.HIT_V) continue;
       // PoC crushWorm (L1997): a big slab of falling ground landing on a worm that stands on something buries it
       const standing = SS.sim.ctl(S, wm) ? !wm.air : wm.rest;
       if (b.kind === 'chunk' && b.mass >= K.CRUSH_KG && b.vel.y < -3 && ny < -0.5 && standing) {
-        SS.sim.emit(S, 'buried', { worm: wm, x: wm.pos.x, y: wm.pos.y, z: wm.pos.z });
+        SS.sim.emit(S, 'buried', { wormId: wm.id, x: wm.pos.x, y: wm.pos.y, z: wm.pos.z });
         SS.sim.log(S, `${wm.name} is buried!`, 0xff9a9a);
         SS.sim.kill_now(S, wm, 'crush');
         continue;
       }
-      const me = Math.min(b.mass, K.HIT_MASS), ke = 0.5 * me * vc * vc / 1000;               // kJ
-      const dmg = Math.min(K.HIT_MAX, Math.round(ke * K.HIT_PER_KJ));
+      const me = M.min(b.mass, K.HIT_MASS), ke = 0.5 * me * vc * vc / 1000;               // kJ
+      const dmg = M.min(K.HIT_MAX, Math.round(ke * K.HIT_PER_KJ));
       wm.bodyHitT = S.time;
-      if (dmg > 0) SS.sim.hurt(S, wm, dmg, b.kind === 'chunk' ? 'falling rock' : 'a flying ' + (b.prop || b.kind));
+      if (dmg > 0) if (b.kind === 'chunk') SS.sim.hurt(S, wm, dmg, C.DS.FALLING_ROCK); else if (b.prop === 'crate') SS.sim.hurt(S, wm, dmg, C.DS.FLY_CRATE); else SS.sim.hurt(S, wm, dmg, C.DS.FLY_PROP, 0, SS.sim.body_name_id(b));
       SS.sim.emit(S, 'bodyhit', { x: wm.pos.x, y: wm.pos.y, z: wm.pos.z, dmg, body: b.id });
       // knock the worm away (and let the body lose a little momentum to it)
-      const kv = Math.min(8, vc * 0.6);
+      const kv = M.min(8, vc * 0.6);
       if (SS.sim.ctl(S, wm)) {
-        const d = SS.plane.dir(S); S.active.air = true; S.active.vs += (nx * d.x + nz * d.z) * kv; S.active.vy = Math.max(S.active.vy, ny * kv + 1.5);
-      } else { wm.rest = false; wm.vel = wm.vel || v3(); wm.vel.x += nx * kv; wm.vel.y += Math.max(0, ny) * kv + 1.5; wm.vel.z += nz * kv; }
-      const j = Math.min(b.mass * vc, 80 * kv) * 0.5;
+        const d = SS.plane.dir(S); S.active.air = true; S.active.vs += (nx * d.x + nz * d.z) * kv; S.active.vy = M.max(S.active.vy, ny * kv + 1.5);
+      } else { wm.rest = false; wm.vel = wm.vel || v3(); wm.vel.x += nx * kv; wm.vel.y += M.max(0, ny) * kv + 1.5; wm.vel.z += nz * kv; }
+      const j = M.min(b.mass * vc, 80 * kv) * 0.5;
       b.vel.x -= nx * j * b.invM; b.vel.y -= ny * j * b.invM; b.vel.z -= nz * j * b.invM;
     }
   }
@@ -322,7 +334,9 @@
    * and gained ~1 m/s per 1/120 s step: a 93 t block shot up 20 m. Sleeping bodies stay fixed unless hit hard. */
   const PC = [];                                   // pair contacts: {ax, ay, az (arm on a), bx, by, bz, nx, ny, nz, pen, vn0, jn, jt}
   for (let i = 0; i < 32; i++) PC.push({ ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, nx: 0, ny: 0, nz: 0, pen: 0, vn0: 0, jn: 0, jt: 0 });
-  let pairStamp = 0;
+  // (P38 R1: the shell-point cache b.wp / b.wpS lives in the snapshotted body; a module counter let a stale b.wpS of a restored snapshot equal the
+  // counter of a fresh process. Now pairs() clears every b.wpS first and the cache key is the constant 1)
+  const pairStamp = 1;
   function worldPts(b) {                           // shell sphere centres relative to b.pos (world axes), cached per call
     if (b.wpS === pairStamp) return b.wp;
     if (!b.wp || b.wp.length < b.np * 3) b.wp = new Float32Array(b.np * 3);
@@ -336,7 +350,7 @@
     return tq.x * c.nx + tq.y * c.ny + tq.z * c.nz;
   };
   function pairs(S, dt) {
-    const L = S.bodies; pairStamp++;
+    const L = S.bodies; for (let i = 0; i < L.length; i++) L[i].wpS = 0;
     for (let i = 0; i < L.length; i++) for (let k = i + 1; k < L.length; k++) {
       const a = L[i], b = L[k];
       if (a.asleep && b.asleep) continue;
@@ -357,22 +371,22 @@
           const mx = ax + ex / e * (ra - pen * 0.5), my = ay + ey / e * (ra - pen * 0.5), mz = az + ez / e * (ra - pen * 0.5);
           c.ax = mx - a.pos.x; c.ay = my - a.pos.y; c.az = mz - a.pos.z; c.bx = mx - b.pos.x; c.by = my - b.pos.y; c.bz = mz - b.pos.z;
           c.nx = ex / e; c.ny = ey / e; c.nz = ez / e; c.pen = pen; c.jn = 0; c.jt = 0;
-          pmax = Math.max(pmax, pen);
+          pmax = M.max(pmax, pen);
         }
       }
       if (!nc) continue;
       for (let q = 0; q < nc; q++) { const c = PC[q]; c.vn0 = relVn(a, b, c); }
       // a sleeping body joins in only when struck (closing faster than 0.5 m/s); else it is a fixed obstacle
-      let closing = 0; for (let q = 0; q < nc; q++) closing = Math.min(closing, PC[q].vn0);
+      let closing = 0; for (let q = 0; q < nc; q++) closing = M.min(closing, PC[q].vn0);
       if (a.asleep && closing < -0.5) wake(a); if (b.asleep && closing < -0.5) wake(b);
-      const da = !a.asleep, db = !b.asleep, e = Math.min(a.e, b.e), mu = Math.sqrt(a.mu * b.mu);
+      const da = !a.asleep, db = !b.asleep, e = M.min(a.e, b.e), mu = Math.sqrt(a.mu * b.mu);
       for (let it = 0; it < K.ITERS; it++) for (let q = 0; q < nc; q++) {
         const c = PC[q];
         const kn = (da ? kEff(a, c.ax, c.ay, c.az, c.nx, c.ny, c.nz) : 0) + (db ? kEff(b, c.bx, c.by, c.bz, c.nx, c.ny, c.nz) : 0);
         if (kn <= 0) continue;
         const vn = relVn(a, b, c), target = c.vn0 < -1 ? -e * c.vn0 : 0;
         let jn = (target - vn) / kn;
-        const acc = Math.max(0, c.jn + jn); jn = acc - c.jn; c.jn = acc;
+        const acc = M.max(0, c.jn + jn); jn = acc - c.jn; c.jn = acc;
         if (da) applyImpulse(a, c.ax, c.ay, c.az, -jn * c.nx, -jn * c.ny, -jn * c.nz);
         if (db) applyImpulse(b, c.bx, c.by, c.bz, jn * c.nx, jn * c.ny, jn * c.nz);
         // friction
@@ -392,9 +406,9 @@
       const ex = pmax - K.SLOP;
       if (ex > 0) {
         let nx = 0, ny = 0, nz = 0; for (let q = 0; q < nc; q++) { nx += PC[q].nx * PC[q].pen; ny += PC[q].ny * PC[q].pen; nz += PC[q].nz * PC[q].pen; }
-        const nl = M.len3(nx, ny, nz) || 1, ia = da ? a.invM : 0, ib = db ? b.invM : 0, sum = ia + ib;
+        const nl = M.nz(M.len3(nx, ny, nz), 1), ia = da ? a.invM : 0, ib = db ? b.invM : 0, sum = ia + ib;
         if (sum > 0) {
-          const mv = Math.min(K.BAUMGARTE * ex, K.MAX_PUSH * dt) / sum;
+          const mv = M.min(K.BAUMGARTE * ex, K.MAX_PUSH * dt) / sum;
           if (da) { a.pos.x -= nx / nl * mv * ia; a.pos.y -= ny / nl * mv * ia; a.pos.z -= nz / nl * mv * ia; }
           if (db) { b.pos.x += nx / nl * mv * ib; b.pos.y += ny / nl * mv * ib; b.pos.z += nz / nl * mv * ib; }
         }
@@ -407,6 +421,7 @@
     const w = W();
     for (let i = S.bodies.length - 1; i >= 0; i--) {
       const b = S.bodies[i];
+      if (b.held) { b.sleepT = 0; continue; }          // P37 W4: a body held by the gravity gun is moved by sim/gadgets.js (kinematic)
       if (b.asleep) {
         // re-check support now and then: wake when the ground under it was blasted away
         if (S.tick % 30 === b.id % 30) {
@@ -420,8 +435,8 @@
             const sea = SS.sim.surface_at(S, b.pos.x, b.pos.z);
             if (sea > b.pos.y - b.rb * 0.5) {
               SS.water.vel(S, b.pos.x, b.pos.z, wv);
-              const rose = sea > (b.seaY === undefined ? -99 : b.seaY) + 0.15;   // above the swell at the shore
-              if ((rose && b.mass / Math.max(1e-3, bodyVol(b)) < 1000) || M.len2(wv.x, wv.z) > 1.2) wake(b);
+              const rose = sea > b.seaY + 0.15;   // above the swell at the shore
+              if ((rose && b.mass / M.max(1e-3, bodyVol(b)) < 1000) || M.len2(wv.x, wv.z) > 1.2) wake(b);
             }
           }
         }
@@ -457,7 +472,7 @@
       if (Math.abs(t) > b.rb + 0.1) continue;
       if (b.kind === 'ball') {
         const r2 = b.r * b.r - t * t;
-        if (r2 > 0.01) PB.push({ s: (b.pos.x - ox) * d.x + (b.pos.z - oz) * d.z, y: b.pos.y, kind: 0, hs: 0, hy: 0, r: Math.sqrt(r2), ref: b });
+        if (r2 > 0.01) P.pb_add(PB, 0, (b.pos.x - ox) * d.x + (b.pos.z - oz) * d.z, b.pos.y, 0, 0, Math.sqrt(r2), b.id, -1, -1, -1, -1, false);
         continue;
       }
       let s0 = 1e9, s1 = -1e9, y0 = 1e9, y1 = -1e9;
@@ -466,15 +481,15 @@
         const px = b.pos.x + tp.x, pz = b.pos.z + tp.z, r = b.pts[i * 4 + 3], tt = (px - ox) * n.x + (pz - oz) * n.z;
         if (Math.abs(tt) > r + 0.35) continue;
         const s = (px - ox) * d.x + (pz - oz) * d.z, y = b.pos.y + tp.y;
-        s0 = Math.min(s0, s - r); s1 = Math.max(s1, s + r); y0 = Math.min(y0, y - r); y1 = Math.max(y1, y + r);
+        s0 = M.min(s0, s - r); s1 = M.max(s1, s + r); y0 = M.min(y0, y - r); y1 = M.max(y1, y + r);
       }
-      if (s1 > s0) PB.push({ s: (s0 + s1) / 2, y: (y0 + y1) / 2, kind: 1, hs: (s1 - s0) / 2, hy: (y1 - y0) / 2, r: 0, ref: b });
+      if (s1 > s0) P.pb_add(PB, 1, (s0 + s1) / 2, (y0 + y1) / 2, (s1 - s0) / 2, (y1 - y0) / 2, 0, b.id, -1, -1, -1, -1, false);
     }
   };
   /* impulse J (N s) along the world direction dir (normalised here), e.g. a grenade bouncing off */
   B.nudge = function (S, b, dir, J) {
     if (!b || !S.bodies.includes(b)) return;
-    const l = M.len3(dir.x, dir.y, dir.z) || 1;
+    const l = M.nz(M.len3(dir.x, dir.y, dir.z), 1);
     wake(b);
     b.vel.x += dir.x / l * J * b.invM; b.vel.y += dir.y / l * J * b.invM; b.vel.z += dir.z / l * J * b.invM;
   };
@@ -484,14 +499,14 @@
     for (const b of only || S.bodies) {
       const dx = b.pos.x - c.x, dy = b.pos.y - c.y, dz = b.pos.z - c.z, dist = M.len3(dx, dy, dz);
       if (dist > 8 * M.cbrt(Wkg) + b.rb) continue;
-      const R = Math.max(0.3, dist - b.rb * 0.5), I = BL.impulse(R, Wkg), A = Math.PI * M.pow(Math.min(b.rb, 2) * 0.7, 2);
-      const dv = Math.min(K.BLAST_DV, I * A * b.invM);
+      const R = M.max(0.3, dist - b.rb * 0.5), I = BL.impulse(R, Wkg), A = Math.PI * M.pow(M.min(b.rb, 2) * 0.7, 2);
+      const dv = M.min(K.BLAST_DV, I * A * b.invM);
       if (dv < 0.05) continue;
       const l = dist || 1, ux = dx / l, uy = dy / l + 0.35, uz = dz / l, ul = M.len3(ux, uy, uz);
       wake(b);
       b.vel.x += ux / ul * dv; b.vel.y += uy / ul * dv; b.vel.z += uz / ul * dv;
       const hx = M.hash3(b.id, 1, 7) - 0.5, hy = M.hash3(b.id, 2, 7) - 0.5, hz = M.hash3(b.id, 3, 7) - 0.5;
-      const sp = dv / Math.max(0.4, b.rb) * 0.6;
+      const sp = dv / M.max(0.4, b.rb) * 0.6;
       b.w.x += hx * sp; b.w.y += hy * sp; b.w.z += hz * sp;
     }
   };

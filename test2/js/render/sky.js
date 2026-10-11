@@ -168,6 +168,7 @@
     rt.texture.minFilter = rt.texture.magFilter = T.LinearFilter; rt.texture.wrapS = T.RepeatWrapping; rt.texture.wrapT = T.ClampToEdgeWrapping;
     const U = { uSun: { value: P.sun }, uAbs: { value: P.abs }, uAlb: { value: P.alb }, uOvc: { value: P.ovc }, uTurb: { value: 1 }, uOv: { value: 0 }, uOvL: { value: 1 }, uE: { value: SKY_E }, uObsH: { value: OBS_H } };
     lutMat = new T.ShaderMaterial({ uniforms: U, vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }', fragmentShader: LUT_F, depthTest: false, depthWrite: false });
+    SS.section.exempt(lutMat, 'sky: full-screen LUT quad');
     lutScene = new T.Scene(); lutCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const q = new T.Mesh(new T.PlaneGeometry(2, 2), lutMat); q.frustumCulled = false; lutScene.add(q);
     domeMat = new T.ShaderMaterial({
@@ -177,6 +178,7 @@
       vertexShader: 'varying vec3 vD; void main(){ vD = position; vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }',
       fragmentShader: DOME_F
     });
+    SS.section.exempt(domeMat, 'sky dome');
     dome = new T.Mesh(new T.SphereGeometry(500, 48, 24), domeMat); dome.renderOrder = -10; dome.frustumCulled = false; scene.add(dome);
     dome.layers.enable(ENV_LAYER);
     envRT = new T.WebGLCubeRenderTarget(ENV_N, { type: T.HalfFloatType, generateMipmaps: false, minFilter: T.LinearFilter });

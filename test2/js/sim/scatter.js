@@ -21,7 +21,7 @@
   const rand = S => M.rng_next(S.rng);
   const lc = { sub: 0, heat: 0, surf: 0 };
   // fire damage does not stack: one burning source per worm per step
-  function scorch(S, w, dt, why) { const k = S.tick; if (w.fireStep === k) return; w.fireStep = k; w.fireT = S.time; SS.sim.burn(S, w, C.FIRE_DPS, dt, why); }
+  function scorch(S, w, dt, src) { const k = S.tick; if (w.fireStep === k) return; w.fireStep = k; w.fireT = S.time; SS.sim.burn(S, w, C.FIRE_DPS, dt, src); }
 
   /* ---------- shapes (shell spheres x, y, z, r in body space) ---------- */
   function ring(pts, n, rad, y, r, a0) { for (let i = 0; i < n; i++) { const a = a0 + i * 2 * Math.PI / n; pts.push(M.cos(a) * rad, y, M.sin(a) * rad, r); } }
@@ -62,7 +62,7 @@
       b = B.add_shape(S, 'prop', pos, m, { x: m * (K.W * K.W + K.H * K.H) / 12, y: m * (K.L * K.L + K.W * K.W) / 12, z: m * (K.L * K.L + K.H * K.H) / 12 }, pts, MAT.ROCK);
       b.mu = 0.6; b.vol = m / 450; b.e = 0.05; b.metal = true; b.paint = (Math.imul(S.bodyId, 2654435761) >>> 0) % 6;
     } else if (P.JUNK[kind]) {
-      const [w, h, d, m] = P.JUNK[kind], r = Math.min(w, d) / 2 - 0.02, ny = Math.max(2, Math.round(h / (r * 1.5))), pts = [];
+      const [w, h, d, m] = P.JUNK[kind], r = M.min(w, d) / 2 - 0.02, ny = M.max(2, Math.round(h / (r * 1.5))), pts = [];
       for (let j = 0; j < ny; j++) for (const x of [-(w / 2 - r), w / 2 - r]) for (const z of [-(d / 2 - r), d / 2 - r]) pts.push(x, -h / 2 + r + j * (h - 2 * r) / (ny - 1), z, r);
       b = B.add_shape(S, 'prop', pos, m, { x: m * (h * h + d * d) / 12, y: m * (w * w + d * d) / 12, z: m * (w * w + h * h) / 12 }, pts, MAT.ROCK);
       b.mu = 0.55; b.vol = m / 300; b.e = 0.1; b.metal = true;
@@ -95,8 +95,8 @@
   SC.populate = function (S, taken) {
     S.flames = [];
     const cnt = P.COUNT[S.biome] || P.COUNT.temperate, ev0 = S.events.length;
-    for (let k = 0; k < KINDS.length; k++) for (let n = 0; n < cnt[k]; n++) {
-      if (k >= cnt.length) continue;
+    const DK = ['dCrates', 'dBarrels', 'dMines', 'dRocks', 'dProps'];        // P37 W5: the menu's None / Low / Medium / High
+    for (let k = 0; k < KINDS.length; k++) for (let n = 0, nk = k < cnt.length ? C.density_count(S.settings, DK[k], cnt[k]) : 0; n < nk; n++) {
       const kind = KINDS[k], spot = SS.sim.find_spot(S, kind === 'girder' ? 5 : 4, taken, { slope: kind === 'boulder' ? 0.4 : 0.2, clear: kind === 'girder' ? 3 : 2 });
       if (!spot) continue;
       taken.push(spot);
@@ -104,8 +104,8 @@
     }
     // P24.10: the PoC's extra props, placed from their own stream (the map stream S.rng stays as before)
     const ex = P.EXTRA[S.biome]; if (ex && !SS.world.under) {
-      const keep = S.rng; S.rng = M.rng_make(((S.settings.seed | 0) * 40503 + 17) >>> 0 || 1);
-      for (const kind in ex) for (let n = 0; n < ex[kind]; n++) {
+      const keep = S.rng; S.rng = M.rng_make((Math.imul(S.settings.seed | 0, 40503) + 17) >>> 0 || 1);
+      for (let xi = 0; xi < ex.length; xi++) for (let n = 0, kind = ex[xi][0], nk = C.density_count(S.settings, P.STONE[kind] ? 'dRocks' : 'dProps', ex[xi][1]); n < nk; n++) {
         const big = kind === 'car' || P.STONE[kind], spot = SS.sim.find_spot(S, big ? 5 : 4, taken, { slope: big ? 0.25 : 0.2, clear: P.STONE[kind] ? 4 : 2.6 });
         if (!spot) continue;
         taken.push(spot); SC.add(S, kind, { x: spot.x, y: spot.y + LIFT[kind] + 0.03, z: spot.z }, rand(S) * 2 * Math.PI);
@@ -162,7 +162,7 @@
       const top = W.top_at(c.x, c.z), sea = SS.sim.surface_at ? SS.sim.surface_at(S, c.x, c.z) : W.SEA;
       if (top > sea && c.y - top < 3) {                       // oil only burns on land (and not after a high-air burst)
         const f = { x: c.x, y: top, z: c.z, r: P.BARREL.OIL_R, t1: S.time + P.BARREL.OIL_T };
-        S.flames.push(f);
+        SS.sim.pool_push(S.flames, C.LIMITS.FLAMES, f);
         SS.sim.emit(S, 'oilfire', { x: f.x, y: f.y, z: f.z, r: f.r, dur: P.BARREL.OIL_T });
       }
     } else SS.sim.explode(S, c, { W: P.MINE.W, dmg: P.MINE.DMG, name: 'mine' }, null);
@@ -174,7 +174,7 @@
     for (let i = S.bodies.length - 1; i >= 0; i--) {
       const b = S.bodies[i];
       if (!b || !b.prop || b.prop === 'boulder') continue;
-      const d = M.len3(b.pos.x - c.x, b.pos.y - c.y, b.pos.z - c.z), R = Math.max(0.2, d - b.rb * 0.5);
+      const d = M.len3(b.pos.x - c.x, b.pos.y - c.y, b.pos.z - c.z), R = M.max(0.2, d - b.rb * 0.5);
       if (R > 12 * M.cbrt(Wkg)) continue;
       const kPa = BL.overpressure(R, Wkg);
       if (b.prop === 'crate' && kPa > P.CRATE.BREAK_KPA) { breakProp(S, b, 'blast'); continue; }
@@ -195,7 +195,7 @@
           const l = d || 1, ux = d > 0.03 ? (b.pos.x - c.x) / l : 0, uy = d > 0.03 ? (b.pos.y - c.y) / l : 1, uz = d > 0.03 ? (b.pos.z - c.z) / l : 0, dv = f * P.MINE.THROW;
           b.asleep = false; b.sleepT = -1;                            // (as bodies.js wake)
           b.vel.x += ux * dv; b.vel.y += (uy + P.MINE.THROW_UP) * dv; b.vel.z += uz * dv;
-          const h = M.len2(ux, uz) || 1, spin = dv / P.MINE.R;     // roll axis = up x the flight direction
+          const h = M.nz(M.len2(ux, uz), 1), spin = dv / P.MINE.R;     // roll axis = up x the flight direction
           b.w.x += uz / h * spin + (rand(S) - 0.5) * spin * 0.6; b.w.y += (rand(S) - 0.5) * spin * 0.4; b.w.z += -ux / h * spin + (rand(S) - 0.5) * spin * 0.6;
         }
       }
@@ -227,8 +227,10 @@
         for (const w of S.worms) {
           if (w.dead) continue;
           if (M.len3(w.pos.x - b.pos.x, w.pos.y - b.pos.y, w.pos.z - b.pos.z) < P.MINE.PROX) {
-            b.armed = true; arm(S, b, P.MINE.FUSE);
-            sim.emit(S, 'minearm', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, fuse: P.MINE.FUSE });
+            // P37-W3: the fuse after a trip: a planted mine = the planter's setting (0-3 s, + / -), a map mine = settings.mineFuse
+            const fz = SS.weaponsA ? SS.weaponsA.mine_fuse(S, b, P.MINE.FUSE) : P.MINE.FUSE;
+            b.armed = true; arm(S, b, fz);
+            sim.emit(S, 'minearm', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, fuse: fz });
             sim.log(S, `${w.name} trips a mine!`, 0xff8060);
             break;
           }
@@ -237,7 +239,7 @@
       // burning: hurts worms nearby, spreads to neighbours, ends in ash (crate) or a blast (barrel)
       if (b.burn >= 0) {
         b.burnT += dt;
-        for (const w of S.worms) if (!w.dead && M.len3(w.pos.x - b.pos.x, w.pos.y - b.pos.y, w.pos.z - b.pos.z) < P.FIRE_R + b.rb) scorch(S, w, dt, 'fire');
+        for (const w of S.worms) if (!w.dead && M.len3(w.pos.x - b.pos.x, w.pos.y - b.pos.y, w.pos.z - b.pos.z) < P.FIRE_R + b.rb) scorch(S, w, dt, C.DS.FIRE);
         if (b.burnT > P.IGNITE_T && (tick + b.id) % 12 === 0) {
           for (const o of S.bodies) if (o !== b && o.prop && o.burn < 0 && M.len3(o.pos.x - b.pos.x, o.pos.y - b.pos.y, o.pos.z - b.pos.z) < P.SPREAD + b.rb + o.rb) SC.ignite(S, o);
         }
@@ -251,7 +253,7 @@
       for (const w of S.worms) {
         if (w.dead) continue;
         const dy = w.pos.y - f.y;
-        if (dy > -1 && dy < 1.6 && M.len2(w.pos.x - f.x, w.pos.z - f.z) < f.r) scorch(S, w, dt, 'burning oil');
+        if (dy > -1 && dy < 1.6 && M.len2(w.pos.x - f.x, w.pos.z - f.z) < f.r) scorch(S, w, dt, C.DS.BURNING_OIL);
       }
       if ((tick + i) % 12 === 0) for (const o of S.bodies) if (o.prop && o.burn < 0 && M.len2(o.pos.x - f.x, o.pos.z - f.z) < f.r + o.rb && Math.abs(o.pos.y - f.y) < 1.5) SC.ignite(S, o);
     }

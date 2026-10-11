@@ -27,7 +27,9 @@
     { name: 'scree', strength: 100, rho: 1900, rgb: 0x8d8780, granular: 1, repose: 1, mu: 0.6 },
     // P2 (PoC): girder steel (indestructible like bedrock, anchors what it touches) and foam-mortar foam (the weakest
     // solid, floats where it touches the sea surface)
-    { name: 'steel', strength: 1e9, rho: 7850, rgb: 0xa0663a, mu: 0.5, fixed: 1 },
+    // P37 W4: the girder PLATE is strong but destructible now (user): a 1 kg grenade pits it 0.44 m, three on one spot
+    // go through its 0.6 m; it still anchors what it touches (collapse.js) and plain carves (torch, bullets) skip it
+    { name: 'steel', strength: 5000, rho: 7850, rgb: 0xa0663a, mu: 0.5, fixed: 1 },
     { name: 'foam', strength: 25, rho: 60, rgb: 0xe4eef8, buoyant: 1, mu: 0.6 },
     // P29d bunkers: reinforced concrete (a 1 kg grenade digs ~0.66 m: a 0.9 m wall is scarred, not breached; it takes
     // several hits in one place; strength 800 gave 1.11 m and one grenade 0.3 m off the wall breached it)
@@ -39,22 +41,31 @@
   SS.CFG = {
     STEP: 1 / 120,          // fixed simulation step (s)
     G: 9.81,                // gravity (m/s^2)
+    SECT_BAND: 2.0,         // P37-2: worms within this distance (m) of the gameplay plane move ON it (HALF + WORM_R)
     HALF: 1.5,              // half thickness of the visible slab (m) — visual only
     WORM_R: 0.45,           // collision radius of a worm in the plane (m)
     WORM_H: 0.98,           // visual height of a worm (m)
     WORM_MASS: 6,           // kg (game-scale, sets blast knock-back)
     WORM_AREA: 0.42,        // m^2 presented to a blast wave
-    WALK: 2.96,             // walk speed (m/s) (PoC walkWorm 46 px/s; 1 px = 0.0643 m: a worm 14 px wide = 0.9 m)
+    // P37-7 (user 2026-10-10: "worms should be walking 30% slower"): WALK = the PoC's walkWorm 46 px/s (1 px = 0.0643 m: a
+    // worm 14 px wide = 0.9 m) x WALK_K. Everything that needs a worm's walking speed (sim, AI, render) asks
+    // sim.walk_speed(S, w) (which adds the fast-walk skill), never C.WALK_POC.
+    WALK_POC: 2.96, WALK_K: 0.7, WALK: 2.072,
+    /* tool-crate skills (worm.skills, turns left; tinfoil 1 = the rest of the game): speed / gravity / lightning factors */
+    SKILL: { FASTWALK_K: 1.6, LOWGRAV_K: 0.45, TINFOIL_K: 0.1 },
     /* Worm dynamics = the PoC's exactly (user 2026-10-07: "the way worms jump"), converted by LENGTH only (1 px =
      * 0.0643 m, times unchanged), so jumps, landings, skids and rope swings keep their PoC shapes AND timings. That
      * makes the worms' own gravity G_WORM = 520 px/s^2 = 33.44 m/s^2 (worm bodies only; projectiles, props, water and
      * terrain keep g = 9.81). Every value below cites the PoC game.js line it comes from. */
     G_WORM: 33.44,
     WORM_DYN: {
-      JUMP_VS: 12.86, JUMP_VY: 10.67,          // jump L3664: vx facing x 200, vy -166 px/s -> 8.2 m long, 1.7 m high, 0.64 s
+      // P37-7: the PoC jump (vx 200 px/s = 12.86 m/s: 8.2 m in 0.64 s, 4x faster than walking) is no longer a way to travel:
+      // the worm stops and tilts back for JUMP_WIND s, then springs with JUMP_VY and the horizontal speed that covers
+      // exactly the distance walking would have covered in the whole time (wind-up + flight): sim.jump_vs(S, w)
+      JUMP_WIND: 0.3, JUMP_VS: 12.86, JUMP_VY: 10.67,   // (JUMP_VS = the PoC value, kept for reference / the old readers)
       HOP_VS: -2.19, HOP_VY: 12.47,            // back hop L3663: vx -34, vy -194 -> 2.3 m high, 1.6 m back, 0.75 s
       SALTO_WIN: 0.5, SALTO_VMIN: -3.86, SALTO_BASE: 6.43, SALTO_ADD: 9.64, SALTO_VS: -4.5,   // L3656: 2nd Backspace while rising
-      STEP_UP: 0.64, STEP_UP_WORM: 1.16, STEP_DOWN: 0.64, LEDGE_VS: 2.57,   // walkWorm L3635: 10 / 18 px, ledge vx 40 px/s
+      STEP_UP: 0.64, STEP_UP_WORM: 1.16, STEP_DOWN: 0.64, LEDGE_VS: 1.8,   // walkWorm L3635: 10 / 18 px, ledge vx 40 px/s
       FALL_SAFE: 30.2,                          // FALL_HURT L3543: 470 px/s along the contact normal (a 13.6 m drop is safe)
       HEAD_ALONG: 0.18, HEAD_K: 3.11, HEAD_ADD: 6, HEAD_MAX: 55, GLANCE_K: 2.22, GLANCE_MAX: 40,   // L3574-3585
       HEAD_UP_K: 0.42, HEAD_UP_MAX: 21.2, HEAD_SIDE: 1.16, DIZZY: 1.8,   // head-on bounce and dizziness L3578-3581
@@ -70,19 +81,28 @@
       SWIM_DPS: 10, SWIM_TICK: 0.5, SWIM_FLOAT_T: 2.5, SWIM_R: 2, SWIM_CLIMB: 1.0, SWIM_V: 0.9, SWIM_MAX_T: 4, FLOAT_D: 0.3,
       WASH_V: 1.2, WASH_VS: 4.5, WASH_VY: 3.86, WASH_K: 0.8, WASH_KY: 0.4, WASH_COOL: 1.2,   // washWorms L6283
       AIM_RATE: 1.5, CHARGE_T: 1.15, MIN_POWER: 0.08, AIM0: 0.35,   // L5154, L5160, launch L4305, makeWorm aim 0.35
-      SETTLE_QUIET: 0.6, SETTLE_CAP: 16         // settle L5107-5110
+      SETTLE_QUIET: 0.6, SETTLE_CAP: 16,        // settle L5107-5110
+      // P38 R9: a worm never moves faster than V_MAX m/s (terminal velocity: a human in free fall tops out near 55 m/s; a blast launches ~30-45);
+      // a worm that is airborne and has not moved vertically for PIN_T s while it "falls" (wedged in rock: gravity built up a runaway speed
+      // against a contact the solver treats as leaving) is moved to the nearest free spot within PIN_R m (cube shells of PIN_STEP m), else crushed
+      V_MAX: 80, PIN_T: 0.5, PIN_R: 12, PIN_STEP: 0.5
     },
     ROPE_MAX: 33.4, ROPE_MIN: 0.9,       // PoC ROPE_MAX 520 px, attach min 14 px
     FALL_SAFE: 30.2,        // (= WORM_DYN.FALL_SAFE; kept for older readers)
     SEED: 7, LAYOUT_SEED: 4242,
     CTX_HOLD: 2.5, CTX_FADE: 1.2,
+    ROT_WINDOW: 10,         // P37-6: s of free rotation at the turn start (rotation lock); then the view is fixed
     ROT_SPEED: 0.9, ALIGN_SPEED: Math.PI * 2,
     /* P1: teams and worm names from the PoC (TEAM_DEF, NAMES); settings.names overrides a team's name */
     TEAMS: [{ name: 'Red Rebels', rgb: 0xff5b4f }, { name: 'Blue Moles', rgb: 0x4ea8ff }, { name: 'Gold Diggers', rgb: 0xffd23f }, { name: 'Green Grubs', rgb: 0x6fd884 }],
     NAMES: ['Spud', 'Noodle', 'Clod', 'Gristle', 'Boris', 'Squirm', 'Pip', 'Mulch', 'Slick', 'Fang', 'Doris', 'Kevin', 'Biscuit', 'Turnip', 'Nugget', 'Wiggles', 'Gus', 'Mabel', 'Pickles', 'Rusty', 'Sprout', 'Taffy', 'Dobbs', 'Mort'],
     /* P1 match rules (PoC): retreat after an attack (s; per weapon `retreat`), CPU skills, sudden death steps */
     GAME: { RETREAT: 5, SKILLS: ['easy', 'normal', 'hard'], SD_RISE: 1.05,   // PoC: 26 px per sudden-death turn = 2.6 % of its map height (~40 m here)
-            SD_DRY_STEP: 2, SD_DRY_MIN: 14 },
+            SD_DRY_STEP: 2, SD_DRY_MIN: 14,
+            // P38 R9: the final stage of sudden death, once the shrink has nothing left to take (dry: the play circle at SD_DRY_MIN, wet: the sea at its
+            // cap SY - SD_SEA_GAP, caves: from the start of sudden death). Every living worm then loses HP continuously (DS.SUDDEN_DEATH), SD_DRAIN
+            // HP/s in the first turn, +SD_DRAIN_RAMP per further turn, at most SD_DRAIN_MAX: the weakest team falls first, the match always ends
+            SD_SEA_GAP: 10, SD_DRAIN: 0.25, SD_DRAIN_RAMP: 0.1, SD_DRAIN_MAX: 2 },
 
     /* Weapons (C: enum WeaponId + const WeaponDef[]). W = TNT-equivalent charge (kg, game-scale). */
     WEAPONS: {
@@ -138,12 +158,12 @@
     WEATHER_NAME: { clear: 'clear', cloudy: 'cloudy', rain: 'rain', storm: 'thunderstorm', snow: 'snow', blizzard: 'blizzard', ashfall: 'ash fall', fog: 'fog' },
     /* 'auto' weather: kind probabilities per biome (drawn from the weather RNG, not the layout RNG); the key order is
      * the severity chain the weather walks along between turns (5f). */
-    WEATHER_AUTO: {
-      temperate: { clear: 0.35, cloudy: 0.25, rain: 0.25, storm: 0.15 },
-      alpine: { clear: 0.2, cloudy: 0.15, snow: 0.45, blizzard: 0.2 },
-      canyon: { clear: 0.5, cloudy: 0.25, rain: 0.1, storm: 0.15 },
-      desert: { clear: 0.7, cloudy: 0.2, storm: 0.1 },
-      volcanic: { cloudy: 0.2, storm: 0.35, ashfall: 0.45 }
+    WEATHER_AUTO: {              // per biome an ORDERED list of [kind, probability] (the order is the severity chain; C: struct { u8 kind; f32 p; } [])
+      temperate: [['clear', 0.35], ['cloudy', 0.25], ['rain', 0.25], ['storm', 0.15]],
+      alpine: [['clear', 0.2], ['cloudy', 0.15], ['snow', 0.45], ['blizzard', 0.2]],
+      canyon: [['clear', 0.5], ['cloudy', 0.25], ['rain', 0.1], ['storm', 0.15]],
+      desert: [['clear', 0.7], ['cloudy', 0.2], ['storm', 0.1]],
+      volcanic: [['cloudy', 0.2], ['storm', 0.35], ['ashfall', 0.45]]
     },
     /* Wind classes (menu / URL 'wind'): speed at 10 m (m/s) and gust amplitude (fraction). */
     WIND: {
@@ -190,10 +210,15 @@
     /* Settings (the sim's defaults; the menu starts from the PoC defaults: turnTime 45, sd on, ctl human / cpu).
      * P1: teams 2-4, worms per team 1-4, hp, turnTime (s, 0 = no limit), ctl[] per team 'human' | 'cpu' (null =
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
-    SETTINGS: { first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
-                collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', under: 'off', cpu: 'off',
+    /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
+    MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
+    BUILD: 'p49-debug',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
+                collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
-      blood: false, select: false, keepRope: false, rooms: false, time: 'day', art: 'painted', shape: 'island' },
+      blood: false, select: false, keepRope: false, rooms: false, time: 'day', art: 'painted', shape: 'island',
+      rotLock: true, labFlags: 0, mineFuse: 'default', teamBlood: false, toolCrates: 'normal',        // (contracts: W1 / W3 / W4 read them; the menu sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
+      dTrees: 'medium', dRocks: 'medium', dBarrels: 'medium', dProps: 'medium', dCrates: 'medium', dMines: 'medium', dBunkers: 'medium', dTown: 'medium', dEggs: 'medium' },
 
     WIND_UNIT: 12, WIND_ACC: 230 * 9.81 / 520,   // PoC WIND_ACC 230 px/s2 per wind unit (12 m/s) on the projectile scale
     WIND_GAIN: 0.55,        // projectile drag coupling to the wind component in the plane (1/s)
@@ -412,7 +437,8 @@
       CAR: { KG: 1100, L: 4.0, W: 1.65, H: 1.45, KPA: 110, DELAY0: 0.15, DELAY1: 0.45, W_BLAST: M.pow(54 / 44, 3), DMG: 44, FIRES: 3, BURN: 7 },
       JUNK: { fridge: [0.9, 1.75, 0.85, 90], vending: [1.15, 2.0, 0.95, 260], phonebooth: [0.95, 2.35, 0.95, 220], KPA: 85 },   // w, h, d (m), kg
       STONE: { column: [0.42, 3.0, 1800], obelisk: [0.5, 3.6, 1600] },   // r (base), h (m), kg
-      EXTRA: { temperate: { car: 1, fridge: 1, vending: 1, phonebooth: 1, column: 1 }, alpine: { phonebooth: 1, obelisk: 1 }, canyon: { car: 1, column: 2, obelisk: 1 }, desert: { car: 2, vending: 1, column: 1, obelisk: 1 }, volcanic: { car: 1, obelisk: 1, column: 1 } },
+      // EXTRA: per biome an ORDERED list of [prop kind, base count] (placed in this order from their own RNG stream)
+      EXTRA: { temperate: [['car', 1], ['fridge', 1], ['vending', 1], ['phonebooth', 1], ['column', 1]], alpine: [['phonebooth', 1], ['obelisk', 1]], canyon: [['car', 1], ['column', 2], ['obelisk', 1]], desert: [['car', 2], ['vending', 1], ['column', 1], ['obelisk', 1]], volcanic: [['car', 1], ['obelisk', 1], ['column', 1]] },
     },
     /* Open lava = 2.5D viscous Bingham layer on the lattice columns (sim/lava.js). Mean velocity of a sheet of depth h on
      * surface slope s: u = g h^2 s / (3 nu) (1 - 1.5 r + 0.5 r^3), r = hc / h, hc = Y / s. nu = NU_HOT e^(NU_K (1 - T)),
@@ -471,5 +497,108 @@
     },
     FIRE_DPS: 7             // HP/s while standing in flames
   };
+  /* P37 W5: world content density (menu sub-menu). Settings keys dTrees, dRocks, dBarrels, dProps, dCrates, dMines,
+   * dBunkers, dTown, dEggs hold 'none' | 'low' | 'medium' | 'high' (absent = 'medium' = the classic counts, so old
+   * saves / tests / net peers without the keys generate the same map). C: int density_count(const Settings*, int key, int base). */
+  SS.CFG.DENSITY = { LEVELS: ['none', 'low', 'medium', 'high'], MUL: [0, 0.5, 1, 2],
+    KEYS: ['dTrees', 'dRocks', 'dBarrels', 'dProps', 'dCrates', 'dMines', 'dBunkers', 'dTown', 'dEggs'] };
+  SS.CFG.density_level = (st, key) => { const v = st && st[key], i = SS.CFG.DENSITY.LEVELS.indexOf(v); return i < 0 ? 2 : i; };
+  SS.CFG.density_count = (st, key, base) => {
+    const lv = SS.CFG.density_level(st, key);
+    if (base <= 0) return base;
+    const sc = SS.world && SS.world.size_of ? SS.world.size_of(st) / 96 : 1;      // P38: content grows with the map's AREA
+    if (sc !== 1) base = Math.round(base * sc * sc);
+    if (lv === 2) return base;
+    if (lv === 0) return 0;
+    return lv === 1 ? M.max(1, Math.round(base * 0.5)) : Math.round(base * 2);
+  };
+  /* ---------- P38 R7 (P1): damage sources. Gameplay never reads English text: hurt(S, w, dmg, src, flags, arg) takes a DamageSrc (enum) and
+   * everything derived from it (the cause of a death, whether the hit ends the turn, the log text) comes from one table. The text is built
+   * at presentation (sim.src_text) from the row's `text` and, for the three families with a name (a projectile, a flying prop), the i16 `arg`.
+   * C: enum DamageSrc { DS_NONE = 0, DS_BLAST, ... }; struct DmgSrcRow { const char *text; u8 cause; u8 flags; }; const DmgSrcRow DS_TBL[DS_COUNT];
+   *   cause (enum Cause): 0 none, 1 blast, 2 shot, 3 crush, 4 burn, 5 lava, 6 poison, 7 drown, 8 shock, 9 fall, 10 alien, 11 acid, 12 shred (minigun)
+   *   flags: DSF_FIRE = 1 (fire: ends the active worm's turn even as damage over time, PoC activeHurt), DSF_NOEND_PLAY = 2 (a sentry gun hit does
+   *          not end the turn in the play phase: turn denial), DSF_DOT = 4 (always damage over time), DSF_FX_HOT = 8 (a worm shouts / burns: hud, audio)
+   *   hurt flags (argument): HF_QUIET = 1 (no log, no turn end), HF_DOT = 2 (damage over time: presentation only, the camera does not follow it) */
+  const CAUSE = { NONE: 0, BLAST: 1, SHOT: 2, CRUSH: 3, BURN: 4, LAVA: 5, POISON: 6, DROWN: 7, SHOCK: 8, FALL: 9, ALIEN: 10, ACID: 11, SHRED: 12 };
+  const F_FIRE = 1, F_NOEND = 2, F_DOT = 4, F_HOT = 8;
+  const DS_ROWS = [
+    ['NONE', 'unknown', CAUSE.BLAST, 0],
+    ['BLAST', 'the blast', CAUSE.BLAST, 0],
+    ['BLAST_CONTAINED', 'the contained blast', CAUSE.BLAST, 0],
+    ['SENTRY', 'a sentry gun', CAUSE.SHRED, F_NOEND],
+    ['PUNCH', 'a knockout punch', CAUSE.SHOT, 0],
+    ['CLAYMORE', 'a claymore', CAUSE.BLAST, 0],
+    ['BOOMERANG', 'a boomerang', CAUSE.SHOT, 0],
+    ['LAVA_SPATTER', 'lava spatter', CAUSE.LAVA, F_HOT],
+    ['SHRAPNEL', 'shrapnel', CAUSE.SHOT, 0],
+    ['LANDING', 'a hard landing', CAUSE.FALL, 0],
+    ['PROJ_HIT', 'a % hit', CAUSE.BLAST, 0],              // arg = weapon index (C.WEAPON_KEYS), -1 = 'shell'
+    ['PROJ_NAPALM', 'a % hit', CAUSE.BURN, 0],
+    ['PROJ_ACID', 'a % hit', CAUSE.ACID, 0],
+    ['PROJ_GAS', 'a % hit', CAUSE.POISON, 0],
+    ['FALLING_ROCK', 'falling rock', CAUSE.CRUSH, 0],
+    ['FLY_PROP', 'a flying %', CAUSE.BLAST, 0],           // arg = body name index (sim BODY_NAMES)
+    ['FLY_CRATE', 'a flying crate', CAUSE.CRUSH, 0],
+    ['FLY_SUPPLY_CRATE', 'a flying supply crate', CAUSE.CRUSH, F_DOT],
+    ['DROWNING', 'drowning', CAUSE.DROWN, F_DOT],
+    ['HOT_SAND', 'hot sand', CAUSE.BURN, F_DOT | F_HOT],
+    ['SUDDEN_DEATH', 'sudden death', CAUSE.POISON, F_DOT],     // P38 R9: the final stage drain (GAME.SD_DRAIN)
+    ['LAVA', 'lava', CAUSE.LAVA, F_DOT | F_HOT],
+    ['FIRE', 'fire', CAUSE.BURN, F_FIRE | F_DOT | F_HOT],
+    ['BURNING_OIL', 'burning oil', CAUSE.BURN, F_FIRE | F_DOT | F_HOT],
+    ['BURNING_GRASS', 'burning grass', CAUSE.BURN, F_FIRE | F_DOT | F_HOT],
+    ['FLAMETHROWER', 'flamethrower fire', CAUSE.BURN, F_FIRE | F_DOT | F_HOT],
+    ['BLACK_HOLE', 'the black hole', CAUSE.BLAST, F_DOT],
+    ['ALIEN_BITE', 'the alien (head bitten off)', CAUSE.ALIEN, 0],
+    ['ACID_BLOOD', 'acid blood', CAUSE.ACID, 0],
+    ['ACID', 'acid', CAUSE.ACID, F_DOT],
+    ['PARASITE', 'the parasite', CAUSE.POISON, F_DOT],
+    ['GAS', 'gas poisoning', CAUSE.POISON, F_DOT],
+    ['LIGHTNING', 'lightning', CAUSE.SHOCK, 0],
+    ['SHOTGUN', 'a shotgun blast', CAUSE.SHOT, 0],
+    ['SNIPER', 'a sniper round', CAUSE.SHOT, 0],
+    ['BAT', 'a baseball bat', CAUSE.SHOT, 0],
+    ['TORCH', 'the torch', CAUSE.BURN, 0],
+    ['SPRING', 'a spring trap', CAUSE.SHOT, 0],
+    ['MINIGUN', 'a minigun round', CAUSE.SHRED, 0],
+    ['MINIGUN_SPLINTER', 'minigun splinters', CAUSE.SHRED, 0]
+  ];
+  SS.CFG.CAUSE = CAUSE;
+  SS.CFG.CAUSE_NAME = ['', 'blast', 'shot', 'crush', 'burn', 'lava', 'poison', 'drown', 'shock', 'fall', 'alien', 'acid', 'shred'];
+  SS.CFG.CAUSE_LOG = ['is out.', 'was blown up.', 'was shot down.', 'was crushed.', 'burned to death.', 'was lost to the lava.', 'succumbed to the gas.', 'drowned.', 'was struck by lightning.', 'fell to their death.', 'was killed by the alien.', 'was dissolved by acid.', 'was shredded.'];
+  SS.CFG.DS = {}; SS.CFG.DS_TEXT = []; SS.CFG.DS_CAUSE = []; SS.CFG.DS_FLAGS = [];
+  for (let i = 0; i < DS_ROWS.length; i++) { SS.CFG.DS[DS_ROWS[i][0]] = i; SS.CFG.DS_TEXT.push(DS_ROWS[i][1]); SS.CFG.DS_CAUSE.push(DS_ROWS[i][2]); SS.CFG.DS_FLAGS.push(DS_ROWS[i][3]); }
+  SS.CFG.DS_COUNT = DS_ROWS.length;
+  SS.CFG.DSF = { FIRE: F_FIRE, NOEND_PLAY: F_NOEND, DOT: F_DOT, FX_HOT: F_HOT };
+  SS.CFG.HF = { QUIET: 1, DOT: 2 };
+  /* ---------- P38 R7 (P10): the caps of every pool in S (one table; C: #define / const int; every list is a fixed array + count there).
+   * Semantics: a list at its cap DROPS ITS OLDEST entry (index 0) to make room (sim.pool_push: C memmove / ring), except PLANE_BODIES (rebuilt every step: the extra
+   * section is dropped). The numbers are well above what the longest CPU matches / all weapon shots reached (measured max in brackets) so no rule changes: proj
+   * [136], flames [45], pending [?], devices [1], holes [1], strikes [1], bullets [1], zaps [1], moais [1], fx [8], planeBodies [56], bodies [49], events [166].
+   * Caps that already existed live in their module tables (BODY.MAX, SHRAPNEL.MAX, SPATTER.MAX, WP crate CR.MAX / MAX_TOOL, ICE.FLOE_MAX, ffield / gadgets MAX, alien MAX_*). */
+  SS.CFG.LIMITS = { WORMS: 16, PROJ: 512, PENDING: 256, FLAMES: 512, DEVICES: 64, HOLES: 16, STRIKES: 16, BULLETS: 64, ZAPS: 16, MOAIS: 16, FX: 256, PLANE_BODIES: 512, EVENTS: 4096, LOG: 7, LAB_METEORS: 8 };
+  /* P42 Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic */
+  SS.CFG.LAB = {
+    FLAG: { BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32 }, ALL: 63,
+    BANK_K: 0.2, BANK_MAX: 3, BANK_SPEED: 2,
+    UNDER_RATIO: 0.5, UNDER_K: 1.35,
+    GUST_T0: 6, GUST_T1: 12, GUST_DIR: 0.9, GUST_V0: -4, GUST_V1: 5, GUST_MAX: 11,
+    MET_EVERY: 3, MET_WARN: 2.2, MET_R: 26, MET_W: 0.45, MET_DMG: 30,
+    CLOCK_PCT: 10, CLOCK_MIN: 15,
+    MOON_EVERY: 3, MOON_K: 0.5
+  };
+  /* ---------- enums (P38 R7 / P8). The JS sim keeps strings as the enum NAMES (a C port compiles each list into an enum; the index is the value):
+   *   phase: C.PH / C.PHASE_NAME  (S.phase is the name in JS);  weapon: C.WEAPON_KEYS (the wire carries index + 1);  weather: C.WEATHER;  biome: C.BIOMES[i].id;
+   *   cause / damage source: C.CAUSE / C.DS (already integers);  settings: C.SETTING_ENUMS below: value -> index, 'auto' / 'random' -> -1 (the Settings struct
+   *   holds an i8 per enum setting; numbers stay numbers, mineFuse -1 = random, 0..3 s). setting_enc / setting_dec convert one value. ---------- */
+  SS.CFG.PH = { PLAY: 0, ATTACK: 1, RESOLVE: 2, DYING: 3, PLACE: 4, OVER: 5 };
+  SS.CFG.PHASE_NAME = ['play', 'attack', 'resolve', 'dying', 'place', 'over'];
+  SS.CFG.SETTING_ENUMS = {
+    weather: ['clear', 'cloudy', 'rain', 'storm', 'snow', 'blizzard', 'ashfall', 'fog'], wind: ['calm', 'breeze', 'strong', 'gale'], lava: ['off', 'on'], skill: ['easy', 'normal', 'hard'],
+    time: ['day', 'dusk', 'night'], shape: ['islands', 'hills', 'caverns', 'canyon'], mapSize: ['normal', 'large'], placement: ['random', 'user'], toolCrates: ['off', 'low', 'normal', 'high'],
+    ctl: ['human', 'cpu'], art: ['painted', 'vector'], slice: ['thin', 'thick'], biome: SS.CFG.BIOMES.map(b => b.id), density: SS.CFG.DENSITY.LEVELS };
+  SS.CFG.setting_enc = (key, v) => { const L = SS.CFG.SETTING_ENUMS[key]; if (!L) return typeof v === 'number' ? v : -1; const i = L.indexOf(v); return i; };
+  SS.CFG.setting_dec = (key, i, auto) => { const L = SS.CFG.SETTING_ENUMS[key]; return L && i >= 0 && i < L.length ? L[i] : auto; };
   SS.CFG.css = rgb => '#' + rgb.toString(16).padStart(6, '0');
 })(window.SS = window.SS || {});

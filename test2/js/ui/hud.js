@@ -26,7 +26,11 @@
   };
 
   const v3 = new THREE.Vector3();
-  function project(p) { v3.set(p.x, p.y, p.z).project(camera); return { x: (v3.x + 1) / 2 * canvas.clientWidth, y: (1 - v3.y) / 2 * canvas.clientHeight, front: v3.z < 1 }; }
+  /* P38-R4: the canvas size is cached (a read of clientWidth after DOM writes forced a layout per label per frame) */
+  let cvW = 0, cvH = 0;
+  function sizeCache() { if (canvas) { cvW = canvas.clientWidth; cvH = canvas.clientHeight; } }
+  addEventListener('resize', sizeCache); addEventListener('orientationchange', sizeCache);
+  function project(p) { if (!cvW) sizeCache(); v3.set(p.x, p.y, p.z).project(camera); return { x: (v3.x + 1) / 2 * cvW, y: (1 - v3.y) / 2 * cvH, front: v3.z < 1 }; }
 
   /* speech bubbles (PoC say(); original lines): a dying worm's last words, a few yelps, a turn opener */
   const SAY = {
@@ -41,7 +45,11 @@
     shock: ['Bzzzt!', 'My hair!', 'Tingly…'],
     wash: ['Pfft! Salty!', 'I can\'t swim!', 'Blub!'],
     pass: ['Hmm… pass.', 'Not now', 'I\'ll wait'],
-    fall: ['Aaaah!', 'Whoaaa!', 'Not again!']
+    fall: ['Aaaah!', 'Whoaaa!', 'Not again!'],
+    cough: ['*cough cough*', 'Hack! Cough!', 'Ugh… that gas', '*wheeze*'],
+    acid: ['Ouch! Ouch!', 'It burns!', 'Ow ow ow!', 'Hot hot hot!'],
+    hugged: ['Mmmph! Get it off!', 'MMPH!!', 'Hmmf! Hmmf!'],                                                 // P47: the face hugger
+    sick: ['I do not feel so good…', 'Something is moving in my chest', 'Is it hot in here?', 'My tummy hurts…', 'Whoa… dizzy…']
   };
   function say(w, kind, arg) {
     for (const o of labels.querySelectorAll('.bubble')) if (o._w === w) o.remove();      // one bubble per worm
@@ -60,12 +68,17 @@
     if (e.type === 'hurt' && e.worm && !e.worm.dead && e.worm.hp > 0 && e.amount >= 5 && Math.random() < 0.45) say(e.worm, 'ouch');
     if (e.type === 'turn' && e.worm) say(e.worm, 'start');                                            // PoC: every turn
     if (e.type === 'fire' && S.active && Math.random() < 0.3) say(S.active, 'fire');
-    if (e.type === 'hurt' && e.worm && !e.worm.dead && /fire|lava|oil|burn|hot/.test(e.why || '') && Math.random() < 0.3) say(e.worm, 'hot');
+    if (e.type === 'hurt' && e.worm && !e.worm.dead && (C.DS_FLAGS[e.src | 0] & C.DSF.FX_HOT) && Math.random() < 0.3) say(e.worm, 'hot');
     if (e.type === 'zap' && e.worm && !e.worm.dead) say(e.worm, 'shock');
     if (e.type === 'wash' && e.worm) say(e.worm, 'wash');
+    if (e.type === 'cough' && e.worm && !e.worm.dead && Math.random() < 0.6) say(e.worm, 'cough');          // P37-W3
+    if (e.type === 'ouch' && e.acid && e.worm && !e.worm.dead && Math.random() < 0.7) say(e.worm, 'acid');
     if (e.type === 'use' && e.weapon === 'skip' && S.active) say(S.active, 'pass');
     if (e.type === 'spring' && e.worm) say(e.worm, 'fall');
     if (e.type === 'pickup' && e.worm) say(e.worm, e.kind === 'health' ? 'health' : 'crate', e.weapon && C.ARSENAL[e.weapon] ? C.ARSENAL[e.weapon].name : '');
+    if (e.type === 'hugger_attach' && e.worm && !e.worm.dead) { say(e.worm, 'hugged'); banner(`${e.worm.name} was face-hugged!`, 'A face hugger latched on', '#b6ff4a'); }       // P47
+    if (e.type === 'hugger_detach' && e.worm && !e.worm.dead) { say(e.worm, 'sick'); banner('INFECTED', `${e.worm.name} loses ${SS.alien.K.PARA_HP} HP every ${SS.alien.K.PARA_T} s`, '#b6ff4a'); }
+    if (e.type === 'chest_burst' && e.wormId != null) banner('Something bursts out!', e.worm ? e.worm.name : '', '#b6ff4a');
     if (e.type === 'reset') U.clear();
     if (e.type === 'hurt') {
       const el = document.createElement('div'); el.className = 'pop'; el.textContent = '-' + e.amount; el.style.color = css(C.TEAMS[e.worm.team].rgb);
@@ -73,8 +86,9 @@
     }
     if (e.type === 'turn') banner(`${SS.sim.team_name(S, e.worm.team)} · ${e.worm.name}`, SS.game && SS.game.is_cpu(S, e.worm.team) ? 'CPU' : 'is up', css(C.TEAMS[e.worm.team].rgb));
     if (e.type === 'banner') banner(e.title, e.sub, 'var(--accent)');
+    if (e.type === 'labbank') banner('Bank shot x' + e.k.toFixed(1), e.bounces + (e.bounces > 1 ? ' ricochets' : ' ricochet'), 'var(--accent)');
     if (e.type === 'pickup' && e.worm) {
-      const el = document.createElement('div'); el.className = 'pop'; el.textContent = e.kind === 'health' ? '+' + e.amount : C.ARSENAL[e.weapon].name; el.style.color = e.kind === 'health' ? '#79d98b' : '#ffb02e';
+      const el = document.createElement('div'); el.className = 'pop'; el.textContent = e.kind === 'health' ? '+' + e.amount : e.kind === 'tool' ? ((C.SKILL && C.SKILL.NAMES && C.SKILL.NAMES[e.tool]) || 'Tool') : C.ARSENAL[e.weapon].name; el.style.color = e.kind === 'health' ? '#79d98b' : e.kind === 'tool' ? '#9fe8ff' : '#ffb02e';
       labels.appendChild(el); el._w = e.worm; el._t = S.time;
     }
     if (e.type === 'reset') { overShown = null; for (const k in gridBtn) gridBtn[k].s = ''; }
@@ -90,7 +104,7 @@
     let el = wl.get(w);
     if (!el) {
       el = document.createElement('div'); el.className = 'wlabel';
-      el.innerHTML = '<span class="nm"></span><span class="off"></span><div class="hpbar"><i></i></div><b class="hpn"></b>';
+      el.innerHTML = '<span class="nm"></span><span class="off"></span><div class="hpbar"><i></i></div><b class="hpn"></b><span class="inf"></span>';
       el.style.setProperty('--team', css(C.TEAMS[w.team].rgb));
       labels.appendChild(el); wl.set(w, el);
     }
@@ -109,17 +123,77 @@
     if (txt !== netLast) { netEl.textContent = txt; netEl.className = cls; netLast = txt; }
     netEl.style.display = 'block';
   }
+  /* P37-6: "ROTATE NOW" splash with the countdown of the free rotation window (sim/rotlock.js), display font */
+  let rotEl = null, rotTxt = '';
+  function rotSplash(S) {
+    if (!rotEl) { rotEl = document.createElement('div'); rotEl.id = 'rotnow'; document.body.appendChild(rotEl); }
+    const a = S.active, mine = a && !(SS.game && SS.game.is_cpu(S, a.team)) && !(SS.net && SS.net.active && a.team !== SS.net.team);
+    const l = mine && SS.rotlock && SS.rotlock.enabled(S) ? SS.rotlock.left(S) : -1, txt = l > 0 ? 'ROTATE NOW<b>' + Math.ceil(l) + '</b>' : '';
+    if (txt !== rotTxt) { rotTxt = txt; if (txt) rotEl.innerHTML = txt; rotEl.classList.toggle('on', !!txt); }
+    rotEl.classList.toggle('low', l > 0 && l <= 3);
+  }
+  /* P42: the Lab badge: the active experimental mechanics (sim/lab.js) */
+  let labEl = null, labTxt = '';
+  function labBadge(S) {
+    if (!labEl) labEl = $('labbadge'); if (!labEl) return;
+    const txt = SS.lab ? SS.lab.badge(S) : '';
+    if (txt !== labTxt) { labTxt = txt; labEl.textContent = txt ? 'Lab: ' + txt : ''; labEl.style.display = txt ? 'block' : 'none'; }
+  }
+  /* P47: the parasite line under a worm's label: a face hugger on, or the infection with the countdown to the next hit (red when that hit kills) */
+  const INF = { stage: 0, left: 0, ttd: 0, sev: 0, pulses: 0 };
+  function infoLabel(S, w, el) {
+    SS.alien.infection(S, w, INF);
+    let txt = '', cls = 'inf';
+    if (INF.stage === 1) { txt = '☣ FACE HUGGER'; cls += ' hug'; }
+    else if (INF.stage === 2) {
+      const s = Math.ceil(INF.left), lethal = w.hp <= SS.alien.K.PARA_HP;
+      txt = `☣ ${lethal ? 'BURSTING' : '−' + SS.alien.K.PARA_HP + ' HP'} in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      cls += lethal ? ' lethal' : ' sick'; if (INF.left < 10) cls += ' soon';
+    }
+    setText(el, txt); if (el._c !== cls) { el._c = cls; el.className = cls; }
+  }
+  /* P47: the hatching bar under every opening egg and the alien's own label (kills, HP) */
+  const eggEls = [], xenoEls = [];
+  function alienLabels(S) {
+    const A = S.alien; let ne = 0, nx = 0;
+    if (A && SS.alien) {
+      for (const e of A.eggs) {
+        if (e.st !== 1) continue;
+        const p = SS.alien.egg_progress(S, e), pt = { x: e.x, y: e.y + 0.02, z: e.z };
+        let el = eggEls[ne]; if (!el) { el = eggEls[ne] = document.createElement('div'); el.className = 'eggbar'; el.innerHTML = '<div class="eb"><i></i></div><b></b>'; labels.appendChild(el); }
+        ne++;
+        const sp = project(pt), shown = SS.view.shownAt(S, pt, 0.6) && sp.front;
+        el.style.display = shown ? 'block' : 'none'; if (!shown) continue;
+        const hue = Math.round(92 - 92 * M.sat((p - 0.72) / 0.28)), pct = Math.floor(p * 100);
+        el.firstChild.firstChild.style.width = (p * 100).toFixed(1) + '%'; el.firstChild.firstChild.style.background = `hsl(${hue},85%,50%)`;
+        setText(el.lastChild, 'EGG ' + pct + '%'); el.classList.toggle('ripe', p > 0.92);
+        el.style.transform = `translate(${sp.x}px,${sp.y}px) translate(-50%,6px)`;
+      }
+      for (const X of A.xenos) {
+        let el = xenoEls[nx]; if (!el) { el = xenoEls[nx] = document.createElement('div'); el.className = 'alabel'; el.innerHTML = '<span class="nm">ALIEN</span><div class="hpbar"><i></i></div><b class="hpn"></b>'; labels.appendChild(el); }
+        nx++;
+        const h = X.n[0], pt = { x: h.x, y: h.y + 0.9 * X.size + 0.3, z: h.z }, sp = project(pt), shown = SS.view.shownAt(S, h, 0.6) && sp.front;
+        el.style.display = shown ? 'block' : 'none'; if (!shown) continue;
+        el.firstChild.nextSibling.firstChild.style.width = Math.max(0, Math.min(100, 100 * X.hp / X.hpMax)) + '%';
+        setText(el.lastChild, Math.max(0, Math.round(X.hp)) + (X.kills ? ' · ' + X.kills + ' kill' + (X.kills > 1 ? 's' : '') : ''));
+        el.style.transform = `translate(${sp.x}px,${sp.y}px) translate(-50%,-100%)`;
+      }
+    }
+    for (let i = ne; i < eggEls.length; i++) eggEls[i].style.display = 'none';
+    for (let i = nx; i < xenoEls.length; i++) xenoEls[i].style.display = 'none';
+  }
   U.draw = function (S) {
-    netPanel();
+    netPanel(); rotSplash(S); labBadge(S); alienLabels(S);
     const a = S.active, insp = M.clamp(S.inspect, 0, 1);
     for (const w of S.worms) {
       const el = label(w);
-      if (w.dead) { el.style.display = 'none'; continue; }
+      if (w.dead || w.eaten) { el.style.display = 'none'; continue; }
       const inSec = SS.view.inSlab(S, w.pos) || w === a, show = inSec || insp > 0.05;
       const sp = project({ x: w.pos.x, y: w.pos.y + 0.85, z: w.pos.z });
       el.style.display = show && sp.front ? 'block' : 'none';
       if (!show) continue;
       setText(el.children[0], (w === a ? '▸ ' : '') + w.name);
+      infoLabel(S, w, el.children[4]);
       setText(el.children[1], inSec ? '' : ` ${Math.abs(P.to_plane(S, w.pos).t).toFixed(1)} m off`);
       el.children[2].firstChild.style.width = Math.max(0, Math.min(100, 100 * w.hp / (w.hp0 || 100))) + '%';
       setText(el.children[3], String(Math.max(0, Math.round(w.hp))));                                   // PoC: the HP number
@@ -134,7 +208,7 @@
       const sp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.5 + age * 0.8, z: el._w.pos.z });
       el.style.transform = `translate(${sp.x}px,${sp.y}px) translate(-50%,-100%) scale(${1 + Math.max(0, 0.3 - age)})`; el.style.opacity = 1 - age / 1.6;
     }
-    const g = S.proj.find(p => p.type === 'grenade');
+    const g = S.proj.find(p => p.type === 'grenade' || p.type === 'gas');
     if (g) {
       const wp = P.to_world(S, g.s, g.y), sp = project({ x: wp.x, y: wp.y + 0.6, z: wp.z });
       fuseEl.style.display = 'block'; setText(fuseEl, Math.max(0, g.fuse).toFixed(1));
@@ -142,10 +216,12 @@
     } else fuseEl.style.display = 'none';
     // the lava layer moves slowly: refresh the section map base every ~2 s of sim time while it changes
     if (S.section && ((S.lava && S.lava.ver - lavaVer >= 20) || (S.water && S.water.ver - waterVer >= 15))) U.sectionChanged(S);
-    drawHUD(S); drawSectionMap(S); drawTopMap(S);
+    drawHUD(S); drawSectionMap(S); drawTopMap(S); gadgetLabels(S);
   };
 
   function bearing(th) { return ((90 + th * 180 / Math.PI) % 360 + 360) % 360; }
+  /* P47: a team with infected (or face-hugged) worms shows a lime count in the team panel */
+  function infTeam(S, t) { let n = 0; for (const w of S.worms) if (w.team === t && !w.dead && (w.embryo || (w.hug != null && w.hug >= 0))) n++; return n ? ` <em class="tinf" title="infected by the alien parasite">☣${n}</em>` : ''; }
   function teamHP(S, t) { return S.worms.filter(w => w.team === t).reduce((s, w) => s + Math.max(0, w.hp), 0); }
   /* dry worlds (Step D): the active worm on hot sand → which way to walk back (along the section, or rotate first) */
   function hotRow(S, a) {
@@ -205,8 +281,8 @@
     for (const k of C.ARSENAL_ORDER) {
       const d = C.ARSENAL[k], b = document.createElement('button');
       b.className = 'wpn'; b.type = 'button'; b.title = `${d.name} (${d.key}): ${d.info}`;
-      const ico = vector && SS.icons[k] ? `<svg viewBox="0 0 24 24" class="vi">${SS.icons[k]}</svg>` : `<img src="assets/icons/icon-${k}.webp" alt="">`;
-      b.innerHTML = `${ico}<span class="k">${d.key}</span><span class="a"></span><span class="n">${d.name.replace('Baseball ', '').replace(' Rifle', '').replace('Pocket ', '').replace('Fuse ', '')}</span>`;
+      const ico = (vector || !(SS.iconsArt && SS.iconsArt[k])) && SS.icons[k] ? `<svg viewBox="0 0 24 24" class="vi">${SS.icons[k]}</svg>` : `<img src="assets/icons/icon-${k}.webp" alt="">`;
+      b.innerHTML = `${ico}<span class="k">${d.key}</span><span class="a"></span><span class="n">${d.name.replace('Baseball ', '').replace(' Rifle', '').replace('Pocket ', '').replace('Fuse ', '').replace('Flamethrower', 'Flamer')}</span>`;
       b.onclick = () => { if (U.onPick) U.onPick(k); b.blur(); };
       el.appendChild(b); gridBtn[k] = { b, a: b.querySelector('.a'), s: '' };
     }
@@ -223,13 +299,38 @@
     }
     const d = C.ARSENAL[S.weapon] || {}, pd = C.PROJ[S.weapon] || {};
     let hint = '';
-    if (d.kind === 'target') hint = S.weapon === 'girder' ? ' · <em>click to place · ↑↓ turn</em>' : ' · <em>click the target on the section</em>' + (d.strike ? ` · <em>${S.strikeDir > 0 ? 'from the left ▶' : '◀ from the right'}</em> (← →)` : '');
+    if (d.twostep) hint = S.tgt ? ' · <em>target set: ↑↓ aim, Space releases the bird</em>' : ' · <em>click the target on the section</em>';
+    else if (d.kind === 'target') hint = S.weapon === 'girder' ? ` · <em>click to place · hold ↑↓ to turn (${Math.round(((S.plateAng || 0) * 180 / Math.PI + 360) % 360)}°)</em>` : ' · <em>click the target on the section</em>' + (d.strike ? ` · <em>${S.strikeDir > 0 ? 'from the left ▶' : '◀ from the right'}</em> (← →)` : '');
+    else if (S.weapon === 'gravgun') hint = S.grab ? ' · <em>hold fire and release to throw it</em>' : ' · <em>fire grabs the outlined object</em>';
     else if (d.target) hint = S.tgt ? ' · <em>target set</em>' : ' · <em>click a target first</em>';
     if (S.rope && d.payload) hint += ' · <em>Enter drops it</em>';
-    if (SS.sim.can_switch && SS.sim.can_switch(S)) hint = ` · <em>Tab: switch worm (${Math.max(0, Math.ceil(10 - (S.time - S.turnStart)))} s)</em>` + hint;
+    if (SS.sim.can_switch && SS.sim.can_switch(S)) hint = ` · <em>\\: switch worm (${Math.max(0, Math.ceil(10 - (S.time - (S.selStart != null ? S.selStart : S.turnStart))))} s)</em>` + hint;
     if (S.phase === 'place') { setHTML('winfo', mine ? `Deploy <em>${esc(a.name)}</em>: click a free spot on the section · Q / E rotate it · Enter auto-places` : `${esc(a.name)} is being deployed…`); return; }
     const shot = S.weapon === 'shotgun' && C.ARMS && C.ARMS.SHOTGUN ? ` · shot ${Math.min(C.ARMS.SHOTGUN.SHOTS, (S.shots || 0) + 1)} of ${C.ARMS.SHOTGUN.SHOTS}` : '';
-    setHTML('winfo', S.phase === 'play' && mine ? `${d.name || ''}${pd.fuseSet ? ' · fuse ' + S.fuse + ' s (F)' : ''}${shot} — ${d.info || ''}${hint}` : '');
+    setHTML('winfo', S.phase === 'play' && mine ? `${d.name || ''}${(() => { const par = SS.weaponsA && SS.weaponsA.param(S, S.weapon); return par ? ` · <em>${par.name} ${par.value} ${par.unit}</em> (+ / −)` : pd.fuseSet ? ' · fuse ' + S.fuse + ' s (F)' : ''; })()}${shot} — ${d.info || ''}${hint}` : '');
+  }
+  /* P37 W4: the active worm's skills (tool deliveries): icon + turns left (the hat: for the rest of the game) */
+  const SKILL_ORDER = ['freerot', 'laser', 'fastwalk', 'lowgrav', 'tinfoil'];
+  function skillsRow(a) {
+    const s = a.skills; if (!s || !SS.icons) return '';
+    let out = '';
+    for (const k of SKILL_ORDER) if (s[k] > 0) out += `<span class="sk" title="${esc(C.SKILL.NAMES[k])}: ${esc(C.SKILL.INFO[k])}"><svg viewBox="0 0 24 24" class="vi">${SS.icons['skill_' + k]}</svg><b>${k === 'tinfoil' ? '∞' : s[k]}</b><i>${esc(C.SKILL.NAMES[k])}</i></span>`;
+    return out ? `<div class="skills">${out}</div>` : '';
+  }
+  /* P37 W4: small labels over the planted gadgets: the dog's timer, the claymore's arming countdown, the sentry's rounds */
+  const gadgetEls = [];
+  function gadgetLabels(S) {
+    const list = [];
+    for (const d of S.dogs || []) { const wp = P.to_world(S, d.s, d.y); list.push([wp.x, wp.y + 0.7, wp.z, Math.max(0, d.life).toFixed(1), 'fuse']); }
+    for (const c of S.claymores || []) { const t = c.armAt - S.time; if (SS.view.shownAt(S, c.pos, 0.6)) list.push([c.pos.x, c.pos.y + 0.55, c.pos.z, t > 0 ? 'arms ' + Math.ceil(t) : 'armed', t > 0 ? 'fuse' : 'fuse armed']); }
+    for (const s of S.sentries || []) if (s.state === 0 && SS.view.shownAt(S, s.pos, 0.8)) list.push([s.pos.x, s.pos.y + 1.15, s.pos.z, s.ammo + '', 'fuse sentry']);
+    for (let i = 0; i < list.length || i < gadgetEls.length; i++) {
+      let el = gadgetEls[i];
+      if (i >= list.length) { if (el) el.style.display = 'none'; continue; }
+      if (!el) { el = gadgetEls[i] = document.createElement('div'); labels.appendChild(el); }
+      const q = list[i], sp = project({ x: q[0], y: q[1], z: q[2] });
+      el.className = q[4]; setText(el, q[3]); el.style.display = sp.front ? 'block' : 'none'; el.style.transform = `translate(${sp.x}px,${sp.y}px) translate(-50%,-100%)`;
+    }
   }
   /* P9 game over (PoC #over): winner, rounds, Rematch / Change setup */
   let overShown = false;
@@ -256,7 +357,7 @@
     drawTop(S, a, team, tc); drawWeapons(S, a); drawOver(S);
     const vmax = wp.vmax || 28, pd = C.PROJ[S.weapon] || {};
     setHTML('hud', `
-      <div class="power ${S.charging ? 'on' : ''}"><i style="width:${(S.power * 100).toFixed(0)}%"></i><span>${S.charging ? (vmax * Math.max(C.WORM_DYN.MIN_POWER, S.power)).toFixed(1) + ' m/s' : pd.W ? pd.W.toFixed(2) + ' kg TNT-eq' + (pd.fuse ? ' · ' + (pd.fuseSet ? S.fuse : pd.fuse) + ' s fuse' : ' · contact fuse') : wp.kind === 'rope' ? 'reach ' + C.ROPE_MAX + ' m' : wp.name}</span></div>
+      <div class="power ${S.charging ? 'on' : ''}"><i style="width:${(S.power * 100).toFixed(0)}%"></i><span>${S.charging ? (vmax * Math.max(C.WORM_DYN.MIN_POWER, S.power)).toFixed(1) + ' m/s' : pd.W ? pd.W.toFixed(2) + ' kg TNT-eq' + (pd.mortar ? ' · burst ' + S.wa.mortarH + ' m (+ / −)' : pd.fuse ? ' · ' + (SS.weaponsA ? SS.weaponsA.fuse_of(S, S.weapon) : pd.fuseSet ? S.fuse : pd.fuse) + ' s fuse' + (pd.fuseSet ? ' (+ / −)' : '') : ' · contact fuse') : wp.kind === 'rope' ? 'reach ' + C.ROPE_MAX + ' m' : wp.name}</span></div>
       <div class="row"><div class="compass"><div class="needle" style="transform:rotate(${brg}deg)"></div><span>${brg.toFixed(0).padStart(3, '0')}°</span></div>
         <div class="facts">
           <div>Section ${S.phase !== 'play' ? '<span class="lock">locked · attack resolving</span>' : SS.sim.heading_window && SS.sim.heading_window(S) ? '<span class="ok">turns only toward the play area or a worm</span>' : '<span class="ok">free to rotate</span>'}</div>
@@ -266,10 +367,11 @@
         </div></div>
       ${iceRow(S, a)}
       ${hotRow(S, a)}
+      ${skillsRow(a)}
       `);
     const tot = (S.teams || []).map((t, i) => teamHP(S, i));
     // P1: N teams; bars relative to the team's starting total (worms x starting HP)
-    setHTML('teams', (S.teams || []).map((t, i) => { const max = S.worms.filter(w => w.team === i).reduce((s, w) => s + (w.hp0 || 100), 0) || 1; return `<div class="tm${a.team === i ? ' cur' : ''}" style="--team:${css(t.rgb)}"><span>${esc(t.name)}${t.ctl === 'cpu' ? ' · CPU' : ''}</span><div class="bar"><i style="width:${(100 * tot[i] / max).toFixed(1)}%"></i></div><b>${tot[i]}</b></div>`; }).join(''));
+    setHTML('teams', (S.teams || []).map((t, i) => { const max = S.worms.filter(w => w.team === i).reduce((s, w) => s + (w.hp0 || 100), 0) || 1; return `<div class="tm${a.team === i ? ' cur' : ''}" style="--team:${css(t.rgb)}"><span>${esc(t.name)}${t.ctl === 'cpu' ? ' · CPU' : ''}${infTeam(S, i)}</span><div class="bar"><i style="width:${(100 * tot[i] / max).toFixed(1)}%"></i></div><b>${tot[i]}</b></div>`; }).join(''));
     // the log fades in 0.05 steps (so the string, and the DOM, change a few times per line instead of every frame)
     setHTML('log', S.log.map(l => `<div style="color:${css(l.rgb)};opacity:${Math.max(0.35, Math.round((1 - (S.time - l.t) / 14) * 20) / 20)}">${esc(l.text)}</div>`).join(''));
   }
@@ -327,7 +429,7 @@
   }
 
   function buildTopBase(S) {
-    const vs = SS.view.state, H = vs.heightmap, n = 97, W = SS.world, sea = W.SEA, surf = vs.surf, sn = vs.surfN;
+    const vs = SS.view.state, H = vs.heightmap, W = SS.world, n = W.SX + 1, sea = W.SEA, surf = vs.surf, sn = vs.surfN;
     topBase.width = n; topBase.height = n;
     const bx = topBase.getContext('2d'), img = bx.createImageData(n, n);
     if (W.under) {                                           // U: an x-ray plan of the caves, the active worm's level bright
@@ -354,19 +456,19 @@
       // hill shading from the heightmap gradient
       const hx = H[k * n + Math.min(n - 1, i + 1)] - H[k * n + Math.max(0, i - 1)], hz = H[Math.min(n - 1, k + 1) * n + i] - H[Math.max(0, k - 1) * n + i];
       const shade = M.clamp(1 - (hx * 0.5 + hz * 0.35) * 0.12, 0.6, 1.3);
-      let c;
+      let cr, cg, cb;                                          // (scalars: this loop ran once per map pixel with array literals)
       const cc = W.circ, far = cc && Math.hypot(i - cc.x, k - cc.z) > cc.r;      // (map pixel = 1 m) D6: beyond the disc
-      if (h < sea) c = [34, 88, 132];
+      if (h < sea) { cr = 34; cg = 88; cb = 132; }
       else if (far) {                                         // the far dunes: plain sand, a little dimmer (not destructible)
-        const rgb = C.MATS[C.MAT.SAND].rgb, lift = 0.72 + h * 0.012; c = [((rgb >> 16) & 255) * lift, ((rgb >> 8) & 255) * lift, (rgb & 255) * lift];
+        const rgb = C.MATS[C.MAT.SAND].rgb, lift = 0.72 + h * 0.012; cr = ((rgb >> 16) & 255) * lift; cg = ((rgb >> 8) & 255) * lift; cb = (rgb & 255) * lift;
       } else {
         const ci = Math.min(W.NX - 1, i * 2), ck = Math.min(W.NZ - 1, k * 2), j = W.topJ[ck * W.NX + ci];
         const m = j >= 0 ? W.mat[(ck * W.NY + j) * W.NX + ci] : 0, rgb = C.MATS[m].rgb;
-        c = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255];
-        if (surf) { const g = surf[(Math.min(sn - 1, ck) * sn + Math.min(sn - 1, ci)) * 4] / 255, dry = surf[(Math.min(sn - 1, ck) * sn + Math.min(sn - 1, ci)) * 4 + 1] / 255; const gc = [96 + dry * 90, 140 + dry * 30, 60]; for (let q = 0; q < 3; q++) c[q] = c[q] * (1 - g) + gc[q] * g; }
-        const lift = 0.85 + h * 0.012; c = [c[0] * lift, c[1] * lift, c[2] * lift];
+        cr = (rgb >> 16) & 255; cg = (rgb >> 8) & 255; cb = rgb & 255;
+        if (surf) { const so = (Math.min(sn - 1, ck) * sn + Math.min(sn - 1, ci)) * 4, g = surf[so] / 255, dry = surf[so + 1] / 255; cr = cr * (1 - g) + (96 + dry * 90) * g; cg = cg * (1 - g) + (140 + dry * 30) * g; cb = cb * (1 - g) + 60 * g; }
+        const lift = 0.85 + h * 0.012; cr *= lift; cg *= lift; cb *= lift;
       }
-      img.data.set([c[0] * shade, c[1] * shade, c[2] * shade, 255], (k * n + i) * 4);
+      const o4 = (k * n + i) * 4, D = img.data; D[o4] = cr * shade; D[o4 + 1] = cg * shade; D[o4 + 2] = cb * shade; D[o4 + 3] = 255;
     }
     bx.putImageData(img, 0, 0);
   }
@@ -377,7 +479,7 @@
     if (SS.world.under && S.active) { const f = S.active.pos.y / 3; if (Math.abs(f - underLevel) > 0.7) underLevel = Math.round(f); }
     const tv = vs.heightVer * 65536 + (vs.surfUploads | 0) + (SS.world.under ? underLevel * 7919 : 0);   // terrain / surface changed (U: the worm's level)
     if (topVer !== tv) { buildTopBase(S); topVer = tv; }
-    const x = topX, Z = topC.width, sc = Z / 96, n = P.nrm(S);
+    const x = topX, Z = topC.width, sc = Z / SS.world.SX, n = P.nrm(S);
     x.imageSmoothingEnabled = true; x.drawImage(topBase, 0, 0, Z, Z);
     const L = 140, ox = S.O.x * sc, oz = S.O.z * sc;
     if (SS.world.dry) {                                       // play area of a dry world: beyond it the sand is hot
@@ -414,7 +516,7 @@
 
   /* top-map click → nearest worm (for alignment) */
   U.pickTop = function (S, e) {
-    const r = topC.getBoundingClientRect(), sc = topC.width / 96;
+    const r = topC.getBoundingClientRect(), sc = topC.width / SS.world.SX;
     const mx = (e.clientX - r.left) * topC.width / r.width, mz = (e.clientY - r.top) * topC.height / r.height;
     let best = null, bd = 9;
     for (const w of S.worms) if (!w.dead && w !== S.active) { const dd = Math.hypot(w.pos.x * sc - mx, w.pos.z * sc - mz); if (dd < bd) { bd = dd; best = w; } }

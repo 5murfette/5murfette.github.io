@@ -45,7 +45,7 @@
   }
   IC.air_temp = airT;
   // turns in one round: the teams that still have a living worm (>= 1)
-  function roundTurns(S) { let n = 0; for (let t = 0; t < (S.teams ? S.teams.length : 0); t++) if (S.worms.some(w => w.team === t && !w.dead)) n++; return Math.max(1, n); }
+  function roundTurns(S) { let n = 0; for (let t = 0; t < (S.teams ? S.teams.length : 0); t++) if (S.worms.some(w => w.team === t && !w.dead)) n++; return M.max(1, n); }
   IC.round_turns = roundTurns;
   const sunny = S => (!S.weather || S.weather.kind === 'clear') && (!SS.sim || !SS.sim.time_of_day || SS.sim.time_of_day(S) === 'day');
   const idx = (st, x, z) => { const w = W(); return M.clamp(Math.round(z / w.H), 0, st.NZ - 1) * st.NX + M.clamp(Math.round(x / w.H), 0, st.NX - 1); };
@@ -56,7 +56,7 @@
   function create(S) {
     const w = W(), NX = w.NX, NZ = w.NZ, N = NX * NZ;
     S.ice = { NX, NZ, N, h: new Float32Array(N), snow: new Float32Array(N), crack: new Uint8Array(N), floe: new Uint8Array(N), ver: 1, turns: 0, T: airT(S),
-      prevVy: {}, scratch: new Uint8Array(N), floes: [], floeId: 0, waves: [], snowT: 0 };
+      prevVy: new Float64Array(16), scratch: new Uint8Array(N), floes: [], floeId: 0, waves: [], snowT: 0 };
   }
   IC.init = function (S) {
     S.ice = null;
@@ -65,7 +65,7 @@
     create(S);
     // the winter before the match: an always-cold biome pre-freezes with its clear-weather frost even if the match
     // starts in a thaw (alpine rain / ashfall)
-    const Tpre = Math.min(airT(S), K.ALWAYS[S.biome] && K.T_AIR[S.biome] ? K.T_AIR[S.biome].clear : 0);
+    const Tpre = M.min(airT(S), K.ALWAYS[S.biome] && K.T_AIR[S.biome] ? K.T_AIR[S.biome].clear : 0);
     for (let t = 0; t < K.PRE_TURNS; t++) freezeTurn(S, K.PRE_TURN_H, Tpre);
     S.ice.turns = 0;
   };
@@ -78,8 +78,8 @@
     if (T >= 0) {                                              // thaw: the thin new ice goes first
       const d = (K.MELT * T + (sunny(S) ? K.MELT_SUN : 0)) * hrs / K.TURN_H;
       for (let c = 0; c < st.N; c++) {
-        if (st.snow[c] > 0) st.snow[c] = Math.max(0, st.snow[c] - d);
-        if (h[c] > 0) { h[c] = Math.max(0, h[c] - d); if (h[c] < K.H_MIN) { h[c] = 0; st.crack[c] = 0; st.snow[c] = 0; } }
+        if (st.snow[c] > 0) st.snow[c] = M.max(0, st.snow[c] - d);
+        if (h[c] > 0) { h[c] = M.max(0, h[c] - d); if (h[c] < K.H_MIN) { h[c] = 0; st.crack[c] = 0; st.snow[c] = 0; } }
       }
       for (let i = st.floes.length - 1; i >= 0; i--) { const f = st.floes[i]; f.h -= d; if (f.h < K.H_MIN) st.floes.splice(i, 1); }
       st.ver++; return;
@@ -99,7 +99,7 @@
     for (let i = st.floes.length - 1; i >= 0; i--) {
       const f = st.floes[i], hf = M.len2(f.h, K.A_GROW * M.pow(dF, 0.5));
       if ((S.turnNo | 0) - f.turn < nT) { f.h = hf; continue; }
-      const tag = 1 + (f.id % 15), sn = Math.min(K.SNOW_MAX, f.snow || 0);
+      const tag = 1 + (f.id % 15), sn = M.min(K.SNOW_MAX, f.snow || 0);
       floeCells(st, f, c => { if (wh[c] > K.WET && h[c] < hf) { h[c] = hf; st.crack[c] = 0; st.floe[c] = tag; st.snow[c] = sn; } });
       st.floes.splice(i, 1);
     }
@@ -137,8 +137,8 @@
   function floeCells(st, f, cb) {
     const H = W().H, ca = M.cos(f.a), sa = M.sin(f.a), n = f.n, wx = new Float32Array(n), wz = new Float32Array(n);
     for (let v = 0; v < n; v++) { wx[v] = f.x + f.px[v] * ca - f.pz[v] * sa; wz[v] = f.z + f.px[v] * sa + f.pz[v] * ca; }
-    const i0 = Math.max(0, Math.floor((f.x - f.r) / H)), i1 = Math.min(st.NX - 1, Math.ceil((f.x + f.r) / H));
-    const k0 = Math.max(0, Math.floor((f.z - f.r) / H)), k1 = Math.min(st.NZ - 1, Math.ceil((f.z + f.r) / H));
+    const i0 = M.max(0, Math.floor((f.x - f.r) / H)), i1 = M.min(st.NX - 1, Math.ceil((f.x + f.r) / H));
+    const k0 = M.max(0, Math.floor((f.z - f.r) / H)), k1 = M.min(st.NZ - 1, Math.ceil((f.z + f.r) / H));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const x = i * H, z = k * H; let inside = false;
       for (let v = 0, u = n - 1; v < n; u = v++) {                            // even-odd rule
@@ -152,8 +152,19 @@
   /* reg (optional, a blast wave's registry key -> { f, n, sx, sz }): a wave breaks the ice ring by ring, step by
    * step; cells of a piece it already made join that floe (grown, re-centred, keeping its drift) instead of each
    * thin ring becoming its own sliver of floes */
+  /* reg = struct Reg { i32 n; i32 key[REG_MAX]; i32 fid[REG_MAX]; i32 cnt[REG_MAX]; f32 sx[REG_MAX], sz[REG_MAX]; } (parallel arrays, entries in the order the
+   * pieces were made; a full registry stops adding: the later pieces just are not grown on). key = ((gx * 4099 + gz) * 4 + band): unique for |gz| < 2049 (the lattice
+   * is <= 128 m, pieces >= 0.6 m: |g| <= 213). fid = the floe's id (not a pointer: a floe that is gone is simply not found). */
+  const REG_MAX = 256;
+  const reg_make = () => ({ n: 0, key: [], fid: [], cnt: [], sx: [], sz: [] });
+  const reg_find = (reg, key) => { for (let i = 0; i < reg.n; i++) if (reg.key[i] === key) return i; return -1; };
+  const floe_find = (st, id) => { for (let i = 0; i < st.floes.length; i++) if (st.floes[i].id === id) return i; return -1; };
+  /* per-call scratch of shatter(): the pieces' accumulators in first-seen order (not state; C: static arrays sized to the cell list) */
+  const GR_KEY = [], GR_N = [], GR_SX = [], GR_SZ = [], GR_SH = [], GR_SS = [];
   function shatter(S, cells, cx, cz, kick, reg) {
-    const st = S.ice, H = W().H, FS0 = K.FLOE_SIZE, groups = new Map();
+    const st = S.ice, H = W().H, FS0 = K.FLOE_SIZE;
+    let ng = 0, lastG = -1;
+    GR_KEY.length = GR_N.length = GR_SX.length = GR_SZ.length = GR_SH.length = GR_SS.length = 0;
     for (let q = 0; q < cells.length; q++) {
       const c = cells[q], x = (c % st.NX) * H, z = Math.floor(c / st.NX) * H;
       // piece size grows with the distance from the break (crushed small near it, big plates further out: the radial
@@ -168,14 +179,19 @@
         const d = M.len2(sx - x, sz - z) - hash(gx + dx, gz + dz, 13) * hash(gx + dx, gz + dz, 14) * 0.9 * FS;
         if (d < bd) { bd = d; best = ((gx + dx) * 4099 + (gz + dz)) * 4 + band; }
       }
-      let g = groups.get(best); if (!g) { g = { n: 0, sx: 0, sz: 0, sh: 0, ss: 0, key: best }; groups.set(best, g); }
-      g.n++; g.sx += x; g.sz += z; g.sh += st.h[c]; g.ss += st.snow[c];
+      let gi = lastG >= 0 && GR_KEY[lastG] === best ? lastG : -1;
+      if (gi < 0) { for (let q2 = 0; q2 < ng; q2++) if (GR_KEY[q2] === best) { gi = q2; break; } }
+      if (gi < 0) { gi = ng++; GR_KEY[gi] = best; GR_N[gi] = 0; GR_SX[gi] = 0; GR_SZ[gi] = 0; GR_SH[gi] = 0; GR_SS[gi] = 0; }
+      lastG = gi;
+      GR_N[gi]++; GR_SX[gi] += x; GR_SZ[gi] += z; GR_SH[gi] += st.h[c]; GR_SS[gi] += st.snow[c];
     }
-    for (const g of groups.values()) {
-      const old = reg ? reg.get(g.key) : null;
-      if (old && st.floes.indexOf(old.f) >= 0) {
-        const f = old.f, ox = old.sx / old.n, oz = old.sz / old.n, k = M.pow((old.n + g.n) / old.n, 0.5);
-        old.n += g.n; old.sx += g.sx; old.sz += g.sz;
+    for (let gi = 0; gi < ng; gi++) {
+      const g = { n: GR_N[gi], sx: GR_SX[gi], sz: GR_SZ[gi], sh: GR_SH[gi], ss: GR_SS[gi], key: GR_KEY[gi] };
+      const ri = reg ? reg_find(reg, g.key) : -1, fi = ri >= 0 ? floe_find(st, reg.fid[ri]) : -1;
+      if (ri >= 0 && fi >= 0) {
+        const f = st.floes[fi], oldN = reg.cnt[ri], ox = reg.sx[ri] / oldN, oz = reg.sz[ri] / oldN, k = M.pow((oldN + g.n) / oldN, 0.5);
+        const old = { n: oldN, sx: reg.sx[ri], sz: reg.sz[ri] };
+        old.n += g.n; old.sx += g.sx; old.sz += g.sz; reg.cnt[ri] = old.n; reg.sx[ri] = old.sx; reg.sz[ri] = old.sz;
         f.x += old.sx / old.n - ox; f.z += old.sz / old.n - oz; f.r *= k;
         for (let v = 0; v < f.n; v++) { f.px[v] *= k; f.pz[v] *= k; }
         f.h = (f.h * (old.n - g.n) + g.sh) / old.n; f.snow = (f.snow * (old.n - g.n) + g.ss) / old.n;
@@ -188,9 +204,9 @@
         const an = (v + (hash(id, v, 21) - 0.5) * 0.7) / nv * M.TAU, rr = r * (0.62 + 0.62 * hash(id, v, 22));
         px[v] = M.cos(an) * rr; pz[v] = M.sin(an) * rr;
       }
-      const dx = x - cx, dz = z - cz, d = M.len2(dx, dz) || 1, vk = kick * (0.6 + 0.4 * hash(id, 3, 23));
-      st.floes.push({ id, turn: S.turnNo | 0, x, z, a: hash(id, 4, 24) * M.TAU, vx: dx / d * vk, vz: dz / d * vk, va: (hash(id, 5, 25) - 0.5) * 2.4 * Math.min(1, kick), h: g.sh / g.n, snow: g.ss / g.n, r: r * 1.2, n: nv, px, pz });
-      if (reg) reg.set(g.key, { f: st.floes[st.floes.length - 1], n: g.n, sx: g.sx, sz: g.sz });   // (snow: the cover it carries away, cm)
+      const dx = x - cx, dz = z - cz, d = M.nz(M.len2(dx, dz), 1), vk = kick * (0.6 + 0.4 * hash(id, 3, 23));
+      st.floes.push({ id, turn: S.turnNo | 0, x, z, a: hash(id, 4, 24) * M.TAU, vx: dx / d * vk, vz: dz / d * vk, va: (hash(id, 5, 25) - 0.5) * 2.4 * M.min(1, kick), h: g.sh / g.n, snow: g.ss / g.n, r: r * 1.2, n: nv, px, pz });
+      if (reg && reg.n < REG_MAX) { const ri2 = reg_find(reg, g.key); if (ri2 >= 0) { reg.fid[ri2] = id; reg.cnt[ri2] = g.n; reg.sx[ri2] = g.sx; reg.sz[ri2] = g.sz; } else { reg.key.push(g.key); reg.fid.push(id); reg.cnt.push(g.n); reg.sx.push(g.sx); reg.sz.push(g.sz); reg.n++; } }   // (snow: the cover it carries away, cm)
     }
     for (let q = 0; q < cells.length; q++) { const c = cells[q]; st.h[c] = 0; st.crack[c] = 0; st.floe[c] = 0; st.snow[c] = 0; }
     st.ver++;
@@ -199,7 +215,7 @@
   function breakAt(S, x, z, rh, rc, why, kick, reg) {
     const st = S.ice, H = W().H, NX = st.NX, ext = Math.ceil(rc / H) + 1, ci = Math.round(x / H), ck = Math.round(z / H), ring = [];
     let any = false;
-    for (let k = Math.max(0, ck - ext); k <= Math.min(st.NZ - 1, ck + ext); k++) for (let i = Math.max(0, ci - ext); i <= Math.min(NX - 1, ci + ext); i++) {
+    for (let k = M.max(0, ck - ext); k <= M.min(st.NZ - 1, ck + ext); k++) for (let i = M.max(0, ci - ext); i <= M.min(NX - 1, ci + ext); i++) {
       const c = k * NX + i, d = M.len2(i * H - x, k * H - z);
       if (st.h[c] <= 0 || d > rc) continue;
       any = true;
@@ -217,7 +233,7 @@
     const st = S.ice; if (!st) return false;
     const c = idx(st, x, z), hc = st.h[c];
     if (hc < K.H_MIN || st.crack[c] > 0 || kg <= IC.cap(hc)) return false;
-    breakAt(S, x, z, K.HOLE_R, Math.max(K.HOLE_R + 0.5, K.CRACK_K * charL(hc)), why || 'overload', 0.4);
+    breakAt(S, x, z, K.HOLE_R, M.max(K.HOLE_R + 0.5, K.CRACK_K * charL(hc)), why || 'overload', 0.4);
     return true;
   };
   const dynKg = (m, v) => { const Hd = v * v / (2 * C.G); return m * (1 + M.pow(1 + 2 * Hd / K.STOP_D, 0.5)) / 2; };   // /2: the static case gives m
@@ -234,7 +250,7 @@
     if (!IC.would_punch(S, x, z, mass, vn)) return false;
     const st = S.ice; if (!st) return true;
     const hc = st.h[idx(st, x, z)];
-    if (hc >= K.H_MIN) breakAt(S, x, z, 0.3, Math.max(0.9, charL(hc)), 'impact', 0.6);
+    if (hc >= K.H_MIN) breakAt(S, x, z, 0.3, M.max(0.9, charL(hc)), 'impact', 0.6);
     return true;
   };
 
@@ -260,7 +276,7 @@
     st.snowT += dt;
     if (st.snowT >= 0.5) {
       const sn = S.weather ? S.weather.snow || 0 : 0, add = sn * K.SNOW_RATE * st.snowT; st.snowT = 0;
-      if (add > 0 && st.T < 0) for (let c = 0; c < st.N; c++) if (st.h[c] >= K.H_MIN) st.snow[c] = Math.min(K.SNOW_MAX, st.snow[c] + add);
+      if (add > 0 && st.T < 0) for (let c = 0; c < st.N; c++) if (st.h[c] >= K.H_MIN) st.snow[c] = M.min(K.SNOW_MAX, st.snow[c] + add);
     }
     for (const b of S.bodies) {
       if (b.iceLock) {
@@ -293,17 +309,16 @@
     const H = W().H, NX = st.NX, NZ = st.NZ;
     for (let w = st.waves.length - 1; w >= 0; w--) {
       const wv = st.waves[w], r0 = wv.r, r1 = wv.r + wv.c * dt; wv.r = r1;
-      if (!wv.hit) { wv.hit = []; wv.t = 0; wv.tf = 0; wv.te = -9; if (!wv.reg) wv.reg = new Map(); }
       wv.t += dt;
       const ck = Math.round(wv.z / H), kr = Math.ceil(r1 / H) + 1;
-      for (let k = Math.max(0, ck - kr); k <= Math.min(NZ - 1, ck + kr); k++) {
+      for (let k = M.max(0, ck - kr); k <= M.min(NZ - 1, ck + kr); k++) {
         const dz = k * H - wv.z, o2 = r1 * r1 - dz * dz; if (o2 <= 0) continue;
         const wo = M.pow(o2, 0.5), i2 = r0 * r0 - dz * dz, wi = i2 > 0 ? M.pow(i2, 0.5) : 0;
         for (let sp = 0; sp < 2; sp++) {
           // span 0: x - wo .. x - wi (or the whole chord when the row misses the inner circle), span 1: x + wi .. x + wo
           if (sp === 1 && wi <= 0) break;
           const xa = wi > 0 ? (sp === 0 ? wv.x - wo : wv.x + wi) : wv.x - wo, xb = wi > 0 ? (sp === 0 ? wv.x - wi : wv.x + wo) : wv.x + wo;
-          for (let i = Math.max(0, Math.floor(xa / H)); i <= Math.min(NX - 1, Math.ceil(xb / H)); i++) {
+          for (let i = M.max(0, Math.floor(xa / H)); i <= M.min(NX - 1, Math.ceil(xb / H)); i++) {
             const c = k * NX + i, hc = st.h[c]; if (hc < K.H_MIN || st.crack[c] > 0) continue;
             const d = M.len2(i * H - wv.x, dz);
             if (d < r0 || d >= r1) continue;
@@ -355,12 +370,12 @@
     const ci = idx(st, c.x, c.z), hc = st.h[ci], s3 = M.cbrt(Wkg);
     const under = c.y < surf - 0.2, above = c.y - surf;
     if (!under && above > 1.6 * s3 + 1) return;                              // too high above the water
-    const R = (under ? K.K_UNDER : K.K_SURF) * s3 / (1 + Math.max(hc, 2) / K.H_REF);
-    const reg = new Map();                                                   // (the blast's pieces, grown on by its wave)
+    const R = (under ? K.K_UNDER : K.K_SURF) * s3 / (1 + M.max(hc, 2) / K.H_REF);
+    const reg = reg_make();                                                  // (the blast's pieces, grown on by its wave)
     breakAt(S, c.x, c.z, K.HOLE_F * R, R, under ? 'underwater blast' : 'blast', 2.2, reg);
     // the wave: out at the shallow-water speed (depth under the blast), reach E at zero thickness
-    const depth = Math.max(0.3, SS.water.depth(S, c.x, c.z));
-    if (st.waves.length < 8) st.waves.push({ x: c.x, z: c.z, r: R, c: M.clamp(M.pow(C.G * depth, 0.5), 2, 7), E: K.WAVE_K * s3 * (under ? 1.4 : 1) * (above > 0.3 ? 0.7 : 1), reg });
+    const depth = M.max(0.3, SS.water.depth(S, c.x, c.z));
+    if (st.waves.length < 8) st.waves.push({ x: c.x, z: c.z, r: R, c: M.clamp(M.pow(C.G * depth, 0.5), 2, 7), E: K.WAVE_K * s3 * (under ? 1.4 : 1) * (above > 0.3 ? 0.7 : 1), reg, hit: [], t: 0, tf: 0, te: -9 });
   };
 
   /* ---------- gameplay plane: intact ice along slice zero ---------- */
@@ -368,14 +383,14 @@
     const st = S.ice; if (!st) return;
     const P = SS.plane, d = P.dir(S), O = S.O, PB = S.planeBodies, H = W().H;
     let run = null;
-    const flush = () => { if (run) { PB.push({ s: (run.s0 + run.s1) / 2, y: run.y, kind: 1, hs: (run.s1 - run.s0) / 2 + H / 2, hy: run.hy, r: 0, ref: null, ice: true }); run = null; } };
+    const flush = () => { if (run) { P.pb_add(PB, 1, (run.s0 + run.s1) / 2, run.y, (run.s1 - run.s0) / 2 + H / 2, run.hy, 0, -1, -1, -1, -1, -1, true); run = null; } };
     for (let s = -70; s <= 70; s += H) {
       const x = O.x + d.x * s, z = O.z + d.z * s;
       if (W().outside(x, z)) { flush(); continue; }
       const top = IC.top_at(S, x, z);
       if (top < -1e8) { flush(); continue; }
-      const c = idx(st, x, z), hy = Math.max(0.04, st.h[c] * 0.005), y = top - hy;
-      if (run && Math.abs(run.y - y) < 0.06) { run.s1 = s; run.y = (run.y + y) / 2; run.hy = Math.max(run.hy, hy); }
+      const c = idx(st, x, z), hy = M.max(0.04, st.h[c] * 0.005), y = top - hy;
+      if (run && Math.abs(run.y - y) < 0.06) { run.s1 = s; run.y = (run.y + y) / 2; run.hy = M.max(run.hy, hy); }
       else { flush(); run = { s0: s, s1: s, y, hy }; }
     }
     flush();
@@ -384,7 +399,7 @@
   IC.stats = function (S) {
     const st = S.ice; if (!st) return null;
     let n = 0, sum = 0, mx = 0, cr = 0;
-    for (let c = 0; c < st.N; c++) if (st.h[c] > 0) { n++; sum += st.h[c]; mx = Math.max(mx, st.h[c]); if (st.crack[c]) cr++; }
+    for (let c = 0; c < st.N; c++) if (st.h[c] > 0) { n++; sum += st.h[c]; mx = M.max(mx, st.h[c]); if (st.crack[c]) cr++; }
     return { cells: n, area: n * W().H * W().H, meanCm: n ? sum / n : 0, maxCm: mx, cracked: cr, floes: st.floes.length, waves: st.waves.length, T: st.T, turns: st.turns };
   };
 })(window.SS = window.SS || {});

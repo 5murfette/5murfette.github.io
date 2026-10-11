@@ -32,7 +32,7 @@
   VG.dirty_set = d => { dirty = d ? { i0: d.i0, k0: d.k0, i1: d.i1, k1: d.k1 } : null; };
   function onMark(i0, k0, i1, k1) {
     if (!dirty) dirty = { i0, k0, i1, k1 };
-    else { dirty.i0 = Math.min(dirty.i0, i0); dirty.k0 = Math.min(dirty.k0, k0); dirty.i1 = Math.max(dirty.i1, i1); dirty.k1 = Math.max(dirty.k1, k1); }
+    else { dirty.i0 = M.min(dirty.i0, i0); dirty.k0 = M.min(dirty.k0, k0); dirty.i1 = M.max(dirty.i1, i1); dirty.k1 = M.max(dirty.k1, k1); }
   }
   const fdry = d => M.smoothstep(K.DRY0, K.DRY1, d);
 
@@ -75,15 +75,15 @@
     const st = S.veg, w = W(); if (!st) return 0;
     const r = rf * K.HEAT_K, H = w.H, n = st.n;
     if (SS.trees) SS.trees.heat_burst(S, c, r);
-    const i0 = Math.max(0, Math.floor((c.x - r) / H)), i1 = Math.min(n - 1, Math.ceil((c.x + r) / H));
-    const k0 = Math.max(0, Math.floor((c.z - r) / H)), k1 = Math.min(n - 1, Math.ceil((c.z + r) / H));
+    const i0 = M.max(0, Math.floor((c.x - r) / H)), i1 = M.min(n - 1, Math.ceil((c.x + r) / H));
+    const k0 = M.max(0, Math.floor((c.z - r) / H)), k1 = M.min(n - 1, Math.ceil((c.z + r) / H));
     let lit = 0;
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const q = k * n + i, d = M.len2(i * H - c.x, k * H - c.z);
       if (d > r || Math.abs(st.top0[q] - c.y) > rf + 0.6 || Math.abs(w.top[q] - st.top0[q]) > 0.2 || st.fuel[q] < 0.05) continue;
       const dry = st.surf[q * 4 + 1] / 255;
       if (dry >= K.IGNITE_DRY) { if (igniteCell(S, st, q, (0.4 + 0.6 * fdry(dry)) * (1 - 0.4 * d / r))) lit++; }
-      else st.surf[q * 4 + 2] = Math.min(255, st.surf[q * 4 + 2] + Math.round(110 * (1 - d / r)));   // green grass: scorched only
+      else st.surf[q * 4 + 2] = M.min(255, st.surf[q * 4 + 2] + Math.round(110 * (1 - d / r)));   // green grass: scorched only
     }
     st.surfVer++;
     if (lit) {
@@ -95,8 +95,8 @@
   /* burning debris / embers: lights the dry-enough fuel in a disc on the ground near y */
   VG.ignite_disc = function (S, x, y, z, r, I) {
     const st = S.veg, w = W(); if (!st) return 0;
-    const H = w.H, n = st.n, i0 = Math.max(0, Math.floor((x - r) / H)), i1 = Math.min(n - 1, Math.ceil((x + r) / H));
-    const k0 = Math.max(0, Math.floor((z - r) / H)), k1 = Math.min(n - 1, Math.ceil((z + r) / H));
+    const H = w.H, n = st.n, i0 = M.max(0, Math.floor((x - r) / H)), i1 = M.min(n - 1, Math.ceil((x + r) / H));
+    const k0 = M.max(0, Math.floor((z - r) / H)), k1 = M.min(n - 1, Math.ceil((z + r) / H));
     let lit = 0;
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const q = k * n + i;
@@ -111,8 +111,8 @@
     if (SS.trees) SS.trees.blast(S, c, Wkg);
     const st = S.veg, w = W(); if (!st) return;
     const R = K.STRIP_R * M.cbrt(Wkg), H = w.H, n = st.n;
-    const i0 = Math.max(0, Math.floor((c.x - R) / H)), i1 = Math.min(n - 1, Math.ceil((c.x + R) / H));
-    const k0 = Math.max(0, Math.floor((c.z - R) / H)), k1 = Math.min(n - 1, Math.ceil((c.z + R) / H));
+    const i0 = M.max(0, Math.floor((c.x - R) / H)), i1 = M.min(n - 1, Math.ceil((c.x + R) / H));
+    const k0 = M.max(0, Math.floor((c.z - R) / H)), k1 = M.min(n - 1, Math.ceil((c.z + R) / H));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const q = k * n + i, d = M.len3(i * H - c.x, k * H - c.z, (st.top0[q] - c.y) * 0.7);
       if (d >= R) continue;
@@ -129,8 +129,8 @@
    * between them still burn). No crater (air burst) = no spoil. */
   function ejecta(S, st, w, c, R) {
     const H = w.H, n = st.n;
-    let i0 = Math.max(0, Math.floor((c.x - R) / H)), i1 = Math.min(n - 1, Math.ceil((c.x + R) / H));
-    let k0 = Math.max(0, Math.floor((c.z - R) / H)), k1 = Math.min(n - 1, Math.ceil((c.z + R) / H));
+    let i0 = M.max(0, Math.floor((c.x - R) / H)), i1 = M.min(n - 1, Math.ceil((c.x + R) / H));
+    let k0 = M.max(0, Math.floor((c.z - R) / H)), k1 = M.min(n - 1, Math.ceil((c.z + R) / H));
     let nC = 0;
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const q = k * n + i;
@@ -138,20 +138,20 @@
     }
     if (nC < 2) return;
     const Rc = Math.sqrt(nC / Math.PI) * H, t0 = K.EJECTA_K * M.pow(Rc, 0.74), Re = K.EJECTA_R * Rc;
-    i0 = Math.max(0, Math.floor((c.x - Re) / H)); i1 = Math.min(n - 1, Math.ceil((c.x + Re) / H));
-    k0 = Math.max(0, Math.floor((c.z - Re) / H)); k1 = Math.min(n - 1, Math.ceil((c.z + Re) / H));
+    i0 = M.max(0, Math.floor((c.x - Re) / H)); i1 = M.min(n - 1, Math.ceil((c.x + Re) / H));
+    k0 = M.max(0, Math.floor((c.z - Re) / H)); k1 = M.min(n - 1, Math.ceil((c.z + Re) / H));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const q = k * n + i, r = M.len2(i * H - c.x, k * H - c.z);
       if (r > Re || st.surf[q * 4] === 0 && st.fuel[q] === 0) continue;
       if (Math.abs(w.top[q] - c.y) > Re) continue;                    // ground far above / below the burst (cliffs, caves)
-      const rr = Math.max(r, Rc), t = t0 * M.pow(Rc / rr, 3) * (0.4 + 1.2 * M.hash3(i, k, 77));
+      const rr = M.max(r, Rc), t = t0 * M.pow(Rc / rr, 3) * (0.4 + 1.2 * M.hash3(i, k, 77));
       st.surf[q * 4] = Math.round(st.surf[q * 4] * M.exp(-t / K.EJECTA_T)); st.fuel[q] *= M.exp(-t / K.EJECTA_FUEL_T);
     }
   }
 
   /* edited columns: dug or buried ground has no grass */
   function refresh(S, st, w) {
-    const n = st.n, i0 = Math.max(0, dirty.i0), k0 = Math.max(0, dirty.k0), i1 = Math.min(n - 1, dirty.i1), k1 = Math.min(w.NZ - 1, dirty.k1);
+    const n = st.n, i0 = M.max(0, dirty.i0), k0 = M.max(0, dirty.k0), i1 = M.min(n - 1, dirty.i1), k1 = M.min(w.NZ - 1, dirty.k1);
     dirty = null;
     if (SS.trees) SS.trees.on_edit(S, i0, k0, i1, k1);
     let ch = false;
@@ -167,7 +167,7 @@
   function tick(S, st) {
     const w = W(), n = st.n, H = w.H, TK = C.FIRE_TICK, top = w.top, surf = st.surf;
     const wind = (S.wind && S.wind.mean) || ZERO, rain = S.weather ? (S.weather.rain || 0) : 0;
-    const damp = S.weather ? Math.max(rain, S.weather.wet || 0) : 0;                 // soaked fuel spreads like rain
+    const damp = S.weather ? M.max(rain, S.weather.wet || 0) : 0;                 // soaked fuel spreads like rain
     const douse = rain > K.RAIN_OUT ? 6 * (rain - 0.4) : 0;
     st.tick++;
     let m = 0;
@@ -194,14 +194,14 @@
     for (let a = 0; a < st.nAct; a++) {
       const c = act[a]; if (st.burnT[c] <= 0) continue;
       let t = st.burnT[c];
-      if (a < nOld) { t -= TK * (1 + 3 * rain + douse); st.fuel[c] = Math.max(0, st.fuel[c] - TK / K.BURN_T); }
+      if (a < nOld) { t -= TK * (1 + 3 * rain + douse); st.fuel[c] = M.max(0, st.fuel[c] - TK / K.BURN_T); }
       if (wet(S, c) || t <= 0) {
         const out = wet(S, c) || douse > 0;                // put out (water, heavy rain): partly charred, not burnt out
-        st.burnT[c] = 0; surf[c * 4 + 3] = 0; surf[c * 4 + 2] = out ? Math.max(surf[c * 4 + 2], 90) : 255; st.fuel[c] = 0; st.stats.burnt++;
+        st.burnT[c] = 0; surf[c * 4 + 3] = 0; surf[c * 4 + 2] = out ? M.max(surf[c * 4 + 2], 90) : 255; st.fuel[c] = 0; st.stats.burnt++;
         continue;
       }
       st.burnT[c] = t;
-      surf[c * 4 + 3] = Math.round(255 * st.burnI[c] * Math.min(1, t / 0.6));
+      surf[c * 4 + 3] = Math.round(255 * st.burnI[c] * M.min(1, t / 0.6));
       nxt[m++] = c;
     }
     st.nxt = act; st.act = nxt; st.nAct = m;
@@ -214,15 +214,15 @@
       else if (st.burnT[q] > 0 && onGround && SS.scatter && SS.scatter.ignite) SS.scatter.ignite(S, b);
     }
     for (const f of S.flames) {
-      const r = f.r * 0.8, i0 = Math.max(0, Math.floor((f.x - r) / H)), i1 = Math.min(n - 1, Math.ceil((f.x + r) / H));
-      const k0 = Math.max(0, Math.floor((f.z - r) / H)), k1 = Math.min(n - 1, Math.ceil((f.z + r) / H));
+      const r = f.r * 0.8, i0 = M.max(0, Math.floor((f.x - r) / H)), i1 = M.min(n - 1, Math.ceil((f.x + r) / H));
+      const k0 = M.max(0, Math.floor((f.z - r) / H)), k1 = M.min(n - 1, Math.ceil((f.z + r) / H));
       for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) if (M.len2(i * H - f.x, k * H - f.z) < r && Math.abs(top[k * n + i] - f.y) < 1) igniteCell(S, st, k * n + i, 0.9);
     }
     // hot lava lights dry grass in and next to its cells, and chars green grass under it (every 0.5 s)
     const lv = S.lava;
     if (lv && st.tick % 5 === 0 && lv.i1 >= lv.i0) {
       let ch = false;
-      for (let k = Math.max(1, lv.k0 - 1); k <= Math.min(n - 2, lv.k1 + 1); k++) for (let i = Math.max(1, lv.i0 - 1); i <= Math.min(n - 2, lv.i1 + 1); i++) {
+      for (let k = M.max(1, lv.k0 - 1); k <= M.min(n - 2, lv.k1 + 1); k++) for (let i = M.max(1, lv.i0 - 1); i <= M.min(n - 2, lv.i1 + 1); i++) {
         const c = k * n + i; if (!(lv.h[c] > 0.02 && lv.T[c] > 0.3)) continue;
         for (let dk = -1; dk <= 1; dk++) for (let di = -1; di <= 1; di++) {
           const q = c + dk * n + di; if (st.fuel[q] < 0.05 || st.burnT[q] > 0 || surf[q * 4 + 2] > 128) continue;
@@ -253,9 +253,9 @@
       const ii = i + di, kk = k + dk; if (ii < 0 || kk < 0 || ii >= n || kk >= n) continue;
       const q = kk * n + ii; if (st.burnT[q] <= 0) continue;
       const h = y - w.top[q]; if (h < -0.5 || h > K.FIRE_H) continue;
-      I = Math.max(I, st.burnI[q]);
+      I = M.max(I, st.burnI[q]);
     }
-    return Math.max(I, It);
+    return M.max(I, It);
   };
   VG.burning = S => (S.veg ? S.veg.nAct : 0);
 })(window.SS = window.SS || {});

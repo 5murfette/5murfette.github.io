@@ -10,27 +10,43 @@
   const M = SS.math;
   const C = SS.CFG, MAT = C.MAT;
   const W = { SX: 96, SZ: 96, SY: 40, H: 0.5, SEA: 3, SEA_WET: 3, dry: false };   // SEA / dry: set per world by worldgen (C.DRY)
-  W.NX = Math.round(W.SX / W.H) + 1;
-  W.NY = Math.round(W.SY / W.H) + 1;
-  W.NZ = Math.round(W.SZ / W.H) + 1;
-  W.N = W.NX * W.NY * W.NZ;
-  W.d = new Float32Array(W.N);
-  W.mat = new Uint8Array(W.N);
-  W.heat = new Uint8Array(W.N);          // lava temperature (255 = fed by a source, never cools)
-  W.top = new Float32Array(W.NX * W.NZ); // y of the highest solid surface per lattice column
-  W.topJ = new Int16Array(W.NX * W.NZ);  // j of the highest solid lattice point (-1 = none)
+  /* P38: the map size is a per-game parameter. W.resize(sx, sz) (called by gen_begin from the mapSize setting)
+   * reallocates every lattice array and updates the derived fields:
+   *   MX, MZ = map centre (SX/2, SZ/2),  PR = play radius (SX/2 - 3.5 = 44.5 m on the 96 m map),
+   *   SC = SX / 96 (scale of every size-dependent constant; 1 on the normal map, so 'normal' stays bit-identical),
+   *   sizeVer = counter bumped by every resize (renderers re-create their size-dependent resources).
+   * C: void world_resize(World*, f32 sx, f32 sz): every array sized from NX / NZ is reallocated. */
+  let NX = 0, NY = 0, NZ = 0, SXY = 0;
+  const H = W.H;
+  const idx = (i, j, k) => (k * NY + j) * NX + i;
+  W.CS = 32;
+  W.sizeVer = 0;
+  W.resize = function (sx, sz) {
+    W.SX = sx; W.SZ = sz;
+    W.MX = sx / 2; W.MZ = sz / 2; W.PR = sx / 2 - 3.5; W.SC = sx / 96;
+    NX = W.NX = Math.round(sx / H) + 1;
+    NY = W.NY = Math.round(W.SY / H) + 1;
+    NZ = W.NZ = Math.round(sz / H) + 1;
+    SXY = NX * NY;
+    W.N = NX * NY * NZ;
+    W.d = new Float32Array(W.N);
+    W.mat = new Uint8Array(W.N);
+    W.heat = new Uint8Array(W.N);          // lava temperature (255 = fed by a source, never cools)
+    W.top = new Float32Array(NX * NZ);     // y of the highest solid surface per lattice column
+    W.topJ = new Int16Array(NX * NZ);      // j of the highest solid lattice point (-1 = none)
+    W.CX = Math.ceil((NX - 1) / W.CS); W.CY = Math.ceil((NY - 1) / W.CS); W.CZ = Math.ceil((NZ - 1) / W.CS);
+    W.chunkVer = new Uint32Array(W.CX * W.CY * W.CZ);
+    W.dirtyBox = null; W.frz = null;
+    W.sizeVer++;
+  };
+  W.resize(96, 96);
   W.version = 0;
   W.biome = 'temperate';
   W.under = false; W.dry = false;          // world kind flags (worldgen.G.begin sets them per map)
   W.features = {};                       // generator output: volcano, canals, lavaInit, pockets, vents... (read-only for others)
-  const NX = W.NX, NY = W.NY, NZ = W.NZ, H = W.H, SXY = NX * NY;
-  const idx = (i, j, k) => (k * NY + j) * NX + i;
   W.idx = idx;
 
   /* ---------- meshing chunks (render rebuilds a chunk when its version changes) ---------- */
-  W.CS = 32;
-  W.CX = Math.ceil((NX - 1) / W.CS); W.CY = Math.ceil((NY - 1) / W.CS); W.CZ = Math.ceil((NZ - 1) / W.CS);
-  W.chunkVer = new Uint32Array(W.CX * W.CY * W.CZ);
   W.dirtyBox = null;                     // union of edited lattice boxes since the renderer last consumed it
   W.listeners = [];                      // sim modules told about every edit: fn(i0, k0, i1, k1) (lattice columns)
 
@@ -38,19 +54,19 @@
   // quiet: renderers only (versions, dirty box, tops), the sim listeners are not told (sim.restore: their pending
   // edit rects come back from the snapshot instead of a whole-lattice refresh that perturbs the water)
   W.mark = function (i0, j0, k0, i1, j1, k1, quiet) {
-    i0 = Math.max(0, i0); j0 = Math.max(0, j0); k0 = Math.max(0, k0);
-    i1 = Math.min(NX - 1, i1); j1 = Math.min(NY - 1, j1); k1 = Math.min(NZ - 1, k1);
+    i0 = M.max(0, i0); j0 = M.max(0, j0); k0 = M.max(0, k0);
+    i1 = M.min(NX - 1, i1); j1 = M.min(NY - 1, j1); k1 = M.min(NZ - 1, k1);
     if (i1 < i0 || j1 < j0 || k1 < k0) return;
     if (W.frz) restore_frozen(i0, j0, k0, i1, j1, k1);
     W.version++;
     const CS = W.CS;
-    const ci0 = Math.max(0, Math.floor((i0 - 2) / CS)), ci1 = Math.min(W.CX - 1, Math.floor((i1 + 1) / CS));
-    const cj0 = Math.max(0, Math.floor((j0 - 2) / CS)), cj1 = Math.min(W.CY - 1, Math.floor((j1 + 1) / CS));
-    const ck0 = Math.max(0, Math.floor((k0 - 2) / CS)), ck1 = Math.min(W.CZ - 1, Math.floor((k1 + 1) / CS));
+    const ci0 = M.max(0, Math.floor((i0 - 2) / CS)), ci1 = M.min(W.CX - 1, Math.floor((i1 + 1) / CS));
+    const cj0 = M.max(0, Math.floor((j0 - 2) / CS)), cj1 = M.min(W.CY - 1, Math.floor((j1 + 1) / CS));
+    const ck0 = M.max(0, Math.floor((k0 - 2) / CS)), ck1 = M.min(W.CZ - 1, Math.floor((k1 + 1) / CS));
     for (let c = ck0; c <= ck1; c++) for (let b = cj0; b <= cj1; b++) for (let a = ci0; a <= ci1; a++) W.chunkVer[(c * W.CY + b) * W.CX + a]++;
     const D = W.dirtyBox;
     if (!D) W.dirtyBox = { i0, j0, k0, i1, j1, k1 };
-    else { D.i0 = Math.min(D.i0, i0); D.j0 = Math.min(D.j0, j0); D.k0 = Math.min(D.k0, k0); D.i1 = Math.max(D.i1, i1); D.j1 = Math.max(D.j1, j1); D.k1 = Math.max(D.k1, k1); }
+    else { D.i0 = M.min(D.i0, i0); D.j0 = M.min(D.j0, j0); D.k0 = M.min(D.k0, k0); D.i1 = M.max(D.i1, i1); D.j1 = M.max(D.j1, j1); D.k1 = M.max(D.k1, k1); }
     W.update_tops(i0, k0, i1, k1);
     if (!quiet) for (let q = 0; q < W.listeners.length; q++) W.listeners[q](i0, k0, i1, k1);
   };
@@ -142,7 +158,7 @@
   /* material of the most solid of the 8 lattice points around (x,y,z); AIR if none is solid */
   W.mat_at = function (x, y, z) {
     if (W.far && outside(x, z)) return W.sample(x, y, z) > 0 ? MAT.SAND : MAT.AIR;   // dry: the far dunes are sand
-    const i = Math.max(0, Math.min(NX - 2, Math.floor(x / H))), j = Math.max(0, Math.min(NY - 2, Math.floor(y / H))), k = Math.max(0, Math.min(NZ - 2, Math.floor(z / H)));
+    const i = M.max(0, M.min(NX - 2, Math.floor(x / H))), j = M.max(0, M.min(NY - 2, Math.floor(y / H))), k = M.max(0, M.min(NZ - 2, Math.floor(z / H)));
     let best = 0, bd = 0;
     for (let q = 0; q < 8; q++) {
       const o = idx(i + (q & 1), j + ((q >> 1) & 1), k + (q >> 2));
@@ -154,20 +170,20 @@
 
   /* Highest solid surface at (x,z) (fine walk downward from the coarse column top). */
   W.topHeight = function (x, z) {
-    if (W.far && outside(x, z)) return Math.max(0, W.far(x, z));
-    const i = Math.max(0, Math.min(NX - 1, Math.round(x / H))), k = Math.max(0, Math.min(NZ - 1, Math.round(z / H)));
+    if (W.far && outside(x, z)) return M.max(0, W.far(x, z));
+    const i = M.max(0, M.min(NX - 1, Math.round(x / H))), k = M.max(0, M.min(NZ - 1, Math.round(z / H)));
     let y0 = 0;
     for (let dk = -1; dk <= 1; dk++) for (let di = -1; di <= 1; di++) {
-      const ii = Math.max(0, Math.min(NX - 1, i + di)), kk = Math.max(0, Math.min(NZ - 1, k + dk));
-      y0 = Math.max(y0, W.top[kk * NX + ii]);
+      const ii = M.max(0, M.min(NX - 1, i + di)), kk = M.max(0, M.min(NZ - 1, k + dk));
+      y0 = M.max(y0, W.top[kk * NX + ii]);
     }
-    for (let y = Math.min(W.SY - 0.25, y0 + 1); y > 0; y -= 0.1) if (W.sample(x, y, z) > 0) return y;
+    for (let y = M.min(W.SY - 0.25, y0 + 1); y > 0; y -= 0.1) if (W.sample(x, y, z) > 0) return y;
     return 0;
   };
   /* coarse column top (bilinear over lattice columns) — cheap, for sky exposure / water beds */
   W.top_at = function (x, z) {
-    if (W.far && outside(x, z)) return Math.max(0, W.far(x, z));
-    const fx = Math.max(0, Math.min(NX - 1.001, x / H)), fz = Math.max(0, Math.min(NZ - 1.001, z / H));
+    if (W.far && outside(x, z)) return M.max(0, W.far(x, z));
+    const fx = M.max(0, M.min(NX - 1.001, x / H)), fz = M.max(0, M.min(NZ - 1.001, z / H));
     const i = Math.floor(fx), k = Math.floor(fz), u = fx - i, v = fz - k, T = W.top;
     const a = T[k * NX + i], b = T[k * NX + i + 1], c = T[(k + 1) * NX + i], d = T[(k + 1) * NX + i + 1];
     return (a + (b - a) * u) * (1 - v) + (c + (d - c) * u) * v;
@@ -175,7 +191,7 @@
 
   /* Metres of solid along the segment p0->p1 (blast-wave shielding, line of sight). */
   W.solid_len = function (x0, y0, z0, x1, y1, z1) {
-    const L = M.len3(x1 - x0, y1 - y0, z1 - z0), n = Math.max(1, Math.ceil(L / 0.25)), st = L / n;
+    const L = M.len3(x1 - x0, y1 - y0, z1 - z0), n = M.max(1, Math.ceil(L / 0.25)), st = L / n;
     let s = 0;
     for (let i = 1; i < n; i++) { const t = i / n; if (W.sample(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t) > 0) s += st; }
     return s;
@@ -189,9 +205,9 @@
   /* ---------- editing primitives ---------- */
   /* Plain spherical cut (material-agnostic). Blast craters use SS.blast (material-aware). */
   W.carve = function (cx, cy, cz, R) {
-    const i0 = Math.max(0, Math.floor((cx - R - 1) / H)), i1 = Math.min(NX - 1, Math.ceil((cx + R + 1) / H));
-    const j0 = Math.max(1, Math.floor((cy - R - 1) / H)), j1 = Math.min(NY - 1, Math.ceil((cy + R + 1) / H));
-    const k0 = Math.max(0, Math.floor((cz - R - 1) / H)), k1 = Math.min(NZ - 1, Math.ceil((cz + R + 1) / H));
+    const i0 = M.max(0, Math.floor((cx - R - 1) / H)), i1 = M.min(NX - 1, Math.ceil((cx + R + 1) / H));
+    const j0 = M.max(1, Math.floor((cy - R - 1) / H)), j1 = M.min(NY - 1, Math.ceil((cy + R + 1) / H));
+    const k0 = M.max(0, Math.floor((cz - R - 1) / H)), k1 = M.min(NZ - 1, Math.ceil((cz + R + 1) / H));
     let removed = 0;
     const fz = W.frz ? W.frz.slot : null;
     for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
@@ -208,7 +224,22 @@
   W.set_air = function (o, dval) { W.d[o] = dval == null ? -0.6 : dval; W.mat[o] = MAT.AIR; W.heat[o] = 0; };
 
   /* Generation (delegates to sim/worldgen.js). Resumable: gen_begin + gen_step until it returns 1. */
-  W.gen_begin = function (settings) { return SS.worldgen.begin(W, settings); };
+  /* map side in metres from the settings: mapSize 'normal' | 'large' ('auto' = the biome's default, C.MAP.DEFAULT);
+   * dry worlds (desert, D6 circle constants) and underground maps are always 'normal'. */
+  W.size_of = function (settings) {
+    const sh = SS.worldgen.shape_of(settings);
+    const under = !!(settings.under && settings.under !== '0' && settings.under !== 'off') || sh === 'caverns';
+    const B = C.BIOMES.find(b => b.id === settings.biome);
+    if (under || (B && B.dry)) return C.MAP.SIDE.normal;
+    let k = settings.mapSize;
+    if (!C.MAP.SIDE[k]) k = C.MAP.DEFAULT[settings.biome] || 'normal';
+    return C.MAP.SIDE[k];
+  };
+  W.gen_begin = function (settings) {
+    const sx = W.size_of(settings);
+    if (sx !== W.SX || !W.d) W.resize(sx, sx);
+    return SS.worldgen.begin(W, settings);
+  };
   W.gen_step = function (job) {
     const p = SS.worldgen.step(job);
     if (p >= 1 && !job.finalized) {

@@ -73,6 +73,7 @@
     // both sides: seen from below (through a cave or an arch cut by the slab) the backdrop's underside reads as dark
     // rock interior, like the slab's own back faces, instead of opening onto the sky
     const m = new T.MeshStandardMaterial({ roughness: 0.95, metalness: 0, transparent: true, depthWrite: true, side: T.DoubleSide });
+    m.userData.sectionMargin = 0;
     // the grid loses ties with the real terrain (the band lies just under it): one pixel's worth of depth slope
     if (kind === 0) { m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 2; }
     const PS = U.uMatP.value[SLOT_SAND], scS = PS.x.toFixed(4), roughS = PS.y.toFixed(3), poro = PS.w.toFixed(3), tS = v3(U.uMatTint.value[SLOT_SAND]);
@@ -92,7 +93,7 @@
           bool inside = rC < ${C.DRY.LAT_R.toFixed(2)};                        // (D6: the lattice disc)
           ${kind === 0 ? `if (rC < ${(C.DRY.LAT_R - OVERLAP).toFixed(2)}) discard;` : ''}
           bool inSlab = tD <= 0.05 && tD >= -uBack;          // the terrain's shadow rule: the slab receives, the context not
-          if (tD > 0.0) { aV = 0.55 * uInsp; if (aV < 0.02) discard; }
+          if (tD > 0.0) aV = 0.55 * uInsp;
           aV *= 1.0 - smoothstep(330.0, 445.0, max(abs(vW.x - 48.0), abs(vW.z - 48.0)));   // the grid's square edge dissolves into the sky`)
         .replace('#include <map_fragment>', /* glsl */`
           vec3 nW = normalize(vWN);
@@ -121,11 +122,12 @@
   /* shadow pass for the grid: the terrain's slab clip (only the part within the slab casts) */
   function depthMaterial() {
     const m = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, side: T.DoubleSide });
+    m.userData.sectionMargin = 0;
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, { uO: U.uO, uN: U.uN, uBack: U.uBack });
       sh.vertexShader = 'varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       sh.fragmentShader = 'uniform vec3 uO, uN; uniform float uBack; varying vec3 vW;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>',
-        '#include <clipping_planes_fragment>\n float tD = dot(vW - uO, uN); if (tD > 0.0 || tD < -uBack) discard;' +
+        '#include <clipping_planes_fragment>\n float tD = dot(vW - uO, uN); if (tD < -uBack) discard;' +
         ` if (distance(vW.xz, vec2(${C.DRY.CX.toFixed(1)}, ${C.DRY.CZ.toFixed(1)})) < ${(C.DRY.LAT_R - OVERLAP).toFixed(2)}) discard;`);
     };
     m.customProgramCacheKey = () => 'dunesdepth2';

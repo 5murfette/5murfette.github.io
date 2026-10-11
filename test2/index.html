@@ -8,6 +8,7 @@
 <title>Burrow Brawl — rotatable cross-section artillery</title>
 <link rel="icon" type="image/webp" href="assets/logo.webp">
 <link rel="stylesheet" href="vendor/fonts.css">
+<link rel="stylesheet" href="assets/menu.css">
 <style>
   /* P9: the PoC (Burrow Brawl) look: Bungee + Barlow Semi Condensed (vendor/fonts.css, OFL), ink / amber palette */
   :root{--glass:rgba(13,19,24,.78);--edge:rgba(236,226,200,.16);--ink:#efe9da;--dim:#9ba7a9;--gold:#ffb02e;--accent:#ffb02e;--danger:#ff5b4f;--good:#79d98b;
@@ -24,11 +25,27 @@
   .wlabel .hpbar i{display:block;height:100%;background:var(--team)}
   .wlabel.ghost{color:#ff7070}.wlabel.ghost .hpbar i{background:#ff7070}
   .wlabel .off{font-weight:500;color:#ffc2c2}
+  .wlabel .inf{display:block;font-size:10px;line-height:1.1;margin-top:1px;font-weight:800;letter-spacing:.3px}
+  .wlabel .inf:empty{display:none}
+  .wlabel .inf.hug{color:#d6ffa0}.wlabel .inf.sick{color:#b6ff4a}.wlabel .inf.lethal{color:#ff6a5a}.wlabel .inf.soon{animation:infp .7s ease-in-out infinite alternate}
+  @keyframes infp{from{opacity:.55}to{opacity:1}}
+  .tinf{font-style:normal;font-size:11px;color:#b6ff4a;text-shadow:0 0 6px rgba(120,255,40,.6)}
+  .eggbar,.alabel{position:absolute;left:0;top:0;pointer-events:none;text-align:center;font:800 10px var(--f-ui);color:#d6ffa0;text-shadow:0 1px 2px #000,0 0 5px rgba(0,0,0,.7);white-space:nowrap}
+  .eggbar .eb{width:52px;height:7px;margin:0 auto 1px;border-radius:4px;background:rgba(0,0,0,.62);box-shadow:0 0 0 1px rgba(182,255,74,.55),0 0 8px rgba(120,255,40,.35);overflow:hidden}
+  .eggbar .eb i{display:block;height:100%;border-radius:4px;transition:background .5s}
+  .eggbar.ripe .eb{animation:infp .5s ease-in-out infinite alternate;box-shadow:0 0 0 1px rgba(255,90,60,.8),0 0 10px rgba(255,70,40,.5)}
+  .alabel{color:#b6ff4a;font-size:12px}.alabel .hpbar{width:46px;height:5px;margin:2px auto 0;border-radius:3px;background:rgba(0,0,0,.55);box-shadow:0 0 0 1px rgba(182,255,74,.45);overflow:hidden}
+  .alabel .hpbar i{display:block;height:100%;background:#b6ff4a}.alabel .hpn{display:block;font-size:11px;line-height:1;margin-top:1px;color:#fff}
   .pop{font-size:22px;font-weight:900;-webkit-text-stroke:1px rgba(0,0,0,.5)}
   .pop.bubble{font:700 14px var(--f-ui);-webkit-text-stroke:0;color:#1a1a1a;background:#fff;border-radius:12px;padding:4px 10px;text-shadow:none;box-shadow:0 3px 10px rgba(0,0,0,.35)}
   .fuse{font:800 15px ui-monospace,monospace;color:#fff;background:rgba(200,40,20,.85);padding:1px 6px;border-radius:10px;text-shadow:none}
   .panel{position:fixed;background:var(--glass);border:1px solid var(--edge);border-radius:14px;padding:10px 12px;backdrop-filter:blur(10px) saturate(1.3);-webkit-backdrop-filter:blur(10px) saturate(1.3);box-shadow:0 10px 30px rgba(0,0,0,.28)}
-  #hud{top:14px;left:14px;width:360px}
+  #hud{top:14px;left:14px;width:340px}
+  #hud .skills{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  #hud .sk{display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 4px;border-radius:12px;background:rgba(159,232,255,.13);border:1px solid rgba(159,232,255,.35);color:#9fe8ff;font:700 11px var(--f-ui)}
+  #hud .sk svg.vi{width:16px;height:16px}
+  #hud .sk b{color:#fff;font-size:12px} #hud .sk i{font-style:normal;color:var(--dim);font-weight:600}
+  .fuse.armed{background:rgba(200,40,20,.9)} .fuse.sentry{background:rgba(30,80,120,.85)}
   #hud .who .nm{font-size:17px;font-weight:800;color:var(--team);letter-spacing:.2px}
   #hud .hp{position:relative;height:12px;margin:5px 0 8px;border-radius:7px;background:rgba(0,0,0,.45);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
   #hud .hp i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,var(--team),#fff8);border-radius:7px}
@@ -84,8 +101,8 @@
   #tbWind .wt{font-weight:700;font-variant-numeric:tabular-nums;font-size:13px}
   #tbWx .wxn{font-weight:800;font-size:15px;white-space:nowrap}#tbWx .wxs{font-size:12px;color:var(--dim);white-space:nowrap}
   /* P9 weapon grid + info line */
-  #weapons{left:50%;transform:translateX(-50%);bottom:10px;display:grid;grid-template-columns:repeat(14,50px);gap:4px;padding:5px;z-index:3}
-  .wpn{position:relative;width:50px;height:46px;border-radius:7px;border:1px solid transparent;background:rgba(255,255,255,.04);color:var(--ink);font:700 9px var(--f-ui);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:0 0 2px;overflow:hidden}
+  #weapons{left:50%;transform:translateX(-50%);bottom:10px;display:grid;grid-template-columns:repeat(22,46px);gap:4px;padding:5px;z-index:3}   /* (P37: 44 weapons: 2 rows wide, 3 below 1200 px; 14 columns made 4-5 rows covering the aim area) */
+  .wpn{position:relative;width:46px;height:46px;border-radius:7px;border:1px solid transparent;background:rgba(255,255,255,.04);color:var(--ink);font:700 9px var(--f-ui);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:0 0 2px;overflow:hidden}
   .wpn:hover{background:rgba(255,255,255,.1)}
   .wpn.sel{border-color:var(--accent);background:rgba(255,176,46,.16)}
   .wpn.empty{opacity:.3}
@@ -95,7 +112,7 @@
   .wpn.sel svg.vi{color:var(--accent)}
   .wpn .a{position:absolute;top:1px;right:3px;font-size:9px;color:var(--accent);font-weight:800}
   .wpn .n{white-space:nowrap;max-width:48px;overflow:hidden;text-overflow:ellipsis;line-height:1}
-  #winfo{left:50%;transform:translateX(-50%);bottom:112px;font-weight:700;font-size:14px;padding:4px 12px;white-space:nowrap;max-width:calc(100vw - 32px);overflow:hidden;text-overflow:ellipsis;z-index:3}
+  #winfo{left:50%;transform:translateX(-50%);bottom:122px;font-weight:700;font-size:14px;padding:4px 12px;white-space:nowrap;max-width:calc(100vw - 32px);overflow:hidden;text-overflow:ellipsis;z-index:3}
   #winfo:empty{display:none}
   #winfo em{font-style:normal;color:var(--accent)}
   /* P9 game over */
@@ -107,55 +124,39 @@
   .bbtn{font:400 18px var(--f-display);padding:10px 20px;border-radius:12px;border:0;cursor:pointer;background:var(--accent);color:#2a1606;box-shadow:0 4px 0 #8a5200;margin:0 6px}
   .bbtn.ghost{background:rgba(255,255,255,.1);color:var(--ink);box-shadow:0 4px 0 rgba(0,0,0,.4)}
   #banner.show{animation:ban 2.2s ease-out}
+  #labbadge{position:fixed;left:50%;top:78px;transform:translateX(-50%);padding:2px 10px;border-radius:10px;background:rgba(40,70,90,.72);border:1px solid rgba(150,210,240,.45);color:#bfe6ff;font:700 10px/1.5 var(--f-display);letter-spacing:.1em;text-transform:uppercase;z-index:4;pointer-events:none;display:none;white-space:nowrap}
+  #rotnow{position:fixed;top:30%;left:0;right:0;text-align:center;font:400 30px var(--f-display);letter-spacing:2px;color:var(--accent);pointer-events:none;opacity:0;transition:opacity .25s;text-shadow:0 3px 18px rgba(0,0,0,.7),0 1px 2px #000}
+  #rotnow.on{opacity:.95}#rotnow b{display:block;font:400 54px/1 var(--f-display);font-variant-numeric:tabular-nums;color:var(--ink)}#rotnow.low b{color:var(--danger)}
   @keyframes ban{0%{opacity:0;transform:translateY(12px) scale(.96)}15%{opacity:1;transform:none}70%{opacity:1}100%{opacity:0;transform:translateY(-8px)}}
-  #log{bottom:10px;left:14px;max-width:min(360px,calc(50vw - 360px));font-size:12px;min-height:20px}
+  #log{bottom:10px;left:14px;max-width:max(180px,min(360px,calc(50vw - 360px)));font-size:12px;min-height:20px;z-index:2}
+  /* P49 debug toolbox */
+  #dbgbtn{position:fixed;top:14px;right:136px;z-index:4;padding:5px 9px;border-radius:10px;border:1px solid var(--edge);background:var(--glass);color:var(--ink);font-size:13px;cursor:pointer}
+  #dbg{left:14px;top:260px;width:260px;max-height:calc(100vh - 360px);overflow:auto;z-index:6;font-size:12px}
+  #dbg.hidden{display:none}
+  #dbg .dh{display:flex;align-items:center;gap:6px;margin-bottom:6px}#dbg .dh b{flex:1;color:var(--gold);font-size:13px;letter-spacing:.06em}#dbg .dh span{color:var(--dim);font:10px ui-monospace,monospace}
+  #dbg button{font:700 11px var(--f-ui);color:var(--ink);background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:3px 7px;cursor:pointer}
+  #dbg button:hover{background:rgba(255,255,255,.16)}#dbg button.on{background:rgba(255,176,46,.22);border-color:var(--accent);color:#fff}
+  #dbg .dt,#dbg .di{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+  #dbg .dp{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0}#dbg .dp:empty{display:none}
+  #dbg label{display:flex;align-items:center;gap:5px;color:var(--dim)}#dbg input[type=number]{width:60px}#dbg select,#dbg input[type=number]{background:rgba(0,0,0,.4);color:var(--ink);border:1px solid rgba(255,255,255,.18);border-radius:5px;padding:1px 3px;font:11px var(--f-ui)}
+  #dbg .dm{margin-top:6px;color:var(--dim)}#dbg .dm b{color:var(--accent)}
+  #dbgcur{position:fixed;pointer-events:none;z-index:7;display:none;padding:2px 8px;border-radius:9px;background:rgba(255,176,46,.88);color:#2a1606;font:800 11px var(--f-ui);white-space:nowrap}
+  #dbgcur.on{display:block}#dbgcur::before{content:"+ ";font-weight:900}
   #help{top:14px;right:14px;width:285px;font-size:12px}
   #help.hidden{display:none}
   #help h1{font-size:15px;margin:0 0 6px;color:var(--gold)}
   #help kbd{display:inline-block;min-width:14px;padding:0 4px;border:1px solid #7d8c9c;border-bottom-width:2px;border-radius:4px;background:rgba(255,255,255,.08);font:11px ui-monospace,monospace;text-align:center}
   #help table{border-collapse:collapse}#help td{padding:1px 4px;vertical-align:top}
   #help p{margin:6px 0 0;color:var(--dim)}
-  #maps{top:52px;right:14px;display:flex;gap:10px;align-items:flex-start}
+  #maps{top:90px;right:14px;display:flex;gap:10px;align-items:flex-start}
   #maps figure{margin:0}
   #maps figcaption{font-size:11px;color:var(--dim);margin-bottom:4px}
   #secmap{width:320px;display:block;border-radius:8px;background:#16202b}
   #topmap{width:170px;height:170px;display:block;border-radius:8px;cursor:pointer}
   #menubtn{position:fixed;top:14px;right:14px;z-index:4;padding:6px 12px;border-radius:10px;border:1px solid var(--edge);background:var(--glass);color:var(--ink);font:700 12px inherit;cursor:pointer;backdrop-filter:blur(8px)}
   #help{top:52px;z-index:5}
-  #mutebtn{position:fixed;top:14px;right:76px;z-index:4;padding:5px 9px;border-radius:10px;border:1px solid var(--edge);background:var(--glass);color:var(--ink);font-size:13px;cursor:pointer}
-  #menu{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(circle at 50% 35%,#3a2a1e,#120d0a);z-index:9;transition:opacity .6s}
-  #menu.menu.ingame{background:rgba(10,8,6,.55);backdrop-filter:blur(6px)}
-  #menu.gone{opacity:0;pointer-events:none}
-  .mpanel{width:min(680px,92vw);max-height:92vh;overflow:auto;background:rgba(20,16,14,.72);border:1px solid var(--edge);border-radius:18px;padding:22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-  .mpanel h1,.mprog h2{margin:0;font:400 34px var(--f-display);letter-spacing:1px;color:var(--gold);text-align:center;text-shadow:0 4px 0 #6b3d00}
-  .mlogo{display:block;width:210px;max-width:60%;margin:-6px auto 2px;filter:drop-shadow(0 8px 18px rgba(0,0,0,.5))}
-  .msec{margin:14px 0 6px;font:400 13px var(--f-display);color:var(--gold);letter-spacing:.06em}
-  .tcfg{display:grid;grid-template-columns:18px 1fr 120px;gap:8px;align-items:center;margin:4px 0}
-  .tcfg i{width:16px;height:16px;border-radius:50%;background:var(--team)}
-  .tcfg input,.tcfg select{background:rgba(255,255,255,.07);color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:5px 8px;font:600 14px var(--f-ui)}
-  .mpanel .sub{text-align:center;color:var(--dim);margin:4px 0 16px}
-  .biomes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
-  .bcard{height:74px;border-radius:12px;border:2px solid rgba(255,255,255,.12);cursor:pointer;display:flex;align-items:flex-end;padding:8px;color:#fff;font:800 14px inherit;text-shadow:0 1px 3px #000;transition:transform .12s,border-color .12s}
-  .bcard:hover{transform:translateY(-2px)}
-  .bcard.on{border-color:var(--gold);box-shadow:0 0 0 2px rgba(255,231,163,.35),0 6px 18px rgba(0,0,0,.4)}
-  .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
-  .mgrid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dim)}
-  .mgrid label.check{grid-column:1/3;flex-direction:row;align-items:center;gap:8px;color:var(--ink)}
-  .mgrid label.check em{color:var(--dim);font-style:normal}
-  .mgrid select,.mgrid input[type=number]{background:rgba(255,255,255,.07);color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:6px 8px;font:13px inherit}
-  .mgrid select option{background:#221a14}
-  .seedrow{display:flex;gap:6px}.seedrow input{flex:1}
-  .dice{width:36px;border-radius:8px;border:1px solid var(--edge);background:rgba(255,255,255,.08);color:var(--ink);font-size:18px;cursor:pointer}
-  .mbtns{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
-  .mbtns button{padding:10px 18px;border-radius:12px;font:400 16px var(--f-display);cursor:pointer;border:0}
-  .mbtns .go{background:var(--accent);color:#2a1606;box-shadow:0 4px 0 #8a5200}
-  .mbtns .ghost{background:rgba(255,255,255,.07);color:var(--ink)}
-  .hint{margin-top:10px;font-size:11px;color:var(--dim);text-align:right}
-  .mprog{width:min(440px,86vw);text-align:center}
-  .pbar{position:relative;height:12px;margin:18px 0 8px;border-radius:7px;background:rgba(255,255,255,.08);overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
-  .pbar i{position:absolute;inset:0 auto 0 0;width:0;background:linear-gradient(90deg,#ffd35a,#ff8a3a);border-radius:7px;transition:width .15s}
-  .plabel{display:flex;justify-content:space-between;color:var(--dim);font-size:12px}
-  .mprog.err .plabel span{color:#ff9a9a}
+  .vslider{width:170px;accent-color:var(--accent,#e8b04a);cursor:pointer}
+  #mutebtn{position:fixed;top:14px;right:90px;z-index:4;padding:5px 9px;border-radius:10px;border:1px solid var(--edge);background:var(--glass);color:var(--ink);font-size:13px;cursor:pointer}
   #netpanel{position:fixed;left:50%;top:44px;transform:translateX(-50%);padding:3px 10px;border-radius:10px;background:rgba(10,14,20,.6);color:#cfe;font:600 12px system-ui;z-index:5;display:none}
   #netpanel.warn{color:#ffd76a} #netpanel.bad{color:#ff7a6a}
   /* touch pad (P24.4): hidden unless body.touch; on a touch device the weapon grid opens from 🎒 */
@@ -168,8 +169,13 @@
   #touch button.wide{width:76px} #touch button.fire{width:84px;height:84px;border-radius:42px;background:rgba(200,60,30,.75);font-size:18px}
   #touch button.on{background:rgba(255,200,80,.6)}
   body.touch #winfo{bottom:118px} body.touch #teams{display:none}
-  @media (max-width:1100px){#maps{display:none}#weapons{grid-template-columns:repeat(10,46px)}.wpn{width:46px}#winfo{bottom:150px}#teams{bottom:206px}}
-  @media (max-width:700px){.biomes{grid-template-columns:repeat(2,1fr)}.mgrid{grid-template-columns:1fr}.mgrid label.check{grid-column:1}#hud{width:280px}#maps{display:none}}
+  /* P38 R3: the HUD at small sizes: the top bar sheds the weather, then moves beside the buttons, the log leaves the grid, the info line follows the grid height */
+  @media (max-width:1400px){#topbar #tbWx{display:none}#log{top:150px;bottom:auto;max-width:220px;max-height:150px;overflow:hidden}}
+  @media (max-width:1200px){#weapons{grid-template-columns:repeat(17,44px)}.wpn{width:44px}#topbar{left:auto;right:136px;transform:none}#tbWind .wbar{width:110px}}
+  @media (max-width:1100px){#maps{display:none}#winfo{bottom:164px}#teams{bottom:202px}}
+  @media (max-width:920px){#hud{width:250px}#topbar{top:10px;right:136px;gap:4px}#topbar .tb{padding:4px 8px}#tbTurn .tn{max-width:120px}#tbWind .wbar{width:80px}}
+  @media (max-width:860px){#weapons{grid-template-columns:repeat(12,44px)}#winfo{bottom:226px}#teams{bottom:262px}}
+  @media (max-width:700px){.biomes{grid-template-columns:repeat(2,1fr)}.mgrid{grid-template-columns:1fr}.mgrid label.check{grid-column:1}#hud{width:280px;top:84px}#maps{display:none}#topbar #tbWind{display:none}#topbar{left:8px;right:auto}#log{top:226px;max-width:calc(100vw - 28px)}}
 </style>
 </head>
 <body>
@@ -177,6 +183,7 @@
 <div id="vignette"></div>
 <div id="labels"></div>
 <div id="banner"></div>
+<div id="labbadge"></div>
 <div id="topbar"><div id="tbTurn" class="panel tb"></div><div id="tbTime" class="panel tb"></div><div id="tbWind" class="panel tb"></div><div id="tbWx" class="panel tb"></div></div>
 <div id="hud" class="panel"></div>
 <button id="mutebtn" title="Sound on / off (F2)">🔊</button>
@@ -186,7 +193,7 @@
   <div class="tl"><button data-k="ArrowLeft">◀</button><button data-k="ArrowRight">▶</button></div>
   <div class="tc"><button data-k="ArrowUp">▲</button><button data-k="ArrowDown">▼</button></div>
   <div class="tr"><button data-k="Enter" class="wide">JUMP</button><button data-k="Backspace">FLIP</button><button data-k="Space" class="fire">FIRE</button></div>
-  <div class="tt"><button data-k="weapons">🎒</button><button data-k="zoom">🔍</button><button data-k="Tab">⇄</button></div>
+  <div class="tt"><button data-k="weapons">🎒</button><button data-k="zoom">🔍</button><button data-k="Tab">⇄</button><button data-k="NumpadSubtract" title="setting -">−</button><button data-k="NumpadAdd" title="setting +">+</button></div>
 </div>
 <div id="winfo" class="panel"></div>
 <div id="over" class="hidden"><div class="card"><h2></h2><p></p><button class="bbtn" id="bRematch">Rematch</button><button class="bbtn ghost" id="bSetup">Change setup</button></div></div>
@@ -197,12 +204,14 @@
   <table>
     <tr><td><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd></td><td>walk · swing on rope · strikes: side of the plane</td></tr>
     <tr><td><kbd>W</kbd><kbd>S</kbd> / <kbd>↑</kbd><kbd>↓</kbd></td><td>aim · rope shorter/longer · girder angle</td></tr>
-    <tr><td><kbd>Enter</kbd> <kbd>⌫</kbd></td><td>jump · backflip · on the rope: drop the weapon</td></tr>
-    <tr><td><kbd>Space</kbd></td><td>hold to charge, release to fire · use · rope</td></tr>
+    <tr><td><kbd>Enter</kbd> <kbd>⌫</kbd></td><td>jump · backflip · on the rope: let go (or drop a held weapon) · on a zipline: drop off</td></tr>
+    <tr><td><kbd>Space</kbd></td><td>hold to charge, release to fire · use · rope: shoot / let go (shoot again in the air: same angle, press at once: the other way) · parachute: open in the air</td></tr>
     <tr><td>click</td><td>target (air strike, napalm, thunder, moai, teleport, girder, homing)</td></tr>
-    <tr><td>weapon grid / keys</td><td>1-0 and the letters on the buttons · <kbd>F</kbd> fuse 1-5 s</td></tr>
+    <tr><td>weapon grid / keys</td><td>1-0 and the letters on the buttons · numpad <kbd>1</kbd>-<kbd>8</kbd>: flamethrower, acid, gas, mortar, minigun, handgun, boomerang, raven · <kbd>F</kbd> cycles the fuse</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>-</kbd></td><td>the selected weapon's setting: fuse 0.5-5 s (grenades, dynamite, gas ...), mortar burst height 1-5 m, planted mine fuse 0-3 s</td></tr>
     <tr><td><kbd>Q</kbd><kbd>E</kbd></td><td>rotate the section (<kbd>Shift</kbd> = fine) · or right-drag</td></tr>
-    <tr><td><kbd>Tab</kbd></td><td>align with the next worm · or click a worm on the top map</td></tr>
+    <tr><td><kbd>Tab</kbd> · <kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>align with the next opponent (strongest first) · the next crate · or click a worm on the top map. With the rotation lock (default) only in the first 10 s of a turn, before the worm moves</td></tr>
+    <tr><td><kbd>\</kbd></td><td>worm select (option): hand the turn to your next worm</td></tr>
     <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>previous / next weapon (with ammo)</td></tr>
     <tr><td><kbd>mouse</kbd></td><td>aim with the cursor · hold the left button to charge, release to fire</td></tr>
     <tr><td><kbd>V</kbd> hold</td><td>inspect: ghosts of off-section worms</td></tr>
@@ -216,12 +225,18 @@
   <figure><figcaption>Current section (side view)</figcaption><canvas id="secmap" width="320" height="120"></canvas></figure>
   <figure><figcaption>World from above</figcaption><canvas id="topmap" width="170" height="170"></canvas></figure>
 </div>
+<button id="dbgbtn" title="Debug toolbox (F9)" style="display:none">🛠</button>
 <button id="menubtn" title="Map menu (M)">☰ Map</button>
 <div id="menu"></div>
 <script src="vendor/three.min.js"></script>
+<script src="js/render/section.js"></script>
+<script src="js/render/prewarm.js"></script>
 <script src="assets/textures.js"></script>
+<script src="assets/models.js"></script>
 <!-- engine-agnostic core + simulation (portable: no DOM, no Three.js, deterministic) -->
 <script src="js/core/cmath.js"></script>
+<script src="js/core/softworm.js"></script>
+<script src="js/core/idle.js"></script>
 <script src="js/sim/config.js"></script>
 <script src="js/sim/world.js"></script>
 <script src="js/sim/collapse.js"></script>
@@ -230,17 +245,34 @@
 <script src="js/sim/meshgen.js"></script>
 <script src="js/sim/sim.js"></script>
 <script src="js/sim/game.js"></script>
+<script src="js/sim/rotlock.js"></script>
 <script src="js/sim/arsenal.js"></script>
+<script src="js/sim/arsenala.js"></script>
 <script src="js/sim/weapons.js"></script>
+<script src="js/sim/traverse.js"></script>
+<script src="js/sim/weaponsa.js"></script>
+<script src="js/sim/raven.js"></script>
+<script src="js/sim/gadgets.js"></script>
+<script src="js/sim/ffield.js"></script>
+<script src="js/sim/skills.js"></script>
+<script src="js/sim/lab.js"></script>
+<script src="js/sim/balance.js"></script>
 <script src="js/sim/blast.js"></script>
 <script src="js/sim/bodies.js"></script>
 <script src="js/sim/shrapnel.js"></script>
 <script src="js/sim/spatter.js"></script>
 <script src="js/sim/struct.js"></script>
 <script src="js/sim/bunker.js"></script>
+<script src="js/sim/ruins.js"></script>
+<script src="js/sim/derelict.js"></script>
+<script src="js/sim/alien.js"></script>
 <script src="js/sim/ice.js"></script>
 <script src="js/sim/ai.js"></script>
+<script src="js/sim/aia.js"></script>
+<script src="js/sim/aib.js"></script>
+<script src="js/sim/aic.js"></script>
 <script src="js/sim/scatter.js"></script>
+<script src="js/sim/debug.js"></script>
 <script src="js/sim/lava.js"></script>
 <script src="js/sim/water.js"></script>
 <script src="js/sim/veg.js"></script>
@@ -251,10 +283,17 @@
 <script src="js/platform/input.js"></script>
 <script src="js/platform/net.js"></script>
 <script src="assets/sfx/manifest.js"></script>
+<script src="assets/music/manifest.js"></script>
+<script src="js/platform/music.js"></script>
 <script src="js/platform/audio.js"></script>
+<script src="js/platform/audioa.js"></script>
+<script src="js/platform/audio_b.js"></script>
+<script src="js/platform/audio_c.js"></script>
+<script src="js/platform/audioi.js"></script>
 <script src="js/platform/quality.js"></script>
 <script src="js/render/textures.js"></script>
 <script src="js/render/materials.js"></script>
+<script src="js/render/models.js"></script>
 <script src="js/render/sky.js"></script>
 <script src="js/render/clouds.js"></script>
 <script src="js/render/farland.js"></script>
@@ -270,18 +309,38 @@
 <script src="js/render/ordnance.js"></script>
 <script src="js/render/graves.js"></script>
 <script src="js/render/vents.js"></script>
+<script src="js/render/traverse.js"></script>
 <script src="js/render/actors.js"></script>
 <script src="js/render/arms.js"></script>
+<script src="js/render/flame.js"></script>
+<script src="js/render/fire.js"></script>
+<script src="js/render/weaponsa.js"></script>
+<script src="js/render/gadgets.js"></script>
+<script src="js/render/polish.js"></script>
+<script src="js/render/react.js"></script>
+<script src="js/render/softview.js"></script>
+<script src="js/render/idleview.js"></script>
+<script src="js/render/ffield.js"></script>
+<script src="js/render/acid.js"></script>
+<script src="js/render/lab.js"></script>
+<script src="js/render/worn.js"></script>
 <script src="js/render/blood.js"></script>
 <script src="js/render/fx.js"></script>
 <script src="js/render/shrapnel.js"></script>
 <script src="js/render/spatter.js"></script>
 <script src="js/render/struct.js"></script>
+<script src="js/render/derelict.js"></script>
+<script src="js/render/alien.js"></script>
+<script src="js/render/hugger.js"></script>
+<script src="js/render/xeno.js"></script>
+<script src="js/render/infect.js"></script>
 <script src="js/render/ice.js"></script>
 <script src="js/render/lens.js"></script>
 <script src="js/render/view.js"></script>
 <script src="js/ui/icons.js"></script>
 <script src="js/ui/hud.js"></script>
+<script src="js/ui/debug.js"></script>
+<script src="js/ui/mappreview.js"></script>
 <script src="js/ui/menu.js"></script>
 <script src="js/ui/netui.js"></script>
 <script src="js/main.js"></script>

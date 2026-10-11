@@ -4,7 +4,7 @@
  * sdRound rounds, per-team ammo. Portable and deterministic: sim time only, names from their own RNG stream (so the
  * layout RNG S.rng, and with it every pinned map hash, is untouched).
  * C layout: struct Team { char name[20]; u32 rgb; u8 ctl; i8 wi; i16 ammo[NWEAPONS]; u8 lastWeapon; };
- *           GameState += { Team teams[4]; u8 nTeams; u16 round, sdRound; bool sudden; f32 turnT, retreatT; }.
+ *           GameState += { Team teams[4]; u8 nTeams; u16 round, sdRound, sdFinal; bool sudden; f32 turnT, retreatT; }.
  * API: setup(S), team_count(S), is_cpu(S, team), skill(S), next_team(S) -> team, names(S, n), step(S, dt),
  *      retreat_for(weaponKey), ammo(S, team, weaponKey), use_ammo(S, team, weaponKey). */
 (function (SS) {
@@ -28,15 +28,15 @@
     for (let i = 0; i < n; i++) {
       const d = C.TEAMS[i], nm = Array.isArray(st.names) && typeof st.names[i] === 'string' && st.names[i].trim() ? st.names[i].trim().slice(0, 18) : d.name;
       const ammo = {};
-      if (C.ARSENAL) for (const k in C.ARSENAL) ammo[k] = C.ARSENAL[k].ammo;
+      if (C.ARSENAL) for (const k of C.ARSENAL_ORDER) ammo[k] = C.ARSENAL[k].ammo;
       S.teams.push({ id: i, name: nm, rgb: d.rgb, ctl: ctlOf(st, i), wi: 0, ammo, lastWeapon: null });
     }
     const wpt = M.clamp(st.worms | 0 || 3, 1, 4);
-    S.round = 1; S.sudden = false; S.turnT = 0; S.retreatT = 0;
-    S.sdRound = 6 + Math.max(0, 4 - wpt) + (n > 2 ? 0 : 1);                    // PoC beginMatch: ~7-9 rounds
+    S.round = 1; S.sudden = false; S.sdFinal = 0; S.turnT = 0; S.retreatT = 0;
+    S.sdRound = 6 + M.max(0, 4 - wpt) + (n > 3 ? -1 : n > 2 ? 0 : 1);       // PoC beginMatch: ~7-9 rounds (P38-R5: a round earlier with 4 teams: a round is 4 turns, the matches ran 60 turns)
     // PoC beginMatch: a random team starts (settings.first: 'random' (default) or a team index; own seeded stream)
     const fr = st.first == null || st.first === 'random' ? Math.floor(M.rng_next(M.rng_make((Math.imul(st.seed | 0, 2654435761) + 977) >>> 0)) * n) : M.clamp(st.first | 0, 0, n - 1);
-    S.teamTurn = (fr + n - 1) % n; S.nextIdx = new Array(n).fill(0);
+    S.teamTurn = (fr + n - 1) % n; S.firstTeam = fr; S.nextIdx = new Array(n).fill(0);
     S.playR = C.DRY.PLAY_R;          // dry worlds: the play circle (game state: sudden death shrinks it; C stays const)
   };
   /* worm names: the PoC pool shuffled per seed (own stream, never S.rng) */
@@ -47,34 +47,53 @@
     return out;
   };
   /* round-robin over teams with a living worm; a wrap starts a new round (PoC pickNextTurn / startTurn) */
-  G.next_team = function (S) {
+  // P38 R3: a round ends where the FIRST mover's turn would come again (seat order counted from S.firstTeam): every team has had
+  // the same number of turns when sudden death starts (it used to depend on the seat of the first mover: up to one turn apart)
+  G.peek_team = function (S) {
     const n = G.team_count(S), from = S.teamTurn;
-    for (let k = 1; k <= n; k++) {
-      const t = (from + k) % n;
-      if (S.worms.some(w => !w.dead && w.hp > 0 && w.team === t)) {      // = sim.living (a 0-HP worm is dying: no turn)
-        if (S.turnNo > 0 && t <= from) S.round++;
-        return t;
-      }
-    }
+    for (let k = 1; k <= n; k++) { const t = (from + k) % n; if (S.worms.some(w => !w.dead && w.hp > 0 && w.team === t)) return t; }   // (= sim.living: a 0-HP worm is dying: no turn)
     return -1;
+  };
+  G.wraps = function (S, t) { const n = G.team_count(S), ft = S.firstTeam | 0; return S.turnNo > 0 && (t - ft + n) % n <= (S.teamTurn - ft + n) % n; };
+  G.next_team = function (S) {
+    const t = G.peek_team(S);
+    if (t >= 0 && G.wraps(S, t)) S.round++;
+    return t;
   };
   G.retreat_for = key => { const d = (C.ARSENAL && C.ARSENAL[key]) || C.WEAPONS[key]; return d && d.retreat != null ? d.retreat : K.RETREAT; };
   G.ammo = (S, team, key) => { const t = S.teams && S.teams[team]; if (!t || t.ammo[key] == null) return Infinity; return t.ammo[key]; };
-  G.use_ammo = (S, team, key) => { const t = S.teams && S.teams[team]; if (t && t.ammo[key] != null && t.ammo[key] !== Infinity) t.ammo[key] = Math.max(0, t.ammo[key] - 1); };
+  G.use_ammo = (S, team, key) => { const t = S.teams && S.teams[team]; if (t && t.ammo[key] != null && t.ammo[key] !== Infinity) t.ammo[key] = M.max(0, t.ammo[key] - 1); };
 
   /* sudden death begins at the turn change after round sdRound (if enabled): from then on the sea rises SD_RISE m
    * after every turn (sim.js next_turn calls G.turn_change) */
   G.turn_change = function (S) {
     if (!S.settings.sd) return;
-    if (!S.sudden && S.round > S.sdRound) {
+    const nt = G.peek_team(S);
+    if (!S.sudden && (S.round > S.sdRound || (S.round === S.sdRound && nt >= 0 && G.wraps(S, nt)))) {      // (P38 R3: right where round sdRound ends)
       S.sudden = true;
       SS.sim.emit(S, 'banner', { title: 'Sudden death', sub: SS.world.dry ? 'The hot sand closes in' : 'The water rises after every turn' });
       SS.sim.log(S, 'Sudden death: the battlefield shrinks after every turn.', 0xff9a6a);
     }
     if (S.sudden) {
-      if (SS.world.dry) S.playR = Math.max(K.SD_DRY_MIN, S.playR - K.SD_DRY_STEP);
-      else if (SS.water && SS.water.raise) SS.water.raise(S, K.SD_RISE);
+      const d = SS.world;
+      if (d.dry) S.playR = M.max(K.SD_DRY_MIN, S.playR - K.SD_DRY_STEP);
+      else if (!d.under && SS.water && SS.water.raise) SS.water.raise(S, M.min(K.SD_RISE, M.max(0, d.SY - K.SD_SEA_GAP - d.SEA)));   // (P38 R9: the sea stops at the cap)
+      // the final stage: nothing is left to take (caves have no sea to rise, the sea is at its cap, the dry play circle is at its minimum)
+      const spent = d.under || (d.dry ? S.playR <= K.SD_DRY_MIN : d.SEA >= d.SY - K.SD_SEA_GAP - 1e-6);
+      if (spent) {
+        if (S.sdFinal === 0) {
+          SS.sim.emit(S, 'banner', { title: 'Final stand', sub: d.under ? 'The cave air turns foul' : d.dry ? 'The heat is unbearable' : 'The cold sea has risen as far as it will' });
+          SS.sim.log(S, 'Final stand: every worm now loses health, a little more every turn.', 0xff7a5a);
+        }
+        S.sdFinal++;
+      }
     }
+  };
+  /* P38 R9: the drain of the final stage, HP per second for every living worm (0 = not yet): GAME.SD_DRAIN in the first turn, +SD_DRAIN_RAMP per
+   * further turn, at most SD_DRAIN_MAX. Called from sim.js hazards. */
+  G.final_drain = function (S) {
+    if (!(S.sdFinal > 0) || S.phase === 'over') return 0;
+    return M.min(K.SD_DRAIN_MAX, K.SD_DRAIN + K.SD_DRAIN_RAMP * (S.sdFinal - 1));
   };
 
   /* P13 (PoC user placement): teams take turns placing one worm each (setup order), 15 s each on SIM time (lockstep
@@ -86,7 +105,7 @@
   G.PLACE = PL;
   G.begin_placement = function (S) {
     S.placeOrder = [];
-    const n = S.teams.length, per = Math.max(...S.teams.map((t, i) => S.worms.filter(w => w.team === i).length));
+    const n = S.teams.length, per = S.teams.reduce((m, t, i) => M.max(m, S.worms.filter(w => w.team === i).length), 0);
     for (let k = 0; k < per; k++) for (let t = 0; t < n; t++) { const w = S.worms.filter(o => o.team === t)[k]; if (w) S.placeOrder.push(w); }
     for (const w of S.worms) { w.reserve = true; w.dead = true; w.grave = null; }
     S.placeIdx = 0; S.phase = 'place'; S.placeT = PL.T; S.placeDone = -1;
@@ -119,7 +138,7 @@
     // the section jumps to the new worm: rebuild it and treat the jump like a turn of the section (the material edge
     // fades out and is rebuilt here; user 2026-10-08: the old outline stayed while a CPU placed elsewhere)
     S.O = { x: p.x, z: p.z }; S.sectionDirty = true; S.lastRotate = S.time;
-    SS.sim.emit(S, 'teleport', { worm: w, from: { x: p.x, y: p.y + 30, z: p.z }, to: { x: p.x, y: p.y, z: p.z }, deploy: 1 });
+    SS.sim.emit(S, 'teleport', { wormId: w.id, from: { x: p.x, y: p.y + 30, z: p.z }, to: { x: p.x, y: p.y, z: p.z }, deploy: 1 });
     SS.sim.log(S, `${w.name} ${how}.`, SS.sim.team_rgb(S, w.team));
     S.placeIdx++; nextPlace(S);
   }
@@ -158,7 +177,7 @@
   G.rooms = function (S) {
     const w = SS.world, H = w.H, rnd = () => M.rng_next(S.rng), out = [];
     for (let k = 0, tries = 0; k < 2 && tries < 600; tries++) {
-      const rx = 2.2 + rnd() * 0.8, rz = 1.4 + rnd() * 0.4, rh = 2.4, cx = 12 + rnd() * 72, cz = 12 + rnd() * 72, top = w.topHeight(cx, cz);
+      const rx = 2.2 + rnd() * 0.8, rz = 1.4 + rnd() * 0.4, rh = 2.4, cx = 12 + rnd() * (w.SX - 24), cz = 12 + rnd() * (w.SZ - 24), top = w.topHeight(cx, cz);
       const y0 = top - 3 - rnd() * 6 - rh;
       if (y0 < 2 || y0 < w.SEA + 0.5 || (w.dry && !SS.sim.in_play(S, cx, cz))) continue;
       if (out.some(r => M.len2(r.x - cx, r.z - cz) < 12)) continue;
@@ -171,9 +190,9 @@
       const j0 = Math.floor((y0 - 1) / H), j1 = Math.ceil((y0 + rh + 1) / H);
       for (let kk = k0; kk <= k1; kk++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
         const o = (kk * w.NY + j) * w.NX + i, x = i * H, y = j * H, z = kk * H;
-        const d = Math.max(Math.abs(x - cx) - rx, Math.abs(z - cz) - rz, Math.max(y0 - y, y - (y0 + rh)));   // box SDF (+ outside)
-        if (d < 0) { w.d[o] = Math.max(-0.6, d); w.mat[o] = C.MAT.AIR; w.heat[o] = 0; }
-        else if (d < 0.5 && w.d[o] > 0) { w.d[o] = Math.max(0.2, d); w.mat[o] = C.MAT.SANDSTONE; }
+        const d = M.max(M.max(Math.abs(x - cx) - rx, Math.abs(z - cz) - rz), M.max(y0 - y, y - (y0 + rh)));   // box SDF (+ outside)
+        if (d < 0) { w.d[o] = M.max(-0.6, d); w.mat[o] = C.MAT.AIR; w.heat[o] = 0; }
+        else if (d < 0.5 && w.d[o] > 0) { w.d[o] = M.max(0.2, d); w.mat[o] = C.MAT.SANDSTONE; }
       }
       w.mark(i0, j0, k0, i1, j1, k1);
       out.push({ x: cx, y: y0, z: cz, rx, rz, rh }); k++;

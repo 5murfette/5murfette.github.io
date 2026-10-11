@@ -24,6 +24,7 @@
    * SAND_EXTRA), b = rock top (top − ROCK_DV): RULES.desert's layering, the same rule the lattice voxels got, so the
    * strata continue; within 1 m inside the border the volume's material weights blend into the strip's. */
   const FAR_N = 2048, FAR_S = 420;
+  const VOLSIZE = new T.Vector3();                      // lattice size, shared by every material (P38: it changes with the map size)
   const FAR = { tFar: { value: null }, uFar: { value: null }, uLat: { value: null } };
   const CAP_DEEP = 400, CAP_EXT = 1500;   // m: the section's rock body below the lattice / beyond it on wet worlds (P29a)
   // C1: the cut face's 3D noise and pinned-coordinate offset (τ = s + uS0, see the cap shader); MORPH_CELL = the world
@@ -83,7 +84,94 @@
     }`;
   TR.HOT_GLSL = HOT;
 
+  /* P37 W4 (user: "the foam should have a white overlay, not black, once it pops, and a 3D hexagon structure inside"):
+   * foam is a honeycomb. foamHex(p, cell): p in metres on a face, returns .x = distance to the cell wall (0 centre ..
+   * 0.5 wall, hexagonal metric), .y = a per-cell random 0..1. foamLook(): the colour of that cell structure: bright white
+   * ridges (the walls), a shadowed groove just inside each wall and a concave, slightly bluish cell floor of per-cell
+   * depth, so a cut through foam shows a field of hexagonal cells looking into the block (and the outside skin shows the
+   * cells as a white relief); never darker than a light grey. */
+  const FOAM_GLSL = /* glsl */`
+    vec2 foamHex(vec2 p, float cell) {
+      p /= cell; vec2 r = vec2(1.0, 1.7320508), h = r * 0.5, a = mod(p, r) - h, b = mod(p - h, r) - h, gv = dot(a, a) < dot(b, b) ? a : b, id = p - gv;
+      vec2 ag = abs(gv); float e = max(dot(ag, vec2(0.5, 0.8660254)), ag.x);
+      return vec2(e, fract(sin(dot(id, vec2(127.1, 311.7))) * 43758.5453));
+    }
+    vec3 foamLook(vec2 p, float cell, float ndl) {
+      vec2 q = foamHex(p, cell); float e = q.x, rnd = q.y;
+      float wall = smoothstep(0.385, 0.455, e), groove = smoothstep(0.30, 0.38, e) * (1.0 - smoothstep(0.38, 0.43, e));
+      float fl = smoothstep(0.04, 0.36, e);
+      vec3 floorC = mix(vec3(0.62, 0.74, 0.90) * (0.9 + 0.2 * rnd), vec3(0.97, 0.985, 1.0), fl);   // a concave, bluish cell floor, lighter towards the walls
+      vec3 c = mix(floorC, vec3(1.0), wall) - 0.30 * groove * vec3(0.8, 0.85, 1.0);
+      return c * (1.0 + 0.1 * ndl);                                                    // (a touch over 1: the foam reads white in every light)
+    }`;
+  /* P37 W4 (user: "the plate should be shiny and perfectly flat, made of metal frames with metal sheets bolted on them, like
+   * a section of the bridge"): the girder plate's steel voxels are drawn by plate-local coordinates. The sim's plate
+   * registry (S.plates) goes to the shader as three vec4 per plate: A = (centre, half length), B = (long axis U, half
+   * thickness), C = (plane normal n, half depth); V = n x U (across the thickness). plateIdx(P) = the plate whose box holds P
+   * (0.25 m of slack: the voxel surface is within a quarter metre of the exact box).
+   *   - the broad faces (normal along V: the deck): a frame of channel steel round the edge, cross ribs every ~1.5 m,
+   *     recessed sheets between them (brushed along the plate, a darker inner bevel), round bolt heads every 0.4 m along
+   *     the frame and the ribs, polished-steel colour, low roughness; a fake sky / ground reflection and a sun glint
+   *     stand in for an environment map (shiny, flat: no relief);
+   *   - the other faces: plain frame steel;
+   *   - the cut through it (cap): the profile of a bridge girder: flanges top and bottom, a web with ribs, bolts. */
+  const PLATE_GLSL = /* glsl */`
+    uniform vec4 uPlA[24]; uniform vec4 uPlB[24]; uniform vec4 uPlC[24]; uniform int uNPl;
+    int plateIdx(vec3 P) {
+      for (int i = 0; i < 24; i++) {
+        if (i >= uNPl) break;
+        vec3 U = uPlB[i].xyz, n = uPlC[i].xyz, V = cross(n, U), d = P - uPlA[i].xyz;
+        if (abs(dot(d, U)) < uPlA[i].w + 0.25 && abs(dot(d, V)) < uPlB[i].w + 0.25 && abs(dot(d, n)) < uPlC[i].w + 0.25) return i;
+      }
+      return -1;
+    }
+    float plBolt(vec2 p, float pitch, float r) {                              // 1 inside a round bolt head
+      vec2 q = (fract(p / pitch + 0.5) - 0.5) * pitch; return 1.0 - smoothstep(r * 0.8, r, length(q));
+    }
+    float plHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    // the colour at P on plate i with surface normal N; .a = polish (1 = mirror steel, 0 = dull frame)
+    vec4 plateCol(int i, vec3 P, vec3 N) {
+      vec3 U = uPlB[i].xyz, n = uPlC[i].xyz, V = cross(n, U), d = P - uPlA[i].xyz;
+      float u = dot(d, U), v = dot(d, V), w = dot(d, n), hu = uPlA[i].w, hv = uPlB[i].w, hw = uPlC[i].w;
+      float nv = abs(dot(N, V)), nw = abs(dot(N, n)), nu = abs(dot(N, U));
+      vec3 steel = vec3(0.66, 0.68, 0.72), frame = vec3(0.47, 0.49, 0.53);
+      if (nv > max(nu, nw)) {                                                  // the deck: coordinates (u, w)
+        float fw = 0.22, ribP = 1.5, ribs = abs(fract(u / ribP + 0.5) - 0.5) * ribP;
+        float edge = min(hu - abs(u), hw - abs(w));
+        float onFrame = 1.0 - smoothstep(fw - 0.02, fw, edge), onRib = 1.0 - smoothstep(0.07, 0.09, ribs);
+        float fr = max(onFrame, onRib);
+        float brush = 0.93 + 0.07 * sin(w * 90.0 + plHash(vec2(floor(u * 3.0), 1.0)) * 6.0) + 0.04 * sin(w * 23.0);
+        float bevel = smoothstep(fw, fw + 0.12, edge) * smoothstep(0.09, 0.2, ribs);          // darker toward the frame: the sheet is recessed
+        vec3 sheet = steel * brush * (0.80 + 0.2 * bevel);
+        vec3 c = mix(sheet, frame * (0.92 + 0.08 * sin(u * 40.0)), fr);
+        float bolt = max(plBolt(vec2(u, w), 0.4, 0.05) * max(onFrame * step(fw * 0.35, edge) * step(edge, fw * 0.8), 0.0), plBolt(vec2(u, w + 0.2), 0.4, 0.05) * onRib * step(0.02, ribs) * step(ribs, 0.06));
+        c = mix(c, vec3(0.2, 0.21, 0.23), bolt * 0.9); c += bolt * vec3(0.5) * smoothstep(0.0, 0.5, bolt);
+        return vec4(c, mix(0.95, 0.5, fr) - bolt * 0.3);
+      }
+      // end / side faces: frame steel with a bevelled lip
+      float lip = smoothstep(0.0, 0.08, min(hv - abs(v), 0.08));
+      return vec4(frame * (0.85 + 0.15 * lip), 0.4);
+    }
+    // the cut face of plate i at P (on the plane through its middle): a bridge-girder profile in (u, v)
+    vec3 plateCut(int i, vec3 P) {
+      vec3 U = uPlB[i].xyz, n = uPlC[i].xyz, V = cross(n, U), d = P - uPlA[i].xyz;
+      float u = dot(d, U), v = dot(d, V), hu = uPlA[i].w, hv = uPlB[i].w;
+      float fl = 0.11, flange = smoothstep(hv - fl - 0.02, hv - fl, abs(v)), ribs = abs(fract(u / 1.5 + 0.5) - 0.5) * 1.5, rib = 1.0 - smoothstep(0.06, 0.08, ribs);
+      float endc = 1.0 - smoothstep(0.1, 0.13, hu - abs(u));
+      vec3 web = vec3(0.30, 0.34, 0.40) * (0.88 + 0.08 * sin(v * 70.0) + 0.04 * plHash(vec2(floor(u * 5.0), 3.0)));
+      vec3 fla = vec3(0.62, 0.66, 0.72) * (0.8 + 0.2 * cos(abs(v) / hv * 3.14159 * 4.0));         // a polished flange: a banded highlight
+      vec3 c = mix(web, vec3(0.46, 0.5, 0.56), max(rib, endc));
+      c = mix(c, fla, flange);
+      float bolt = max(plBolt(vec2(u, abs(v) - hv + fl * 0.5), 0.45, 0.04) * flange, plBolt(vec2(u + 0.07, v * 2.0), 0.3, 0.035) * rib);
+      c = mix(c, vec3(0.16, 0.17, 0.19), bolt * 0.85) + bolt * 0.12;
+      return c;
+    }`;
   const COMMON = /* glsl */`
+    uniform float uNL, uSL;   // P38: lattice columns per side / map side (m): textures and the water map are sized per map
+    ${FOAM_GLSL}
+    ${PLATE_GLSL}
+    float gMetal = 0.0;
+    float fakeEnvK = 0.0;
     uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tWater; uniform sampler2D tCover; uniform float uPlayR;
     uniform vec3 uO, uN, uHaze, uGrassTint, uDryTint, uSunDir;
     uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze;
@@ -166,6 +254,7 @@
     }
     ${HOT}
     vec3 terrainColor(vec3 nW, out float rough, out vec3 emis, out float relief, out float glintD){
+      gMetal = 0.0;
       vec3 bw = pow(abs(nW), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);
       vec2 dPx = dFdx(vT.xz), dPy = dFdy(vT.xz);           // uniform control flow (used by the lava branch)
       float fw = max(length(dFdx(vT)), length(dFdy(vT)));   // pixel footprint (m), for the relief octaves
@@ -197,7 +286,7 @@
       vec4 RA = mix(uRelief[i1], uRelief[i2], t);
       float GD = mix(uGlint[i1], uGlint[i2], t);
       // surface state from the simulation (grass cover, dryness, char, burning)
-      vec4 sf = texture(tSurf, (vT.xz * 2.0 + 0.5) / 193.0);   // 193 columns, texel centres at x = i * 0.5
+      vec4 sf = texture(tSurf, (vT.xz * 2.0 + 0.5) / uNL);   // 193 columns, texel centres at x = i * 0.5
       float up = nW.y, sky = (1.0 - smoothstep(0.05, 0.35, vDepth));
       float cover = sf.r * smoothstep(0.55, 0.8, up + (nb - 0.5) * 0.25) * sky;
       vec3 gT = triA(12.0, vT, bw, 0.33), dT = triA(13.0, vT, bw, 0.3);
@@ -205,7 +294,7 @@
       col = mix(col, grass, smoothstep(0.15, 0.6, cover));
       // weather cover (5e): per-column snow / ash depth from the sim (render/weather.js tCover: r / g = depth / 0.4 m)
       // on up-facing, sky-exposed surfaces; full from ~5 cm snow / ~3 cm ash, patchy below; uSnow = a uniform floor
-      vec2 cvr = texture(tCover, (vT.xz * 2.0 + 0.5) / 193.0).rg * 0.4;
+      vec2 cvr = texture(tCover, (vT.xz * 2.0 + 0.5) / uNL).rg * 0.4;
       float upM = smoothstep(0.45, 0.75, up + (nb - 0.5) * 0.3) * sky;
       float sn = max(uSnow, cvr.x > 0.002 ? smoothstep(0.2, 0.8, cvr.x / 0.05 + (nb - 0.5) * 0.6) : 0.0) * upM;
       col = mix(col, triA(5.0, vT, bw, 0.2) * vec3(1.0, 1.02, 1.06), sn);
@@ -227,7 +316,7 @@
       // water: wet band, depth tint and caustics below the (simulated) surface
       // tWater: render/water.js map (one texel per column: r surface or bed, g depth, b foam, a wetness) or a blank
       // texture (legacy: still sea at uSea)
-      vec4 wt = texture(tWater, uWaterTex > 0.5 ? (vW.xz * 2.0 + 0.5) / 193.0 : vW.xz / 96.0);
+      vec4 wt = texture(tWater, uWaterTex > 0.5 ? (vW.xz * 2.0 + 0.5) / uNL : vW.xz / uSL);
       float surf = uWaterTex > 0.5 ? (wt.g > -0.6 ? wt.r : -99.0) : (wt.r > 0.0 ? wt.r : uSea);   // g < 0: dry bank next to water (signed depth)
       float under = surf - vW.y;
       float wetB = smoothstep(-0.45, 0.0, under);
@@ -286,11 +375,26 @@
         float bar = 1.0 - smoothstep(0.06, 0.12, min(abs(fract(q.x + q.y) - 0.5), abs(fract(q.x - q.y) - 0.5)));
         float rv = 1.0 - smoothstep(0.08, 0.13, length(fract(q * 2.0) - 0.5));
         vec3 steel = vec3(0.47, 0.24, 0.12) * (0.85 + 0.3 * nb) * (1.0 - 0.38 * bar) + vec3(0.12, 0.1, 0.08) * rv;
+        // P37 W4: the foam skin: the honeycomb as a white relief (triplanar on the dominant axis of the normal) + a little bubble noise
         float bub = texture(tNoise, vT.xz * 3.1 + vT.y * 1.7).r;
-        vec3 foam = vec3(0.86, 0.9, 0.95) * (0.82 + 0.18 * smoothstep(0.3, 0.7, bub));
+        vec2 fq = abs(nW.y) > 0.62 ? vT.xz : (abs(nW.x) > abs(nW.z) ? vT.zy : vT.xy);
+        vec3 foam = foamLook(fq, 0.3, up * 0.5 + 0.5) * (0.96 + 0.04 * smoothstep(0.3, 0.7, bub));
         float ks = smoothstep(0.2, 0.55, xs), kf = smoothstep(0.2, 0.55, xf);
         col = mix(mix(col, steel, ks), foam, kf);
-        rough = mix(mix(rough, 0.42, ks), 0.9, kf); RA *= 1.0 - max(ks, kf); GD *= 1.0 - max(ks, kf); emis *= 1.0 - max(ks, kf);
+        rough = mix(mix(rough, 0.42, ks), 0.9, kf); RA *= 1.0 - max(ks, kf); GD *= 1.0 - max(ks, kf); emis *= 1.0 - max(ks, kf); emis += kf * vec3(0.16, 0.17, 0.185);   // (P37: foam self-lights a little: white in any light)
+      }
+      // P37 W4: the girder plate: frame, sheets and bolts in plate-local coordinates, polished (see PLATE_GLSL)
+      if (xs > 0.02 && uNPl > 0) {
+        int pi = plateIdx(vW);
+        if (pi >= 0) {
+          vec4 pc = plateCol(pi, vW, nW);
+          vec3 V3 = normalize(cameraPosition - vW), R = reflect(-V3, nW);
+          vec3 env = mix(vec3(0.30, 0.27, 0.24), mix(vec3(0.88, 0.9, 0.94), vec3(0.42, 0.6, 0.92), smoothstep(0.1, 0.85, R.y)), smoothstep(-0.2, 0.08, R.y));
+          float fres = 0.18 + 0.82 * pow(1.0 - max(dot(nW, V3), 0.0), 4.0), sun = pow(max(dot(R, normalize(uSunDir)), 0.0), 120.0);
+          float kp = smoothstep(0.2, 0.55, xs);
+          col = mix(col, pc.rgb, kp); rough = mix(rough, mix(0.5, 0.2, pc.a), kp); gMetal = kp * 0.7 * pc.a;
+          emis += kp * pc.a * (env * fres * pc.rgb * 0.75 + vec3(sun * 1.6));
+        }
       }
       float sv; relief = reliefH(vT, RA, fw, sv); glintD = GD;
       rough = min(1.0, sqrt(rough * rough + sv));
@@ -312,6 +416,7 @@
     if (mode === 1 || mode === 3) Object.assign(opts, { transparent: true, depthWrite: false });
     if (mode === 2) Object.assign(opts, { colorWrite: false });
     const m = new T.MeshStandardMaterial(opts);
+    m.userData.sectionMargin = 0;                         // P46: the terrain's front limit is slice zero itself (render/section.js)
     if (mode === 0) m.shadowSide = T.DoubleSide;
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
@@ -319,8 +424,14 @@
       // slice zero (t = 0) is the collision section: the slab is everything from -uBack up to it, nothing in front
       // D6: a dry world's lattice is drawn only inside the disc uLatR (x, z, r; r 0 = off): the far grid beyond it
       // (render/dunes.js); rock pieces (body) are never clipped
-      const clip = (mode === 0 ? 'if (tD > 0.0 || tD < -uBack) discard;' : mode === 3 ? 'if (tD < 0.0) discard;' : 'if (tD > -uBack) discard;') +
+      const clip = (mode === 0 ? 'if (tD < -uBack) discard;' : mode === 3 ? 'if (tD < 0.0) discard;' : 'if (tD > -uBack) discard;') +
         (body ? '' : ' if (uLatR.z > 0.0 && distance(vW.xz, uLatR.xy) > uLatR.z) discard;');
+      if (mode === 2) {
+        /* P38-R4: the far context's depth pre-pass writes depth only: the clip tests and nothing else (it ran the full terrain
+         * shader + the PBR lighting for nothing: colorWrite is off). The vertex shader is the same as the colour pass's (same depth). */
+        sh.fragmentShader = 'uniform vec3 uO, uN, uLatR; uniform float uBack; varying vec3 vW;\nvoid main() {\n float tD = dot(vW - uO, uN);\n ' + clip + '\n gl_FragColor = vec4(0.0);\n}';
+        return;
+      }
       sh.fragmentShader = COMMON + sh.fragmentShader
         .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
           float tD = dot(vW - uO, uN);
@@ -330,6 +441,7 @@
           float tRough, tRelief, tGlint; vec3 tEmis;
           vec3 col = terrainColor(normalize(vTN), tRough, tEmis, tRelief, tGlint);
           ${mode === 0 ? `if (!gl_FrontFacing) { col = texture(tMats, vec3(vT.xz*0.1 + vT.y*0.07, 14.0)).rgb * 0.35; tEmis = vec3(0.0);
+            col = mix(col, vec3(0.88, 0.92, 0.97), smoothstep(0.2, 0.55, vMD.y));   // P37 W4: the inside of foam is white, not dark
             if (uDbgBack > ${body ? '0.5' : '1.5'}) { col = vec3(0.0); tEmis = vec3(4.0, 0.0, 4.0); } }` : ''}
           diffuseColor.rgb = col;
           ${mode === 1 || mode === 3 ? /* glsl */`
@@ -340,6 +452,7 @@
         `)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
           roughnessFactor = tRough;`)
+        .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n metalnessFactor = gMetal;')
         // LV2 relief normals: Mikkelsen 2010 surface gradient from screen-space derivatives of the relief height (m)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
           {
@@ -361,10 +474,11 @@
   /* shadow pass for the slab: same clip */
   function slabDepthMaterial() {
     const m = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, side: T.DoubleSide });
+    m.userData.sectionMargin = 0;
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, { uO: U.uO, uN: U.uN, uBack: U.uBack, uLatR: U.uLatR });
       sh.vertexShader = 'varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-      sh.fragmentShader = 'uniform vec3 uO, uN, uLatR; uniform float uBack; varying vec3 vW;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n float tD = dot(vW - uO, uN); if (tD > 0.0 || tD < -uBack) discard;' +
+      sh.fragmentShader = 'uniform vec3 uO, uN, uLatR; uniform float uBack; varying vec3 vW;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n float tD = dot(vW - uO, uN); if (tD < -uBack) discard;' +
         ' if (uLatR.z > 0.0 && distance(vW.xz, uLatR.xy) > uLatR.z) discard;');
     };
     m.customProgramCacheKey = () => 'slabdepth2';
@@ -377,18 +491,21 @@
    * lattice point). The jitter is low-frequency (~1-2 m) so boundaries wander instead of growing teeth. */
   function capMaterial() {
     const m = new T.MeshStandardMaterial({ roughness: 0.95, metalness: 0, side: T.DoubleSide });
+    m.userData.sectionMargin = 0;
     const bspline = Q.name !== 'low';
     m.onBeforeCompile = sh => {
       if (bspline) sh.fragmentShader = '#define CAP_BSPLINE 1\n' + sh.fragmentShader;
-      Object.assign(sh.uniforms, U, FAR, CAPU, { tVol: { value: volTex }, uVolSize: { value: new T.Vector3(SS.world.NX, SS.world.NY, SS.world.NZ) }, uCapN: capN });
+      Object.assign(sh.uniforms, U, FAR, CAPU, { tVol: { value: volTex }, uVolSize: { value: VOLSIZE }, uCapN: capN });
       // the plane mesh sits 2 mm behind slice zero; everything is sampled ON slice zero (t = 0: the collision plane, O1)
       sh.vertexShader = 'uniform vec3 uO, uN; varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vW -= uN * dot(vW - uO, uN);');
       sh.fragmentShader = /* glsl */`
         uniform highp sampler3D tVol; uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tCover; uniform highp sampler2D tLavaS;
         uniform vec3 uVolSize, uO, uN, uGrassTint; uniform float uTime, uSea, uHalf, uVolc; uniform vec3 uMatTint[12];
         uniform highp sampler2D tFar; uniform vec4 uFar; uniform vec2 uLat; uniform vec3 uLatR;   // D5 far strip: u0, du, n, on; lattice size; D6 disc
-        uniform highp sampler3D tN3; uniform float uS0;
+        uniform highp sampler3D tN3; uniform float uS0; uniform float uNL, uSL;
         varying vec3 vW;
+        ${FOAM_GLSL}
+        ${PLATE_GLSL}
         // C1 (user: the face must not SCROLL while the section turns; each spot morphs into another random part of the
         // texture, faster the further from the worm): textures are pinned to the face, pu = (τ, y), τ = s + uS0 (s =
         // distance from the pivot along the face; uS0 absorbs pivot moves on the same plane); the variety comes from a
@@ -452,8 +569,8 @@
         vec3 capCol(int mat, vec2 pu, vec3 strata, float dd, vec4 sf, float heat, out vec3 em){
           em = vec3(0.0);
           // P7: girder steel (13): the beam's cut, a painted plate with a dark web line; foam (14): bubbly pale cells
-          if (mat == 13) { float web = 1.0 - smoothstep(0.03, 0.06, abs(fract(pu.y * 1.6) - 0.5)); return vec3(0.47, 0.24, 0.12) * (1.0 - 0.45 * web) * (0.9 + 0.2 * texture(tNoise, pu * 0.5).r); }
-          if (mat == 14) { float b = texture(tNoise, pu * 1.7).r; return vec3(0.86, 0.9, 0.95) * (0.78 + 0.22 * smoothstep(0.35, 0.65, b)); }
+          if (mat == 13) { int pi = uNPl > 0 ? plateIdx(vW) : -1; if (pi >= 0) return plateCut(pi, vW); float web = 1.0 - smoothstep(0.03, 0.06, abs(fract(pu.y * 1.6) - 0.5)); return vec3(0.47, 0.24, 0.12) * (1.0 - 0.45 * web) * (0.9 + 0.2 * texture(tNoise, pu * 0.5).r); }
+          if (mat == 14) { em = vec3(0.2, 0.21, 0.225); return foamLook(pu, 0.2, 1.0); }        // P37 W4: white honeycomb cut (a field of hexagonal cells looking into the block)
           // P31 obsidian cut: black glass, curved conchoidal fracture lines, a faint grey flow banding
           if (mat == 16) { float cf = texture(tNoise, pu * 0.8).r, rip = 0.5 + 0.5 * sin(cf * 30.0); float band = texture(tNoise, vec2(pu.x * 0.15, pu.y * 2.2)).g;
             return vec3(0.03, 0.028, 0.034) * (0.8 + 0.4 * rip) + vec3(0.025) * smoothstep(0.62, 0.8, band); }
@@ -555,7 +672,7 @@
           // (nothing solid within 4 m above), is drawn as the cover layer lying on the section's ground line
           float capCv = 0.0, capAsh = 0.0;
           if (d0 <= 0.0 && !capLava && !outL) {
-            vec2 cq = texture(tCover, (vW.xz * 2.0 + 0.5) / 193.0).rg * 0.4;
+            vec2 cq = texture(tCover, (vW.xz * 2.0 + 0.5) / uNL).rg * 0.4;
             float cT = cq.x + cq.y;
             if (cT > 0.004 && dens(vW - vec3(0.0, cT, 0.0)) > 0.0) {
               capCv = 1.0; capAsh = cq.y / cT;
@@ -568,6 +685,7 @@
           vec2 jn = vec2(n3(vW * vec3(0.11, 0.13, 0.11)).r, n3(vW * vec3(0.13, 0.11, 0.13) + vec3(0.5, 0.3, 0.7)).r) - 0.5;
           jn += (vec2(n3(vW * vec3(0.031, 0.037, 0.031)).g, n3(vW * vec3(0.037, 0.031, 0.037) + vec3(0.4, 0.7, 0.2)).g) - 0.5) * 0.45;
           vec3 jp = vW + vec3(dW.x, 0.0, dW.y) * jn.x * 0.9 + vec3(0.0, jn.y * 0.8, 0.0);
+          if (uNPl > 0 && plateIdx(vW) >= 0) jp = vW;       // P37 W4: a plate's cut keeps its crisp straight edges (no organic wobble)
           vec3 gg = jp / 0.5;
           ivec3 vmax = ivec3(uVolSize) - 1;
           float Wm[17];            // materials 1-16 (13 girder steel, 14 foam, 15 concrete, 16 obsidian: their own cap colours, capCol)
@@ -626,7 +744,7 @@
           vec2 pu = vec2(tau, vW.y);
           vec3 strata = texM(vec2(tau, vW.y + warp), vec2(0.11, 0.085), 14.0, vec2(1.0, 0.0)) * mix(vec3(0.92), vec3(1.08), nb);
           float dd = depthB + (nb - 0.5) * 0.25;
-          vec4 sf = outL || deepR ? vec4(0.0) : texture(tSurf, (vW.xz * 2.0 + 0.5) / 193.0);
+          vec4 sf = outL || deepR ? vec4(0.0) : texture(tSurf, (vW.xz * 2.0 + 0.5) / uNL);
           vec3 e1, e2;
           vec3 col = capCol(m1, pu, strata, dd, sf, heat, e1);
           float tb = w2 > 0.0 ? smoothstep(-0.24, 0.24, (w2 - w1) / (w1 + w2) + (n3(vW * vec3(0.09, 0.1, 0.09) + float(m2) * 0.37).r - n3(vW * vec3(0.09, 0.1, 0.09) + float(m1) * 0.37).r) * 0.25) : 0.0;
@@ -662,13 +780,16 @@
       uGrassTint: { value: new T.Color(1, 1, 1) }, uDryTint: { value: new T.Color(1, 1, 1) }, uSunDir: { value: new T.Vector3(0, 1, 0) },
       uHalf: { value: C.HALF }, uBack: { value: C.HALF }, uAlpha: { value: 0 }, uTime: { value: 0 }, uSea: { value: W.SEA }, uWaterTex: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
       uCaustic: { value: 1 }, uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
+      uNL: { value: W.NX }, uSL: { value: W.SX },
       uLatR: { value: new T.Vector3(48, 48, 0) },   // D6: dry worlds' lattice disc (x, z, r; r 0 = off, set per frame)
+      uPlA: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uPlB: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uPlC: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uNPl: { value: 0 },   // P37 W4: plate registry
       uMatP: { value: MATP.map(p => new T.Vector4(p[0], p[1], p[2], p[3])) },
       uMatTint: { value: TINT.map(c => new T.Vector3(c[0], c[1], c[2])) },
       uRelief: { value: RELIEF.map(c => new T.Vector4(c[0], c[1], c[2], c[3])) }, tRel: { value: tx.noise3 }, uGlint: { value: GLINT.slice() }
     });
     // 3D world texture RG16F: R = density (raw, linear filtering = the sim's trilinear W.sample; 8-bit put the cap's
     // edge up to 15 cm off the collision line, O1), G = material | heat << 5 as an integer (texelFetch; P31: 5 material bits for obsidian, 16)
+    VOLSIZE.set(W.NX, W.NY, W.NZ);
     volData = new Uint16Array(W.N * 2);
     volTex = new T.Data3DTexture(volData, W.NX, W.NY, W.NZ);
     volTex.format = T.RGFormat; volTex.type = T.HalfFloatType; volTex.unpackAlignment = 1;
@@ -767,9 +888,25 @@
     return c;
   }
   const built = [];
+  let chunkMs = 2;                                       // expected cost of one chunk build (ms)
   /* full build at load (async, reports progress) */
+  /* P38: the map size changed (a new World lattice): re-create the volume texture and the size uniforms. */
+  function resize() {
+    const W = SS.world;
+    if (volTex.image.width === W.NX && volTex.image.height === W.NY && volTex.image.depth === W.NZ) return;
+    volTex.dispose();                                    // (three: the old GL storage is immutable, a new one is allocated)
+    volData = new Uint16Array(W.N * 2);
+    volTex.image = { data: volData, width: W.NX, height: W.NY, depth: W.NZ };
+    volTex.needsUpdate = true;
+    VOLSIZE.set(W.NX, W.NY, W.NZ);
+    U.uNL.value = W.NX; U.uSL.value = W.SX;
+    FAR.uLat.value.set(W.SX, W.SZ);
+    farKey = null; farRange = null;
+  }
   TR.buildAll = async function (renderer, onProgress) {
-    const W = SS.world, n = W.CX * W.CY * W.CZ;
+    const W = SS.world;
+    resize();
+    const n = W.CX * W.CY * W.CZ;
     TR.dispose();
     built.length = n;
     packBox(0, 0, 0, W.NX - 1, W.NY - 1, W.NZ - 1); volTex.needsUpdate = true;
@@ -792,15 +929,18 @@
     if (order.length) {
       const pr = ci => { const c = chunks[ci]; if (!c || !c.box) return 1; return slabHits(c.box, S, n0) ? 0 : 1; };
       order.sort((a, b) => pr(a) - pr(b));
-      for (const ci of order) {
-        const c = buildChunk(ci); built[ci] = c.ver;
-        if (performance.now() - t0 > budgetMs) break;
+      /* P38-R4: the budget is checked BEFORE a build (the old check ran after it: a frame always overran by one chunk): the next chunk is
+       * built only if the time spent plus its expected cost (the slowest of the last builds, decayed) fits; at least one per frame */
+      for (let q = 0; q < order.length; q++) {
+        if (q > 0 && performance.now() - t0 + chunkMs > budgetMs) break;
+        const t1 = performance.now(), c = buildChunk(order[q]); built[order[q]] = c.ver;
+        const d = performance.now() - t1; chunkMs = d > chunkMs ? d : chunkMs * 0.9 + d * 0.1;
       }
     }
     // visibility: slab only for chunks that intersect the band
     for (const c of chunks) if (c) c.slab.visible = slabHits(c.box, S, n0);
     U.uO.value.set(S.O.x, 0, S.O.z); U.uN.value.set(n0.x, 0, n0.z);
-    { const c = W.circ; U.uLatR.value.set(c ? c.x : 48, c ? c.z : 48, c ? c.r : 0); }
+    { const c = W.circ; U.uLatR.value.set(c ? c.x : W.MX, c ? c.z : W.MZ, c ? c.r : 0); }
     // cap plane at slice zero (t = -0.002); dry worlds: out to FAR_S m beyond the lattice exits (D5 far strip)
     const d = SS.plane.dir(S), r = W.dry && SS.worldgen.far_layers ? buildFar(S, d) : SS.plane.range(S);
     // C1: a new pivot on the same plane (rotate_by re-centres O on the worm) must not shift the face's texture:
@@ -845,13 +985,16 @@
       const x = q & 1 ? box.max.x : box.min.x, z = q & 2 ? box.max.z : box.min.z, t = (x - S.O.x) * n0.x + (z - S.O.z) * n0.z;
       lo = Math.min(lo, t); hi = Math.max(hi, t);
     }
-    return lo <= 0.5 && hi >= -U.uBack.value - 0.5;
+    return (lo <= 0.5 || SS.section.frontOn) && hi >= -U.uBack.value - 0.5;
   }
   /* per frame visual uniforms */
   TR.frame = function (S, view, ctxA, inspect) {
     U.uTime.value = view.time;
     U.uAlpha.value = ctxA;
     U.uVolc.value = S.biome === 'volcanic' ? 1 : 0;          // volcanic island: the deep bedrock is black basalt too
+    { const pl = S.plates || [], n = Math.min(24, pl.length);   // P37 W4: the girder plates (shader: frame / sheets / bolts in plate-local coordinates)
+      for (let i = 0; i < n; i++) { const p = pl[i]; U.uPlA.value[i].set(p.cx, p.cy, p.cz, p.hl); U.uPlB.value[i].set(p.ux, p.uy, p.uz, p.ht); U.uPlC.value[i].set(p.nx, 0, p.nz, p.hd); }
+      U.uNPl.value = n; }
     // far context only exists beyond the slab; near context (in front of slice zero) only while inspecting
     const far = ctxA > 0.004 && U.uBack.value < 200;
     for (const c of chunks) if (c) { c.pre.visible = c.far.visible = far; c.near.visible = inspect > 0.05 && Q.nearCtx; }

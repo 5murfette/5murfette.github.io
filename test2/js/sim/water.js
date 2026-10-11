@@ -38,7 +38,7 @@
   WA.dirty_set = d => { dirty = d ? { i0: d.i0, k0: d.k0, i1: d.i1, k1: d.k1 } : null; };
   function onMark(i0, k0, i1, k1) {
     if (!dirty) dirty = { i0, k0, i1, k1 };
-    else { dirty.i0 = Math.min(dirty.i0, i0); dirty.k0 = Math.min(dirty.k0, k0); dirty.i1 = Math.max(dirty.i1, i1); dirty.k1 = Math.max(dirty.k1, k1); }
+    else { dirty.i0 = M.min(dirty.i0, i0); dirty.k0 = M.min(dirty.k0, k0); dirty.i1 = M.max(dirty.i1, i1); dirty.k1 = M.max(dirty.k1, k1); }
   }
   /* ground under column (i, k) seen from below: the first solid->air transition above bedrock */
   function bedOf(w, i, k) {
@@ -90,7 +90,7 @@
   /* release this sub-step's share of the turn's seep budget */
   function seepIn(st, w, b, dt) {
     const NX = st.NX, NZ = st.NZ, SEA = w.SEA, h = st.h, list = st.seepList;
-    const q = Math.min(st.seepLeft, K.SEEP / (st.nTeams || 2) / K.SEEP_T * dt);
+    const q = M.min(st.seepLeft, K.SEEP / (st.nTeams || 2) / K.SEEP_T * dt);
     st.seepLeft = st.seepLeft - q > 1e-9 ? st.seepLeft - q : 0;
     let added = 0;
     for (let n = 0; n < st.nSeep; n++) {
@@ -125,7 +125,7 @@
     for (let c = 0; c < N; c++) if (st.sea[c]) st.h[c] = SEA - st.b[c];
     // sponge weight and the edge each ring cell belongs to (0 -x, 1 +x, 2 -z, 3 +z)
     for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) {
-      const e = Math.min(i, k, NX - 1 - i, NZ - 1 - k), c = k * NX + i;
+      const e = M.min(M.min(M.min(i, k), NX - 1 - i), NZ - 1 - k), c = k * NX + i;
       st.ring[c] = e < K.RING ? M.pow(1 - e / K.RING, 2) : 0;
       st.side[c] = e === i ? 0 : e === NX - 1 - i ? 1 : e === k ? 2 : 3;
     }
@@ -150,19 +150,19 @@
       r.a[q] = 1 - M.exp(-K.SPONGE * st.ring[c] * K.DT * 8);
       const up = sd === 0 ? dx : sd === 1 ? -dx : sd === 2 ? dz : -dz;          // -(outward normal . heading)
       r.up[q] = up > 0 && st.swellA > 0 ? up : 0;
-      const x = i * w.H, z = k * w.H, cw = Math.sqrt(C.G * Math.max(0.5, w.SEA - st.b[c]));
+      const x = i * w.H, z = k * w.H, cw = Math.sqrt(C.G * M.max(0.5, w.SEA - st.b[c]));
       r.ph[q] = kw * (x * dx + z * dz); r.om[q] = kw * cw;
     }
     return r;
   }
 
   function refreshBeds(st, w) {
-    const NX = st.NX, NZ = st.NZ, i0 = Math.max(0, dirty.i0 - 1), k0 = Math.max(0, dirty.k0 - 1), i1 = Math.min(NX - 1, dirty.i1 + 1), k1 = Math.min(NZ - 1, dirty.k1 + 1);
+    const NX = st.NX, NZ = st.NZ, i0 = M.max(0, dirty.i0 - 1), k0 = M.max(0, dirty.k0 - 1), i1 = M.min(NX - 1, dirty.i1 + 1), k1 = M.min(NZ - 1, dirty.k1 + 1);
     dirty = null;
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const c = k * NX + i, nb = bedOf(w, i, k), surf = st.b[c] + st.h[c];
       // the water surface stays where it was: a raised bed displaces water, a crater leaves a hole the water fills
-      st.h[c] = st.h[c] > 0 ? Math.max(0, surf - nb) : 0;
+      st.h[c] = st.h[c] > 0 ? M.max(0, surf - nb) : 0;
       st.b[c] = nb;
     }
     st.seepDirty = true; st.bedVer = (st.bedVer || 0) + 1;
@@ -191,11 +191,11 @@
       const c = k * NX + i, hc = h[c];
       if (hc <= 0) { fL[c] = fR[c] = fB[c] = fF[c] = 0; continue; }
       // Step I: an intact ice sheet damps the waves under it (the swell dies in the ice)
-      const Hc = b[c] + hc, d = damp / (1 + DT * K.FRICTION / Math.max(hc, 0.01)) * (ih && ih[c] >= 2 && !icr[c] ? 1 - Math.min(0.06, ih[c] * 0.004) : 1);
-      let l = i > 0 ? Math.max(0, fL[c] * d + kf * (Hc - b[c - 1] - h[c - 1])) : 0;
-      let r = i < NX - 1 ? Math.max(0, fR[c] * d + kf * (Hc - b[c + 1] - h[c + 1])) : 0;
-      let bb = k > 0 ? Math.max(0, fB[c] * d + kf * (Hc - b[c - NX] - h[c - NX])) : 0;
-      let f = k < NZ - 1 ? Math.max(0, fF[c] * d + kf * (Hc - b[c + NX] - h[c + NX])) : 0;
+      const Hc = b[c] + hc, d = damp / (1 + DT * K.FRICTION / M.max(hc, 0.01)) * (ih && ih[c] >= 2 && !icr[c] ? 1 - M.min(0.06, ih[c] * 0.004) : 1);
+      let l = i > 0 ? M.max(0, fL[c] * d + kf * (Hc - b[c - 1] - h[c - 1])) : 0;
+      let r = i < NX - 1 ? M.max(0, fR[c] * d + kf * (Hc - b[c + 1] - h[c + 1])) : 0;
+      let bb = k > 0 ? M.max(0, fB[c] * d + kf * (Hc - b[c - NX] - h[c - NX])) : 0;
+      let f = k < NZ - 1 ? M.max(0, fF[c] * d + kf * (Hc - b[c + NX] - h[c + NX])) : 0;
       const out = (l + r + bb + f) * DT;
       if (out > hc * area) { const s = hc * area / out; l *= s; r *= s; bb *= s; f *= s; }
       fL[c] = l; fR[c] = r; fB[c] = bb; fF[c] = f;
@@ -205,14 +205,14 @@
     for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) {
       const c = k * NX + i;
       const inL = i > 0 ? fR[c - 1] : 0, inR = i < NX - 1 ? fL[c + 1] : 0, inB = k > 0 ? fF[c - NX] : 0, inF = k < NZ - 1 ? fB[c + NX] : 0;
-      const h0 = h[c], h1 = Math.max(0, h0 + inv * (inL + inR + inB + inF - fL[c] - fR[c] - fB[c] - fF[c]));
+      const h0 = h[c], h1 = M.max(0, h0 + inv * (inL + inR + inB + inF - fL[c] - fR[c] - fB[c] - fF[c]));
       h[c] = h1;
       const hm = 0.5 * (h0 + h1);
       if (hm < K.WET) { ux[c] = uz[c] = 0; continue; }
-      const den = 2 * dx * Math.max(hm, 0.05);
+      const den = 2 * dx * M.max(hm, 0.05);
       let vx = ((inL - fL[c]) + (fR[c] - inR)) / den, vz = ((inB - fB[c]) + (fF[c] - inF)) / den;
       // flux / depth blows up in thin run-up films (8+ m/s at 5 cm): report at most Froude FR_MAX (and VMAX)
-      const v2 = vx * vx + vz * vz, cap = Math.min(K.VMAX, K.FR_MAX * Math.sqrt(C.G * hm));
+      const v2 = vx * vx + vz * vz, cap = M.min(K.VMAX, K.FR_MAX * Math.sqrt(C.G * hm));
       if (v2 > cap * cap) { const f = cap / Math.sqrt(v2); vx *= f; vz *= f; }
       ux[c] = vx; uz[c] = vz;
     }
@@ -223,7 +223,7 @@
       const c = rc.c[q];
       if (b[c] >= w.SEA + 1) continue;
       const tgt = rc.up[q] > 0 ? w.SEA + st.swellA * rc.up[q] * M.sin(rc.ph[q] - rc.om[q] * st.t) : w.SEA, a = rc.a[q];
-      h[c] = Math.max(0, h[c] + (tgt - b[c] - h[c]) * a);
+      h[c] = M.max(0, h[c] + (tgt - b[c] - h[c]) * a);
       const fd = 1 - 0.5 * a; fL[c] *= fd; fR[c] *= fd; fB[c] *= fd; fF[c] *= fd;
     }
     st.ver++;
@@ -241,8 +241,17 @@
    * dry worlds have no sea (SEA below the lattice): no-op. Emits 'searise' for the renderer (outer plane, uSea). */
   WA.raise = function (S, dh) {
     const st = S.water, w = W(); if (!st || w.under || w.dry || !(dh > 0)) return;
+    // P37-1: worms standing on the floating sea ice rise WITH the sheet (before, the instant rise put their feet under the
+    // surface: every one "drowned" on its turn start, swam out onto the ice and the turn was gone -> an endless loop)
+    const onIce = [];
+    if (SS.ice && S.ice) for (const wm of S.worms) {
+      if (wm.dead || wm.swim || wm.drowning) continue;
+      const it = SS.ice.top_at(S, wm.pos.x, wm.pos.z);
+      if (it > -1e8 && Math.abs(wm.pos.y - (wm.foot || 0.5) - it) < 0.15) onIce.push(wm);
+    }
     w.SEA += dh;
     for (let c = 0; c < st.N; c++) if (st.h[c] > 0.01) st.h[c] += dh;
+    for (const wm of onIce) wm.pos.y += dh;
     st.bedVer = (st.bedVer || 0) + 1; st.ver++;
     SS.sim.emit(S, 'searise', { sea: w.SEA, dh });
   };
@@ -250,7 +259,7 @@
   WA.new_turn = function (S) {
     const st = S.water; if (!st) return;
     const per = K.SEEP / (S.teams ? S.teams.length : 2);
-    st.seepLeft = Math.min(st.seepLeft + per, 2 * per);
+    st.seepLeft = M.min(st.seepLeft + per, 2 * per);
   };
 
   /* ---------- queries ---------- */
@@ -260,7 +269,7 @@
     const st = S.water, w = W(); if (!st) return w.SEA;
     const fx = x / w.H, fz = z / w.H;
     if (fx < 0 || fz < 0 || fx > st.NX - 1 || fz > st.NZ - 1) return w.SEA;
-    const i = Math.min(st.NX - 2, Math.floor(fx)), k = Math.min(st.NZ - 2, Math.floor(fz)), u = fx - i, v = fz - k;
+    const i = M.min(st.NX - 2, Math.floor(fx)), k = M.min(st.NZ - 2, Math.floor(fz)), u = fx - i, v = fz - k;
     let sw = 0, sh = 0;
     for (let q = 0; q < 4; q++) {
       const c = (k + (q >> 1)) * st.NX + i + (q & 1), hh = st.h[c];
@@ -282,26 +291,26 @@
   /* add amp * (1 - (d/r)^2) of water within r (wet cells only; negative = a dip) */
   WA.disturb = function (S, x, z, r, amp) {
     const st = S.water, w = W(); if (!st) return;
-    const H = w.H, i0 = Math.max(0, Math.floor((x - r) / H)), i1 = Math.min(st.NX - 1, Math.ceil((x + r) / H));
-    const k0 = Math.max(0, Math.floor((z - r) / H)), k1 = Math.min(st.NZ - 1, Math.ceil((z + r) / H));
+    const H = w.H, i0 = M.max(0, Math.floor((x - r) / H)), i1 = M.min(st.NX - 1, Math.ceil((x + r) / H));
+    const k0 = M.max(0, Math.floor((z - r) / H)), k1 = M.min(st.NZ - 1, Math.ceil((z + r) / H));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
-      const c = k * st.NX + i, d2 = ((i * H - x) ** 2 + (k * H - z) ** 2) / (r * r);
+      const c = k * st.NX + i, dx2 = i * H - x, dz2 = k * H - z, d2 = (dx2 * dx2 + dz2 * dz2) / (r * r);
       if (d2 >= 1 || st.h[c] <= K.WET) continue;
-      st.h[c] = Math.max(0, st.h[c] + amp * (1 - d2));
+      st.h[c] = M.max(0, st.h[c] + amp * (1 - d2));
     }
     st.ver++;
   };
   /* a mound of height a and radius r at (x, z), its volume taken from the ring r..2r (volume-neutral) */
   function mound(st, w, x, z, r, a) {
-    const H = w.H, R2 = 2 * r, i0 = Math.max(0, Math.floor((x - R2) / H)), i1 = Math.min(st.NX - 1, Math.ceil((x + R2) / H));
-    const k0 = Math.max(0, Math.floor((z - R2) / H)), k1 = Math.min(st.NZ - 1, Math.ceil((z + R2) / H));
+    const H = w.H, R2 = 2 * r, i0 = M.max(0, Math.floor((x - R2) / H)), i1 = M.min(st.NX - 1, Math.ceil((x + R2) / H));
+    const k0 = M.max(0, Math.floor((z - R2) / H)), k1 = M.min(st.NZ - 1, Math.ceil((z + R2) / H));
     let vin = 0, nring = 0;
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const c = k * st.NX + i; if (st.h[c] <= K.WET) continue;
       const d = M.len2(i * H - x, k * H - z);
       if (d < r) { const dh = a * (1 - (d / r) * (d / r)); st.h[c] += dh; vin += dh; } else if (d < R2) nring++;
     }
-    if (nring) { const dd = vin / nring; for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) { const c = k * st.NX + i, d = M.len2(i * H - x, k * H - z); if (d >= r && d < R2 && st.h[c] > K.WET) st.h[c] = Math.max(0, st.h[c] - dd); } }
+    if (nring) { const dd = vin / nring; for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) { const c = k * st.NX + i, d = M.len2(i * H - x, k * H - z); if (d >= r && d < R2 && st.h[c] > K.WET) st.h[c] = M.max(0, st.h[c] - dd); } }
   }
 
   /* blast hook: cavity + rim (volume-neutral), and an underwater charge's delayed collapse jet */
@@ -312,13 +321,13 @@
     const depth = surf - c.y, s3 = M.cbrt(Wkg);
     if (depth < -1.2 * s3) return;                                   // air burst too high to dent the water
     const under = depth > 0.3, att = depth > 3 ? M.exp(-(depth - 3) / 3) : 1, R = 2.8 * s3, A = (under ? 1.1 : 0.7) * s3 * att;
-    const H = w.H, Rr = 1.7 * R, i0 = Math.max(0, Math.floor((c.x - Rr) / H)), i1 = Math.min(st.NX - 1, Math.ceil((c.x + Rr) / H));
-    const k0 = Math.max(0, Math.floor((c.z - Rr) / H)), k1 = Math.min(st.NZ - 1, Math.ceil((c.z + Rr) / H));
+    const H = w.H, Rr = 1.7 * R, i0 = M.max(0, Math.floor((c.x - Rr) / H)), i1 = M.min(st.NX - 1, Math.ceil((c.x + Rr) / H));
+    const k0 = M.max(0, Math.floor((c.z - Rr) / H)), k1 = M.min(st.NZ - 1, Math.ceil((c.z + Rr) / H));
     let vout = 0, wr = 0;
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const q = k * st.NX + i; if (st.h[q] <= K.WET) continue;
       const d = M.len2(i * H - c.x, k * H - c.z);
-      if (d < R) { const dh = Math.min(st.h[q], A * (1 - (d / R) * (d / R))); st.h[q] -= dh; vout += dh; }
+      if (d < R) { const dh = M.min(st.h[q], A * (1 - (d / R) * (d / R))); st.h[q] -= dh; vout += dh; }
       else if (d < Rr) wr += M.sin(Math.PI * (d - R) / (Rr - R));
     }
     if (wr > 0) for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
@@ -328,7 +337,7 @@
     }
     // the cavity collapses inward (implosion) and its converging walls throw up the central jet: a mound at t + 0.2-0.3 s
     // that falls back as the second ring (both for charges under the surface and for contact bursts on it)
-    const tJet = under ? 0.3 : 0.2, jetH = Math.min(16, Math.max(2, (under ? 8 : 5) * s3 * att));
+    const tJet = under ? 0.3 : 0.2, jetH = M.min(16, M.max(2, (under ? 8 : 5) * s3 * att));
     st.pend.push({ t: st.t + tJet, x: c.x, z: c.z, r: R * 0.42, a: A * (under ? 0.9 : 0.6) });
     st.ver++;
     SS.sim.emit(S, 'waterblast', { x: c.x, y: surf, z: c.z, R, A, under, depth, tJet, jetH });
@@ -340,7 +349,7 @@
     const a = W().H * W().H;
     for (let c = 0; c < st.N; c++) {
       const hh = st.h[c]; if (hh <= K.WET) continue;
-      wet++; vol += hh * a; vmax = Math.max(vmax, M.len2(st.ux[c], st.uz[c])); hmax = Math.max(hmax, st.bed[c] + hh);
+      wet++; vol += hh * a; vmax = M.max(vmax, M.len2(st.ux[c], st.uz[c])); hmax = M.max(hmax, st.bed[c] + hh);
     }
     return { vol, wet, vmax, hmax, seepCells: st.nSeep, seepVol: st.seepVol, seepLeft: st.seepLeft };
   };

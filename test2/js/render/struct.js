@@ -24,8 +24,6 @@
     sh.vertexShader = 'attribute float aDeck; varying vec3 vW; varying vec3 vObj; varying float vDeck;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
       vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vObj = transformed; vDeck = aDeck;`);
     sh.fragmentShader = FS_HEAD + '\n' + sh.fragmentShader
-      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
-        if (uClip > 0.5 && uInsp < 0.5 && dot(vW - uO, uN) > 0.02) discard;`)
       .replace('#include <map_fragment>', /* glsl */`
         // texture space: object space for fallen pieces (rust stays on the steel), world space for the standing bridge
         vec3 tp = uClip > 0.5 ? vW : vObj;
@@ -51,6 +49,7 @@
   }
   function mkMat(clip) {
     const m = new T.MeshStandardMaterial({ roughness: 0.6, metalness: 0, side: T.DoubleSide });
+    if (clip) m.userData.sectionMargin = 0.02;           // P46: the standing bridge ends at slice zero (+2 cm); fallen pieces use the default margin
     m.onBeforeCompile = sh => patch(sh, clip);
     m.customProgramCacheKey = () => 'struct' + (clip ? 'C' : 'P');
     return m;
@@ -109,11 +108,7 @@
     own = { uPaint: { value: new T.Color(0.07, 0.17, 0.1) }, uInsp: { value: 0 } };
     mat = mkMat(true); matPiece = mkMat(false);
     depth = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking });
-    depth.onBeforeCompile = sh => {
-      Object.assign(sh.uniforms, { uO: U.uO, uN: U.uN, uInsp: own.uInsp });
-      sh.vertexShader = 'varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-      sh.fragmentShader = 'uniform vec3 uO, uN; uniform float uInsp; varying vec3 vW;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n if (uInsp < 0.5 && dot(vW - uO, uN) > 0.02) discard;');
-    };
+    depth.userData.sectionMargin = 0.02;
     depth.customProgramCacheKey = () => 'structDepth';
   };
   SV.clear = function () { for (const [, it] of items) { scene.remove(it.mesh); it.mesh.geometry.dispose(); } items.clear(); };

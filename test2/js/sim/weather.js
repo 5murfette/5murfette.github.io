@@ -47,7 +47,7 @@
   const WE = SS.weather = {};
   const W = () => SS.world;
 
-  const gustOf = v => v <= 0 ? 0 : Math.min(0.35, 0.2 + 0.0125 * v);
+  const gustOf = v => v <= 0 ? 0 : M.min(0.35, 0.2 + 0.0125 * v);
 
   function pickKind(S, r) {
     if (W().under) return 'clear';                                    // U: no weather underground
@@ -55,7 +55,7 @@
     if (want && want !== 'auto' && C.WEATHER_KIND[want]) return want;
     const tab = C.WEATHER_AUTO[S.biome] || C.WEATHER_AUTO.temperate;
     let u = M.rng_next(r), last = 'clear';
-    for (const k of Object.keys(tab)) { last = k; u -= tab[k]; if (u < 0) return k; }
+    for (let i = 0; i < tab.length; i++) { last = tab[i][0]; u -= tab[i][1]; if (u < 0) return last; }
     return last;
   }
 
@@ -99,7 +99,7 @@
     // ground per cell: mean of W.top over its columns
     for (let ck = 0; ck < GN; ck++) for (let ci = 0; ci < GN; ci++) {
       let s = 0, n = 0;
-      for (let k = ck * per; k < Math.min(wd.NZ, ck * per + per); k++) for (let i = ci * per; i < Math.min(wd.NX, ci * per + per); i++) { s += wd.top[k * wd.NX + i]; n++; }
+      for (let k = ck * per; k < M.min(wd.NZ, ck * per + per); k++) for (let i = ci * per; i < M.min(wd.NX, ci * per + per); i++) { s += wd.top[k * wd.NX + i]; n++; }
       f.hg[ck * GN + ci] = n ? s / n : wd.SEA;
     }
     // neighbourhood mean (separable box, radius MEAN_R)
@@ -116,28 +116,28 @@
       const sp = 1 + M.clamp(K.RIDGE_K * e, K.RIDGE_MIN, K.RIDGE_MAX);
       // lee: the highest ground upwind within LEE_SCAN
       let crest = g;
-      for (let d = GC; d <= K.LEE_SCAN + 1e-6; d += GC) crest = Math.max(crest, samp(x - ux * d, z - uz * d));
+      for (let d = GC; d <= K.LEE_SCAN + 1e-6; d += GC) crest = M.max(crest, samp(x - ux * d, z - uz * d));
       const lee = sstep(K.LEE_DH[0], K.LEE_DH[1], crest - g);
       // channelling: valley cells turn toward the contour of the smoothed ground (the side with u . t > 0)
-      const gx = (mn[k * GN + Math.min(GN - 1, i + 1)] - mn[k * GN + Math.max(0, i - 1)]) / (2 * GC), gz = (mn[Math.min(GN - 1, k + 1) * GN + i] - mn[Math.max(0, k - 1) * GN + i]) / (2 * GC);
+      const gx = (mn[k * GN + M.min(GN - 1, i + 1)] - mn[k * GN + M.max(0, i - 1)]) / (2 * GC), gz = (mn[M.min(GN - 1, k + 1) * GN + i] - mn[M.max(0, k - 1) * GN + i]) / (2 * GC);
       const gl = M.len2(gx, gz), chan = sstep(K.CHAN[0], K.CHAN[1], -e) * sstep(0.03, 0.12, gl) * K.CHAN_MIX;
       let dx = ux, dz = uz;
       if (chan > 0) {
         let tx = -gz / gl, tz = gx / gl; if (tx * ux + tz * uz < 0) { tx = -tx; tz = -tz; }
-        dx = ux + (tx - ux) * chan; dz = uz + (tz - uz) * chan; const l = M.len2(dx, dz) || 1; dx /= l; dz /= l;
+        dx = ux + (tx - ux) * chan; dz = uz + (tz - uz) * chan; const l = M.nz(M.len2(dx, dz), 1); dx /= l; dz /= l;
       }
       f.fx[c] = dx * sp * (1 - lee) - ux * K.LEE_REV * lee;
       f.fz[c] = dz * sp * (1 - lee) - uz * K.LEE_REV * lee;
       f.sp[c] = sp; f.crest[c] = lee > 0 ? crest : g;
       // whirl candidates: cliff feet in the lee, canyon floors, flat hot desert (above the sea)
-      const wgt = Math.max(lee > 0.3 ? 1 : 0, chan > 0.4 ? 1 : 0, desert && gl < 0.08 && g > wd.SEA + 0.5 ? 0.5 : 0);
+      const wgt = M.max(M.max(lee > 0.3 ? 1 : 0, chan > 0.4 ? 1 : 0), desert && gl < 0.08 && g > wd.SEA + 0.5 ? 0.5 : 0);
       if (wgt > 0 && g > wd.SEA + 0.3) { f.cand[nc] = c; f.candW[nc] = wgt; nc++; }
     }
-    f.nCand = nc; f.ver = wd.version; f.dir = w.dir; f.t = S.time; f.builds++;   // (no timing here: the sim never reads the wall clock; profile from the platform)
+    f.nCand = nc; f.ver = wd.version - (S.verBase || 0); f.dir = w.dir; f.t = S.time; f.builds++;   // (no timing here: the sim never reads the wall clock; profile from the platform)
   }
   function needField(S) {
     const f = S.wind.field;
-    return !f || f.dir !== S.wind.dir || (f.ver !== W().version && S.time - f.t >= 0.5);
+    return !f || f.dir !== S.wind.dir || (f.ver !== W().version - (S.verBase || 0) && S.time - f.t >= 0.5);
   }
 
   /* ---------- whirlwinds (5b) ---------- */
@@ -153,14 +153,14 @@
     if (W().under) { S.wind.whirls.length = 0; return; }              // U: no whirlwinds in the caves
     const w = S.wind, we = S.weather, WH = K.WHIRL, wd = W();
     // one draw per second of sim time: deterministic spawn cadence
-    we.whirlAcc = (we.whirlAcc || 0) + dt;
+    we.whirlAcc += dt;
     while (we.whirlAcc >= 1) {
       we.whirlAcc -= 1;
       const u = M.rng_next(we.rng);
       const hot = S.biome === 'desert' && we.kind === 'clear';
       if (w.whirls.length >= WH.MAX || (w.speed < WH.MIN_WIND && !hot) || u >= WH.RATE) continue;
       const f = w.field; if (!f || !f.nCand) continue;
-      let tot = 0; const O = S.O || { x: 48, z: 48 };
+      let tot = 0; const O = S.O || { x: W().MX, z: W().MZ };
       for (let q = 0; q < f.nCand; q++) { const c = f.cand[q], x = (c % f.GN + 0.5) * GC, z = ((c / f.GN | 0) + 0.5) * GC; if (M.len2(x - O.x, z - O.z) < WH.NEAR) tot += f.candW[q]; }
       if (tot <= 0) continue;
       let pick = M.rng_next(we.rng) * tot;
@@ -178,7 +178,7 @@
       const wa = 0.4 * M.sin(wl.age * 0.9 + wl.ph);
       wl.x += (w.mean.x * 0.6 + M.cos(wl.ph + wl.age * 0.5) * wa) * dt;
       wl.z += (w.mean.z * 0.6 + M.sin(wl.ph + wl.age * 0.5) * wa) * dt;
-      wl.env = Math.min(1, wl.age / 1.5, (wl.life - wl.age) / 2);
+      wl.env = M.min(M.min(1, wl.age / 1.5), (wl.life - wl.age) / 2);
       wl.s = wl.sign * wl.vmax * wl.env;
     }
   }
@@ -207,30 +207,30 @@
   WE.dirty_set = d => { dirty = d ? { i0: d.i0, k0: d.k0, i1: d.i1, k1: d.k1 } : null; };
   function onMark(i0, k0, i1, k1) {
     if (!dirty) dirty = { i0, k0, i1, k1 };
-    else { dirty.i0 = Math.min(dirty.i0, i0); dirty.k0 = Math.min(dirty.k0, k0); dirty.i1 = Math.max(dirty.i1, i1); dirty.k1 = Math.max(dirty.k1, k1); }
+    else { dirty.i0 = M.min(dirty.i0, i0); dirty.k0 = M.min(dirty.k0, k0); dirty.i1 = M.max(dirty.i1, i1); dirty.k1 = M.max(dirty.k1, k1); }
   }
   function initCover(S) {
     const wd = W(), we = S.weather, N = wd.NX * wd.NZ;
     if (wd.listeners.indexOf(onMark) < 0) wd.listeners.push(onMark);
     dirty = null;
     we.snowD = new Float32Array(N); we.ashD = new Float32Array(N); we.top0 = new Float32Array(wd.top);
-    we.tick = 0; we.coverVer = 1; we.wet = Math.min(1, we.rain > 0 ? 0.5 + 0.5 * we.rain : 0);
+    we.tick = 0; we.coverVer = 1; we.wet = M.min(1, we.rain > 0 ? 0.5 + 0.5 * we.rain : 0);
     const s0 = P.SNOW_INIT * we.snow, a0 = P.ASH_INIT * we.ash;
     for (let c = 0; c < N; c++) { if (wd.top[c] > wd.SEA + 0.05) { we.snowD[c] = s0; we.ashD[c] = a0; } }
   }
   function stepCover(S, dt) {
     const wd = W(), we = S.weather, w = S.wind, NX = wd.NX, N = NX * wd.NZ, r = P.RAMP * dt;
     we.rain += M.clamp(we.rT - we.rain, -r, r); we.snow += M.clamp(we.sT - we.snow, -r, r); we.ash += M.clamp(we.aT - we.ash, -r, r);
-    we.wet = we.rain > 0.02 ? Math.min(1, we.wet + P.WET_UP * we.rain * dt) : Math.max(0, we.wet - P.WET_DRY * (1 + 0.1 * w.speed) * dt);
+    we.wet = we.rain > 0.02 ? M.min(1, we.wet + P.WET_UP * we.rain * dt) : M.max(0, we.wet - P.WET_DRY * (1 + 0.1 * w.speed) * dt);
     we.tick += dt;
     if (we.tick < P.TICK) return;
     const T = we.tick; we.tick = 0;
     // trees: soaked wood is harder to light (lightning bypasses the threshold)
-    if (S.trees && C.TREES) for (const t of S.trees) { if (t.thr0 == null) t.thr0 = t.thr; t.thr = t.thr0 * (1 + P.TREE_WET * we.wet); }
+    if (S.trees && C.TREES) for (const t of S.trees) { t.thr = t.thr0 * (1 + P.TREE_WET * we.wet); }
     const snow = we.snowD, ash = we.ashD, top0 = we.top0, top = wd.top;
     // edits: columns whose top moved are bare (crater floor, fresh spoil)
     if (dirty) {
-      for (let k = Math.max(0, dirty.k0); k <= Math.min(wd.NZ - 1, dirty.k1); k++) for (let i = Math.max(0, dirty.i0); i <= Math.min(NX - 1, dirty.i1); i++) {
+      for (let k = M.max(0, dirty.k0); k <= M.min(wd.NZ - 1, dirty.k1); k++) for (let i = M.max(0, dirty.i0); i <= M.min(NX - 1, dirty.i1); i++) {
         const c = k * NX + i;
         if (Math.abs(top[c] - top0[c]) > P.CLEAR_D) { snow[c] = 0; ash[c] = 0; }
         top0[c] = top[c];
@@ -242,13 +242,13 @@
     for (let c = 0; c < N; c++) {
       if (top[c] <= wd.SEA + 0.05) { snow[c] = 0; ash[c] = 0; continue; }
       const wetC = wa && wa.h[c] > 0.004, hot = (vg && vg.burnT && vg.burnT[c] > 0) || (lv && lv.h && lv.h[c] > 0.01);
-      if (wetC || hot) snow[c] = 0; else snow[c] = Math.max(0, Math.min(P.SNOW_MAX, snow[c] + ds - melt));
-      if (wetC) ash[c] = 0; else ash[c] = Math.min(P.ASH_MAX, ash[c] + da);
+      if (wetC || hot) snow[c] = 0; else snow[c] = M.max(0, M.min(P.SNOW_MAX, snow[c] + ds - melt));
+      if (wetC) ash[c] = 0; else ash[c] = M.min(P.ASH_MAX, ash[c] + da);
     }
     // snow cover near the section (grass blades shorten / whiten)
-    const O = S.O || { x: 48, z: 48 }, H = wd.H, R = Math.round(P.COVER_R / H), ci = Math.round(O.x / H), ck = Math.round(O.z / H);
+    const O = S.O || { x: W().MX, z: W().MZ }, H = wd.H, R = Math.round(P.COVER_R / H), ci = Math.round(O.x / H), ck = Math.round(O.z / H);
     let sum = 0, n = 0;
-    for (let k = Math.max(0, ck - R); k <= Math.min(wd.NZ - 1, ck + R); k += 2) for (let i = Math.max(0, ci - R); i <= Math.min(NX - 1, ci + R); i += 2) { sum += Math.min(1, snow[k * NX + i] / P.COVER_D); n++; }
+    for (let k = M.max(0, ck - R); k <= M.min(wd.NZ - 1, ck + R); k += 2) for (let i = M.max(0, ci - R); i <= M.min(NX - 1, ci + R); i += 2) { sum += M.min(1, snow[k * NX + i] / P.COVER_D); n++; }
     we.snowCover = n ? sum / n : 0;
     we.coverVer++;
   }
@@ -256,7 +256,7 @@
   /* ---------- lightning (5d) ---------- */
   const L = C.LIGHTNING;
   function strikeTargets(S) {
-    const wd = W(), O = S.O || { x: 48, z: 48 }, out = [], near = (x, z) => M.len2(x - O.x, z - O.z) < L.NEAR, hw = h => Math.max(0.5, h - wd.SEA);
+    const wd = W(), O = S.O || { x: W().MX, z: W().MZ }, out = [], near = (x, z) => M.len2(x - O.x, z - O.z) < L.NEAR, hw = h => M.max(0.5, h - wd.SEA);
     if (SS.trees && S.trees) for (const t of S.trees) {
       if (!t.alive || !near(t.x, t.z)) continue;
       const p = SS.trees.top_point(t); if (p) out.push({ kind: 'tree', ref: t, id: t.id, x: p.x, y: p.y, z: p.z, w: hw(p.y) * hw(p.y) * L.K_TREE });
@@ -298,9 +298,11 @@
     if (tg.kind === 'tree') p = SS.trees.strike(S, tg.ref, { breakTop: brk }) || p;
     SS.sim.emit(S, 'lightning', { x: p.x, y: p.y, z: p.z, kind: tg.kind, id: tg.id, seed });
     SS.sim.emit(S, 'thunder', { x: p.x, y: p.y, z: p.z });
+    S.lightning = 1;                                  // P37 W4: a tinfoil hat grounds it (sim.hurt takes 10 %)
     SS.sim.explode(S, { x: p.x, y: p.y, z: p.z }, { W: L.W, dmg: 10, name: 'lightning' }, null);   // PoC strike explode(.., 24, 10)
     if (SS.weapons && SS.weapons.electrocute) SS.weapons.electrocute(S, p, L.ZAP_R, L.ZAP_D, null);   // PoC electrocute(60, 16)
-    we.strikes = (we.strikes || 0) + 1;
+    S.lightning = 0;
+    we.strikes++;
     return tg;
   }
   /* PoC (applyTurnStart): in a thunderstorm, each turn has a 60 % chance of ONE strike, at a random moment between 4 s
@@ -315,16 +317,16 @@
     const we = S.weather; if (!we) return;
     we.nextStrike = null;
     if (!we.storm || W().under) return;
-    if (M.rng_next(we.rng) < L.TURN_P) { const T = S.settings.turnTime > 0 ? S.settings.turnTime : 45; we.nextStrike = S.time + M.rng_range(we.rng, 4, Math.max(6, T * 0.8)); }
+    if (M.rng_next(we.rng) < L.TURN_P) { const T = S.settings.turnTime > 0 ? S.settings.turnTime : 45; we.nextStrike = S.time + M.rng_range(we.rng, 4, M.max(6, T * 0.8)); }
   };
   WE.strike_now = function (S) { return strike(S); };     // tests
 
   WE.init = function (S) {
-    const bi = Math.max(0, C.BIOMES.findIndex(b => b.id === S.biome));
-    const r = M.rng_make(((C.LAYOUT_SEED * 31 + (S.settings.seed | 0) * 104729 + bi * 7919 + 0x9e37) >>> 0) || 1);
+    const bi = M.max(0, C.BIOMES.findIndex(b => b.id === S.biome));
+    const r = M.rng_make(((C.LAYOUT_SEED * 31 + Math.imul(S.settings.seed | 0, 104729) + bi * 7919 + 0x9e37) >>> 0) || 1);
     const kind = pickKind(S, r), KD = C.WEATHER_KIND[kind];
     S.weather = { kind, rain: KD.rain, snow: KD.snow, ash: KD.ash, cloud: KD.cloud, storm: KD.storm, sky: KD.sky,
-      rT: KD.rain, sT: KD.snow, aT: KD.ash, wet: 0, snowCover: 0, rng: r,
+      rT: KD.rain, sT: KD.snow, aT: KD.ash, wet: 0, snowCover: 0, rng: r, changes: 0, strikes: 0, whirlAcc: 0, nextStrike: null,
       ph: [M.rng_range(r, 0, 6.2832), M.rng_range(r, 0, 6.2832), M.rng_range(r, 0, 6.2832)] };
     initCover(S);
     const b = windBand(S, kind, r);
@@ -353,15 +355,16 @@
     if (!we.storm) we.nextStrike = null;
     const b = windBand(S, kind, we.rng), w = S.wind;
     w.lo = b.lo; w.hi = b.hi; w.gustA = b.g; w.speed = M.clamp(w.speed, b.lo, b.hi);
-    we.changes = (we.changes || 0) + 1;
+    we.changes++;
   }
   function changeKind(S) {
-    const we = S.weather, tab = C.WEATHER_AUTO[S.biome] || C.WEATHER_AUTO.temperate, keys = Object.keys(tab), i = keys.indexOf(we.kind);
+    const we = S.weather, tab = C.WEATHER_AUTO[S.biome] || C.WEATHER_AUTO.temperate;
+    let i = -1; for (let q = 0; q < tab.length; q++) if (tab[q][0] === we.kind) i = q;
     if (i < 0 || M.rng_next(we.rng) >= C.WEATHER_CHANGE) return false;
     const j = i + (M.rng_next(we.rng) < 0.5 ? -1 : 1);
-    if (j < 0 || j >= keys.length) return false;
-    if (M.rng_next(we.rng) >= Math.min(1, tab[keys[j]] / tab[keys[i]])) return false;
-    setKind(S, keys[j]);
+    if (j < 0 || j >= tab.length) return false;
+    if (M.rng_next(we.rng) >= M.min(1, tab[j][1] / tab[i][1])) return false;
+    setKind(S, tab[j][0]);
     return true;
   }
   WE.set_kind = setKind;                                  // tests
@@ -391,9 +394,9 @@
     if (!w) return out;
     const wd = W(), i = Math.round(x / wd.H), k = Math.round(z / wd.H);
     const ground = i >= 0 && k >= 0 && i < wd.NX && k < wd.NZ ? wd.top[k * wd.NX + i] : wd.SEA;
-    const under = y < ground - 0.5, h = Math.max(K.H_MIN, y - ground);
+    const under = y < ground - 0.5, h = M.max(K.H_MIN, y - ground);
     if (w.speed > 0) {
-      const p = under ? K.SHELTER : Math.min(K.P_MAX, M.log((h + K.Z0) / K.Z0) / M.log((10 + K.Z0) / K.Z0));
+      const p = under ? K.SHELTER : M.min(K.P_MAX, M.log((h + K.Z0) / K.Z0) / M.log((10 + K.Z0) / K.Z0));
       const v = w.speed * w.gust * p, ux = M.cos(w.dir), uz = M.sin(w.dir), f = w.field;
       let fx = ux, fz = uz;
       if (f && f.dir === w.dir && !under) {
@@ -406,7 +409,7 @@
       }
       out.x = fx * v; out.z = fz * v;
     }
-    if (w.whirls.length && !under) whirlAt(w, x, y, z, Math.max(0, y - ground), out);
+    if (w.whirls.length && !under) whirlAt(w, x, y, z, M.max(0, y - ground), out);
     return out;
   };
 
@@ -416,7 +419,7 @@
   /* tests / menu: force heading, speed (m/s at 10 m) and gust amplitude; the band follows the speed */
   WE.set_wind = function (S, dir, speed, gustA) {
     const w = S.wind; if (!w) return;
-    w.dir = dir; w.speed = Math.max(0, speed); w.lo = w.speed * 0.75; w.hi = w.speed * 1.25;
+    w.dir = dir; w.speed = M.max(0, speed); w.lo = w.speed * 0.75; w.hi = w.speed * 1.25;
     w.gustA = gustA == null ? gustOf(w.speed) : gustA;
     updateMean(S); swell(S);
   };

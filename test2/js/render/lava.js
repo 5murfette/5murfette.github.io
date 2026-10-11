@@ -139,11 +139,12 @@
     const opts = { roughness: 0.8, metalness: 0, side: T.FrontSide };
     if (mode !== 0) Object.assign(opts, { transparent: true, depthWrite: false });
     const m = new T.MeshStandardMaterial(opts);
+    m.userData.sectionMargin = 0;
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, { uO: U.uO, uN: U.uN, uHaze: U.uHaze, uBack: U.uBack, uAlpha: U.uAlpha, uTime: U.uTime, tNoise: U.tNoise, uCtxSolid: U.uCtxSolid, uCtxHaze: U.uCtxHaze }, OWN);
       sh.vertexShader = 'attribute vec4 aL; varying vec3 vW; varying vec4 vL;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
         vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vL = aL;`);
-      const clip = mode === 0 ? 'if (tD > 0.0 || tD < -uBack) discard;' : mode === 3 ? 'if (tD < 0.0) discard;' : 'if (tD > -uBack) discard;';
+      const clip = mode === 0 ? 'if (tD < -uBack) discard;' : mode === 3 ? 'if (tD < 0.0) discard;' : 'if (tD > -uBack) discard;';
       sh.fragmentShader = (Q.name === 'low' ? '#define LAVA_LOW 1\n' : '') + FRAG + sh.fragmentShader
         .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
           float tD = dot(vW - uO, uN);
@@ -210,8 +211,15 @@
     geo.setDrawRange(0, 0);
     for (const me of meshes) me.geometry = geo;
   }
+  /* P38: a map of another size: the per-column arrays and the cap texture follow the lattice */
+  function fit() {
+    const W = SS.world, N = W.NX * W.NZ;
+    if (vid.length === N) return;
+    box = null; vid = new Int32Array(N).fill(-1); texData = new Float32Array(N * 4);
+    tex.dispose(); tex.image = { data: texData, width: W.NX, height: W.NZ }; tex.needsUpdate = true; ver = -1;
+  }
   LW.reset = function (S) {
-    ver = -1; lastT = -9;
+    fit(); ver = -1; lastT = -9;
     if (box) { clearBox(box); box = null; }
     const v = S.lava && S.lava.vent, F = SS.world.features || {}, vo = F.volcano;
     const vs = (S.lava && S.lava.vents) || [];
@@ -284,6 +292,7 @@
   /* per frame */
   LW.frame = function (S, view) {
     if (!S.lava) { for (const me of meshes) me.visible = false; return; }
+    fit();
     if (S.lava.ver !== ver && view.time - lastT > 0.09) { rebuild(S); ver = S.lava.ver; lastT = view.time; }
     const draw = nI > 0, ctxA = view.ctxA || 0, insp = view.insp || 0;
     meshes[0].visible = draw;

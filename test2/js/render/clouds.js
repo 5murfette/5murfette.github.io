@@ -136,6 +136,7 @@
     geo.instanceCount = 0;
     mat = new T.ShaderMaterial({ uniforms: U, vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, depthTest: true,
       blending: T.CustomBlending, blendSrc: T.OneFactor, blendDst: T.OneMinusSrcAlphaFactor, blendSrcAlpha: T.OneFactor, blendDstAlpha: T.OneMinusSrcAlphaFactor });
+    SS.section.exempt(mat, 'sky: clouds');
     mesh = new T.Mesh(geo, mat); mesh.frustumCulled = false; mesh.renderOrder = -9; scene.add(mesh);
     if (SS.skyView && SS.skyView.ENV_LAYER) mesh.layers.enable(SS.skyView.ENV_LAYER);   // also in the water's reflections
   };

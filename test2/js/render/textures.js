@@ -238,6 +238,7 @@
     out.glow = tex(X.glowCanvas(), false, false, 1);
     out.ring = tex(X.ringCanvas(), false, false, 1);
     out.streak = tex(X.streakCanvas(), false, false, 1);
+    for (const k in out) if (out[k] && out[k].isTexture) out[k].userData.shared = true;      // (P38-R2: disposeTree of a crate / sprite must not free the shared maps: they would be re-uploaded)
     prog(1, 'Textures ready');
     return out;
   };

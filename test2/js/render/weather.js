@@ -17,7 +17,8 @@
   'use strict';
   const T = window.THREE;
   const WX = SS.weatherView = {};
-  const N1 = 193, COVER_MAX = 0.4;
+  let N1 = 193;                          // lattice columns per side (P38: per map)
+  const COVER_MAX = 0.4;
   const RAIN_N = 20000, FLAKE_N = 24000, SPLASH_N = 1600, WHIRL_N = 520, WHIRL_MAX = 4;
   let scene, Q, P = null, rain, flake, splash, whirl, coverTex, coverData, coverRef = null, coverVer = -1, coverUploads = 0;
   const base = { sun: 3, hemi: 1.15, fill: 0.45, fog: 0.006, motes: 0.55, storm: false, fillPos: new T.Vector3(-30, 20, -40), fillCol: new T.Color(0x9cc0ff),
@@ -31,7 +32,7 @@
   /* ---------- shared GLSL ---------- */
   const HASH = /* glsl */`
     float h1(float n){ return fract(sin(n) * 43758.5453); }
-    float topAt(vec2 xz){ return texture2D(tHeight, (xz * 2.0 + 0.5) / 193.0).r * 40.0; }   // view.js heightTex: top / 40
+    float topAt(vec2 xz){ return texture2D(tHeight, (xz * 2.0 + 0.5) / float(textureSize(tHeight, 0).x)).r * 40.0; }   // view.js heightTex: top / 40
     vec3 side(vec3 ax, vec3 toC){ vec3 s = cross(ax, toC); float l = length(s); return l > 1e-4 ? s / l : vec3(1.0, 0.0, 0.0); }
     void hide(){ gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }`;
   const OUT = /* glsl */`
@@ -382,8 +383,9 @@
   WX.init = function (sc, textures, quality, parts) {
     scene = sc; txRef = textures; Q = quality; P = parts || null;
     const q = Q.particles || 1;
-    rain = mesh(quadGeo(Math.round(RAIN_N * q)), precipMat(false), 7);
-    flake = mesh(quadGeo(Math.round(FLAKE_N * q)), precipMat(true), 7);
+    const AMB = 'ambient precipitation: the streaks fill the view and end at the section ground line (own rule in PREC_V)';   // P46: the one documented weather exemption
+    rain = mesh(quadGeo(Math.round(RAIN_N * q)), SS.section.exempt(precipMat(false), AMB), 7);
+    flake = mesh(quadGeo(Math.round(FLAKE_N * q)), SS.section.exempt(precipMat(true), AMB), 7);
     splash = mesh(quadGeo(Math.round(SPLASH_N * q)), new T.ShaderMaterial({
       vertexShader: SPL_V, fragmentShader: SPL_F, transparent: true, depthWrite: false, side: T.DoubleSide,
       uniforms: {
@@ -401,6 +403,7 @@
       vertexShader: WH_V, fragmentShader: WH_F, transparent: true, depthWrite: false, side: T.DoubleSide,
       uniforms: { tHeight: { value: null }, uWA: { value: v4() }, uWB: { value: v4() }, uWC: { value: v4() }, uWD: { value: v4() }, uTime: { value: 0 }, uPix: { value: 0.001 }, uFogD: { value: 0.006 }, uLit: { value: 1 } }
     }), 6);
+    N1 = SS.world.NX;
     coverData = new Uint8Array(N1 * N1 * 4);
     coverTex = new T.DataTexture(coverData, N1, N1, T.RGBAFormat);
     coverTex.magFilter = coverTex.minFilter = T.LinearFilter; coverTex.needsUpdate = true;
@@ -408,6 +411,14 @@
     if (P && P.fill) { base.fill = P.fill.intensity; base.fillPos.copy(P.fill.position); base.fillCol.copy(P.fill.color); }
     if (P && P.motes) base.motes = P.motes.material.opacity;
     addEventListener('pointerdown', unlockAudio, true); addEventListener('keydown', unlockAudio, true);
+  };
+  /* P38: a map of another size: the cover texture follows the lattice (the height texture is view.js's) */
+  WX.resize = function () {
+    const n = SS.world.NX;
+    if (n === N1) return;
+    N1 = n; coverData = new Uint8Array(N1 * N1 * 4);
+    coverTex.dispose(); coverTex.image = { data: coverData, width: N1, height: N1 }; coverTex.needsUpdate = true;
+    coverRef = null; coverVer = -1;
   };
   WX.look = function (L, sk, haze) {
     base.sun = L.sunI; base.hemi = L.hemiI; base.fog = L.fog;
@@ -449,6 +460,7 @@
   }
   const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
   WX.frame = function (S, view, camera, dt) {
+    if (SS.world.NX !== N1) WX.resize();
     const t0 = performance.now();
     const we = S.weather || null, wind = S.wind || null, U = SS.terrain.uniforms, time = view.time;
     const rainA = we ? we.rain || 0 : 0, snowA = we ? we.snow || 0 : 0, ashA = we ? we.ash || 0 : 0, cloud = we ? we.cloud || 0 : 0;

@@ -33,7 +33,7 @@
   const mesh = (geo, mat, x, y, z) => { const m = new T.Mesh(geo, mat); m.position.set(x || 0, y || 0, z || 0); m.castShadow = true; return m; };
 
   /* ---------- the exhaust plume: procedural fire (shader), cone along -x from the nozzle ---------- */
-  const CLOCK = { value: 0 };
+  const CLOCK = { value: 0 }, PV0 = new T.Vector3(), PV1 = new T.Vector3();
   const PLUME_VS = 'varying vec2 vUv; varying vec3 vN; varying vec3 vV; void main(){ vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }';
   const PLUME_FS = [
     'uniform float uTime; uniform float uSeed; uniform float uHot; varying vec2 vUv; varying vec3 vN; varying vec3 vV;',
@@ -222,8 +222,12 @@
       for (const f of u.flaps) f.hinge.rotation.y = (f.horiz ? 0.5 : 1) * f.sgn * u.defl * Math.cos(u.rollA);   // about the span
       if (u.fire) {
         const on = !p.wet, fl = 0.85 + 0.15 * Math.sin(t * 53 + u.rollA) + 0.08 * Math.sin(t * 91);
-        u.fire.visible = u.inner.visible = on;
+        u.fire.visible = u.inner.visible = on && !SS.flameView;
         u.fire.scale.set(fl * (0.75 + Math.min(0.45, sp * 0.012)), 1, 1); u.inner.scale.set(fl, 1, 1);
+        if (on && SS.flameView) {                                                         // P45: the exhaust is a stream of procedural tongues (render/flame.js)
+          g.updateMatrixWorld(true); u.fire.getWorldPosition(PV0); PV1.set(-1, 0, 0).transformDirection(g.matrixWorld);
+          SS.flameView.exhaust(g.id, PV0.x, PV0.y, PV0.z, PV1.x, PV1.y, PV1.z, 1.5 * fl, 0.3 + 0.06 * Math.min(4, u.R / 0.04), 1.2, dt);
+        }
       }
     } else if (u.kind === 'tumble') {
       // yaw into the section, then spin about the section normal with the speed; resting = no spin
@@ -277,6 +281,10 @@
     } else if (id === 'teleport') { add(box(3, 5, 2, MAT.steel), 4); add(new T.Mesh(new T.TorusGeometry(2.2 * K, 0.5 * K, 6, 16), MAT.glass), 4, 4); }
     else if (id === 'scrambler') { add(cyl(3, 3, 2, MAT.gold), 4); add(new T.Mesh(new T.SphereGeometry(1 * K, 8, 6), MAT.glass), 6, 4); }
     else if (id === 'girder') { add(box(12, 1.6, 2, MAT.girder), 5).rotation.z = 0.2; }
+    else if (id === 'zipline') {       // a crossbow: a stock, a bow across it, a string and a bolt on the rail
+      add(box(10, 1.8, 1.6, MAT.wood), 2); add(box(1.2, 11, 0.8, MAT.steel), 8, 0); add(box(7, 0.25, 0.25, MAT.dark), 8, 0, 0).rotation.z = 0;
+      add(new T.Mesh(new T.CylinderGeometry(0.25 * K, 0.25 * K, 9 * K, 5), MAT.steel), 6, 1.2).rotation.z = -PI / 2;
+    } else if (id === 'parachute') { const p = add(box(5, 6.5, 3.5, MAT.olive), 2, 0); add(box(1.2, 5, 3, MAT.dark), 5, 0); p.castShadow = true; }
     else if (id === 'rope') {
       add(new T.Mesh(new T.TorusGeometry(2.2 * K, 0.7 * K, 6, 14), MAT.wood), 3);
       const h = hookMesh(); h.position.x = 6.5 * K; h.scale.setScalar(0.8); g.add(h);
@@ -286,9 +294,10 @@
     else if (id === 'boulder') add(new T.Mesh(new T.DodecahedronGeometry(3.4 * K, 0), MAT.stone), 5.5);
     else if (id === 'sheep') { const b = add(new T.Mesh(new T.SphereGeometry(3 * K, 10, 8), MAT.wool), 5); b.scale.set(1.3, 1, 1); add(new T.Mesh(new T.SphereGeometry(1.5 * K, 8, 6), MAT.black), 8.6, 1); }
     else if (BUILD[id]) { const k = BUILD[id](); k.position.x = 5 * K; k.scale.setScalar(0.85); g.add(k); }
+    else if (SS.gadgetView && SS.gadgetView.heldModel) { const k = SS.gadgetView.heldModel(id); if (k) g.add(k); }          // P37 W4: dog, sentry, claymore, force field, gravity gun, punch
     // where the worm's hands hold it (held-local metres): a gun two-handed (the grip and the fore-end), a thrown or
     // dropped item in one hand under it
-    const thrown = ['grenade', 'cluster', 'banana', 'holy', 'dynamite', 'sheep', 'blackhole', 'boulder', 'mine', 'magnet', 'spring', 'foam'].includes(id);
+    const thrown = ['grenade', 'cluster', 'banana', 'holy', 'dynamite', 'sheep', 'blackhole', 'boulder', 'mine', 'magnet', 'spring', 'foam', 'dog', 'sentry', 'claymore', 'ffield', 'punch'].includes(id);
     if (thrown) g.children.forEach(c => { c.position.x -= 2 * K; });       // closer to the body
     g.userData.grips = thrown ? [[3 * K, -2.6 * K, 0]] : [[2 * K, -2.4 * K, 1.2 * K], [7 * K, -1.6 * K, -1.2 * K]];
     g.userData.id = id;

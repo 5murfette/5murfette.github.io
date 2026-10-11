@@ -65,6 +65,21 @@
     t.repeat.set(1 / 0.44, 1 / 0.68); t.offset.set(0.5, -0.02 / 0.68);
     return t;
   }
+  /* P42i: the engraving only, on a transparent canvas, for the recessed front panel of the baked stone (models/grave.glb:
+   * panel x -0.152..0.152, y 0.141..0.610 above the pivot at the foot, front face z = +0.05 m, an arch of radius 0.152 on top) */
+  const PANEL_W = 0.305, PANEL_H = 0.47, PANEL_Y = 0.376, PANEL_Z = 0.054;
+  function decalTexture(name, teamRgb) {
+    const Wd = 256, Ht = 394, cv = document.createElement('canvas'); cv.width = Wd; cv.height = Ht; const x = cv.getContext('2d');
+    const cut = (draw) => { x.save(); x.translate(0, 2); x.globalAlpha = 0.6; x.fillStyle = x.strokeStyle = '#d4d7da'; draw(); x.restore(); x.save(); x.fillStyle = x.strokeStyle = '#25282c'; draw(); x.restore(); };
+    cut(() => { x.font = 'bold 32px Georgia, serif'; x.textAlign = 'center'; x.fillText('R.I.P.', Wd / 2, 150); });
+    let fs = 44; x.font = `bold ${fs}px Georgia, serif`; while (x.measureText(name).width > Wd - 36 && fs > 16) { fs -= 2; x.font = `bold ${fs}px Georgia, serif`; }
+    cut(() => { x.font = `bold ${fs}px Georgia, serif`; x.textAlign = 'center'; x.fillText(name, Wd / 2, 218); });
+    cut(() => { x.fillRect(Wd / 2 - 62, 244, 124, 4); });
+    x.fillStyle = '#' + new T.Color(teamRgb).getHexString(); x.beginPath(); x.arc(Wd / 2, 306, 22, 0, 7); x.fill();
+    x.strokeStyle = '#25282c'; x.lineWidth = 3.5; x.stroke();
+    const t = new T.CanvasTexture(cv); if (T.SRGBColorSpace) t.colorSpace = T.SRGBColorSpace; t.anisotropy = 4;
+    return t;
+  }
   // the timer of a charged grave: red seven-segment-ish digits on a black display (redrawn when the shown value changes)
   function timerTexture() {
     const cv = document.createElement('canvas'); cv.width = 96; cv.height = 40; const t = new T.CanvasTexture(cv); t.userData = { cv, last: '' }; return t;
@@ -83,11 +98,25 @@
     mats(); geos();
     const grp = new T.Group(), body = new T.Group(); body.position.z = -0.08; grp.add(body);
     body.rotation.z = r(-0.06, 0.06); body.rotation.x = r(-0.05, 0.02);       // a slight lean, settled in the soil
-    const faceMat = new T.MeshStandardMaterial({ map: faceTexture(name || 'Worm', teamRgb), roughness: 0.78, metalness: 0.02 });
-    const sideMat = new T.MeshStandardMaterial({ color: 0x8c9095, roughness: 0.85 });
-    const stone = new T.Mesh(STONE_GEO, [faceMat, sideMat]); stone.position.y = 0.02; stone.castShadow = stone.receiveShadow = true; body.add(stone);
-    body.add(mesh(PLINTH_GEO, sideMat, 0, -0.02, 0));
-    for (let i = 0; i < 7; i++) { const m = mesh(PETAL_GEO, MOSS, r(-0.28, 0.28), 0.02, r(-0.12, 0.02)); m.scale.set(r(2, 4), 1.2, r(2, 4)); body.add(m); }
+    let faceMat, sideMat, scorch = null;
+    const baked = SS.models && SS.models.mesh('grave');
+    if (baked) {
+      /* P42i: the baked AI headstone (stone + plinth + grass tufts); own material copies (scorched after a blast); the
+       * engraving is a transparent decal on the recessed front panel */
+      const bm = baked.children[0];
+      bm.material = Array.isArray(bm.material) ? bm.material.map(m => m.clone()) : bm.material.clone();
+      bm.castShadow = bm.receiveShadow = true; baked.position.y = -0.06; body.add(baked);
+      sideMat = faceMat = Array.isArray(bm.material) ? bm.material[0] : bm.material; scorch = faceMat;
+      const dm = new T.MeshStandardMaterial({ map: decalTexture(name || 'Worm', teamRgb), transparent: true, roughness: 0.8, metalness: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+      const decal = new T.Mesh(new T.PlaneGeometry(PANEL_W, PANEL_H), dm); decal.position.set(0, PANEL_Y - 0.06, PANEL_Z); decal.renderOrder = 2; body.add(decal);
+      faceMat = dm;
+    } else {
+      faceMat = new T.MeshStandardMaterial({ map: faceTexture(name || 'Worm', teamRgb), roughness: 0.78, metalness: 0.02 });
+      sideMat = new T.MeshStandardMaterial({ color: 0x8c9095, roughness: 0.85 });
+      const stone = new T.Mesh(STONE_GEO, [faceMat, sideMat]); stone.position.y = 0.02; stone.castShadow = stone.receiveShadow = true; body.add(stone);
+      body.add(mesh(PLINTH_GEO, sideMat, 0, -0.02, 0));
+      for (let i = 0; i < 7; i++) { const m = mesh(PETAL_GEO, MOSS, r(-0.28, 0.28), 0.02, r(-0.12, 0.02)); m.scale.set(r(2, 4), 1.2, r(2, 4)); body.add(m); }
+    }
     const mound = mesh(MOUND_GEO, SOIL, 0, -0.04, -0.42); mound.scale.set(0.32, 0.1, 0.4); grp.add(mound);
     // the charge (graves that will go off): three sticks strapped to the stone's foot, a timer box, wires
     const charge = new T.Group(); charge.position.set(0, 0.12, 0.075); body.add(charge);
@@ -98,6 +127,7 @@
     const box = mesh(new T.BoxGeometry(0.2, 0.1, 0.05), tape, 0, 0.0, 0.055); charge.add(box); disp.position.set(0, 0.0, 0.082); charge.add(disp);
     const led = new T.Mesh(new T.SphereGeometry(0.014, 8, 6), new T.MeshBasicMaterial({ color: 0xff2a1a, toneMapped: false })); led.position.set(0.085, 0.05, 0.08); charge.add(led);
     const wire = new T.Mesh(new T.TorusGeometry(0.07, 0.006, 5, 14, Math.PI), new T.MeshStandardMaterial({ color: 0x2a6fd0 })); wire.position.set(0, 0.06, 0.06); charge.add(wire);
+    if (baked) charge.position.z = 0.12;
     charge.visible = false;
     // greenery (after the grave has settled for good): blades and flowers beside / behind the stone (readable at play
     // distance: blades 0.15-0.32 m, flowers 0.18-0.34 m with 5 cm petals)
@@ -115,7 +145,7 @@
       const core = mesh(CORE_GEO, new T.MeshStandardMaterial({ color: 0xffc21a, roughness: 0.5 })); core.scale.setScalar(2.2); head.add(core);
       head.rotation.x = -0.5; f.add(head); f.userData.h = 1; f.scale.setScalar(0.001); green.add(f); plants.push(f);
     }
-    grp.userData = { body, green, plants, flies: null, seed: r(0, 10), charge, tt, led, faceMat, sideMat, blown: false };
+    grp.userData = { body, green, plants, flies: null, seed: r(0, 10), charge, tt, led, faceMat, sideMat, scorch, blown: false };
     grp.position.set(g.x, g.y, g.z);
     return grp;
   };
@@ -147,7 +177,11 @@
       drawTimer(u.tt, left >= 0 ? left.toFixed(1) : 'ARM', blink || left >= 0);
       u.led.visible = blink;
     }
-    if (g.blown && !u.blown) { u.blown = true; u.faceMat.color.setRGB(0.62, 0.6, 0.58); u.sideMat.color.setRGB(0.42, 0.41, 0.4); }
+    if (g.blown && !u.blown) {
+      u.blown = true;
+      if (u.scorch) u.scorch.color.setRGB(0.42, 0.4, 0.38);
+      else { u.faceMat.color.setRGB(0.62, 0.6, 0.58); u.sideMat.color.setRGB(0.42, 0.41, 0.4); }
+    }
     grp.position.set(g.x, g.y, g.z);
     grp.rotation.y = Math.atan2(nrm.x, nrm.z);                               // the face (local +z) turns to the camera side
     const age = g.rest && g.landT >= 0 ? S.time - g.landT : -1;
@@ -178,5 +212,5 @@
     }
   };
   const SHARED = () => [STONE, DARK, SOIL, MOSS, STEM].concat(GRASS);
-  GV.dispose = function (grp) { const sh = SHARED(); grp.traverse(o => { if (!o.isMesh || !o.material) return; for (const m of [].concat(o.material)) if (!sh.includes(m)) { if (m.map) m.map.dispose(); m.dispose(); } }); };   // (the stone has a material ARRAY: face + sides)
+  GV.dispose = function (grp) { const sh = SHARED(); grp.traverse(o => { if (!o.isMesh || !o.material) return; for (const m of [].concat(o.material)) if (!sh.includes(m)) { if (m.map && !m.map.userData.shared) m.map.dispose(); m.dispose(); } }); };   // (the stone has a material ARRAY: face + sides)
 })(window.SS = window.SS || {});

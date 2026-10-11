@@ -49,7 +49,7 @@
     const NX = W.NX, NY = W.NY, NZ = W.NZ, SXY = NX * NY;
     const KNOWN = ++counter, comps = [];
     K.stats.seeds = 0; K.stats.visited = 0; K.stats.maxRun = 0;
-    const i0 = Math.max(1, b.i0 - 2), i1 = Math.min(NX - 2, b.i1 + 2), j0 = Math.max(1, b.j0 - 2), j1 = Math.min(NY - 2, b.j1 + 2), k0 = Math.max(1, b.k0 - 2), k1 = Math.min(NZ - 2, b.k1 + 2);
+    const i0 = M.max(1, b.i0 - 2), i1 = M.min(NX - 2, b.i1 + 2), j0 = M.max(1, b.j0 - 2), j1 = M.min(NY - 2, b.j1 + 2), k0 = M.max(1, b.k0 - 2), k1 = M.min(NZ - 2, b.k1 + 2);
     for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const s = (k * NY + j) * NX + i;
       if (!supports(W, s) || stamp[s] === KNOWN) continue;
@@ -74,7 +74,7 @@
         }
       }
       K.stats.seeds++; K.stats.visited += nv; if (nv > K.stats.maxRun) K.stats.maxRun = nv;
-      const cnt = Math.min(nv, BUDGET);
+      const cnt = M.min(nv, BUDGET);
       for (let q = 0; q < cnt; q++) stamp[visit[q]] = KNOWN; // either anchored, or recorded below (never probed twice)
       if (!ok) comps.push(visit.slice(0, cnt));
     }
@@ -109,9 +109,9 @@
       let i0 = 1e9, j0 = 1e9, k0 = 1e9, i1 = -1, j1 = -1, k1 = -1;
       for (const o of list) {
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
-        i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j); k0 = Math.min(k0, k); k1 = Math.max(k1, k);
+        i0 = M.min(i0, i); i1 = M.max(i1, i); j0 = M.min(j0, j); j1 = M.max(j1, j); k0 = M.min(k0, k); k1 = M.max(k1, k);
       }
-      bi0 = Math.min(bi0, i0); bj0 = Math.min(bj0, j0); bk0 = Math.min(bk0, k0); bi1 = Math.max(bi1, i1); bj1 = Math.max(bj1, j1); bk1 = Math.max(bk1, k1);
+      bi0 = M.min(bi0, i0); bj0 = M.min(bj0, j0); bk0 = M.min(bk0, k0); bi1 = M.max(bi1, i1); bj1 = M.max(bj1, j1); bk1 = M.max(bk1, k1);
       if (list.length < 22) { for (const o of list) if (M.hash3(o, 9, 9) < 0.5) rubble.push({ x: (o % NX) * H, y: (Math.floor(o / NX) % NY) * H, z: Math.floor(o / SXY) * H, mat: W.mat[o] }); continue; }
       // local grid with one lattice of padding
       const gx = i1 - i0 + 3, gy = j1 - j0 + 3, gz = k1 - k0 + 3, gd = new Float32Array(gx * gy * gz).fill(-0.6), gm = new Uint8Array(gx * gy * gz);
@@ -119,7 +119,7 @@
       const matCount = new Uint32Array(C.MATS.length);
       for (const o of list) {
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY), l = ((k - k0 + 1) * gy + (j - j0 + 1)) * gx + (i - i0 + 1);
-        gd[l] = Math.max(0.35, Math.min(1.5, W.d[o])); gm[l] = W.mat[o]; matCount[W.mat[o]]++;
+        gd[l] = M.max(0.35, M.min(1.5, W.d[o])); gm[l] = W.mat[o]; matCount[W.mat[o]]++;
         const mv = C.MATS[W.mat[o]].rho * H * H * H;
         cx += i * H * mv; cy += j * H * mv; cz += k * H * mv; mass += mv;
       }
@@ -131,15 +131,15 @@
         Ixx += mv0 * (y * y + z * z + 0.04); Iyy += mv0 * (x * x + z * z + 0.04); Izz += mv0 * (x * x + y * y + 0.04);
       }
       // collision points: shell voxels, spread out by a coarse 3D hash grid
-      const pts = [], taken = new Set(), cell = Math.max(0.8, M.cbrt(list.length * 0.125) / 3);
+      const pts = [], taken = [], cell = M.max(0.8, M.cbrt(list.length * 0.125) / 3);
       for (const o of list) {
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
         const l = ((k - k0 + 1) * gy + (j - j0 + 1)) * gx + (i - i0 + 1);
         const shell = gd[l - 1] <= 0 || gd[l + 1] <= 0 || gd[l - gx] <= 0 || gd[l + gx] <= 0 || gd[l - gx * gy] <= 0 || gd[l + gx * gy] <= 0;
         if (!shell) continue;
-        const key = Math.floor(i * H / cell) + ',' + Math.floor(j * H / cell) + ',' + Math.floor(k * H / cell);
-        if (taken.has(key)) continue;
-        taken.add(key); pts.push(i * H - cx, j * H - cy, k * H - cz, 0.26);
+        const key = (Math.floor(i * H / cell) * 1024 + Math.floor(j * H / cell)) * 1024 + Math.floor(k * H / cell);   // (cells < 1024 per axis; at most 48 keys: a linear scan)
+        if (taken.indexOf(key) >= 0) continue;
+        taken.push(key); pts.push(i * H - cx, j * H - cy, k * H - cz, 0.26);
         if (pts.length >= 48 * 4) break;
       }
       let dom = 0; for (let m = 1; m < C.MATS.length; m++) if (matCount[m] > matCount[dom]) dom = m;
@@ -182,9 +182,9 @@
   K.rebake = function (W, g, com, pos, q) {
     const H = W.H, NX = W.NX, NY = W.NY;
     const r = M.len3(g.nx, g.ny, g.nz) * H * 0.5 + 1;
-    const i0 = Math.max(1, Math.floor((pos.x - r) / H)), i1 = Math.min(W.NX - 2, Math.ceil((pos.x + r) / H));
-    const j0 = Math.max(2, Math.floor((pos.y - r) / H)), j1 = Math.min(W.NY - 2, Math.ceil((pos.y + r) / H));
-    const k0 = Math.max(1, Math.floor((pos.z - r) / H)), k1 = Math.min(W.NZ - 2, Math.ceil((pos.z + r) / H));
+    const i0 = M.max(1, Math.floor((pos.x - r) / H)), i1 = M.min(W.NX - 2, Math.ceil((pos.x + r) / H));
+    const j0 = M.max(2, Math.floor((pos.y - r) / H)), j1 = M.min(W.NY - 2, Math.ceil((pos.y + r) / H));
+    const k0 = M.max(1, Math.floor((pos.z - r) / H)), k1 = M.min(W.NZ - 2, Math.ceil((pos.z + r) / H));
     const v = { x: 0, y: 0, z: 0 };
     let added = 0;
     for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {

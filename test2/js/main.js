@@ -15,10 +15,11 @@
   function clickTarget() {
     const I = SS.input; if (!I.clicks.length) return null;
     const c = I.clicks.shift(); I.clicks.length = 0;
+    if (SS.dbgui && SS.dbgui.armed()) { const p = SS.view.pickPlane(S, c.x, c.y); if (p) SS.dbgui.queue(p.s, p.y); return null; }   // P49: the debug toolbox takes the click
     if (S.phase === 'place') { const p = SS.view.pickPlane(S, c.x, c.y); return p ? { s: p.s, y: p.y, fire: true } : null; }   // P13: deploy
     const d = C.ARSENAL[S.weapon]; if (!d || !(d.kind === 'target' || d.target) || S.phase !== 'play') return null;
     const p = SS.view.pickPlane(S, c.x, c.y); if (!p) return null;
-    return { s: p.s, y: p.y, fire: d.kind === 'target' };
+    return { s: p.s, y: p.y, fire: d.kind === 'target' && !d.twostep };   // (twostep: the mail raven: the click sets the target, Space releases)
   }
   /* P22a instant replay (user: "if more than 1 worm died"): when an attack starts (play -> attack) the deterministic
    * state is snapshot (sim.snapshot: S + the voxel world) and every step's input recorded; when the next turn begins
@@ -53,6 +54,7 @@
   function step() {
     if (RP.play) { replayStep(); return; }
     SS.input.sample(inp, S, clickTarget());
+    if (SS.dbgui && !netGame) SS.dbgui.fill(inp);                  // P49: a debug drop travels as one step's Input (sim/debug.js)
     if (inp.reset) { inp.reset = 0; SS.input.end_step(); RP.snap = RP.inputs = null; if (!netGame) newGame(S.settings); return; }
     const phase0 = S.phase, turn0 = S.turnNo;
     // while the worm aims / walks: a fresh snapshot every 2 s of sim time (~5 ms each); the inputs since it are kept
@@ -86,7 +88,7 @@
       if (inp.reset) { inp.reset = 0; SS.input.end_step(); if (NT.isHost && S.phase === 'over') newGame(S.settings); return false; }   // host: next map (sent to the guest)
     }
     if (NT.drives(drvTeam)) { if (pendingAlign) { inp.align_id = pendingAlign; pendingAlign = 0; } NT.queueInput(k, NT.pack(inp)); use = inp; }
-    else { const a = NT.takeInput(k); if (!a) return false; SS.input.sample(inp, S, null); use = NT.unpack(a, inpR); }
+    else { const a = NT.takeInput(k); if (!a) { if (NT.isHost) { const nm = NT.stalled(drvTeam, k, performance.now()); if (nm) SS.sim.log(S, `${nm} is not responding: the CPU takes over their worms.`, 0xffb080); } return false; } SS.input.sample(inp, S, null); SS.input.clicks.length = 0; use = NT.unpack(a, inpR); }     // P38 D4: a follower's clicks / weapon picks are dropped (a stale click fired a target weapon at the start of the own turn)
     SS.sim.step(S, use, C.STEP); SS.input.end_step();
     use.align_id = 0;
     S.netStep = k + 1;
@@ -132,13 +134,14 @@
   /* Full new map with progress: generation stages, subsystem setup, then chunk meshing. */
   async function newGame(settings) {
     if (busy) { if (netGame) pendingStart = settings; return; }       // a net 'start' that arrives while loading runs next
-    if (netGame && SS.net.active) { if (SS.net.isHost) settings = SS.net.start(Object.assign({}, settings, { cpu: 'off' })); else SS.net.clearQueues(); }
+    if (netGame && SS.net.active) { if (SS.net.isHost) settings = SS.net.start(Object.assign({}, settings, { cpu: 'off' })); }     // (P38 R6 R1: a guest never clears the queues here: net.js did it at 'start', and inputs of the new match may already be buffered)
+
     busy = true; menuOpen = false;
     RP.snap = RP.inputs = RP.play = null; RP.armed = false;          // a replay never runs into a new world
     paused = true; running = false;
     try {
       await ensureRenderer(settings);
-      SS.view.setSlice(settings.slice);
+      SS.view.setSlice(settings.slice); SS.view.setGhost(settings.ghost | 0);
       let t0 = performance.now();
       const job = SS.sim.begin_reset(S, settings);
       let p = 0, ts = performance.now();
@@ -152,10 +155,14 @@
       SS.view.newWorld(S);
       await SS.view.buildTerrain(f => SS.menu.progress(0.72 + 0.27 * f, 'Building terrain meshes'));
       stats.meshMs = performance.now() - t0;
+      SS.menu.progress(0.995, 'Compiling shaders'); await tick();
+      SS.view.prewarm(S);
       SS.menu.progress(1, 'Ready');
       frameRender(C.STEP);
       SS.menu.hide(params.has('auto'));
       S.netStep = 0;
+      if (SS.debug) SS.debug.enable(S, !netGame);                    // P49: the debug toolbox drops only in local / CPU matches
+      if (SS.dbgui) SS.dbgui.allowed(!netGame);
       running = true; paused = !!(window.POC && window.POC.keepPaused);
     } catch (e) {
       console.error(e); SS.menu.error(e.message || String(e));
@@ -169,26 +176,34 @@
     menuOpen = true;
     // keys / clicks pressed before the menu opened must not fire or jump on Resume
     SS.input.end_step(); SS.input.clicks.length = 0; inp.fire_held = 0; inp.fire_pressed = 0;
-    SS.menu.show(SS.menu.load(), s => newGame(s), { inGame: true, onResume: () => { menuOpen = false; SS.input.end_step(); } });
+    // P38 R3: the form shows the LIVE settings of this match (rematch seed + 1, ?auto, net start), not only the saved ones
+    const saved = SS.menu.load(), live = Object.assign({}, saved, S.settings || {});
+    if (saved.biome === 'random' && SS.menu.resolve_biome(Object.assign({}, saved, { seed: live.seed })) === live.biome) live.biome = 'random';
+    SS.menu.show(live, s => newGame(s), { inGame: true, onResume: () => { menuOpen = false; SS.input.end_step(); } });
   }
 
   function urlSettings() {
     const s = Object.assign({}, C.SETTINGS);
-    for (const k of ['biome', 'weather', 'lava', 'wind', 'quality', 'slice', 'under', 'cpu', 'skill', 'placement', 'time', 'art', 'shape', 'first', 'volcanoes']) if (params.has(k)) s[k] = params.get(k);
-    for (const k of ['blood', 'select', 'keepRope', 'rooms']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
+    for (const k of ['biome', 'weather', 'lava', 'wind', 'quality', 'slice', 'ghost', 'under', 'cpu', 'skill', 'placement', 'time', 'art', 'shape', 'first', 'volcanoes', 'mapSize']) if (params.has(k)) s[k] = params.get(k);
+    for (const k of SS.CFG.DENSITY.KEYS.concat(['mineFuse', 'toolCrates'])) if (params.has(k)) s[k] = params.get(k);
+    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
     for (const k of ['teams', 'worms', 'hp', 'turnTime']) if (params.has(k)) s[k] = parseInt(params.get(k), 10) || 0;
     if (params.has('ctl')) s.ctl = params.get('ctl').split(',');
+    if (params.has('lab')) s.labFlags = parseInt(params.get('lab'), 10) || 0;     // P42: Lab mechanics bit mask (tests)
     if (params.has('sd')) s.sd = params.get('sd') !== '0';
     if (params.has('seed')) s.seed = parseInt(params.get('seed'), 10) || 0;
     if (params.has('collapse')) s.collapse = params.get('collapse') !== '0';
-    return s;
+    return SS.menu.sanitize(s, C.SETTINGS);                           // (P38 R6 R3: an unknown biome / out-of-range value from the URL)
   }
 
   function boot() {
     const canvas = $('view');
     SS.menu.init();
+    if (SS.dbgui) SS.dbgui.init(params.get('debug') === '1');       // P49: ?debug=1 opens the debug toolbox at the start (F9 toggles it)
     SS.input.attach(canvas, code => {
       // P9: the PoC weapon hotkeys took B, C, H, L, N, R (sim/arsenal.js); these moved to F1 / ?, Home, ` and the menu
+      if (code === 'F9' && SS.dbgui) { SS.dbgui.toggle(); return; }
+      if (code === 'Escape' && SS.dbgui && SS.dbgui.armed()) { SS.dbgui.cancel(); return; }       // P49: Esc cancels a pending drop (before it opens the menu)
       if (code === 'F1' || code === 'Slash') $('help').classList.toggle('hidden');
       if ((code === 'KeyM' || code === 'Escape') && running && !menuOpen) openMenu();
       if (code === 'Home') SS.view.resetPan && SS.view.resetPan();
@@ -209,6 +224,7 @@
     // PoC mouse: a left press aims + fires on a local human turn with a weapon that is aimed (target weapons and a
     // homing without its target, or shift + click, take the click as a target instead)
     SS.input.mouseFireOk = shift => {
+      if (SS.dbgui && SS.dbgui.armed()) return false;                // P49: a click with a debug item armed drops it, it does not fire
       if (!running || menuOpen || !S || S.phase !== 'play' || !S.active || SS.game.is_cpu(S, S.active.team)) return false;
       if (netGame && !SS.net.drives(S.active.team)) return false;
       const d = C.ARSENAL[S.weapon]; if (!d || d.kind === 'target' || S.weapon === 'girder') return false;
@@ -218,6 +234,8 @@
     SS.ui.onSetup = () => { if (netGame && !SS.net.isHost) return; openMenu(); };
     SS.ui.onOnline = () => { if (SS.netui) SS.netui.toggle(SS.menu.load()); };
     SS.menu.onOnline = () => SS.ui.onOnline();
+    SS.menu.defaultStart = s => newGame(s);
+    SS.menu.onBack = () => { if (netGame && SS.net.active) { SS.net.close(); netGame = false; } };       // (a failed start: back to a local menu)
     addEventListener('resize', resize);
     canvas.addEventListener('mousemove', e => { if (SS.armsView) SS.armsView.cursor = { x: e.clientX, y: e.clientY }; });   // P7: aim helpers
     if (innerWidth < 900) $('help').classList.add('hidden');
@@ -226,6 +244,7 @@
     window.POC = {
       S, get W() { return SS.world; }, keys: SS.input.keys, pressed: SS.input.pressed, stats0: stats, keepPaused: false,
       get camera() { return SS.view.camera(); }, get scene() { return SS.view.scene(); }, get renderer() { return SS.view.renderer(); },
+      get dpr() { return SS.view.dpr(); }, adaptive: () => adaptOn,
       get ready() { return running && !busy; }, get quality() { return Q && Q.name; },
       start: s => newGame(Object.assign(urlSettings(), s || {})),
       overlap2: (s, y) => SS.plane.overlap2(S, s, y), toPlane: p => SS.plane.to_plane(S, p), toWorld: (s, y) => SS.plane.to_world(S, s, y),
@@ -237,7 +256,7 @@
       pause(v) { paused = v; this.keepPaused = v; },
       replaying: () => RP.play ? { i: RP.play.i, n: RP.play.inputs.length } : null,
       advance(sec, input) { const n = Math.round(sec / C.STEP); for (let i = 0; i < n; i++) { if (input) input(i); step(); } SS.view.snapCamera(); frameRender(C.STEP); },
-      render() { SS.view.snapCamera(); frameRender(C.STEP); },
+      render(dt) { if (!dt) SS.view.snapCamera(); frameRender(dt || C.STEP); },   // (dt: the studio / tools advance the view clock by the sim time they stepped)
       slabExtent() { const b = SS.terrain.uniforms.uBack.value; return { minT: -b, maxT: 0, thickness: b }; },
       setSlice: v => SS.view.setSlice(v),
       stats: () => {
@@ -253,14 +272,15 @@
       SS.net.stepNow = () => S.netStep | 0;
       SS.ui.netStart = settings => { if (!SS.net.isHost || !SS.net.active) return; netGame = true; newGame(Object.assign({}, settings || SS.menu.load(), { cpu: 'off' })); };
       SS.net.on('start', st => {
-        const ok = {}, allow = ['biome', 'seed', 'weather', 'lava', 'wind', 'under', 'collapse', 'teams', 'worms', 'hp', 'turnTime', 'skill', 'sd', 'placement', 'first', 'volcanoes', 'time', 'shape', 'blood', 'select', 'keepRope', 'rooms'];
+        const ok = {}, allow = ['biome', 'seed', 'weather', 'lava', 'wind', 'under', 'collapse', 'teams', 'worms', 'hp', 'turnTime', 'skill', 'sd', 'placement', 'first', 'volcanoes', 'time', 'shape', 'blood', 'select', 'keepRope', 'rooms'].concat(SS.menu.NET_KEYS || []);   // (P37: the menu's rule / density keys)
         for (const k of allow) if (st[k] != null && (typeof st[k] === 'string' || typeof st[k] === 'number' || typeof st[k] === 'boolean')) ok[k] = st[k];
         if (Array.isArray(st.ctl)) ok.ctl = st.ctl.slice(0, 4).map(v => (v === 'cpu' ? 'cpu' : 'human'));
         if (Array.isArray(st.names)) ok.names = st.names.slice(0, 4).map(v => String(v).slice(0, 18));
         // presentation stays the guest's own (a different quality reloads the renderer: it dropped the link mid-match)
         const mine = SS.menu.load() || {}, pres = {};
-        for (const k of ['quality', 'slice', 'art']) if (mine[k] != null) pres[k] = mine[k];
-        netGame = true; newGame(Object.assign(urlSettings(), pres, ok, { cpu: 'off' }));
+        for (const k of ['slice', 'art', 'ghost', 'idle']) if (mine[k] != null) pres[k] = mine[k];     // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
+        pres.quality = Q ? Q.name : mine.quality;                          // (P38 R6 R6: the RUNNING quality: a saved one that differs would reload the page and drop the link)
+        netGame = true; newGame(SS.menu.sanitize(Object.assign(urlSettings(), pres, ok, { cpu: 'off' }), C.SETTINGS));
       });
       SS.net.on('leave', d => {
         if (!netGame) return;
@@ -272,8 +292,19 @@
           netGame = false;
         }
       });
-      SS.net.on('desync', d => { console.warn('lockstep desync at step', d.k); SS.sim.log(S, `Desync at step ${d.k}: the two games differ.`, 0xff8080); });
-      SS.net.on('close', () => { if (netGame) SS.sim.log(S, 'Multiplayer: the host left; the game goes on here only.', 0xffb080); netGame = false; });
+      /* leaving multiplayer for a local game: every seat but my own becomes a CPU team (a left host's / a dropped friend's team must not
+       * stay 'human' with nobody to play it) */
+      const toLocal = () => {
+        const me = SS.net.team;
+        if (S.teams) for (let i = 0; i < S.teams.length; i++) if (i !== me && S.teams[i].ctl !== 'cpu') S.teams[i].ctl = 'cpu';
+        netGame = false;
+      };
+      SS.net.on('desync', d => {
+        console.warn('lockstep desync at step', d.k); SS.sim.log(S, `Desync at step ${d.k}: the two games differ.`, 0xff8080);
+        if (SS.netui && SS.netui.desync) SS.netui.desync(d.k, () => { SS.net.close(); toLocal(); });
+      });
+      SS.net.on('refused', d => { if (SS.netui && SS.netui.refused) SS.netui.refused(d.msg || `${d.name} runs another game build: not allowed in.`); if (d.msg) SS.net.close(); });
+      SS.net.on('close', () => { if (netGame) SS.sim.log(S, 'Multiplayer: the host left; the game goes on here only (the CPU plays the other teams).', 0xffb080); toLocal(); });
       window.POC.net = { get game() { return netGame; }, stepNet: () => stepNet(), flush: () => SS.net.flush(), start: st => SS.ui.netStart(st) };
     }
 
@@ -283,21 +314,32 @@
     if (auto) newGame(auto);
     else SS.menu.show(SS.menu.load(), s => newGame(s));
 
-    let acc = 0, last = performance.now(), frameErrs = 0;
+    /* P38-R4 adaptive resolution (platform/quality.js adapt_*): off under automation (navigator.webdriver: tests want a fixed canvas), ?adpr=1 / 0 forces */
+    const adaptOn = params.get('adpr') === '1' || (params.get('adpr') !== '0' && !navigator.webdriver);
+    let adapt = null, adaptQ = null;
+    function adaptDpr(ms, nowS) {
+      if (!adaptOn || !Q || menuOpen || busy || document.hidden || ms > 250) return;
+      if (adaptQ !== Q) { adaptQ = Q; adapt = SS.quality.adapt_make(Math.min(Q.dpr, window.devicePixelRatio || 1)); }
+      const r = SS.quality.adapt_frame(adapt, ms, nowS);
+      if (r) SS.view.setDpr(r);
+    }
+    let acc = 0, last = performance.now(), frameErrs = 0, tscale = 1;      // tscale: slow motion / replay (the effect clocks of the renderer follow it)
     function frame(now) {
       // the next frame is requested first: an exception in one frame is logged (console.error, the tests see it) but
       // never stops the loop (D6: a RangeError in the section builder used to freeze the game for good)
       requestAnimationFrame(frame);
-      const dt = Math.min(0.1, Math.max(0, (now - last) / 1000)); last = now;
+      const rawMs = now - last, dt = Math.min(0.1, Math.max(0, rawMs / 1000)); last = now;
       try {
+        if (SS.audio && SS.audio.hold) SS.audio.hold(paused || menuOpen);
+        if (SS.music) SS.music.tick(running && !busy ? S : null, paused ? 'pause' : menuOpen ? 'menu' : null);
         if (running && !busy) {
           if (netGame && SS.net.active) {
             // lockstep: the driver steps in real time; the follower also catches up on queued inputs (<= 60 per frame)
             // (catch-up applies to the follower only: a driver never runs ahead of real time)
             if (!menuOpen) { acc += dt; let n = 0; while (running && n < 60 && (acc >= C.STEP || (!SS.net.drives(S.active ? S.active.team : 0) && SS.net.pending() > 2))) { if (!stepNet()) { acc = Math.min(acc, C.STEP); break; } acc = Math.max(0, acc - C.STEP); n++; } SS.net.flush(); }
-          } else if (!paused && !menuOpen) { acc += dt * (RP.play ? 0.5 : S.time < (S.slowUntil || 0) && S.slowUntil - S.time < 1.5 ? 0.35 : 1); while (acc >= C.STEP && running) { step(); acc -= C.STEP; } }   // (PoC slow motion)
+          } else if (!paused && !menuOpen) { tscale = RP.play ? 0.5 : S.time < (S.slowUntil || 0) && S.slowUntil - S.time < 1.5 ? 0.35 : 1; acc += dt * tscale; while (acc >= C.STEP && running) { step(); acc -= C.STEP; } }   // (PoC slow motion)
           else acc = 0;
-          if (!paused) frameRender(dt);
+          if (!paused) { SS.view.timeScale = menuOpen ? 1 : tscale; frameRender(dt); adaptDpr(rawMs, now / 1000); }
         }
       } catch (e) { acc = 0; if (frameErrs++ < 5) console.error('frame error:', e && e.stack || e); }
     }

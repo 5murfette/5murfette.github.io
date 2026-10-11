@@ -19,22 +19,31 @@
   I.mx = 0; I.my = 0; I.mouseIn = false; I.held = false; I.aimReq = false; I.mfire = false; I.mfirePressed = false; I.kbLock = null; I.mouseFireOk = null;
   /* P9: weapon hotkeys from the PoC (sim/arsenal.js `key`), on key codes; poc5's own keys that clashed moved:
    * help F1 / ?, slice view `, recentre Home, end turn = Skip Go (K), new map = the menu, lobby = the menu button */
-  const CODE = k => (/^[0-9]$/.test(k) ? 'Digit' + k : k === '-' ? 'Minus' : 'Key' + k);
+  // (P37: the letters ran out. Merge of W2-W4 keys: '=' is only the + of the +/- weapon parameters, '\\' only worm select,
+  // M the parachute; the robo dog moved to `, the punch to Numpad0, the zipline to Numpad9, the gravity gun to Numpad .)
+  const PUNCT = { '-': 'Minus', '=': 'Equal', ';': 'Semicolon', "'": 'Quote', '/': 'Slash', '\\': 'Backslash', '`': 'Backquote', 'N.': 'NumpadDecimal' };
+  const CODE = k => (/^[0-9]$/.test(k) ? 'Digit' + k : /^N[0-9]$/.test(k) ? 'Numpad' + k[1] : PUNCT[k] || 'Key' + k);   // (N1..N8: the P37 weapons A on the numpad)
   let WKEY = null;
   const wkeys = () => { if (!WKEY) { WKEY = {}; const A = SS.CFG.ARSENAL; for (const k in A) WKEY[CODE(A[k].key)] = k; } return WKEY; };
 
-  const HANDLED = new Set(['Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter']);
+  const HANDLED = new Set(['Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter', 'Slash', 'Quote']);   // (Slash / Quote: Firefox's quick find)
   I.attach = function (canvas, onKey) {
     addEventListener('keydown', e => {
       if (e.target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) return;
+      // (P38 R1: macOS swallows the keyup of every key pressed while Cmd is held, so a Cmd / Ctrl chord (a browser shortcut) must never leave game keys stuck: drop what is held and ignore the chord)
+      if (e.metaKey || e.ctrlKey) { I.keys.clear(); return; }
       if (HANDLED.has(e.code)) e.preventDefault();
       if (!e.repeat) { I.pressed.add(e.code); if (onKey) onKey(e.code); }
       I.keys.add(e.code);
     });
     addEventListener('keyup', e => I.keys.delete(e.code));
-    addEventListener('blur', () => I.keys.clear());
-    canvas.addEventListener('contextmenu', e => e.preventDefault());
     let drag = false, pan = false, down = null;
+    /* P38 R6 (R5): a lost mouseup (the window lost focus / the tab was hidden while a button was down) must not leave the
+     * mouse fire, pan or drag latched: every pointer latch is dropped with the keys */
+    const release_all = () => { I.keys.clear(); I.mfire = false; I.mfirePressed = false; I.held = false; I.aimReq = false; drag = false; pan = false; down = null; };
+    addEventListener('blur', release_all);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) release_all(); });
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
     canvas.addEventListener('mousedown', e => {
       I.mx = e.clientX; I.my = e.clientY;
       if (e.button === 0 && I.mouseFireOk && I.mouseFireOk(e.shiftKey)) { I.mfire = true; I.mfirePressed = true; I.aimReq = true; I.kbLock = null; return; }
@@ -127,7 +136,8 @@
     inp.sdir = strike ? (arrowsL ? -1 : arrowsR ? 1 : 0) : 0;
     inp.move = strike ? ((k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0)) : (right ? 1 : 0) - (left ? 1 : 0);
     // the girder turns in 22.5° steps on the up / down keys
-    inp.gang = girder ? ((p.has('KeyW') || p.has('ArrowUp')) ? 1 : (p.has('KeyS') || p.has('ArrowDown')) ? -1 : 0) : 0;
+    inp.gang = 0;                                                                       // (P37 W4: the plate turns freely while the keys are held)
+    inp.gturn = girder ? ((k.has('KeyW') || k.has('ArrowUp')) ? 1 : 0) - ((k.has('KeyS') || k.has('ArrowDown')) ? 1 : 0) : 0;
     inp.up = !girder && (k.has('KeyW') || k.has('ArrowUp')) ? 1 : 0;
     inp.down = !girder && (k.has('KeyS') || k.has('ArrowDown')) ? 1 : 0;
     // Enter on the rope drops the selected payload weapon, else it jumps
@@ -150,7 +160,11 @@
         }
       }
     }
-    let wkey = ''; const wk = wkeys(); for (const c of p) if (wk[c]) wkey = wk[c];
+    // P37: + / - step the selected weapon's parameter (fuse 0.5-5 s, mortar burst height 1-5 m, planted mine fuse 0-3 s):
+    // = / + / numpad +, and - / numpad -; - only steps while the weapon has one (else it picks the bellows, key '-')
+    const hasParam = !!(S && S.active && SS.weaponsA && SS.weaponsA.param(S, S.weapon));
+    inp.adj = ((p.has('Equal') || p.has('NumpadAdd')) && hasParam ? 1 : 0) - ((p.has('NumpadSubtract') || p.has('Minus')) && hasParam ? 1 : 0);
+    let wkey = ''; const wk = wkeys(); for (const c of p) if (wk[c] && !(hasParam && (c === 'Minus'))) wkey = wk[c];
     if (I.pickWeapon) { wkey = I.pickWeapon; I.pickWeapon = ''; }
     // P24.11 (PoC Q / E / Tab cycle; here [ and ]: Q / E turn the section): previous / next weapon that has ammo
     if (!wkey && S && S.active && S.teams && (p.has('BracketLeft') || p.has('BracketRight'))) {
@@ -159,19 +173,21 @@
       for (let n = 0; n < order.length; n++) { i = (i + dir + order.length) % order.length; if (am[order[i]] > 0 || am[order[i]] === Infinity) { wkey = order[i]; break; } }
     }
     inp.weapon = wkey;
-    inp.fuse = p.has('KeyF') && S ? (S.fuse % 5) + 1 : 0;                  // PoC: F cycles the fuse 1-5 s
+    inp.fuse = p.has('KeyF') && S ? (Math.floor(SS.weaponsA ? SS.weaponsA.fuse_of(S, S.weapon) : S.fuse) % 5) + 1 : 0;                  // PoC: F cycles the fuse 1-5 s
     inp.rotate = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0);
     inp.rotate_mouse = I.mouseRot;
     inp.fine = shift ? 1 : 0;
-    // PoC worm select: Tab hands the turn to the next worm while that is allowed, else it aligns the section
-    const wsel = p.has('Tab') && !shift && S && SS.sim.can_switch && SS.sim.can_switch(S);
-    inp.wsel = wsel ? 1 : 0;
-    inp.align_step = p.has('Tab') && !wsel ? (shift ? -1 : 1) : 0;
+    // P37-6: Tab = the next OPPONENT worm (strongest team / worm first), Shift+Tab = the next crate (nearest first); both
+    // only while the view may still be rotated (sim/rotlock.js). PoC worm select (option) moved to the \\ key (every letter is a weapon / move key).
+    inp.wsel = p.has('Backslash') && S && SS.sim.can_switch && SS.sim.can_switch(S) ? 1 : 0;
+    inp.align_step = p.has('Tab') && !shift ? 1 : 0;
+    inp.align_crate = p.has('Tab') && shift ? 1 : 0;
     inp.align_refocus = 0;
     inp.end_turn = 0;
     inp.reset = 0;
     inp.inspect = k.has('KeyV') ? 1 : 0;
     inp.tgt = 0; inp.ts = 0; inp.ty = 0;
+    inp.dbk = 0; inp.dbp0 = 0; inp.dbp1 = 0; inp.dbs = 0; inp.dby = 0; inp.dbsky = 0;        // (P49: the debug toolbox fills these after the sample, ui/debug.js)
     if (target) { inp.tgt = 1; inp.ts = target.s; inp.ty = target.y; if (target.fire) inp.fire_pressed = 1; }
     return inp;
   };

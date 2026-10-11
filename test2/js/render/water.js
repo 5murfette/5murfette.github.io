@@ -21,13 +21,14 @@
   'use strict';
   const T = window.THREE;
   const WV = SS.waterView = {};
-  const N1 = 193, WETH = 0.004, WET_T = 9, FOAM_T = 2.6, DAMP = 0.9, DAMP_T = 2.5;
+  let N1 = 193;                       // lattice columns per side (P38: per map, WV.resize)
+  const WETH = 0.004, WET_T = 9, FOAM_T = 2.6, DAMP = 0.9, DAMP_T = 2.5;
   let ms = 0, scene, tx, Q, U, tex, data, foam, wetA, grid, outer, face, gridMat, outerMat, faceMat, stateRef = null, ver = -1, lastT = 0;
   const own = {
     tW: { value: null }, tSky: { value: null }, tEnv: { value: null }, uEnv: { value: 0 }, uSun: { value: new T.Vector3(0.5, 0.6, 0.3).normalize() },
     uHorizon: { value: new T.Color(0xf6c89a) }, uDeep: { value: new T.Color(0x0d3a5c) }, uShallow: { value: new T.Color(0x2fa7a8) },
     uFog: { value: new T.Color(0xf3d2b0) }, uFogD: { value: 0.0026 }, uInsp: { value: 0 }, uWTime: { value: 0 }, uRain: { value: 0 },
-    tShelf: { value: null },
+    tShelf: { value: null }, uNW: { value: 193 }, uSW: { value: 96 }, uMC: { value: new T.Vector2(48, 48) },   // lattice texels / map side (m) / map centre
     uRing: { value: [0, 1, 2, 3, 4, 5].map(() => new T.Vector4(0, 0, -99, 0)) }   // P29l: open-sea ring waves (x, z, start time, strength)
   };
   let ringN = 0;
@@ -86,7 +87,6 @@
     }
     vec4 shade(float depth, float foamS, float dA){          // dA: apparent depth (colour / opacity; LS1 shelf)
       float tD = dot(vW - uO, uN);
-      if (tD > 0.0 && uInsp < 0.02) discard;                 // nothing in front of slice zero (inspection fades it in)
       if (depth < 0.006) discard;
       float inl = clamp(-foamS, 0.0, 1.0);                   // inland still water (foam channel stored as -1 - foam)
       foamS = max(foamS, 0.0) + max(-1.0 - foamS, 0.0);
@@ -143,12 +143,14 @@
     for (let k = 0; k < n - 1; k++) for (let i = 0; i < n - 1; i++) { const a = k * n + i, b = a + 1, c = a + n, d = c + 1; idx.push(a, c, b, b, c, d); }
     const g = new T.BufferGeometry();
     g.setAttribute('position', new T.BufferAttribute(pos, 3)); g.setIndex(idx);
-    g.boundingSphere = new T.Sphere(new T.Vector3(48, 3, 48), 80);
+    g.boundingSphere = new T.Sphere(new T.Vector3(N1 / 4, 3, N1 / 4), N1 * 0.42);
     return g;
   }
 
   WV.init = function (sc, textures, quality, renderer) {
     scene = sc; tx = textures; Q = quality; U = SS.terrain.uniforms;
+    N1 = SS.world.NX;
+    own.uNW.value = N1; own.uSW.value = SS.world.SX; own.uMC.value.set(SS.world.MX, SS.world.MZ);
     const N = N1 * N1;
     data = new Float32Array(N * 4); foam = new Float32Array(N); wetA = new Float32Array(N);
     tex = new T.DataTexture(data, N1, N1, T.RGBAFormat, T.FloatType);
@@ -167,14 +169,14 @@
     gridMat = new T.ShaderMaterial({
       transparent: true, depthWrite: false, fog: false, uniforms: shared(),
       vertexShader: /* glsl */`
-        uniform highp sampler2D tW; uniform sampler2D tShelf; uniform float uSea;
+        uniform highp sampler2D tW; uniform sampler2D tShelf; uniform float uSea, uNW;
         varying vec3 vW; varying vec3 vNg; varying vec4 vD; varying vec2 vSh;
-        float lvl(ivec2 q, float own){ q = clamp(q, ivec2(0), ivec2(${N1 - 1})); vec4 d = texelFetch(tW, q, 0); return d.g > ${WETH} ? d.r : own; }
+        float lvl(ivec2 q, float own){ q = clamp(q, ivec2(0), ivec2(int(uNW) - 1)); vec4 d = texelFetch(tW, q, 0); return d.g > ${WETH} ? d.r : own; }
         void main(){
           ivec2 ij = ivec2(floor(position.x * 2.0 + 0.5), floor(position.z * 2.0 + 0.5));
           vec4 d = texelFetch(tW, ij, 0);
           float y = d.r;
-          float e = float(min(min(ij.x, ij.y), min(${N1 - 1} - ij.x, ${N1 - 1} - ij.y)));
+          float e = float(min(min(ij.x, ij.y), min(int(uNW) - 1 - ij.x, int(uNW) - 1 - ij.y)));
           if (d.g > ${WETH}) y = mix(uSea, y, clamp(e / 3.0, 0.0, 1.0));      // meet the flat outer ocean at the border
           float hx = lvl(ij + ivec2(1, 0), y) - lvl(ij - ivec2(1, 0), y), hz = lvl(ij + ivec2(0, 1), y) - lvl(ij - ivec2(0, 1), y);
           vNg = normalize(vec3(-hx, 1.0, -hz));
@@ -190,6 +192,7 @@
           ex = max(ex, 9.0 * (1.0 - smoothstep(0.0, 3.0, vSh.y)));                // deep at the border (the outer plane)
           gl_FragColor = shade(vD.x, vD.y, vD.y < -0.5 ? vD.x : vD.x + ex); ${TAIL} }`
     });
+    gridMat.userData.sectionMargin = 0;                    // P46: the water follows the terrain's front limit (render/section.js)
     grid = new T.Mesh(makeGrid(Q.waterN && Q.waterN < 150 ? 2 : 1), gridMat);
     grid.renderOrder = 6; grid.frustumCulled = false; scene.add(grid);
 
@@ -199,27 +202,28 @@
       vertexShader: /* glsl */`
         varying vec3 vW; varying vec3 vNg; varying vec4 vD;
         void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vNg = vec3(0.0, 1.0, 0.0); vD = vec4(0.0); gl_Position = projectionMatrix * viewMatrix * w; }`,
-      fragmentShader: /* glsl */`uniform highp sampler2D tW; uniform float uBack, uAlpha;
+      fragmentShader: /* glsl */`uniform highp sampler2D tW; uniform float uBack, uAlpha, uNW, uSW; uniform vec2 uMC;
 ` + SURF + /* glsl */`void main(){
           float vis = 1.0;
-          if (vW.x > 0.0 && vW.z > 0.0 && vW.x < 96.0 && vW.z < 96.0) {
+          if (vW.x > 0.0 && vW.z > 0.0 && vW.x < uSW && vW.z < uSW) {
             // inside the map the grid draws the water; over dry land beyond the slab, while the surrounding world (the
             // terrain context) is hidden, the sea continues flat, so the slab stands in an unbroken sea
-            if (texture2D(tW, (vW.xz * 2.0 + 0.5) / ${N1}.0).g > 0.0 || dot(vW - uO, uN) > -uBack) discard;
+            if (texture2D(tW, (vW.xz * 2.0 + 0.5) / uNW).g > 0.0 || dot(vW - uO, uN) > -uBack) discard;
             vis = 1.0 - uAlpha;
             if (vis < 0.01) discard;
           }
-          vec2 o = max(max(-vW.xz, vW.xz - 96.0), 0.0);
+          vec2 o = max(max(-vW.xz, vW.xz - uSW), 0.0);
           // P29f (user 2026-10-08: "a strange cut-off at a distance, like an island in the air"): the plane fades out
           // over its last 150 m, beyond render/farland.js's R_IN (520 m), so the far ocean (drawn under it, the same
           // surface down to the true horizon) carries the horizon: before, the fogged edge of this plane lay as a pale
           // band over the far islands' bases
-          vis *= 1.0 - smoothstep(540.0, 690.0, length(vW.xz - vec2(48.0)));
+          vis *= 1.0 - smoothstep(540.0, 690.0, length(vW.xz - uMC));
           vec4 c = shade(1.9 + length(o) * 0.12, 0.0, 9.0 + length(o) * 0.12);   // LS1: deep from the border on
           gl_FragColor = vec4(c.rgb, c.a * vis); ${TAIL} }`
     });
+    outerMat.userData.sectionMargin = 0;
     outer = new T.Mesh(new T.PlaneGeometry(1400, 1400), outerMat);
-    outer.rotation.x = -Math.PI / 2; outer.position.set(48, SS.world.SEA, 48); outer.renderOrder = 5.9; outer.frustumCulled = false; scene.add(outer);
+    outer.rotation.x = -Math.PI / 2; outer.position.set(SS.world.MX, SS.world.SEA, SS.world.MZ); outer.renderOrder = 5.9; outer.frustumCulled = false; scene.add(outer);
 
     // the aquarium face at slice zero
     faceMat = new T.ShaderMaterial({
@@ -228,15 +232,15 @@
       vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */`
         uniform highp sampler2D tW; uniform highp sampler3D tVol; uniform sampler2D tNoise;
-        uniform vec3 uVolSize, uSun, uDeep, uShallow, uFog, uN; uniform float uWTime, uFogD, uSea;
+        uniform vec3 uVolSize, uSun, uDeep, uShallow, uFog, uN; uniform float uWTime, uFogD, uSea, uNW, uSW;
         varying vec3 vW;
         void main(){
           vec2 g = vW.xz * 2.0;
           if (vW.y < 0.02) discard;
           float surf, inl = 0.0;
-          if (g.x < 0.0 || g.y < 0.0 || g.x > ${N1 - 1}.0 || g.y > ${N1 - 1}.0) {
+          if (g.x < 0.0 || g.y < 0.0 || g.x > uNW - 1.0 || g.y > uNW - 1.0) {
             // beyond the map: the open sea at rest over a seabed falling away to the diorama base
-            vec2 o = max(max(-vW.xz, vW.xz - 96.0), 0.0);
+            vec2 o = max(max(-vW.xz, vW.xz - uSW), 0.0);
             surf = uSea;
             if (vW.y > surf || vW.y < 1.08 - length(o) * 0.06) discard;
           } else {
@@ -246,7 +250,7 @@
             inl = 0.0;
             for (int q = 0; q < 4; q++) {
               ivec2 o = ivec2(q & 1, q >> 1);
-              vec4 d = texelFetch(tW, min(i0 + o, ivec2(${N1 - 1})), 0);
+              vec4 d = texelFetch(tW, min(i0 + o, ivec2(int(uNW) - 1)), 0);
               float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
               dep += d.g * w;
               if (d.g > ${WETH}) { sw += w; sh += w * d.r; inl += w * step(d.b, -0.5); }
@@ -280,8 +284,27 @@
         }`
     });
     const SEA = SS.world.SEA;
+    faceMat.userData.sectionMargin = 0;
     face = new T.Mesh(new T.PlaneGeometry(1, 1), faceMat);
     face.scale.set(3000, SEA + 4, 1); face.renderOrder = 6.2; face.frustumCulled = false; scene.add(face);   // 3 km wide: the section's rock reaches 1.5 km past the map (P29a)
+  };
+
+  /* P38: a map of another size: new lattice-sized arrays and textures (the texture objects stay, the terrain's tWater
+   * uniform points at them), a new inner grid, the outer ocean and the section face re-centred. */
+  WV.resize = function () {
+    const W = SS.world;
+    if (W.NX === N1) return;
+    N1 = W.NX;
+    const N = N1 * N1;
+    data = new Float32Array(N * 4); foam = new Float32Array(N); wetA = new Float32Array(N);
+    shelf = new Uint8Array(N); shelfD = new Float32Array(N);
+    tex.dispose(); tex.image = { data, width: N1, height: N1 }; tex.needsUpdate = true;
+    shelfTex.dispose(); shelfTex.image = { data: shelf, width: N1, height: N1 }; shelfTex.needsUpdate = true;
+    own.uNW.value = N1; own.uSW.value = W.SX; own.uMC.value.set(W.MX, W.MZ);
+    grid.geometry.dispose(); grid.geometry = makeGrid(Q.waterN && Q.waterN < 150 ? 2 : 1);
+    outer.position.x = W.MX; outer.position.z = W.MZ;
+    faceMat.uniforms.uVolSize.value.set(W.NX, W.NY, W.NZ);
+    ver = -1; shelfT = -9; ringN = 0;
   };
 
   // P1 sudden death: the sea level rose (uSea is the terrain's shared uniform, set by view.seaChanged)
@@ -374,6 +397,7 @@
   }
 
   WV.frame = function (S, view, camera) {
+    if (SS.world.NX !== N1) WV.resize();
     const st = S.water;
     const on = !!st && !SS.world.dry;                    // dry worlds (Step D): no sea at all; render/dunes.js draws the far dunes
     grid.visible = face.visible = on; outer.visible = !SS.world.dry;

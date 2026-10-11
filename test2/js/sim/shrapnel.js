@@ -21,7 +21,9 @@
   const SH = SS.shrapnel = {};
   const K = C.SHRAPNEL;
   const W = () => SS.world;
-  const rng = S => { if (!S.fragRng) S.fragRng = M.rng_make(Math.imul((S.settings && S.settings.seed) | 0, 2654435761) + 0x5eed >>> 0); return M.rng_next(S.fragRng); };
+  const rng = S => M.rng_next(S.fragRng);
+  // RNG stream S.fragRng (created at every reset, with the other streams: docs/PORTING.md "RNG streams")
+  SH.init = function (S) { S.fragRng = M.rng_make((Math.imul(S.settings.seed | 0, 2654435761) + 0x5eed) >>> 0); };
 
   function add(S, c, dx, dy, dz, v, aim) {
     if (S.frags.length >= K.MAX) return null;
@@ -46,11 +48,11 @@
       const dx = wm.pos.x - o.x, dy = wm.pos.y - o.y, dz = wm.pos.z - o.z, d = M.len3(dx, dy, dz);
       if (d > K.REACH || d < 1e-3) continue;
       if (w.solid_len(o.x, o.y, o.z, wm.pos.x, wm.pos.y, wm.pos.z) > K.LOS_SOLID) continue;
-      const ex = nReal * K.A_WORM / (2 * Math.PI * Math.max(d, 0.5) * Math.max(d, 0.5));
+      const ex = nReal * K.A_WORM / (2 * Math.PI * M.max(d, 0.5) * M.max(d, 0.5));
       let hits = Math.floor(ex); if (rng(S) < ex - hits) hits++;
       for (let h = 0; h < hits; h++) {
         const tx = wm.pos.x + (rng(S) - 0.5) * 0.5, ty = wm.pos.y + (rng(S) - 0.5) * 0.6, tz = wm.pos.z + (rng(S) - 0.5) * 0.5;
-        const ax = tx - o.x, ay = ty - o.y, az = tz - o.z, al = M.len3(ax, ay, az) || 1;
+        const ax = tx - o.x, ay = ty - o.y, az = tz - o.z, al = M.nz(M.len3(ax, ay, az), 1);
         if (add(S, o, ax / al, ay / al, az / al, K.V0 * (1 + (rng(S) * 2 - 1) * K.V_SPREAD), wm.id)) n++;
       }
     }
@@ -58,7 +60,10 @@
     return n;
   };
 
-  const dmg = new Map();                          // worm -> [hp, fragments] this step
+  /* per-step scratch (filled and drained inside SH.step, empty between steps: not state): the hits of this step per worm, in the order the
+   * worms were first hit (the order of the hurt events). C: static i32 dmgN; i32 dmgWorm[32]; f64 dmgHp[32]; i32 dmgCnt[32]; */
+  const DMG_MAX = 32, dmgWorm = new Int32Array(DMG_MAX), dmgHp = new Float64Array(DMG_MAX), dmgCnt = new Int32Array(DMG_MAX);
+  let dmgN = 0;
   function stop(S, f, i, kind, mat) {
     SS.sim.emit(S, 'frag', { id: f.id, x: f.x, y: f.y, z: f.z, vx: f.vx, vy: f.vy, vz: f.vz, ox: f.ox, oy: f.oy, oz: f.oz, age: f.age, kind, mat: mat || 0 });
     S.frags.splice(i, 1);
@@ -70,7 +75,7 @@
       const f = F[i]; f.age += dt;
       let sp = M.len3(f.vx, f.vy, f.vz);
       if (sp < K.V_STOP || f.age > K.LIFE || M.len2(f.x - f.ox, f.z - f.oz) > K.REACH * 4) { F.splice(i, 1); continue; }
-      const n = Math.max(1, Math.ceil(sp * dt / K.SUB)), h = dt / n;
+      const n = M.max(1, Math.ceil(sp * dt / K.SUB)), h = dt / n;
       let gone = false;
       for (let s = 0; s < n && !gone; s++) {
         const k = 1 / (1 + K.KD * sp * h);           // implicit quadratic drag along the velocity
@@ -83,7 +88,9 @@
           const ex = f.x - wm.pos.x, ey = f.y - wm.pos.y, ez = f.z - wm.pos.z;
           if (ex * ex + ey * ey + ez * ez > K.WORM_HIT_R * K.WORM_HIT_R) continue;
           const hp = M.clamp(Math.round(0.5 * K.MASS * sp * sp / K.J_PER_HP), 1, K.HIT_MAX);
-          const acc = dmg.get(wm) || [0, 0]; acc[0] += hp; acc[1]++; dmg.set(wm, acc);
+          let di = 0; while (di < dmgN && dmgWorm[di] !== wm.id) di++;
+          if (di === dmgN) { dmgWorm[dmgN] = wm.id; dmgHp[dmgN] = 0; dmgCnt[dmgN] = 0; dmgN++; }
+          dmgHp[di] += hp; dmgCnt[di]++;
           stop(S, f, i, 'worm'); gone = true; break;
         }
         if (gone) break;
@@ -95,16 +102,19 @@
         }
       }
     }
-    if (dmg.size) {
-      for (const [wm, a] of dmg) {
+    if (dmgN > 0) {
+      for (let di = 0; di < dmgN; di++) {
+        const wm = S.worms[dmgWorm[di]];
+        let hpSum = dmgHp[di];
         // P24: the PoC blast damage is the main hurt now; casing fragments add at most CAP HP per worm per burst
         // (a point-blank homing once did 85 HP from 43 fragments on top of the blast)
         if (!(S.time - (wm.shrapT == null ? -9 : wm.shrapT) < 0.5)) { wm.shrapT = S.time; wm.shrapSum = 0; }
-        a[0] = Math.min(a[0], K.CAP - wm.shrapSum); if (a[0] <= 0) continue; wm.shrapSum += a[0];
-        SS.sim.hurt(S, wm, a[0], 'shrapnel', true);
-        SS.sim.log(S, `${wm.name} took ${a[0]} from shrapnel (${a[1]} fragment${a[1] > 1 ? 's' : ''}).`, 0xffb27a);
+        hpSum = M.min(hpSum, K.CAP - wm.shrapSum); if (hpSum <= 0) continue; wm.shrapSum += hpSum;
+        SS.sim.hurt(S, wm, hpSum, C.DS.SHRAPNEL, C.HF.QUIET);
+        SS.sim.hit_ends_turn(S, wm);        // (P38 R1: a fragment hit is a hit like any other: it ends the active worm's turn / retreat, PoC activeHurt)
+        SS.sim.log(S, `${wm.name} took ${hpSum} from shrapnel (${dmgCnt[di]} fragment${dmgCnt[di] > 1 ? 's' : ''}).`, 0xffb27a);
       }
-      dmg.clear();
+      dmgN = 0;
     }
   };
   SH.settled = S => !S.frags || S.frags.length === 0;

@@ -28,7 +28,7 @@
   GR.setSurface = function (buf, n) { surf = buf; surfN = n; };
   function grassAt(x, z) {
     if (!surf) return 0;
-    const i = M.clamp(Math.round(x / 96 * (surfN - 1)), 0, surfN - 1), k = M.clamp(Math.round(z / 96 * (surfN - 1)), 0, surfN - 1);
+    const i = M.clamp(Math.round(x / SS.world.SX * (surfN - 1)), 0, surfN - 1), k = M.clamp(Math.round(z / SS.world.SZ * (surfN - 1)), 0, surfN - 1);
     return surf[(k * surfN + i) * 4] / 255;
   }
 

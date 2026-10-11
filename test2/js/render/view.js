@@ -12,7 +12,7 @@
     pan: { s: 0, y: 0 }, orbit: { yaw: 0, tilt: 0 }, look: null, activeId: -1, surf: null, surfN: 0
   };
   V.state = view;
-  const NS = 193;                         // surface / water height maps: one texel per lattice column
+  let NS = 193;                           // surface / water height maps: one texel per lattice column (P38: SS.world.NX, per map)
 
   /* Per-biome lighting and grading (sky panorama, sun, ambient, haze, vegetation and water tints). */
   const LOOKS = {
@@ -26,7 +26,8 @@
 
   V.init = function (canvas, textures, quality, opts) {
     tx = textures; Q = quality; opts = opts || {};
-    renderer = new T.WebGLRenderer({ canvas, antialias: Q.name !== 'low', preserveDrawingBuffer: !!opts.preserve, powerPreference: 'high-performance' });
+    renderer = new T.WebGLRenderer({ canvas, antialias: Q.msaa > 0, preserveDrawingBuffer: !!opts.preserve, powerPreference: 'high-performance' });
+    renderer.localClippingEnabled = true;                // P46: the section rule is a clipping plane on every material (render/section.js)
     renderer.setPixelRatio(Math.min(Q.dpr, window.devicePixelRatio || 1));
     renderer.toneMapping = T.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
     renderer.outputColorSpace = T.SRGBColorSpace;
@@ -34,6 +35,7 @@
     scene = new T.Scene();
     scene.fog = new T.FogExp2(0xf1d9c0, 0.0065);
     camera = new T.PerspectiveCamera(42, 1, 0.1, 900);
+    SS.section.attach(renderer, scene);                  // P46: the rule is on for this scene only (far pass / PMREM / post quads are drawn without it)
 
     hemi = new T.HemisphereLight(0xcfe2ff, 0x7a5a3a, 1.15); scene.add(hemi);
     sun = new T.DirectionalLight(0xffe0b5, 3.0);
@@ -64,7 +66,7 @@
     else {
       const wm = SS.mat.water(tx, tx.skies.sky, heightTex);
       water = new T.Mesh(new T.PlaneGeometry(1400, 1400), wm);
-      water.rotation.x = -Math.PI / 2; water.position.set(48, SS.world.SEA, 48); water.renderOrder = 6; scene.add(water);
+      water.rotation.x = -Math.PI / 2; water.position.set(SS.world.MX, SS.world.SEA, SS.world.MZ); water.renderOrder = 6; scene.add(water);
     }
     if (SS.dunesView) SS.dunesView.init(scene);       // dry worlds: far dunes instead of the sea (Step D2)
     SS.terrain.uniforms.tSurf.value = surfTex;
@@ -95,25 +97,66 @@
       for (let i = 0; i < n; i++) { const u = Math.random() * 0.97 + 0.03, a = Math.random() * 6.283, r = Math.sqrt(1 - u * u), k = 0.55 + Math.random() * 0.45, warm = Math.random();
         p[i * 3] = Math.cos(a) * r * 700; p[i * 3 + 1] = u * 700; p[i * 3 + 2] = Math.sin(a) * r * 700; c[i * 3] = k; c[i * 3 + 1] = k * (0.92 + 0.08 * warm); c[i * 3 + 2] = k * (0.85 + 0.25 * (1 - warm)); }
       const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(p, 3)); g.setAttribute('color', new T.BufferAttribute(c, 3));
-      stars = new T.Points(g, new T.PointsMaterial({ map: tx.glow, size: 2.6, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, fog: false, blending: T.AdditiveBlending }));
+      stars = new T.Points(g, SS.section.exempt(new T.PointsMaterial({ map: tx.glow, size: 2.6, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, fog: false, blending: T.AdditiveBlending }), 'sky: stars'));
       stars.renderOrder = -5; stars.frustumCulled = false; scene.add(stars); }
     SS.fx.init(scene, tx, Q);
+    if (SS.flameView) SS.flameView.init(scene, Q);
     if (SS.actors.init) SS.actors.init(scene, tx, Q);
     if (SS.armsView) SS.armsView.init(scene, tx);           // P7: the PoC arsenal's models and effects
+    if (SS.weaponsView) SS.weaponsView.init(scene, tx);     // P37-W3: weapons A
     if (SS.ventsView) SS.ventsView.init(scene);             // P25: fumaroles
     if (SS.bloodView) SS.bloodView.init(scene);             // the PoC's optional gore (setup Blood: On)
     if (SS.weatherView) SS.weatherView.init(scene, tx, Q, { skyMat, sun, hemi, fill, motes, heightTex, renderer });
     if (SS.shrapView) SS.shrapView.init(scene);        // X2: luminous casing shrapnel
     if (SS.spatView) SS.spatView.init(scene);          // LV4: lava spatter clots
     if (SS.structView) SS.structView.init(scene);      // M: steel bridges
+    if (SS.derelictView) SS.derelictView.init(scene, tx);   // P37: the derelict ship's glow
+    if (SS.alienView) SS.alienView.init(scene, tx, renderer);   // P37: eggs, face huggers, the alien, acid
     if (SS.iceView) SS.iceView.init(scene);            // Step I: sea ice
-    if (SS.post) SS.post.init(renderer, scene, camera, Q);
+    for (const n of W4V) if (SS[n]) SS[n].init(scene, tx);
     return { renderer, scene, camera };
   };
 
+  let vw = 0, vh = 0;
   V.resize = function (w, h) {
+    vw = w; vh = h;
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-    if (SS.post) SS.post.resize(w, h, renderer.getPixelRatio());
+  };
+  /* P38-R4: the pixel ratio (adaptive resolution, platform/quality.js adapt_*): the canvas, the far pass and the lens target follow the drawing buffer */
+  V.setDpr = function (r) {
+    r = Math.min(r, window.devicePixelRatio || 1);
+    if (Math.abs(renderer.getPixelRatio() - r) < 0.01) return;
+    renderer.setPixelRatio(r); if (vw) V.resize(vw, vh);
+  };
+  V.dpr = () => renderer.getPixelRatio();
+  V.msaa = () => (Q ? Q.msaa : 0);
+  /* P38-R4 shader pre-warm (a first use used to compile its programs mid-game: 20-340 ms hitches). Every object of the main and the far
+   * scene is made visible for a moment (pooled effect meshes are hidden until used), the programs are submitted to the driver at once
+   * (renderer.compile) and drawn once into a 1 x 1 pixel scissor on the canvas and into a tiny float target (the lens path: other
+   * output colour space / tone mapping = other programs; also the shadow-depth programs). Presentation only: nothing is simulated. */
+  V.prewarm = function (S) {
+    if (!renderer) return 0;
+    const t0 = performance.now(), hid = [], force = o => { if (!o.visible) { hid.push(o); o.visible = true; } };
+    scene.traverse(force); if (SS.farView && SS.farView.scene) SS.farView.scene().traverse(force);
+    const rt0 = renderer.getRenderTarget(), vp = renderer.getViewport(new T.Vector4()), sc = renderer.getScissor(new T.Vector4()), st = renderer.getScissorTest();
+    try {
+      if (SS.farView && SS.farView.dirty) SS.farView.dirty();
+      renderer.compile(scene, camera);
+      renderer.setScissorTest(true); renderer.setScissor(0, 0, 1, 1); renderer.setViewport(0, 0, 1, 1);
+      renderer.render(scene, camera);
+      const tr = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, samples: Q.msaa > 0 ? Q.msaa : 0 });
+      renderer.setRenderTarget(tr); if (SS.farView && SS.farView.dirty) SS.farView.dirty();
+      renderer.compile(scene, camera); renderer.render(scene, camera);
+      renderer.setRenderTarget(rt0); tr.dispose();
+    } finally {
+      for (const o of hid) o.visible = false;
+      renderer.setViewport(vp); renderer.setScissor(sc); renderer.setScissorTest(st); renderer.setRenderTarget(rt0);
+      if (SS.farView && SS.farView.dirty) SS.farView.dirty();
+    }
+    V.prewarmMs = performance.now() - t0;
+    if (SS.lens && SS.lens.ensure) SS.lens.ensure();
+    if (SS.prewarm) SS.prewarm.begin(renderer, scene, camera, scene);        // the rest (materials of not yet shown effects): V.render spreads it over the next frames
+    return V.prewarmMs;
   };
   V.camera = () => camera; V.scene = () => scene; V.renderer = () => renderer;
   V.vis = w => SS.actors.vis(w);
@@ -132,7 +175,13 @@
     return { s: SS.plane.to_plane(S, p).s, y: p.y };
   };
   /* P1 sudden death: the sea rose (sim/water.js raise): move the flat sea planes, the terrain's still-sea level */
+  // P37-5: the planes follow W.SEA itself (sim truth), not only the 'searise' event: a new match / a restored snapshot /
+  // a replay reset W.SEA without that event and the outer ocean stayed at the old (risen) level next to the new water
+  let seaShown = null;
+  V.seaSync = function () { const s = SS.world.SEA; if (s !== seaShown) V.seaChanged(s); };
   V.seaChanged = function (sea) {
+    seaShown = sea;
+    if (SS.farView && SS.farView.setSea) SS.farView.setSea(sea);
     if (water) water.position.y = sea;
     SS.terrain.uniforms.uSea.value = sea;
     if (SS.waterView && SS.waterView.seaChanged) SS.waterView.seaChanged(sea);
@@ -159,10 +208,13 @@
   V.snapCamera = () => { view.camT = null; view.dir.cur = null; };
   /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
   const PX = 0.0643;
+  const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
+  let deathId = -1, deathT = -99;    // P38 R3: the last worm that died (a drowning / poison death has no dying beat and no discrete hurt: the camera framed nothing)
   let hurtId = -1, hurtT = -99;      // the last worm hurt (id: worm objects are replaced by a replay restore)
   function interest(S, a) {
     const P2 = SS.plane, at = (s, y) => P2.to_world(S, s, y);
     if (S.phase === 'place') return null;
+    if (S.free3d && S.free3d.length) { const q = S.free3d[0]; return { key: 'free3d', x: q.pos.x, y: q.pos.y, z: q.pos.z, d: 900, p: 9 }; }   // P37 W4: a shell bounced off a force field flies in 3D
     if (S.phase === 'dying' && S.dyingW) { const w = S.dyingW, g = S.dyingGrave && w.grave ? w.grave : w.pos; return { key: 'dying', x: g.x, y: g.y, z: g.z, d: 480, p: 9 }; }
     if (S.strikes && S.strikes.length) {
       const st = S.strikes[0], pl = at(st.s, st.y);
@@ -176,10 +228,14 @@
       const z = S.zaps[0], gy = SS.weapons && SS.weapons.ground_below ? SS.weapons.ground_below(S, z.s, SS.world.SY - 0.5) : 0, tp = at(z.s, Math.max(gy, SS.world.SEA) + 1.5);
       return { key: 'zap', x: tp.x, y: tp.y, z: tp.z, d: 600, p: 8 };
     }
+    if (SS.alien && SS.alien.camera) { const ac = SS.alien.camera(S); if (ac) return ac; }      // P37: the alien strikes / a face hugger leaps
+    if (S.dogs && S.dogs.length) { const d = S.dogs[0], c = at(d.s, d.y); return { key: 'dog' + d.id, x: c.x, y: c.y, z: c.z, d: 560, p: 7 }; }     // P37 W4: the camera runs with the robo dog
     if (S.holes && S.holes.length) { const h = S.holes[0]; return { key: 'hole', x: h.x, y: h.y, z: h.z, d: 720, p: 8 }; }
     // P29 (user 2026-10-08): after the shot the camera follows the DAMAGE: the worm being hurt (fire, a late blast)
     // wins over falling shells / gel, explosions and the shooter ("most important")
     const hw = S.phase !== 'play' && hurtId >= 0 && view.time - hurtT < 1.6 ? S.worms[hurtId] : null;
+    const dw = S.phase !== 'play' && deathId >= 0 && view.time - deathT < 1.8 ? S.worms[deathId] : null;
+    if (dw && dw.dead) { const g = dw.grave || dw.pos; return { key: 'death' + dw.id, x: g.x, y: g.y, z: g.z, d: 520, p: 7.6 }; }
     if (hw && !hw.dead) return { key: 'hurt' + hw.id, x: hw.pos.x, y: hw.pos.y, z: hw.pos.z, d: 520, p: 7.5 };
     if (S.proj.length) {
       if (S.proj.length > 1) {
@@ -191,7 +247,7 @@
       const p = S.proj[0], sp = Math.hypot(p.vs, p.vy), c = at(p.s + p.vs * 0.12, p.y + p.vy * 0.12);
       return { key: 'proj' + (p.id || 0), x: c.x, y: c.y, z: c.z, d: M.clamp(560 + sp / PX * 0.3, 560, 860), p: 7 };
     }
-    if (S.moais) for (const m of S.moais) { const b = m.b; if (b && Math.hypot(b.vel.x, b.vel.y, b.vel.z) > 25 * PX) return { key: 'moai', x: b.pos.x, y: b.pos.y, z: b.pos.z, d: 640, p: 6 }; }
+    if (S.moais) for (const m of S.moais) { const b = SS.bodies.by_id(S, m.body); if (b && Math.hypot(b.vel.x, b.vel.y, b.vel.z) > 25 * PX) return { key: 'moai', x: b.pos.x, y: b.pos.y, z: b.pos.z, d: 640, p: 6 }; }
     const ex = S.lastExplosion;
     if (ex && S.time - (S.lastBlastT == null ? -99 : S.lastBlastT) < 1.4 && ex.R >= 14 * PX) return { key: 'boom' + S.lastBlastT.toFixed(2), x: ex.x, y: ex.y, z: ex.z, d: M.clamp(470 + ex.R / PX * 4.5, 540, 1050), p: 6 };
     if (S.phase === 'play' && a && !a.dead) return { key: 'active', x: a.pos.x, y: a.pos.y, z: a.pos.z, d: 0, p: 5 };
@@ -226,14 +282,17 @@
   V.clearActors = () => clearActors();          // (instant replay: the restored state has new object identities)
   function clearActors() {
     SS.fx.clear();
+    if (SS.flameView) SS.flameView.clear();
     if (SS.actors.clear) SS.actors.clear();
     if (SS.armsView) SS.armsView.clear();
+    if (SS.weaponsView) SS.weaponsView.clear();
     if (SS.bloodView) SS.bloodView.clear();
     if (SS.weatherView && SS.weatherView.clear) SS.weatherView.clear();
     if (SS.shrapView) SS.shrapView.clear();
     if (SS.spatView) SS.spatView.clear();
     if (SS.structView) SS.structView.clear();
     if (SS.iceView) SS.iceView.clear();
+    for (const n of W4V) if (SS[n]) SS[n].clear();
   }
 
   /* ---------- new map: look, surface map, height maps (terrain meshes are built by main via buildTerrain) ---------- */
@@ -295,6 +354,7 @@
     if (SS.waterView) SS.waterView.look(L, sk, haze);
     if (SS.weatherView) SS.weatherView.look(L, sk, haze);
     if (SS.fx.look) SS.fx.look(L, sk);
+    if (SS.flameView) SS.flameView.look(L, sk);
     // U: underground: no sun, a dim cave ambient (rock-tinted bounce), dark fog; the sky world is hidden in V.render
     if (SS.world.under) {
       sun.intensity = 0; sun.castShadow = false; fill.intensity = 0; hemi.color.set(0x8a8f99); hemi.groundColor.set(0x3a3028); hemi.intensity = 0.32;
@@ -321,30 +381,60 @@
     }
     return { buf, n };
   }
+  /* P38-R8: blast scorch on any ground (the sim's char channel only knows grass cells): a render-only soot map, OR-ed into the char (b) channel of the uploaded surface texture */
+  let scorchMap = null, scorchDirty = false;
+  V.scorch = function (x, z, r, a) {
+    const n = NS, H = SS.world.H; if (!scorchMap || scorchMap.length !== n * n) scorchMap = new Uint8Array(n * n);
+    const ci = x / H, ck = z / H, rc = r / H, i0 = Math.max(0, Math.floor(ci - rc)), i1 = Math.min(n - 1, Math.ceil(ci + rc)), k0 = Math.max(0, Math.floor(ck - rc)), k1 = Math.min(n - 1, Math.ceil(ck + rc));
+    for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
+      const d = Math.hypot(i - ci, k - ck) / rc; if (d >= 1) continue;
+      const rag = 0.82 + 0.18 * Math.sin(i * 12.9898 + k * 78.233) * Math.sin(k * 4.1 + i * 2.3), f = Math.min(1, (1 - d) * 1.8) * a * rag;
+      const v = Math.round(255 * f); if (v > scorchMap[k * n + i]) scorchMap[k * n + i] = v;
+    }
+    scorchDirty = true;
+  };
+  function applyScorch() { if (!scorchMap) return; const d = surfTex.image.data; for (let q = 0; q < scorchMap.length; q++) { const v = scorchMap[q]; if (v && v > d[q * 4 + 2]) d[q * 4 + 2] = v; } }
   function uploadSurface(S) {
     const s = surfaceBuffer(S);
     view.surf = s.buf; view.surfN = s.n; view.surfVer = S.veg ? S.veg.surfVer : 0; view.surfUploads = (view.surfUploads | 0) + 1;
-    surfTex.image.data.set(s.buf.subarray(0, NS * NS * 4)); surfTex.needsUpdate = true;
+    surfTex.image.data.set(s.buf.subarray(0, NS * NS * 4)); applyScorch(); surfTex.needsUpdate = true; scorchDirty = false;
     SS.grass.setSurface(s.buf, s.n);
   }
   function buildHeights() {
-    view.heightmap = SS.meshgen.heightmap(97); view.heightVer++;
+    view.heightmap = SS.meshgen.heightmap(SS.world.SX + 1); view.heightVer++;   // (1 px = 1 m: the HUD minimap; the version drives the minimap / cave x-ray / dunes rebuilds)
     const h = SS.meshgen.heightmap(NS), d = heightTex.image.data;
     for (let i = 0; i < h.length; i++) { const v = Math.round(M.clamp(h[i] / 40, 0, 1) * 255); d[i * 4] = v; d[i * 4 + 1] = v; d[i * 4 + 2] = v; d[i * 4 + 3] = 255; }
     heightTex.needsUpdate = true;
     view.heightFor = SS.world.version;
   }
+  /* P38: the map size changed: every lattice-sized render resource follows (the texture OBJECTS stay, other modules
+   * hold them in uniforms). Called first thing by newWorld. */
+  V.resizeWorld = function () {
+    const W = SS.world;
+    if (view.sizeVer === W.sizeVer) return;
+    view.sizeVer = W.sizeVer;
+    if (NS !== W.NX) {
+      NS = W.NX;
+      for (const t of [heightTex, surfTex]) { t.dispose(); t.image = { data: new Uint8Array(NS * NS * 4), width: NS, height: NS }; t.needsUpdate = true; }
+    }
+    if (SS.waterView && SS.waterView.resize) SS.waterView.resize();
+    if (SS.weatherView && SS.weatherView.resize) SS.weatherView.resize();
+    if (water) water.position.set(W.MX, W.SEA, W.MZ);
+  };
   V.newWorld = function (S) {
+    V.resizeWorld();
     clearActors();
     applyLook(S);
-    uploadSurface(S);
+    scorchMap = null; scorchDirty = false; uploadSurface(S);
     buildHeights();
-    SS.terrain.uniforms.uSea.value = SS.world.SEA;       // per world (dry worlds: below the floor)
+    V.seaChanged(SS.world.SEA);                           // per world (dry worlds: below the floor): terrain, outer ocean, face
     SS.terrain.uniforms.uCtxSolid.value = 1;   // D3 (dry) + CX1 (all worlds): the far context is drawn solid
     if (SS.dunesView) SS.dunesView.reset(S, view);
     view.camT = null; V.resetPan(); view.activeId = -1;
     if (SS.lavaView) SS.lavaView.reset(S);
     if (SS.ventsView) SS.ventsView.reset(S);
+    if (SS.derelictView) SS.derelictView.reset(S);
+    if (SS.alienView) SS.alienView.reset(S);
     if (SS.bodyView) SS.bodyView.clear();
     if (SS.edgeView) SS.edgeView.reset(S);
     S.sectionDirty = true;
@@ -356,7 +446,7 @@
   /* drawn as part of the slab: from slice zero (plus a body radius) back to -uBack. A worm in front of slice zero
    * would float in front of the cut face (its ground is not drawn), so it is a ghost like the off-section ones. */
   /* user 2026-10-08: what lies ON the terrain (blood stains, gibs, ...) follows the terrain's section view: nothing in
-   * front of slice zero (+margin), and beyond the slab (t < -uBack - margin) only as much as the context terrain is
+   * front of slice zero (+margin: the automatic rule of render/section.js), and beyond the slab (t < -uBack - margin) only as much as the context terrain is
    * drawn (uAlpha; 0 = hidden). Patches a material's shaders (instancing aware) with the terrain's own uniforms. */
   V.slabFade = function (mat, margin) {
     const prev = mat.onBeforeCompile;
@@ -372,7 +462,6 @@
         vSlabW = (modelMatrix * slabP).xyz;`);
       sh.fragmentShader = 'uniform vec3 uO, uN; uniform float uBack, uAlpha, uSlabM; varying vec3 vSlabW;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', `#include <dithering_fragment>
         { float tS = dot(vSlabW - uO, uN);
-          if (tS > uSlabM) discard;
           if (tS < -uBack - uSlabM) { if (uAlpha < 0.004) discard; gl_FragColor.a *= uAlpha; } }`);
     };
     const key = mat.customProgramCacheKey ? mat.customProgramCacheKey.bind(mat) : () => '';
@@ -385,11 +474,13 @@
   V.shownAt = function (S, p, r) {
     if ((view.insp || 0) > 0.05) return true;
     const n = P.nrm(S), back = SS.terrain.uniforms.uBack.value, t = (p.x - S.O.x) * n.x + (p.z - S.O.z) * n.z;
+    if (t > r && SS.section.frontOn) return true;                    // (front ghost: drawn, and clipped / ghosted by render/section.js)
     return t <= r && (t >= -back - r || ((view.ctxA || 0) > 0.004 && back < 200));
   };
   V.inSlab = (S, p) => { const t = P.to_plane(S, p).t; return t <= C.WORM_R && t >= -SS.terrain.uniforms.uBack.value - C.WORM_R; };
   // P29j (user 2026-10-08: "the slice view setting doesn't work, the full map behind is always shown"): the slab depth
   // (uBack) AND the haze of everything behind it: thin / thick = crisp to 1.5 / 6 m, the rest recedes; full = all crisp
+  V.setGhost = pct => SS.section.setGhost(pct);
   V.setSlice = function (name) { V.slice = V.SLICE[name] ? name : 'thin'; SS.terrain.setBack(V.SLICE[V.slice]); SS.terrain.uniforms.uCtxHaze.value = V.slice === 'full' ? 0 : 1; return V.slice; };
 
   /* ---------- section outline ribbon ---------- */
@@ -413,43 +504,55 @@
   }
 
   /* ---------- events ---------- */
+  /* metres from the camera's focus point to an event (the camera shake of a blast follows the distance, not the zoom) */
+  function focusDist(e) { return view.camT ? Math.hypot(e.x - view.camT.x, e.y - view.camT.y, e.z - view.camT.z) : view.zoom; }
   function onEvents(S) {
     const camDist = view.zoom;
     for (const e of S.events) {
+      SS.sim.event_bind(S, e);                                  // R7 P2: the sim's events carry worm ids; the view code reads e.worm
       switch (e.type) {
-        case 'reset': clearActors(); hurtId = -1; break;
-        case 'hurt': if (e.worm) { hurtId = e.worm.id; hurtT = view.time; } break;   // the camera follows the damage (interest)
-        case 'explode': SS.fx.explosion(e, camDist); break;
+        case 'reset': clearActors(); hurtId = -1; deathId = -1; break;
+        case 'kill': if (e.worm) { deathId = e.worm.id; deathT = view.time; } break;
+        case 'hurt': if (e.worm && !e.dot) { hurtId = e.worm.id; hurtT = view.time; } break;   // the camera follows the damage (interest)
+        case 'explode': if (SS.bodyView && SS.bodyView.noteBlast) SS.bodyView.noteBlast(e);
+          SS.fx.env.tod = view.tod; SS.fx.env.under = !!SS.world.under; SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
         case 'splash': SS.fx.splash(e.x, e.y, e.z, e.size); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'waterblast': SS.fx.waterBlast(e); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'lavaplop': SS.fx.lava(e.x, e.y, e.z, Math.min(1.4, 0.35 + (e.speed || 0) * 0.06)); break;
-        case 'icebreak': SS.fx.dust(e.x, e.y + 0.05, e.z, Math.min(5, 2 + e.r | 0), 0.4 + 0.15 * e.r, 0xdbe6ee); if (SS.fx.steam) SS.fx.steam(e.x, e.y, e.z, 0.15); break;
-        case 'steelcut': SS.fx.dust(e.x, e.y, e.z, 2, 0.35, 0x8a8580); break;
-        case 'bridgefall': SS.fx.dust(e.x, e.y, e.z, 5, 1.2, 0x7a7068); break;
+        case 'icebreak': SS.fx.dust(e.x, e.y + 0.05, e.z, Math.min(5, 2 + e.r | 0), 0.4 + 0.15 * e.r, 0xdbe6ee); SS.fx.chips(e.x, e.y + 0.1, e.z, [0.75, 0.92, 1], Math.min(10, 3 + e.r * 2 | 0), 3.5, 0.08); if (SS.fx.steam) SS.fx.steam(e.x, e.y, e.z, 0.15); break;
+        case 'steelcut': SS.fx.dust(e.x, e.y, e.z, 2, 0.35, 0x8a8580); SS.fx.spark(e.x, e.y, e.z); break;
+        case 'bridgefall': SS.fx.dust(e.x, e.y, e.z, 5, 1.2, 0x7a7068); SS.fx.chips(e.x, e.y, e.z, [0.45, 0.33, 0.2], 10, 5, 0.12); break;
         case 'lavasplash': SS.fx.lava(e.x, e.y, e.z, Math.min(2.2, 0.6 + Math.sqrt(e.volume || 0))); break;
         case 'lavabreach': SS.fx.lava(e.x, e.y, e.z, 1.2); break;
         case 'steam': SS.fx.steam(e.x, e.y, e.z, e.power); break;
         case 'rubble': for (let i = 0; i < e.pts.length; i += 3) SS.fx.dust(e.pts[i].x, e.pts[i].y, e.pts[i].z, 2, 0.5); break;
         case 'collapse': SS.fx.dust(e.x, e.y, e.z, Math.min(14, 4 + e.pieces * 2), 1.2); break;
         case 'rebake': SS.fx.dust(e.x, e.y - 0.5, e.z, Math.min(12, 3 + (e.voxels / 60) | 0), 1.0); break;
-        case 'bodyhit': SS.fx.dust(e.x, e.y, e.z, 4, 0.5); break;
-        case 'propbreak': SS.fx.dust(e.x, e.y, e.z, e.why === 'burnt' ? 6 : 9, 0.6, e.why === 'burnt' ? 0x3a3330 : 0x8a6a48); break;
+        case 'bodyhit': SS.fx.dustAt(e.x, e.y, e.z, 4, 0.5); break;
+        case 'propbreak': SS.fx.dust(e.x, e.y, e.z, e.why === 'burnt' ? 6 : 9, 0.6, e.why === 'burnt' ? 0x3a3330 : 0x8a6a48);
+          if (SS.models && SS.bodyView && SS.models.shatter('prop_' + e.kind, SS.bodyView.groupOf(e.body), e.body)) break;   // baked chunks fly instead of the chips
+          SS.fx.chips(e.x, e.y, e.z, e.why === 'burnt' ? [0.05, 0.045, 0.04] : [0.5, 0.33, 0.18], e.why === 'burnt' ? 6 : 10, 4.5, 0.09); break;
         case 'minedisarm': SS.fx.splash(e.x, e.y, e.z, 0.4); break;
         case 'oilfire': SS.fx.dust(e.x, e.y + 0.5, e.z, 8, 1.4, 0x2a2420); break;
         case 'grassfire': SS.fx.dust(e.x, e.y + 0.3, e.z, Math.min(5, 2 + e.cells / 10 | 0), 0.5, 0x3a3330); break;
-        case 'land': SS.fx.dust(e.x, e.y, e.z, Math.min(10, 2 + e.speed | 0), 0.5); break;
-        case 'bounce': SS.fx.dust(e.x, e.y, e.z, 3, 0.3); SS.fx.spark(e.x, e.y, e.z); break;
-        case 'jump': SS.fx.dust(e.x, e.y - 0.45, e.z, 3, 0.35); break;
+        case 'land': if (!(e.worm && e.speed > 9)) SS.fx.dustAt(e.x, e.y, e.z, Math.min(10, 2 + e.speed | 0), 0.5); break;      // (a hard landing's dust is react.js's: it was spawned twice)
+        case 'bounce': SS.fx.dustAt(e.x, e.y, e.z, 3, 0.3); SS.fx.spark(e.x, e.y, e.z); break;
+        case 'jump': SS.fx.dustAt(e.x, e.y - 0.45, e.z, 3, 0.35); break;
         case 'fire': SS.fx.dust(e.pos.x, e.pos.y, e.pos.z, 4, 0.4, 0xdddddd); break;
         case 'rope_hook': SS.fx.spark(e.x, e.y, e.z); break;
+        case 'zip_hook': SS.fx.spark(e.x, e.y, e.z); break;
+        case 'chute_open': if (e.worm) SS.fx.dust(e.worm.pos.x, e.worm.pos.y + 0.6, e.worm.pos.z, 6, 0.5, 0xe8e8e8); break;
       }
       if (SS.fx.onEvent) SS.fx.onEvent(S, e, camDist);
       if (SS.actors.onEvent) SS.actors.onEvent(S, e);
       if (SS.armsView) SS.armsView.onEvent(S, e);
+      if (SS.weaponsView) SS.weaponsView.onEvent(S, e);
+      for (const n of W4V) if (SS[n] && SS[n].onEvent) SS[n].onEvent(S, e);
       if (SS.bloodView) SS.bloodView.onEvent(S, e);
       if (SS.audio) SS.audio.onEvent(S, e);                   // P10: procedural sound
       if (SS.weatherView && SS.weatherView.onEvent) SS.weatherView.onEvent(S, e);
       if (SS.shrapView) SS.shrapView.onEvent(S, e);
+      if (SS.alienView && SS.alienView.onEvent) SS.alienView.onEvent(S, e);          // P47: the infected worm, the alien's bite / burst
       if (SS.ui && SS.ui.onEvent) SS.ui.onEvent(S, e);
     }
     S.events.length = 0;
@@ -458,14 +561,18 @@
   /* ---------- per-frame sync + render ---------- */
   const ease = x => x * x * (3 - 2 * x);
   const v4 = new T.Vector3(), yAxis = new T.Vector3(0, 1, 0);
-  V.render = function (S, dt) {
+  /* P38-R2: slow motion / instant replay run at V.timeScale (set by main.js): every effect and animation clock (view.time, particles,
+   * blood, react / worn / gadget timers) gets the scaled dt, the camera and the terrain remesh the real one (dtU). */
+  V.timeScale = 1;
+  V.render = function (S, dtU) {
+    const dt = dtU * (V.timeScale || 1);
     view.time += dt;
     onEvents(S);
     if (S.weather && view.wxKind !== undefined && S.weather.kind !== view.wxKind) applyLook(S);   // 5f: the weather turned
     const W = SS.world;
-    SS.terrain.update(renderer, S, dt, Q.remeshMs);
+    SS.terrain.update(renderer, S, dtU, Q.remeshMs);
     if (W.version !== view.heightFor && view.time - view.heightT > 0.4) { buildHeights(); view.heightT = view.time; }
-    if (S.veg && S.veg.surfVer !== view.surfVer) uploadSurface(S);
+    if (S.veg && (S.veg.surfVer !== view.surfVer || scorchDirty)) uploadSurface(S);
     // the section also follows world edits that do not mark it dirty (collapse, rebake), at most ~3 times a second
     // (also whenever the plane moved without a dirty flag: the drawn section must always be the one the terrain is cut at)
     const moved = S.section && (S.section.O.x !== S.O.x || S.section.O.z !== S.O.z || S.section.theta !== S.theta);
@@ -487,6 +594,7 @@
     // from caves) and props hung in the sky during the fade (P1). Worms keep the fade (S.ctx, actors).
     const ctxF = 1;
     view.ctxA = ctxF; view.insp = insp;
+    SS.section.update(S.O, n, insp);                                   // P46: the one section visibility rule (render/section.js)
     view.pxScale = renderer.domElement.height * camera.projectionMatrix.elements[5] * 0.5;
     SS.terrain.frame(S, view, ctxF, insp);
     const wind = S.wind || null;
@@ -498,21 +606,21 @@
     // camera: side-on from the +normal side with a slight downward tilt; inspection swings into a 3D overview.
     if (a && a.id !== view.activeId) { view.activeId = a.id; V.resetPan(); }
     // PoC: walking, jumping, charging or firing hands the camera back to the worm (a manual pan eases out)
-    if (a && !a.dead && (a.walking || a.air || S.charging || S.proj.length) && (view.pan.s || view.pan.y)) { const k = Math.exp(-dt * 5); view.pan.s *= k; view.pan.y *= k; if (Math.abs(view.pan.s) + Math.abs(view.pan.y) < 0.05) view.pan.s = view.pan.y = 0; }
+    if (a && !a.dead && (a.walking || a.air || S.charging || S.proj.length) && (view.pan.s || view.pan.y)) { const k = Math.exp(-dtU * 5); view.pan.s *= k; view.pan.y *= k; if (Math.abs(view.pan.s) + Math.abs(view.pan.y) < 0.05) view.pan.s = view.pan.y = 0; }
     // PoC camera director (interest() / updateCamera): the most interesting thing wins by priority, a new interest of
     // the same or lower priority takes over only after 1.2 s; zoom = the PoC distance / its default 640 px x the user's
     const it = interest(S, a), dr = view.dir;
-    dr.since += dt;
+    dr.since += dtU;
     if (it && (!dr.cur || it.key === dr.cur.key || it.p > dr.cur.p || dr.since > 1.2 || (S.phase === 'play' && it.key === 'active'))) { if (!dr.cur || it.key !== dr.cur.key) dr.since = 0; dr.cur = it; }
     else if (!it && dr.cur && dr.since > 1.2) dr.cur = null;
-    const cur = dr.cur || { key: 'active', x: a ? a.pos.x : 48, y: a ? a.pos.y : 10, z: a ? a.pos.z : 48, d: 0, p: 0 };
+    const cur = view.lock || dr.cur || { key: 'active', x: a ? a.pos.x : SS.world.MX, y: a ? a.pos.y : 10, z: a ? a.pos.z : SS.world.MZ, d: 0, p: 0 };
     const pk = cur.key === 'active' ? 1 : 0, fx = cur.x + d.x * view.pan.s * pk, fy = cur.y + 1.2 + view.pan.y * pk, fz = cur.z + d.z * view.pan.s * pk;
-    const wantZ = cur.key === 'active' ? view.zoom : Math.max(view.zoom * 0.85, view.zoom * cur.d / 640);
+    const wantZ = cur.key === 'active' ? view.zoom : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * cur.d / 640);   // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
     if (!view.camT) { view.camT = new T.Vector3(fx, fy, fz); view.camZ = wantZ; }
     const rate = cur.key === 'active' ? 6 : cur.p >= 7 ? 4.5 : 3.2;
-    view.camT.lerp(v4.set(fx, fy, fz), 1 - Math.exp(-dt * rate));
-    view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dt * 2.4));
-    if (insp < 0.05) { view.orbit.yaw *= Math.exp(-dt * 4); view.orbit.tilt *= Math.exp(-dt * 4); }
+    view.camT.lerp(v4.set(fx, fy, fz), 1 - Math.exp(-dtU * rate));
+    view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dtU * 2.4));
+    if (insp < 0.05) { view.orbit.yaw *= Math.exp(-dtU * 4); view.orbit.tilt *= Math.exp(-dtU * 4); }
     const tilt = 0.2 + insp * (0.5 + view.orbit.tilt), yaw = insp * (0.55 + view.orbit.yaw), dist = (view.camZ || view.zoom) * (1 + insp * 0.9);
     const cy = Math.cos(yaw), sy = Math.sin(yaw), bx = n.x * cy + d.x * sy, bz = n.z * cy + d.z * sy;
     camera.position.set(view.camT.x + bx * dist * Math.cos(tilt), view.camT.y + dist * Math.sin(tilt), view.camT.z + bz * dist * Math.cos(tilt));
@@ -538,19 +646,25 @@
     if (SS.lavaView) SS.lavaView.frame(S, view);
     if (SS.bodyView) SS.bodyView.frame(S, view);
     if (SS.treeView) SS.treeView.frame(S, view);
+    V.seaSync();
     if (SS.waterView) SS.waterView.frame(S, view, camera);
     if (SS.dunesView) SS.dunesView.frame(S, view);
     if (SS.weatherView) SS.weatherView.frame(S, view, camera, dt);
-    if (SS.farView) SS.farView.frame();
+    if (SS.farView) SS.farView.frame(view.time);
     if (SS.cloudView) { SS.cloudView.frame(S, view, camera, dt); if (SS.skyView) SS.skyView.frame(camera, SS.cloudView.drift(), SS.cloudView.uniforms.uVis.value, view.time); }
     if (SS.shrapView) SS.shrapView.frame(S, view, camera, dt);
     if (SS.spatView) SS.spatView.frame(S, view, camera);
     if (SS.structView) SS.structView.frame(S, view);
+    if (SS.derelictView) SS.derelictView.frame(S, view, camera, dt);
+    if (SS.alienView) SS.alienView.frame(S, view, camera, dt);
     if (SS.iceView) SS.iceView.frame(S, view);
     if (SS.armsView) SS.armsView.frame(S, view, camera, dt);
+    if (SS.weaponsView) SS.weaponsView.frame(S, view, camera, dt);
+    for (const n of W4V) if (SS[n]) SS[n].frame(S, view, camera, dt);
     if (SS.ventsView) SS.ventsView.frame(S, view, camera, dt);
     if (SS.bloodView) SS.bloodView.frame(S, dt);
     SS.fx.update(dt, camera);
+    if (SS.flameView) SS.flameView.update(S, dt, camera);
     // U: underground maps hide the whole sky world (several modules re-enable their meshes per frame) and light the
     // active worm's lamp
     if (SS.world.under) {
@@ -563,12 +677,16 @@
       // night: the active worm's lamp lights its surroundings (as in the caves, a little weaker)
       const a = S.active; lamp.intensity = view.tod === 'night' && a && !a.dead ? 26 : 0; if (a) lamp.position.set(a.pos.x, a.pos.y + 0.7, a.pos.z);
     }
+    if (SS.prewarm) SS.prewarm.tick();
     if (stars) { stars.position.copy(camera.position); stars.visible = !SS.world.under && stars.material.opacity > 0; }
-    if (SS.post && Q.bloom) SS.post.render(view);
-    else if (SS.lens && S.holes && S.holes.length) {                       // P29c: gravitational lensing (render/lens.js)
+    if (SS.lens) SS.lens.tick(dt);
+    const hz = SS.flameView && Q.haze && !SS.world.under && SS.flameView.haze().n > 0 ? SS.flameView.haze() : null;       // P45: heat haze over big fires (high quality only: costs a lens pass)
+    if (SS.lens && ((S.holes && S.holes.length) || SS.lens.active() || hz)) {                       // P29c: gravitational lensing (render/lens.js)
       const HK = C.ARMS.HOLE;
-      SS.lens.render(renderer, scene, camera, S.holes.map(h => ({ x: h.x, y: h.y, z: h.z, s: 0.25 + 0.55 * Math.min(1, h.t / HK.GROW) })));
+      SS.lens.render(renderer, scene, camera, (S.holes || []).map(h => ({ x: h.x, y: h.y, z: h.z, s: 0.25 + 0.55 * Math.min(1, h.t / HK.GROW) })), hz);
     } else renderer.render(scene, camera);
+    SS.section.tick(scene, renderer);
+    if (SS.section.ghost > 0) SS.section.renderGhost(renderer, scene, camera, V);      // P46: the optional front ghost (0 = off, costs nothing)
   };
 
 })(window.SS = window.SS || {});

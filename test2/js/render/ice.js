@@ -21,13 +21,12 @@
    * plus a low-frequency wander: smooth lobes, no cell teeth; a pale slush rim at the edge. */
   function material() {
     const m = new T.MeshStandardMaterial({ roughness: 0.4, metalness: 0, side: T.DoubleSide, vertexColors: false, transparent: true, depthWrite: true });
+    m.userData.sectionMargin = 0.02;
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, own, { uO: U.uO, uN: U.uN, tNoise: U.tNoise, uHaze: U.uHaze });
       sh.vertexShader = 'attribute vec3 aIce; varying vec3 vW; varying vec3 vIce;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
         vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vIce = aIce;`);
       sh.fragmentShader = 'uniform vec3 uO, uN, uHaze; uniform float uInsp, uSnow; uniform sampler2D tNoise; varying vec3 vW; varying vec3 vIce;\nvec3 iceRefl;\n' + sh.fragmentShader
-        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
-          if (uInsp < 0.5 && dot(vW - uO, uN) > 0.02) discard;`)
         .replace('#include <map_fragment>', /* glsl */`
           float hcm = vIce.x, snowcm = vIce.y, pres = vIce.z;   // (P30: y = snow on the ice, cm; broken ice is floes now)
           // floes: z = 2 + e (e: 0 at the centre -> 1 on the broken edge / the side wall): a crisp piece with a pale

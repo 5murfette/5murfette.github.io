@@ -17,7 +17,12 @@
    *     and shorter, so the body parts move one after another (real earthworm locomotion: retrograde waves);
    *   - a slow sway wave travels up the neck; the head follows the aim quickly, the arc behind it slowly;
    *   - airborne / on the rope the curls open (a straighter body); on the ground the base tilts with the slope.
-   * Ring annuli (segment grooves) and a team-coloured saddle (clitellum) are in the geometry; original design. */
+   * Ring annuli (segment grooves) and a team-coloured saddle (clitellum) are in the geometry; original design.
+   *
+   * P39 (user: "imagine they are jello worm shaped"): the spine above is only the MUSCLE GOAL pose. The drawn body is the soft-body solver's
+   * (core/softworm.js, driven through render/softview.js): the goal is sampled at 16 nodes, the solver deforms / wobbles / crumples / lies along
+   * the slope under real terrain contact and friction, and the tube is skinned from the live nodes (buildRings). No rigid rotation, tumble, roll,
+   * dent or scale of the whole body is applied any more: a salto is a muscle torque, a bat hit / blast / landing are impulses on the nodes. */
   // user 2026-10-08: a worm, not a snake: ~38 bulging segments (annuli) along the body, smooth over the saddle
   const NS = 150, NR = 14, SEGS = 38, BODY = (() => {
     // arc lengths (m): tail + base, corner (turns up and back), neck, top arc (turns forward), head
@@ -64,7 +69,7 @@
     g.boundingSphere = new T.Sphere(new T.Vector3(0, 0, 0), 1.6);
     return g;
   }
-  const SP = { x: new Float32Array(NS), y: new Float32Array(NS), a: new Float32Array(NS), r: new Float32Array(NS) };
+  const SP = { x: new Float32Array(NS), y: new Float32Array(NS), a: new Float32Array(NS), r: new Float32Array(NS), b: new Float32Array(NS) };   // b = the contraction (0..1) of the peristaltic wave at the sample
   /* the spine for pose p {t, crawl (0..1 wave speed), air (0..1), headD (rad, fast), arcD (rad, slow)} */
   function spine(p) {
     const B = BODY, ds = B.L / (NS - 1), wph = p.wave;
@@ -72,11 +77,11 @@
       let k = 0;
       // piecewise curvature with soft joints
       const e = 0.035;
-      k += B.k[1] * smooth01(B.uBase - e, B.uBase + e, u) * (1 - smooth01(B.uNeck - e, B.uNeck + e, u)) * (1 - 0.55 * p.air);
-      k += B.k[3] * smooth01(B.uArc - e, B.uArc + e, u) * (1 - smooth01(B.u[3] - e, B.u[3] + e, u)) * (1 - 0.5 * p.air);
+      k += B.k[1] * smooth01(B.uBase - e, B.uBase + e, u) * (1 - smooth01(B.uNeck - e, B.uNeck + e, u)) * (1 - 0.2 * p.air);
+      k += B.k[3] * smooth01(B.uArc - e, B.uArc + e, u) * (1 - smooth01(B.u[3] - e, B.u[3] + e, u)) * (1 - 0.15 * p.air);
       // the aim: the head (fast) and the arc behind it (slow) turn toward it
       k += p.arcD / (B.seg[3] / B.L * B.L) * smooth01(B.uArc - e, B.uArc + e, u) * (1 - smooth01(B.u[3] - e, B.u[3] + e, u));
-      k += p.headD / (0.22) * smooth01(0.88, 0.92, u);
+      k += (p.headD + (p.wob || 0)) / (0.22) * smooth01(0.88, 0.92, u);
       // a slow sway travelling up the neck (parts move one after another)
       k += 0.9 * Math.sin(2 * Math.PI * (u * 1.3 - p.t * 0.22)) * smooth01(B.uBase, 1, u) * (0.6 + 0.4 * (1 - p.crawl)) * (1 - p.air);
       // the tail tip curls up a little
@@ -99,14 +104,33 @@
     if (p.air > 0) { let cx = 0, cy = 0; for (let i = 0; i < NS; i++) { cx += SP.x[i]; cy += SP.y[i]; } cx /= NS; cy /= NS; for (let i = 0; i < NS; i++) { SP.x[i] -= cx * p.air; SP.y[i] -= (cy) * p.air; } }
     for (let i = 0; i < NS; i++) {
       const u = i / (NS - 1), seg = (u > SADDLE0 - 0.01 && u < SADDLE1 + 0.01) || u > 0.9 ? 1 : 0.9 + 0.1 * Math.pow(Math.abs(Math.sin(u * Math.PI * SEGS)), 0.45);   // annuli: bulges with grooves between
-      SP.r[i] = radius(u) * seg * (1 + 0.16 * bump(u)) * (1 + 0.02 * Math.sin(p.t * 2.4));
+      SP.r[i] = radius(u) * seg * (1 + 0.16 * bump(u)) * (1 + 0.02 * Math.sin(p.t * 2.4)); SP.b[i] = bump(u);
     }
     // the lying part keeps its belly on the ground (its centre line rises and falls with its girth)
     if (p.air < 1) for (let i = 0; i < iC; i++) { const g = -0.5 + SP.r[i] + (SP.y[i] - (-0.5 + R_FRONT)); SP.y[i] += (g - SP.y[i]) * (1 - p.air); }
     return SP;
   }
-  function updateBody(g, p) {
-    const sp = spine(p), pos = g.attributes.position.array, nrm = g.attributes.normal.array;
+  /* P38-R4: BufferGeometry.computeVertexNormals without its per-triangle Vector3 work and attribute accessors (it was ~40 % of the
+   * allocation and ~1 ms per frame for 16 worms): the area-weighted average of the face normals, on the raw typed arrays.
+   * C: void face_normals(const f32 *pos, const u32 *idx, u32 ntri, f32 *nrm, u32 nvert). */
+  function faceNormals(g) {
+    const pos = g.attributes.position.array, nrm = g.attributes.normal.array, idx = g.index.array, n = idx.length;
+    nrm.fill(0);
+    for (let t = 0; t < n; t += 3) {
+      const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+      const cx = pos[c] - pos[b], cy = pos[c + 1] - pos[b + 1], cz = pos[c + 2] - pos[b + 2], ax = pos[a] - pos[b], ay = pos[a + 1] - pos[b + 1], az = pos[a + 2] - pos[b + 2];
+      const nx = cy * az - cz * ay, ny = cz * ax - cx * az, nz = cx * ay - cy * ax;
+      nrm[a] += nx; nrm[a + 1] += ny; nrm[a + 2] += nz; nrm[b] += nx; nrm[b + 1] += ny; nrm[b + 2] += nz; nrm[c] += nx; nrm[c + 1] += ny; nrm[c + 2] += nz;
+    }
+    for (let i = 0; i < nrm.length; i += 3) {
+      const l = Math.sqrt(nrm[i] * nrm[i] + nrm[i + 1] * nrm[i + 1] + nrm[i + 2] * nrm[i + 2]) || 1;
+      nrm[i] /= l; nrm[i + 1] /= l; nrm[i + 2] /= l;
+    }
+    g.attributes.normal.needsUpdate = true;
+  }
+  /* the tube mesh from a spine (SP-shaped arrays: body-local x, y, tangent angle a, radius r at NS samples) */
+  function buildRings(g, sp) {
+    const pos = g.attributes.position.array, nrm = g.attributes.normal.array;
     for (let i = 0; i < NS; i++) {
       const ca = Math.cos(sp.a[i]), sa = Math.sin(sp.a[i]), nx = -sa, ny = ca, r = sp.r[i];
       for (let j = 0; j < NR; j++) {
@@ -124,13 +148,18 @@
     pos[e1] = sp.x[l] + Math.cos(sp.a[l]) * sp.r[l]; pos[e1 + 1] = sp.y[l] + Math.sin(sp.a[l]) * sp.r[l]; pos[e1 + 2] = 0;
     nrm[e1] = Math.cos(sp.a[l]); nrm[e1 + 1] = Math.sin(sp.a[l]); nrm[e1 + 2] = 0;
     g.attributes.position.needsUpdate = true;
-    g.computeVertexNormals();                                     // (the grooves tilt the normals: the segments catch the light)
+    faceNormals(g);                                               // (the grooves tilt the normals: the segments catch the light)
     g.computeBoundingBox();                                       // (live shape: picking / tests read it)
     return sp;
   }
+  A.faceNormals = faceNormals;                                  // (tests)
+  function updateBody(g, p) { return buildRings(g, spine(p)); }
   A.wormSpine = p => spine(Object.assign({ t: 0, crawl: 0, air: 0, headD: 0, arcD: 0, wave: 0 }, p));   // tests / tools
   const HEAD_NAT = 2.27 - 3.32;                // the head's heading in the rest pose (rad, facing frame)
   const EYE_GEO = new T.SphereGeometry(0.075, 16, 12), PUPIL_GEO = new T.SphereGeometry(0.036, 10, 8), GLINT_GEO = new T.SphereGeometry(0.011, 6, 4);
+  // P43: an eyelid = a skin half sphere (pole up) a little bigger than the eye; rotated about the head axis it covers the eye from the top (render/idleview.js face())
+  const LID_GEO = new T.SphereGeometry(0.075, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), LID_MAT = new T.MeshStandardMaterial({ color: 0xf0a291, roughness: 0.45, emissive: 0x1c0e0b });
+  const IDLE_OFF = { k: 0 }, IDLE_CTX = { air: false, aiming: false, f: 1, inSec: true, active: false, crawl: 0, burn: false, wet: 0, zs: 1 };
   // shared by every worm / grave (one copy each; before, every new map leaked a set per worm and per grave)
   const SLAB_GEO = new T.BoxGeometry(0.46, 0.62, 0.16), CAP_GEO = new T.SphereGeometry(0.23, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
   let STONE = null;
@@ -138,7 +167,8 @@
   const SKIN_FILL = new T.Color(0.11, 0.055, 0.045);
   const MOUTH_GEO = new T.SphereGeometry(0.048, 12, 8), MOUTH_MAT = new T.MeshStandardMaterial({ color: 0x3a0a0e, roughness: 0.6 });
   // ASSET: worm_hands (part of models/worm.glb)
-  const HAND_GEO = new T.SphereGeometry(0.045, 10, 8), ARM_GEO = new T.CylinderGeometry(0.026, 0.03, 1, 8), HAND_MAT = new T.MeshStandardMaterial({ color: 0xf2a092, roughness: 0.55, emissive: 0x1c0c08 });   // a little self-light: a worm in shade stays pink, never black
+  const GRIPW = new Float32Array(6), v4g = new T.Vector3();
+  const ELBOW_GEO = new T.SphereGeometry(0.031, 8, 6), HAND_GEO = new T.SphereGeometry(0.045, 10, 8), ARM_GEO = new T.CylinderGeometry(0.026, 0.03, 1, 8), HAND_MAT = new T.MeshStandardMaterial({ color: 0xf2a092, roughness: 0.55, emissive: 0x1c0c08 });   // a little self-light: a worm in shade stays pink, never black
   const SKIN = new T.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.42, sheen: 0.7, sheenColor: new T.Color(0xffd0c4), sheenRoughness: 0.45, clearcoat: 0.45, clearcoatRoughness: 0.35 });
   const EYE = new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.15 });
   const PUPIL = new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 });
@@ -153,7 +183,11 @@
   const BONE_MAT = new T.MeshBasicMaterial({ color: 0xe6fbff, transparent: true, opacity: 1, depthTest: false, depthWrite: false });   // (seen through the shell)
   const XR_MAT = new T.MeshBasicMaterial({ color: 0x0c3f7a, transparent: true, opacity: 0.62, depthWrite: false });   // x-ray: dark film, bright bones
   const ARC_MAT = new T.LineBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.95, blending: T.AdditiveBlending, depthWrite: false });
-  for (const m of [BONE_MAT, XR_MAT, ARC_MAT]) m.userData.shared = true;   // (A.clear must not dispose them)
+  for (const m of [BONE_MAT, XR_MAT, ARC_MAT, MOUTH_MAT, HAND_MAT, LID_MAT]) m.userData.shared = true;
+  /* P43: the face and the hands are drawn in the transparent pass AFTER the x-ray silhouette (renderOrder 8): an eye or a hand in front of the body surface wrote
+   * its depth in the opaque pass and the x-ray film (the body "behind" it) tinted it pink; now the body alone is in the depth buffer when the film is drawn */
+  const FACE_RO = 9;
+  for (const m of [EYE, PUPIL, GLINT, MOUTH_MAT, HAND_MAT, LID_MAT]) m.transparent = true;   // (A.clear must not dispose them)
   const zm = new T.Matrix4(), zq = new T.Quaternion(), zs = new T.Vector3(), zp = new T.Vector3(), zAxis = new T.Vector3(0, 0, 1), RIB_Q = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 1, 0), Math.PI / 2);
   function makeZap(v) {
     const z = { shell: new T.Mesh(v.geo, XR_MAT), bones: new T.InstancedMesh(BONE_GEO, BONE_MAT, NVERT + 1), ribs: new T.InstancedMesh(RIB_GEO, BONE_MAT, NRIB),
@@ -209,20 +243,25 @@
     // receiveShadow off (user: worms went black in the desert sun when the cut face shaded them); a warm skin fill below
     const mesh = new T.Mesh(geo, SKIN.clone()); mesh.castShadow = true; mesh.receiveShadow = false; mesh.frustumCulled = false; body.add(mesh);
     const eyes = new T.Group(); body.add(eyes);
-    const pupils = [];
+    const pupils = [], lids = [], glints = [];
     for (const z of [-0.075, 0.075]) {
       const e = new T.Mesh(EYE_GEO, EYE); e.position.set(0, 0, z); e.scale.set(0.85, 1.15, 0.85); eyes.add(e);
       const p = new T.Mesh(PUPIL_GEO, PUPIL); p.position.set(0.05, 0, z * 1.1); eyes.add(p); pupils.push(p);
-      const gl = new T.Mesh(GLINT_GEO, GLINT); gl.position.set(0.075, 0.025, z * 1.1 + 0.012); eyes.add(gl);
+      const gl = new T.Mesh(GLINT_GEO, GLINT); gl.position.set(0.075, 0.025, z * 1.1 + 0.012); eyes.add(gl); glints.push(gl);
+      const lid = new T.Mesh(LID_GEO, LID_MAT); lid.position.set(0, 0, z); lid.scale.set(0.96, 1.29, 0.96); lid.visible = false; eyes.add(lid); lids.push(lid);
     }
     // the mouth: a dark notch at the head tip; its shape is the expression (line / open 'whee' / scared O)
     const mouth = new T.Mesh(MOUTH_GEO, MOUTH_MAT); body.add(mouth);
+    mouth.renderOrder = FACE_RO; eyes.traverse(o => { o.renderOrder = FACE_RO; });
     root.add(body);
     // held weapon (visible while aiming): one model per weapon (render/ordnance.js held(), made on first use)
     const held = new T.Group();
     root.add(held);
     // little worm hands on short arms (shown with a held weapon): skin-coloured, from the chest to the grips
-    const hands = [0, 1].map(() => { const hand = new T.Mesh(HAND_GEO, HAND_MAT), arm = new T.Mesh(ARM_GEO, HAND_MAT); hand.castShadow = arm.castShadow = true; hand.visible = arm.visible = false; root.add(hand, arm); return { hand, arm }; });
+    const hands = [0, 1].map(() => {
+      const hand = new T.Mesh(HAND_GEO, HAND_MAT), arm = new T.Mesh(ARM_GEO, HAND_MAT), fore = new T.Mesh(ARM_GEO, HAND_MAT), elbow = new T.Mesh(ELBOW_GEO, HAND_MAT);   // P43: fore + elbow = a bent arm for the idle antics
+      hand.castShadow = arm.castShadow = fore.castShadow = elbow.castShadow = true; hand.renderOrder = arm.renderOrder = fore.renderOrder = elbow.renderOrder = FACE_RO; hand.visible = arm.visible = fore.visible = elbow.visible = false; root.add(hand, arm, fore, elbow); return { hand, arm, fore, elbow, elbOn: false, ex: 0, ey: 0, ez: 0 };
+    });
     // x-ray silhouette when hidden behind terrain (same live geometry)
     const xray = new T.Mesh(geo, new T.MeshBasicMaterial({ color: team.rgb, transparent: true, opacity: 0.45, depthFunc: T.GreaterDepth, depthWrite: false }));
     xray.renderOrder = 8; xray.frustumCulled = false; body.add(xray);
@@ -232,7 +271,7 @@
     gBody.renderOrder = 11; gRim.renderOrder = 10; ghost.add(gRim, gBody);
     scene.add(root, ghost);
     const pose = { t: 0, crawl: 0, air: 0, headD: 0, arcD: 0, wave: (w.id || 0) * 0.37 };
-    return { root, body, mesh, geo, eyes, pupils, mouth, held, hands, heldBy: {}, burrowT: 9, batT: 0, batA: 0, flinchT: 0, stars: null, ghost, ghostMats: [gBody.material, gRim.material], phase: (w.id || 0) * 1.7, flash: 0, flame: null, pose, tilt: 0, lastS: null };
+    return { root, body, mesh, geo, eyes, pupils, lids, glints, mouth, held, hands, heldBy: {}, batT: 0, flinchT: 0, stars: null, ghost, ghostMats: [gBody.material, gRim.material], phase: (w.id || 0) * 1.7, flash: 0, flame: null, pose, tilt: 0, lastS: null };
   };
 
   A.makeGrave = function (scene, g, w) {
@@ -259,6 +298,28 @@
   let scene = null, rope, ropeKnot, reticle, trailT = 0, hookM = null, hookLine = null, glowTx = null;
   const teles = [];   // PoC teleFx: live beam effects
   const worms = new Map(), projs = new Map(), graves = new Map(), powerDots = [], keptRopes = [];
+  /* P38 A5: hands + arms are children of the root, but the body they hang on is rotated / squashed / flipped on its own (salto, lean, bat
+   * spin): the early pose code queues each hand as (hand point, shoulder point, in which frame each is) and flushHands() resolves the
+   * body-local points with the body's matrix of THIS frame once it is final, so an arm never detaches from a flipping worm. */
+  const hq = [], hv = new T.Vector3(), sv = new T.Vector3();
+  function qhand(hd, px, py, pz, sx, sy, sz, handBody, shBody) { hq.push(hd, px, py, pz, sx, sy, sz, handBody, shBody); }
+  function armSeg(m, ax, ay, az, bx, by, bz) {                 // a cylinder arm segment from a to b
+    const dx = bx - ax, dy = by - ay, dz = bz - az, L = Math.hypot(dx, dy, dz) || 1e-3;
+    m.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2); m.scale.set(1, L, 1); m.quaternion.setFromUnitVectors(yAxis, v4.set(dx / L, dy / L, dz / L));
+  }
+  function flushHands(v) {
+    for (const hd of v.hands) { hd.fore.visible = hd.elbow.visible = false; }
+    for (let i = 0; i < hq.length; i += 9) {
+      const hd = hq[i]; hv.set(hq[i + 1], hq[i + 2], hq[i + 3]); sv.set(hq[i + 4], hq[i + 5], hq[i + 6]);
+      if (hq[i + 7]) hv.applyMatrix4(v.body.matrix); if (hq[i + 8]) sv.applyMatrix4(v.body.matrix);
+      hd.hand.position.copy(hv);
+      if (hd.elbOn) {                                           // P43: a bent arm (shoulder - elbow - hand)
+        armSeg(hd.arm, sv.x, sv.y, sv.z, hd.ex, hd.ey, hd.ez); armSeg(hd.fore, hd.ex, hd.ey, hd.ez, hv.x, hv.y, hv.z); hd.elbow.position.set(hd.ex, hd.ey, hd.ez); hd.fore.visible = hd.elbow.visible = hd.arm.visible;
+        hd.elbOn = false;
+      } else armSeg(hd.arm, sv.x, sv.y, sv.z, hv.x, hv.y, hv.z);
+    }
+    hq.length = 0;
+  }
   const v4 = new T.Vector3(), ropeB = new T.Vector3(), yAxis = new T.Vector3(0, 1, 0), RED = new T.Color(0xff2a10);
 
   A.init = function (sc, tx) {
@@ -269,6 +330,7 @@
     // the grappling hook: flies out on its line (S.hook), then sits in the anchor pointing into the rock
     if (SS.ordnance) { hookM = SS.ordnance.hook(); hookM.scale.setScalar(1.4); hookM.visible = false; scene.add(hookM); }
     hookLine = new T.Mesh(rope.geometry, rope.material); hookLine.visible = false; scene.add(hookLine);
+    if (SS.travView) SS.travView.init(scene);                            // P37 W2: rope / parachute / zipline drawing
     reticle = new T.Sprite(new T.SpriteMaterial({ map: tx.ring, color: 0xffffff, depthTest: false, transparent: true }));
     reticle.scale.set(0.55, 0.55, 1); reticle.renderOrder = 12; scene.add(reticle);
     for (let i = 0; i < 14; i++) {
@@ -283,15 +345,22 @@
       scene.remove(v.root, v.ghost);
       for (const g of [v.root, v.ghost]) g.traverse(o => { if (o.isMesh && o.material) for (const m of [].concat(o.material)) if (!keep.has(m) && !m.userData.shared) m.dispose(); });
       if (v.geo) v.geo.dispose();                                  // P8: each worm owns its live body geometry
+      SS.mat.disposeTree(v.held); SS.mat.disposeTree(v.stars);     // P38-R2: held weapon models and the dizzy stars own geometries
       if (v.flame) SS.bodyView.unflame(v.flame);
+      if (v.wm) for (const m of v.wm.values()) m.dispose();
       if (v.zap) { v.zap.arcs.geometry.dispose(); v.zap.bones.dispose(); v.zap.ribs.dispose(); v.zap.glow.material.dispose(); }
     }
     for (const v of projs.values()) scene.remove(v);
-    for (const f of teles) scene.remove(f.grp); teles.length = 0;
+    for (const f of teles) { scene.remove(f.grp); SS.mat.disposeTree(f.grp); } teles.length = 0;      // (P38-R2: ghost clones of the body geometry, beam sprites)
     for (const v of graves.values()) { scene.remove(v); if (SS.graveView) SS.graveView.dispose(v); }
     worms.clear(); projs.clear(); graves.clear();
+    if (SS.travView) SS.travView.clear();
   };
-  A.vis = w => { const v = worms.get(w); return v ? { group: v.root, body: v.mesh, ghost: v.ghost } : null; };
+  /* P37: the world position of a worm's face (the eyes group) and its heading: out = { x, y, z, yaw, ha } (the face hugger sits there) */
+  A.head_world = (w, out) => { const v = worms.get(w); if (!v || !v.eyes) return false; v.root.updateMatrixWorld(true); const e = v.eyes.matrixWorld.elements; out.x = e[12]; out.y = e[13]; out.z = e[14]; out.yaw = v.root.rotation.y; out.ha = v.eyes.rotation.z; return true; };
+  A.vis = w => { const v = worms.get(w); return v ? { group: v.root, body: v.mesh, ghost: v.ghost, v } : null; };   // (P37: v = the whole view record: render/worn.js attaches hats / masks to its body group)
+  // P37 W4 (knockout punch): the worm spins head over tail (rate rad/s) until it lands (the same mechanism as the bat's)
+  A.tumble = (w, rate) => { const v = worms.get(w); if (v) { v.batT = 3; if (SS.softView) SS.softView.twist(w, rate); } };
   /* PoC teleFx (game.js L3891, user: "the one from PoC was perfect"): beamed across: columns of light stand at both
    * ends; the worm dissolves at the source as it materialises at the destination (ghost copies of its body, the source
    * fading and stretching up, the destination fading in from a stretched pose); the real worm is hidden for the 1.5 s;
@@ -352,14 +421,19 @@
     if (e.type === 'hurt' && e.worm) {
       const v = worms.get(e.worm); if (!v) return;
       v.flash = Math.min(1, 0.45 + e.amount / 40);
-      if (e.why === 'a baseball bat') { v.batT = 3; v.batW = 15 * (Math.random() < 0.5 ? -1 : 1); }   // sent spinning, terrified
+      if (e.src === C.DS.BAT) {                                  // P37-8: the soft body dents along the hit vector first (softview.js; the throw follows: 'batfly')
+        v.hitFly = true; v.flinchT = 0.3;
+      }
       else v.flinchT = 0.5;                                                                          // a flinch, eyes shut
+    }
+    if (e.type === 'batfly' && e.worm) {                                  // thrown: terrified
+      const v = worms.get(e.worm); if (v) v.batT = 3;                  // (terrified face while it flies; the flight itself is the soft body's)
     }
     // a blast nearby makes every worm within reach flinch (eyes shut, a twitch) even when it was not hurt
     if (e.type === 'explode') for (const w of S.worms) { if (w.dead) continue; const d = Math.hypot(w.pos.x - e.x, w.pos.y - e.y, w.pos.z - e.z); if (d < 3 * (e.R || 3)) { const v = worms.get(w); if (v) v.flinchT = Math.max(v.flinchT, 0.45 * (1 - d / (3 * (e.R || 3))) + 0.15); } }
     // a hard landing: the worm burrows into the ground for a moment and pops back out (dust)
-    if (e.type === 'land' && e.hard && e.worm && !e.worm.dead) { const v = worms.get(e.worm); if (v) { v.burrowT = 0; v.batT = 0; if (SS.fx && SS.fx.dust) SS.fx.dust(e.x, e.y, e.z, 12, 0.7, 0x8a6a48); } }
-    if (e.type === 'land' && e.worm) { const v = worms.get(e.worm); if (v && v.batT > 0) v.batT = Math.min(v.batT, 0.3); }
+    if (e.type === 'land' && e.hard && e.worm && !e.worm.dead) { const v = worms.get(e.worm); if (v) { v.batT = 0; if (SS.fx && SS.fx.dust) SS.fx.dust(e.x, e.y, e.z, 12, 0.7, 0x8a6a48); } }
+    if (e.type === 'land' && e.worm) { const v = worms.get(e.worm); if (v && v.batT > 0) { v.batT = Math.min(v.batT, 0.3); if (v.hitFly) { v.hitFly = false; v.ache = 3.4; } } }   // P37-8: landed after the bat: a headache
   };
   let viewTime = 0;
   A.sync = function (S, view, ctxA, insp, dt) {
@@ -367,17 +441,37 @@
     viewTime = view.time; if (SS.ordnance) SS.ordnance.tick(view.time);
     if (teles.length) teleStep(dt);
     const d = P.dir(S), a = S.active;
+    syncRopeAim(S, view, a);
+    if (SS.travView) { rope.visible = ropeKnot.visible = false; for (const m of keptRopes) m.visible = false; SS.travView.sync(S, view, a, dt); }   // (it draws the rope, kept ropes, chute, zipline)   // (before the worms: their hands grip the rope / risers / handle)
     syncWorms(S, view, d, insp, dt);
     syncProjectiles(S, dt);
-    syncRopeAim(S, view, a);
   };
 
+  /* P38 S1: the underwater mode. The water's section face is a translucent quad drawn AFTER the opaque pass, so a sunken worm sat
+   * under 75-95 % water colour while its (shared, bright) eye materials did not: a flat leaf with a floating eye. A submerged worm is
+   * drawn in the transparent pass after the face (renderOrder 6.6, depth-tested) with its own copies of the shared materials. */
+  const WET_FILL = new T.Color(0.02, 0.075, 0.1), WET_RO = 6.6;
+  function wetMode(v, on) {
+    if (!!v.wetOn === on) return;
+    v.wetOn = on;
+    if (on && !v.wm) v.wm = new Map([[EYE, EYE.clone()], [PUPIL, PUPIL.clone()], [GLINT, GLINT.clone()], [MOUTH_MAT, MOUTH_MAT.clone()], [HAND_MAT, HAND_MAT.clone()]]);
+    const swap = o => { if (!o.isMesh) return; if (on) { const c = v.wm.get(o.material); if (c) { o.userData.dry = o.material; o.material = c; } } else if (o.userData.dry) { o.material = o.userData.dry; o.userData.dry = null; } };
+    const flag = o => { if (!o.isMesh) return; o.renderOrder = on ? WET_RO : FACE_RO; for (const m of [].concat(o.material)) { m.transparent = true; } };
+    for (const g of [v.eyes, v.mouth]) { g.traverse(swap); g.traverse(flag); }
+    for (const hd of v.hands) for (const o of [hd.hand, hd.arm]) { swap(o); flag(o); }
+    v.mesh.renderOrder = on ? WET_RO : 0; v.mesh.material.transparent = on;
+  }
+  /* the pull on a hanging worm's head (unit, plane): toward the rope anchor, straight up under the canopy / on the zipline handle */
+  const PULL_UP = { x: 0, y: 1 }, PULL = { x: 0, y: 1 };
+  function ropePull(S, w, s0) { const dx = S.rope.s - s0, dy = S.rope.y - w.pos.y, l = M.len2(dx, dy) || 1; PULL.x = dx / l; PULL.y = dy / l; return PULL; }
+  /* P47: the infected body (a chest that swells and pulses) edits the live spine's radii before the tube is built (render/infect.js) */
+  function alienPre(S, w, v, dt, spl) { if (SS.alienView && SS.alienView.worm_pre) SS.alienView.worm_pre(S, w, v, spl, dt); return spl; }
   function syncWorms(S, view, d, insp, dt) {
     const a = S.active;
     for (const w of S.worms) {
       let v = worms.get(w);
       if (!v) { v = A.makeWorm(scene, w); worms.set(w, v); }
-      if (w.dead) {
+      if (w.dead || w.eaten) {                                       // (P47: an eaten worm is gone at the bite: the alien's own carcass clone is dragged into its coils)
         v.root.visible = false; v.ghost.visible = false;
         if (v.flame) { SS.bodyView.unflame(v.flame); v.flame = null; }
         if (w.grave && !graves.has(w)) graves.set(w, A.makeGrave(scene, w.grave, w));
@@ -393,24 +487,65 @@
       v.root.visible = inSec && !teles.some(f => f.w === w);       // hidden while the beam carries it (ghosts stand in)
       v.root.position.set(w.pos.x, w.pos.y, w.pos.z);
       const f = w === a ? w.facing : 1;
-      v.root.rotation.y = -Math.atan2(d.z * f, d.x * f);
+      const phiw = -Math.atan2(d.z * f, d.x * f), nnw = P.nrm(S), zsw = Math.sign(Math.sin(phiw) * nnw.x + Math.cos(phiw) * nnw.z) || 1;     // zsw: the local z sign that faces the camera
+      v.root.rotation.y = phiw;
       // P8: pose (crawl wave speed from the walking speed, air, the aim) -> live body, eyes and held weapon at the head
-      const ps = v.pose, airborne = w === a ? a.air || !!S.rope : !w.rest, aiming = w === a && S.phase === 'play';
+      const burnNow = S.time - (w.burnT == null ? -9 : w.burnT) < 0.3 && SS.view.inSlab(S, w.pos);   // P38 A5: a burning worm panics (scared face, hands up, writhing) and chars
+      const sw = SS.polishView ? SS.polishView.swing(w) : null;                          // P38 A5: the bat swing outlives the 'play' phase
+      const ps = v.pose, airborne = w === a ? a.air || !!S.rope : !w.rest, aiming = w === a && (S.phase === 'play' || !!sw || (SS.weaponsA && SS.weaponsA.streaming(S, w)));   // (P37: the held flamethrower / minigun stays up while it fires)
       const sNow = P.to_plane(S, w.pos).s, spd = v.lastS == null ? 0 : Math.abs(sNow - v.lastS) / Math.max(1e-3, dt); v.lastS = sNow;
-      const crawlT = airborne ? 0 : Math.min(1, spd / C.WALK);
+      const crawlT = airborne ? 0 : Math.min(1, spd / (SS.sim.walk_speed ? SS.sim.walk_speed(S, w) : C.WALK));
       ps.t = view.time + v.phase;
+      // P38 S1 (render/react.js): impact dents, tumble, faces, idle / victory moments, the underwater mode
+      let rx = null, wet = 0, surfY = -1e9;
+      const vsP = w === a ? a.vs || 0 : (w.vel ? w.vel.x * d.x + w.vel.z * d.z : 0), vyP = w === a ? (a.air ? a.vy || 0 : 0) : (w.vel && !w.rest ? w.vel.y : 0);
+      if (inSec && SS.water && S.water && SS.water.depth(S, w.pos.x, w.pos.z) > 0.06) { const surf = SS.water.surface(S, w.pos.x, w.pos.z); surfY = surf; wet = w.drowning || surf - w.pos.y > 0.45 ? M.clamp((surf - w.pos.y) / 1.4, 0.15, 1) : (w.swim ? 0.01 : 0); }
+      if (SS.reactView) {
+        rx = SS.reactView.pose(S, w, v, dt, { air: airborne, vloc: vsP * f, vy: vyP, speed: airborne ? Math.hypot(vsP, vyP) : 0, f, burn: burnNow, active: w === a, crawl: crawlT, aiming, inSec, wet });
+        v.wetK = wet > 0.05 ? wet : 0;
+      }
+      // P43 (render/idleview.js, core/idle.js): the bored-worm antics: muscle offsets, head, yaw toward the camera, the face / hands / props below (null = not bored)
+      IDLE_CTX.air = airborne; IDLE_CTX.aiming = aiming; IDLE_CTX.f = f; IDLE_CTX.inSec = inSec; IDLE_CTX.active = w === a; IDLE_CTX.crawl = crawlT; IDLE_CTX.burn = burnNow; IDLE_CTX.wet = wet; IDLE_CTX.zs = zsw;
+      const idl = SS.idleView ? SS.idleView.pose(S, w, v, dt, IDLE_CTX) : null;
+      if (idl && idl.yaw) v.root.rotation.y = phiw - zsw * idl.yaw;
+      if (v.handsBig && !(idl && idl.pk > 0.02)) { for (const hd of v.hands) hd.hand.scale.setScalar(1); v.handsBig = false; }
       ps.crawl += (crawlT - ps.crawl) * Math.min(1, dt * 5);
       ps.air += ((airborne ? 1 : 0) - ps.air) * Math.min(1, dt * 4);
       ps.wave += dt * (0.12 + 1.6 * ps.crawl);                       // contraction waves run head -> tail (u + wave)
       // P33: swimming / struggling in the water: fast contraction waves, the head thrown up and about
       if (w.swim || w.ropeWet) ps.wave += dt * 3.2;
-      const look = aiming && !w.ropeWet ? S.aim : w.swim || w.ropeWet ? 1.1 + 0.5 * Math.sin(ps.t * 9.0) : 0.25 * Math.sin(ps.t * 0.37);
+      let look = aiming && !w.ropeWet ? S.aim : w.swim || w.ropeWet ? 1.1 + 0.5 * Math.sin(ps.t * 9.0) : 0.25 * Math.sin(ps.t * 0.37);
       // the head takes most of the turn (its tip may rotate a lot), the arc a little: the body stays ~1 m tall
-      const want = M.clamp(look - HEAD_NAT, -0.5, 2.6);
+      if (idl && idl.lookW > 0.001) look += (idl.look - look) * idl.lookW;
+      const want = M.clamp(look - HEAD_NAT, idl ? -0.9 : -0.5, 2.6);
       ps.headD += (Math.min(1.7, want * 0.75) - ps.headD) * Math.min(1, dt * 7);   // the head first ...
       ps.arcD += (want * 0.25 - ps.arcD) * Math.min(1, dt * 2.2);                // ... the arc behind it follows slowly
+      // P37-8: the headache wobble (the bat dent is the soft body's now: softview.js)
+      v.ache = Math.max(0, (v.ache || 0) - dt);
+      ps.wob = (v.ache > 0 ? 0.32 * Math.sin(viewTime * 8.5) * Math.min(1, v.ache) : (rx ? rx.wob : 0)) + (idl ? idl.wob : 0);
+      // P39: the MUSCLES (goal pose of the soft body: crouch before a jump, take-off stretch, breathing, the dying tremble) and the posture frame;
+      // the solver turns them into motion. Nothing here rotates or scales the drawn body any more.
+      const wind = w === a && w.windUp > 0 ? M.clamp(1 - (w.windUp - S.time) / C.WORM_DYN.JUMP_WIND, 0, 1) : 0, windE = wind * wind * (3 - 2 * wind);
+      const skid = windE > 0 ? -0.62 * windE : !!w.slide && !(w === a ? a.air : !w.rest) ? -0.22 : 0;          // a skid leans back; the wind-up crouches back
+      v.lean = (v.lean || 0) + (skid - (v.lean || 0)) * Math.min(1, dt * 8);
+      v.hangA = (v.hangA || 0) + ((SS.travView ? SS.travView.hang_pose(S, w, a, sNow, f) : 0) - (v.hangA || 0)) * Math.min(1, dt * 10);   // hanging on the rope / line / canopy
+      const sqT = w.squash != null ? (S.time - w.squash) / 0.28 : 9, sq = sqT >= 0 && sqT < 1 ? 0.08 * Math.sin(Math.PI * sqT) * (1 - sqT * 0.5) : 0;   // (P40: was 0.24: the crumple and the rebound are the soft body's now, the muscles only brace a little)
+      const vyb = w === a ? (a.air ? a.vy : 0) : (!w.rest && w.vel ? w.vel.y : 0), stch = vyb > 2.5 ? Math.min(0.12, vyb * 0.012) : 0, crch = 0.2 * windE;
+      let gsx = 1 + sq * 0.55 - stch * 0.3 + crch * 0.4, gsy = 1 - sq + stch - crch, gox = 0, goy = 0;
+      if (rx) { gsx *= rx.sx; gsy *= rx.sy; goy += rx.oy; gox += rx.ox; }
+      if (idl) { gsx *= idl.sx; gsy *= idl.sy; goy += idl.oy; gox += idl.ox; }
+      { const sh = SS.polishView ? SS.polishView.shudder(S, w) : null; if (sh) { gox += sh.dx; gsx *= sh.sc; gsy *= sh.sc; } }   // P38 A5: the dying beat: it trembles and swells
+      const rs = w.flipRope != null && w.flipRope === w.flipAt;
+      let spin = w.flip && w.flipAt != null && airborne ? f * (rs ? w.flipW * w.flipK : 13) : 0;          // a salto / rope release = a muscle torque on the body, not a drawn rotation
+      if (w.swim || w.ropeWet) spin += f * 3.4 * M.cos(viewTime * 10.5);                                       // thrashing in the water
+      if (burnNow) spin += f * 2.8 * M.cos(viewTime * 23 + v.phase);                                           // a burning worm writhes
+      const hanging = w === a && !!(S.rope || (S.zip && S.zip.state === 2) || (S.chute && S.chute.open));
+      { const nn = P.normal2(S, sNow, w.pos.y - 0.55); v.slope = M.clamp(M.atan2(-nn.s, nn.y), -1.2, 1.2); }       // the ground frame: the slope under it
+      const grounded = (!airborne || P.grounded2(S, sNow, w.pos.y)) && !w.swim && !w.ropeWet;      // (a sliding worm is on the ground, whatever its rest flag says)
       if (inSec || insp > 0.01) {
-        const sp = updateBody(v.geo, ps), hi = NS - 4, ha = sp.a[hi];
+        const sp = buildRings(v.geo, alienPre(S, w, v, dt, SS.softView.update(S, w, v, spine(ps), { f, sNow, grounded, slope: v.slope || 0, lean: v.lean, spin, hang: hanging ? v.hangA : null, pull: hanging ? (S.rope ? ropePull(S, w, sNow) : PULL_UP) : null, swim: !!(w.swim || w.ropeWet) && !grounded, speed: Math.hypot(vsP, vyP), surf: surfY, vs: crawlT > 0.1 && !w.slide ? vsP : 0,
+          sx: gsx, sy: gsy, ox: gox, oy: goy, dt: M.clamp(dt, 0, 0.05), dizzy: w.dizzyUntil > S.time }))), hi = NS - 4, ha = sp.a[hi];
+        if (SS.alienView && SS.alienView.worm_post) SS.alienView.worm_post(S, w, v, sp, dt, view);                  // P47: the face frame (a hugger sits on it), the infected look
         if (v.zap) updateZap(v, sp, Math.min(1, (viewTime - v.zapT) / ZAP_T));
         // eyes on the front of the head, looking along it; blink now and then
         v.eyes.position.set(sp.x[hi] + Math.cos(ha) * 0.05 - Math.sin(ha) * 0.06, sp.y[hi] + Math.sin(ha) * 0.05 + Math.cos(ha) * 0.06, 0);
@@ -418,71 +553,104 @@
         v.eyes.scale.y = (Math.sin(ps.t * 0.9) > 0.995) ? 0.15 : 1;
         const pl = aiming ? M.clamp(S.aim - ha, -0.8, 0.8) : 0;
         for (const p of v.pupils) { p.position.y = Math.sin(pl) * 0.03; p.position.x = 0.05 * Math.cos(pl) + 0.004; }
-        v.held.visible = aiming && !S.rope && !S.hook && !w.air && !(w.dizzyUntil > S.time) && S.weapon !== 'skip';   // stowed in the air / while dizzy (no weapon then, PoC)
+        const wkey = sw ? 'bat' : S.weapon;
+        v.held.visible = aiming && !S.rope && !S.hook && !w.air && !(S.zip && S.zip.state === 2) && !(w.dizzyUntil > S.time) && wkey !== 'skip' && !(idl && idl.hideHeld);   // stowed in the air / while dizzy (no weapon then, PoC)
         if (v.held.visible) {
-          let hm = v.heldBy[S.weapon];
-          if (!hm && SS.ordnance) { hm = v.heldBy[S.weapon] = SS.ordnance.held(S.weapon); v.held.add(hm); }
-          for (const k in v.heldBy) v.heldBy[k].visible = k === S.weapon;
+          let hm = v.heldBy[wkey];
+          if (!hm && SS.ordnance) { hm = v.heldBy[wkey] = SS.ordnance.held(wkey); v.held.add(hm); }
+          for (const k in v.heldBy) v.heldBy[k].visible = k === wkey;
+          if (SS.weaponsView) SS.weaponsView.held(S, w, hm, dt, view.time);        // P37-W3: rolling barrels, nozzle glow
           // on the shot line (the shots leave the worm's centre along the aim): the root is tilted with the slope,
           // so the aim in its frame is aim - tilt; in front of the body on the camera's side (local z sign)
-          const a2 = S.aim - v.tilt, phi = v.root.rotation.y, nn = P.nrm(S), zs = Math.sign(Math.sin(phi) * nn.x + Math.cos(phi) * nn.z) || 1;
+          const kk = SS.polishView ? SS.polishView.kick(w) : 0, a2 = S.aim - v.tilt + (sw ? sw.ang : 0) + 0.14 * kk, phi = v.root.rotation.y, nn = P.nrm(S), zs = Math.sign(Math.sin(phi) * nn.x + Math.cos(phi) * nn.z) || 1;
           const gr = hm.userData.grips || [];
-          v.held.position.set(Math.cos(a2) * 0.14, Math.sin(a2) * 0.14 + 0.02, 0.17 * zs); v.held.rotation.set(0, 0, a2); v.held.scale.set(1, 1, zs);
+          const rk = 0.14 - 0.09 * kk;                                                 // recoil: the weapon is pushed back into the shoulder
+          v.held.position.set(Math.cos(a2) * rk + SS.softView.OUT.dx, Math.sin(a2) * rk + 0.02 + SS.softView.OUT.dy, 0.17 * zs);   // (rides with the soft shoulder)
+          v.held.rotation.set(0, 0, a2); const hs = sw ? sw.vis : 1; v.held.scale.set(hs, hs, zs * hs);   // (R3: these were swallowed by the comment above since P39)
           const ci = Math.round(NS * 0.55), cr = sp.r[ci], cx = sp.x[ci] + Math.cos(sp.a[ci] - Math.PI / 2) * cr * 0.5, cy = sp.y[ci] + Math.sin(sp.a[ci] - Math.PI / 2) * cr * 0.5;
           for (let q = 0; q < 2; q++) {
             const hd = v.hands[q], g0 = gr[q];
             hd.hand.visible = hd.arm.visible = !!g0; if (!g0) continue;
             const ca = Math.cos(a2), sa = Math.sin(a2), hx = v.held.position.x + ca * g0[0] - sa * g0[1], hy = v.held.position.y + sa * g0[0] + ca * g0[1], hz = v.held.position.z + g0[2] * zs;
-            hd.hand.position.set(hx, hy, hz);
-            const sx = cx, sy = cy, sz = (q ? -0.05 : 0.07) * zs + 0.06 * zs, dx = hx - sx, dy = hy - sy, dz = hz - sz, L = Math.hypot(dx, dy, dz) || 1e-3;
-            hd.arm.position.set((hx + sx) / 2, (hy + sy) / 2, (hz + sz) / 2); hd.arm.scale.set(1, L, 1);
-            hd.arm.quaternion.setFromUnitVectors(yAxis, v4.set(dx / L, dy / L, dz / L));
+            qhand(hd, hx, hy, hz, cx, cy, (q ? -0.05 : 0.07) * zs + 0.06 * zs, false, true);
           }
         }
-        if (!v.held.visible) for (const hd of v.hands) hd.hand.visible = hd.arm.visible = false;
+        if (!v.held.visible && !(v.ache > 0) && !(aiming && S.weapon === 'skip' && !S.rope && !w.air)) for (const hd of v.hands) hd.hand.visible = hd.arm.visible = false;
         // expressions (user 2026-10-08: "all the usual behaviours as things happen"): rising = 'whee' (mouth open,
         // eyes up), falling fast / bat-spun = scared (wide eyes, tiny pupils, O mouth, hands flailing), skidding =
         // squint, flinch = eyes shut; else the blink and a small line of a mouth
         const vy = w === a ? (a.air ? a.vy : 0) : (!w.rest && w.vel ? w.vel.y : 0), slide = !!w.slide && !airborne;
-        const scared = v.batT > 0 || (airborne && vy < -9), whee = airborne && vy > 2.5 && !scared, flinch = v.flinchT > 0;
+        const scared = v.batT > 0 || (airborne && vy < -9) || burnNow, whee = airborne && vy > 2.5 && !scared, flinch = v.flinchT > 0;
         const tipx = sp.x[NS - 1] + Math.cos(ha) * 0.035 + Math.sin(ha) * 0.04, tipy = sp.y[NS - 1] + Math.sin(ha) * 0.035 - Math.cos(ha) * 0.04;
         v.mouth.position.set(tipx, tipy, 0); v.mouth.rotation.z = ha;
         if (scared) v.mouth.scale.set(0.9, 1.5, 1.1); else if (whee) v.mouth.scale.set(1.35, 1.0, 1.2); else if (flinch) v.mouth.scale.set(1.1, 0.35, 0.9); else v.mouth.scale.set(1.0, 0.28, 0.8);
-        if (flinch) v.eyes.scale.set(1, 0.1, 1);
+        if (v.ache > 0) { v.eyes.scale.set(1.1, 0.28, 1.1); v.mouth.scale.set(1.2, 0.5 + 0.15 * Math.sin(view.time * 9), 0.9); }   // P37-8: headache: eyes screwed shut, a wince
+        else if (flinch) v.eyes.scale.set(1, 0.1, 1);
         else if (scared) { v.eyes.scale.set(1.25, 1.25, 1.25); for (const p of v.pupils) p.scale.setScalar(0.55); }
         else if (slide) v.eyes.scale.set(1, 0.5, 1);
         else v.eyes.scale.x = v.eyes.scale.z = 1;
         if (!scared) for (const p of v.pupils) p.scale.setScalar(1);
         if (whee) for (const p of v.pupils) p.position.y = 0.025;
+        if (rx && !(v.ache > 0)) {                                                   // P38 S1: pain / fear / yawn / cheer faces
+          if (rx.pain > 0.12 && !rx.cheer) { v.eyes.scale.set(1.1, 0.1, 1.1); v.mouth.scale.set(1.05 + 0.45 * rx.pain, 0.45 + (rx.scream ? 1.7 : 0.9) * rx.pain, 1.0 + 0.4 * rx.pain); }
+          else if (rx.fear > 0.12) { v.eyes.scale.set(1.2 + 0.2 * rx.fear, 1.2 + 0.25 * rx.fear, 1.2); for (const p of v.pupils) p.scale.setScalar(0.55 - 0.2 * rx.fear); v.mouth.scale.set(0.9, 0.5 + 0.9 * rx.fear + 0.2 * Math.sin(view.time * 30), 1.0); }
+          else if (rx.yawn > 0.05) { v.eyes.scale.set(1.05, 0.12 + 0.3 * (1 - rx.yawn), 1.05); v.mouth.scale.set(1.2, 0.35 + 1.5 * rx.yawn, 1.1); }
+          else if (rx.cheer > 0.5) { v.eyes.scale.set(1.1, 0.42, 1.1); v.mouth.scale.set(1.8, 0.9 + 0.3 * Math.sin(view.time * 11), 1.2); }
+          else if (rx.perk > 0.2) v.eyes.scale.set(1.12, 1.2, 1.12);
+        }
+        { const ci0 = Math.round(NS * 0.55), stI = SS.idleView && SS.idleView.st(w); if (stI) SS.idleView.rig(stI, v.eyes.position.x, v.eyes.position.y, sp.x[ci0], sp.y[ci0], ha); }   // P43: the live anchors for the next frame's programs
+        if (SS.idleView) SS.idleView.face(v, idl || IDLE_OFF, zsw);                              // P43: eyelids, eye roll, the bored / sleepy / panicked face
+        // P37-8: a headache: one hand presses the head, rubbing; Skip Go selected: both hands up, waving "no, no" (the turn ends on fire)
+        const skipG = aiming && S.weapon === 'skip' && !S.rope && !w.air;
+        if (!v.held.visible && (v.ache > 0 || skipG)) {
+          const hx = sp.x[NS - 6], hy = sp.y[NS - 6];
+          v.hands.forEach((hd, q) => {
+            const sgn = q ? 1 : -1; let px, py, pz;
+            if (v.ache > 0) { if (q) { hd.hand.visible = hd.arm.visible = false; return; } px = hx + 0.02 + 0.03 * Math.sin(view.time * 9); py = hy + 0.2 + 0.02 * Math.cos(view.time * 9); pz = 0.12; }
+            else { px = hx + 0.1 + 0.12 * Math.sin(view.time * 7 + q * 2.6); py = hy + 0.3 + 0.05 * Math.cos(view.time * 7 + q * 2.6); pz = sgn * 0.2; }
+            const sx0 = sp.x[NS - 10], sy0 = sp.y[NS - 10] - 0.05, sz0 = sgn * 0.05;
+            hd.hand.visible = hd.arm.visible = true; qhand(hd, px, py, pz, sx0, sy0, sz0, true, true);
+          });
+        }
         // hands flail while falling scared (no weapon then)
-        if (!v.held.visible && airborne && (scared || vy < -4)) {
+        if (!v.held.visible && ((airborne && (scared || vy < -4)) || burnNow || (rx && rx.flail))) {
           const hx = sp.x[NS - 10], hy = sp.y[NS - 10];
           v.hands.forEach((hd, q) => {
             const fl = Math.sin(view.time * 22 + q * 2) * 0.12, sgn = q ? 1 : -1;
             hd.hand.visible = hd.arm.visible = true;
             const px = hx + 0.05 + fl * 0.5, py = hy + 0.18 + fl, pz = sgn * 0.17, sx0 = hx, sy0 = hy - 0.05, sz0 = sgn * 0.05;
-            hd.hand.position.set(px, py, pz);
-            const dx = px - sx0, dy = py - sy0, dz = pz - sz0, L = Math.hypot(dx, dy, dz);
-            hd.arm.position.set((px + sx0) / 2, (py + sy0) / 2, (pz + sz0) / 2); hd.arm.scale.set(1, L, 1); hd.arm.quaternion.setFromUnitVectors(yAxis, v4.set(dx / L, dy / L, dz / L));
+            qhand(hd, px, py, pz, sx0, sy0, sz0, true, true);
           });
         }
+        if (idl && idl.pk > 0.02 && !v.held.visible) {                                         // P43: the hands of an antic (juggling, the phone, the watch, the fan ...)
+          const ci0 = Math.round(NS * 0.55), hh = SS.idleView.hands(idl, zsw, sp.x[ci0], sp.y[ci0]);
+          const ee = SS.idleView.E;
+          v.hands.forEach((hd, q) => {
+            if (!hh[q * 4]) return; hd.hand.visible = hd.arm.visible = true; qhand(hd, hh[q * 4 + 1], hh[q * 4 + 2], hh[q * 4 + 3], sp.x[ci0], sp.y[ci0], (q ? -0.06 : 0.07) * zsw, false, false);
+            hd.elbOn = !!ee[q * 4]; hd.ex = ee[q * 4 + 1]; hd.ey = ee[q * 4 + 2]; hd.ez = ee[q * 4 + 3]; hd.hand.scale.setScalar(1.35);
+          });
+          v.handsBig = true;
+        }
+              // P38-A4: hanging: both hands grip the rope / the parachute risers / the zipline handle bar (render/traverse.js V.grips)
+        if (inSec && SS.travView && SS.travView.grips(S, w, a, GRIPW)) {
+          v.root.updateMatrixWorld(true);
+          const ci2 = Math.round(NS * 0.55), cr2 = sp.r[ci2], cx2 = sp.x[ci2] + Math.cos(sp.a[ci2] - Math.PI / 2) * cr2 * 0.5, cy2 = sp.y[ci2] + Math.sin(sp.a[ci2] - Math.PI / 2) * cr2 * 0.5;
+          const shx = cx2, shy = cy2;
+          for (let q = 0; q < 2; q++) {
+            const hd = v.hands[q], side = q ? -1 : 1;
+            v4g.set(GRIPW[q * 3], GRIPW[q * 3 + 1], GRIPW[q * 3 + 2]); v.root.worldToLocal(v4g);
+            const hx = v4g.x, hy = v4g.y, hz = v4g.z, sz = side * 0.07, dx = hx - shx, dy = hy - shy, dz = hz - sz, L = Math.hypot(dx, dy, dz) || 1e-3;
+            hd.hand.visible = hd.arm.visible = true; hd.hand.position.set(hx, hy, hz);
+            hd.arm.position.set((hx + shx) / 2, (hy + shy) / 2, (hz + sz) / 2); hd.arm.scale.set(1, L, 1);
+            hd.arm.quaternion.setFromUnitVectors(yAxis, v4.set(dx / L, dy / L, dz / L));
+          }
+        }
       }
-      v.flinchT = Math.max(0, v.flinchT - dt); if (v.batT > 0) { v.batT -= dt; v.batA += v.batW * dt; } else v.batA *= Math.max(0, 1 - dt * 10);
-      // PoC dynamics on screen: the back salto spins the whole body (13 rad/s, head over backwards, about the disc
-      // centre); a landing / take-off squashes it for 0.28 s (feet stay on the ground); dizzy = stars round the head
-      const flipA = w.flip && w.flipAt != null ? (S.time - w.flipAt) * 13 : 0;
-      v.flipA = flipA ? flipA : (v.flipA || 0) * Math.max(0, 1 - dt * 14);
-      const skid = !!w.slide && !(w === a ? a.air : !w.rest) ? -0.22 : 0;          // a skid leans back
-      v.lean = (v.lean || 0) + (skid - (v.lean || 0)) * Math.min(1, dt * 8);
-      v.body.rotation.z = v.flipA + v.batA + v.lean + (w.swim || w.ropeWet ? 0.32 * Math.sin(viewTime * 10.5) : 0);   // P33: thrashing
-      if ((w.swim || w.ropeWet) && SS.fx && Math.random() < dt * 7) SS.fx.splash(w.pos.x + (Math.random() - 0.5) * 0.6, SS.sim.surface_at(S, w.pos.x, w.pos.z), w.pos.z + (Math.random() - 0.5) * 0.6, 0.22);
-      const sqT = w.squash != null ? (S.time - w.squash) / 0.28 : 9, q = sqT >= 0 && sqT < 1 ? 0.24 * Math.sin(Math.PI * sqT) * (1 - sqT * 0.5) : 0;
-      // rising: a little stretched; the burrow after a hard landing: down into the ground in 0.12 s, a beat under it,
-      // then out with an overshoot (0.85 s in all)
-      const vyb = w === a ? (a.air ? a.vy : 0) : (!w.rest && w.vel ? w.vel.y : 0), st = vyb > 2.5 ? Math.min(0.12, vyb * 0.012) : 0;
-      v.burrowT += dt; const bt = v.burrowT, bur = bt < 0.12 ? bt / 0.12 : bt < 0.42 ? 1 : bt < 0.85 ? 1 - (bt - 0.42) / 0.43 * 1.15 : 0;
-      v.body.scale.set(1 + q * 0.55 - st * 0.3, 1 - q + st, 1 + q * 0.55 - st * 0.3); v.body.position.y = -0.5 * q - 0.62 * Math.max(-0.12, bur);
-      const dizzy = w.dizzyUntil > S.time && inSec;
+      v.flinchT = Math.max(0, v.flinchT - dt);
+      v.batT = Math.max(0, v.batT - dt);                                // (the flag of the scared face after a bat hit; the tumble itself is the soft body's)
+      v.body.position.set(0, 0, 0); v.body.rotation.set(0, 0, 0); v.body.scale.set(1, 1, 1);     // the body is drawn exactly as the solver made it
+      v.body.updateMatrix(); flushHands(v);
+      const dizzy = (w.dizzyUntil > S.time || v.ache > 0 || (rx && rx.daze)) && inSec;
       if (dizzy && !v.stars && SS.ordnance) { v.stars = new T.Group(); for (let i = 0; i < 3; i++) v.stars.add(SS.ordnance.star()); v.body.add(v.stars); }
       if (v.stars) {
         v.stars.visible = dizzy;
@@ -492,18 +660,24 @@
           v.stars.children.forEach((st, i) => { const a = view.time * 6 + i * 2.094; st.position.set(Math.cos(a) * 0.16, Math.sin(a * 2) * 0.02, Math.sin(a) * 0.16); st.rotation.set(0, a * 1.7, 0); });
         }
       }
-      // on the ground the base follows the slope (in the facing frame)
-      let tilt = 0;
-      if (!airborne) { const nn = P.normal2(S, sNow, w.pos.y - 0.55); tilt = M.clamp(Math.atan2(-nn.s * (w === a ? w.facing : 1), nn.y), -0.5, 0.5); }
-      v.tilt += (tilt - v.tilt) * Math.min(1, dt * 6); v.root.rotation.z = v.tilt;
+      v.tilt = 0; v.root.rotation.z = 0;                                  // (the body lies along the slope by itself: contact + the ground frame)
       v.ghost.visible = !inSec && insp > 0.01;
       v.ghost.position.copy(v.root.position);
       v.ghostMats[0].opacity = 0.45 * insp; v.ghostMats[1].opacity = 0.6 * insp;
       // hurt flash (decays in ~0.4 s)
       v.flash = Math.max(0, v.flash - dt * 2.5);
       v.mesh.material.emissive.copy(RED).multiplyScalar(v.flash * 0.9).add(SKIN_FILL);
+      if (idl && (idl.gr || idl.gg || idl.gb || idl.tint)) { const e = v.mesh.material.emissive, kk = idl.k; e.r += idl.gr * kk + 0.01 * idl.tint; e.g += idl.gg * kk + 0.05 * idl.tint; e.b += idl.gb * kk + 0.16 * idl.tint; }   // P43: the glow of a phone screen, the chill of the cold
+      if (idl) SS.idleView.props(v, idl, SS.idleView.st(w), zsw, view);                        // P43: the props and icons of the antic
+      if (SS.weaponsView) SS.weaponsView.worm(S, w, v, dt, viewTime);              // P37-W3: coughing, acid tint
       // on fire (lava, burning oil, a burning prop): flames on the worm while sim.burn keeps stamping w.burnT
-      const burning = S.time - (w.burnT == null ? -9 : w.burnT) < 0.3 && inSec;
+      const burning = burnNow;
+      v.soot = M.clamp((v.soot || 0) + (burning ? dt * 0.22 : -dt * 0.012), 0, 0.75);          // charred skin while it burns, recovering very slowly
+      if (v.soot > 0.001 || v.sootOn) { const k = 1 - v.soot * 0.78; v.mesh.material.color.setRGB(k, k * 0.93, k * 0.9); v.sootOn = v.soot > 0.001; }
+      if (v.wetK > 0 || v.wetOn) {                                                // P38 S1: below the surface: drawn after the water face, tinted by depth (a drowned worm no longer vanishes)
+        wetMode(v, v.wetK > 0);
+        if (v.wetK > 0) { const k0 = 1 - v.soot * 0.78, k = v.wetK; v.mesh.material.color.setRGB(k0 * (1 - 0.42 * k), k0 * 0.93 * (1 - 0.16 * k), k0 * 0.9 * (1 - 0.04 * k)); v.sootOn = true; v.mesh.material.emissive.add(WET_FILL.clone().multiplyScalar(k)); }
+      }
       if (burning) {
         if (!v.flame) v.flame = SS.bodyView.flame((w.id * 0.37 + 0.11) % 1);
         // in front of the body (seen from the camera), else the worm hides its own flames
@@ -538,6 +712,7 @@
         m.rotation.set(0, -Math.atan2(P.dir(S).z * p.dir, P.dir(S).x * p.dir), 0, 'YXZ');
         const L = m.userData.legs; if (L) for (let i = 0; i < 4; i++) L[i].rotation.z = Math.sin(p.age * 14 + i * 1.6) * 0.5;
       } else if (p.type === 'flame' || p.type === 'fuel') { if (trailT > 0.02) SS.fx.spark(wp.x, wp.y, wp.z); }
+      else if (SS.weaponsView && SS.weaponsView.orient(m, p, S, dt)) { /* P37-W3 shells */ }
       else { m.rotation.set(0, -S.theta, (m.rotation.z || 0) - p.vs * dt * 3, 'YXZ'); }
       if (p.wet && trailT > 0.02) SS.fx.bubble && SS.fx.bubble(wp.x, wp.y, wp.z);
     }
@@ -593,6 +768,7 @@
     if (aiming) {
       const ad = SS.sim.aim_dir(S), ap = P.to_plane(S, a.pos), qq = P.to_world(S, ap.s + ad.s * 2.4, a.pos.y + ad.y * 2.4);
       reticle.position.set(qq.x, qq.y, qq.z);
+      if (SS.wornView && SS.wornView.laserHit()) { const lh = SS.wornView.laserHit(); reticle.position.set(lh.x, lh.y, lh.z); }   // P37 W4: the laser sight skill: the crosshair snaps to the first surface on the path
       reticle.material.rotation = view.time * 1.5;
       reticle.material.color.set(S.weapon === 'rope' ? 0xbfe6ff : 0xffffff);
       if (S.charging) {

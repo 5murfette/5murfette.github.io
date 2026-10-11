@@ -24,14 +24,14 @@
 
   /* ---------- free-air blast curves ---------- */
   BL.overpressure_z = function (Z) {                  // kPa at scaled distance Z (m/kg^(1/3))
-    const z = Math.max(Z, 0.05);
+    const z = M.max(Z, 0.05);
     const num = 808 * (1 + (z / 4.5) * (z / 4.5));
     const den = Math.sqrt((1 + (z / 0.048) * (z / 0.048)) * (1 + (z / 0.32) * (z / 0.32)) * (1 + (z / 1.35) * (z / 1.35)));
     return B.P0 * num / den;
   };
   BL.overpressure = (R, Wkg) => BL.overpressure_z(R / M.cbrt(Wkg));
   BL.impulse = function (R, Wkg) {                    // Pa·s
-    const w3 = M.cbrt(Wkg), z = Math.max(R / w3, 0.05);
+    const w3 = M.cbrt(Wkg), z = M.max(R / w3, 0.05);
     return 6.7 * w3 * Math.sqrt(1 + M.pow(z / 0.23, 4)) / (z * z * M.cbrt(1 + M.pow(z / 1.55, 3)));
   };
   /* scaled distance where the overpressure falls to p (kPa); overpressure_z is monotonic decreasing */
@@ -46,14 +46,14 @@
   for (let m = 1; m < C.MATS.length; m++) {
     if (C.MATS[m].strength >= 1e9) continue;          // bedrock, girder steel: never fail
     ZCRIT[m] = BL.z_for_pressure(C.MATS[m].strength);
-    zMaxSolid = Math.max(zMaxSolid, ZCRIT[m]);
+    zMaxSolid = M.max(zMaxSolid, ZCRIT[m]);
   }
   BL.ZCRIT = ZCRIT;
   BL.crater_radius = (m, Wkg) => ZCRIT[m] * M.cbrt(Wkg);
   // PoC pressureFactor (L2799): 1 at the centre, 0.35 at the hole's edge R, 0 beyond 2.1 R
   BL.poc_factor = function (d, R) {
     if (R <= 0 || d >= R * 2.1) return 0;
-    if (d <= R) return 1 - 0.65 * Math.sqrt(Math.max(0, d) / R);
+    if (d <= R) return 1 - 0.65 * Math.sqrt(M.max(0, d) / R);
     return 0.35 * (1 - Math.sqrt(M.clamp((d - R) / (R * 1.1), 0, 1)));
   };
 
@@ -64,10 +64,10 @@
    * Returns { removed, byMat[], box } (box = edited lattice range, for collapse and remeshing). */
   BL.crater = function (c, Wkg) {
     const w = W(), H = w.H, NX = w.NX, NY = w.NY, NZ = w.NZ, SXY = NX * NY, D = w.d, Mt = w.mat, Ht = w.heat;
-    const w3 = M.cbrt(Wkg), rBig = Math.min(B.R_MAX, zMaxSolid * w3);
-    const i0 = Math.max(1, Math.floor((c.x - rBig) / H) - 1), i1 = Math.min(NX - 2, Math.ceil((c.x + rBig) / H) + 1);
-    const j0 = Math.max(1, Math.floor((c.y - rBig) / H) - 1), j1 = Math.min(NY - 2, Math.ceil((c.y + rBig) / H) + 1);
-    const k0 = Math.max(1, Math.floor((c.z - rBig) / H) - 1), k1 = Math.min(NZ - 2, Math.ceil((c.z + rBig) / H) + 1);
+    const w3 = M.cbrt(Wkg), rBig = M.min(B.R_MAX, zMaxSolid * w3);
+    const i0 = M.max(1, Math.floor((c.x - rBig) / H) - 1), i1 = M.min(NX - 2, Math.ceil((c.x + rBig) / H) + 1);
+    const j0 = M.max(1, Math.floor((c.y - rBig) / H) - 1), j1 = M.min(NY - 2, Math.ceil((c.y + rBig) / H) + 1);
+    const k0 = M.max(1, Math.floor((c.z - rBig) / H) - 1), k1 = M.min(NZ - 2, Math.ceil((c.z + rBig) / H) + 1);
     const byMat = new Int32Array(C.MATS.length);
     let removed = 0;
     if (i1 < i0 || j1 < j0 || k1 < k0) return { removed, byMat, box: null };       // wholly outside the lattice (dry far dunes)
@@ -84,10 +84,10 @@
       else {
         rm = 1e9;
         const nb = [o - 1, o + 1, o - NX, o + NX, o - SXY, o + SXY];
-        for (let t = 0; t < 6; t++) { const n = nb[t]; if (D[n] > 0) rm = Math.min(rm, ZCRIT[Mt[n]] * w3); }
+        for (let t = 0; t < 6; t++) { const n = nb[t]; if (D[n] > 0) rm = M.min(rm, ZCRIT[Mt[n]] * w3); }
         if (rm === 1e9) rm = rBig;
       }
-      tgt[q] = r - Math.min(rm, rBig);
+      tgt[q] = r - M.min(rm, rBig);
     }
     // pass 2: apply (never to the frozen ring of a dry world, D6)
     const fz = w.frz ? w.frz.slot : null;
@@ -95,7 +95,7 @@
       const o = (k * NY + j) * NX + i, v = tgt[((k - k0) * ny + (j - j0)) * nx + (i - i0)];
       if (v >= D[o] || (fz && fz[k * NX + i] >= 0)) continue;
       if (D[o] > 0 && v <= 0) { removed++; byMat[Mt[o]]++; Mt[o] = MAT.AIR; Ht[o] = 0; }
-      D[o] = Math.max(v, -3);
+      D[o] = M.max(v, -3);
     }
     w.mark(i0, j0, k0, i1, j1, k1);
     return { removed, byMat, box: { i0, j0, k0, i1, j1, k1 } };
@@ -107,7 +107,7 @@
   // overpressure, so a dying worm's or a grave's small pop hurt like a bazooka)
   BL.worm_effect = function (c, Wkg, pos, dmgPoC) {   // pure: { dmg, dv, dir[3], dP, shield }
     const w = W(), dx = pos.x - c.x, dy = pos.y - c.y, dz = pos.z - c.z, r = M.len3(dx, dy, dz);
-    const re = Math.max(0.25, r - 0.35);                // to the body surface (worm radius ~0.35 m)
+    const re = M.max(0.25, r - 0.35);                // to the body surface (worm radius ~0.35 m)
     const L = w.solid_len(c.x, c.y, c.z, pos.x, pos.y, pos.z);
     const shield = 0.25 + 0.75 * M.exp(-L / B.SHIELD_L);
     const dP = BL.overpressure(re, Wkg), pe = dP * shield * B.REFLECT, f = pe / (pe + B.P_HALF);
@@ -115,9 +115,9 @@
     // radius and R the PoC crater radius (44 px x W^1/3), x its cover factor beyond R; dv = (dmg f 6.5 + 50 f) px/s
     // with the PoC damage of a charge that size (~50 W^0.28); the direction is away from the blast + 0.45 up (a worm
     // under a blast is pushed partly down). The worms' own gravity (C.G_WORM) makes the flights the PoC's.
-    const Rk = 2.83 * M.cbrt(Wkg), dk = Math.max(0, r - 0.6 * C.WORM_R);
+    const Rk = 2.83 * M.cbrt(Wkg), dk = M.max(0, r - 0.6 * C.WORM_R);
     let fk = dk <= Rk ? 1 - 0.65 * Math.sqrt(dk / Rk) : dk < 2.1 * Rk ? 0.35 * (1 - Math.sqrt((dk - Rk) / (1.1 * Rk))) : 0;
-    if (dk > Rk) fk *= Math.max(0.12, M.exp(-L / 1.16));
+    if (dk > Rk) fk *= M.max(0.12, M.exp(-L / 1.16));
     const dmgP = dmgPoC != null ? dmgPoC : 50 * M.pow(Wkg, 0.28), dv = (dmgP * fk * 6.5 + 50 * fk) * 0.0643, dmg = dmgP * fk;
     let ux = r > 1e-4 ? dx / r : 0, uy = r > 1e-4 ? dy / r : 1, uz = r > 1e-4 ? dz / r : 0;
     uy += 0.45;
@@ -136,11 +136,11 @@
     if (SS.water && S.water && Wkg > 0) {
       const surf = SS.water.surface(S, c.x, c.z), deep = SS.water.depth(S, c.x, c.z) > 0.15;
       if (deep && surf > -90 && surf > c.y - 0.6) wet = surf - c.y;         // the charge's depth under the water (render)
-      if (deep && surf > -90 && surf > c.y - 0.1) { const so = Math.max(0, c.y - (surf - SS.water.depth(S, c.x, c.z))); Wc = Wkg * M.exp(-so / (0.6 * M.cbrt(Wkg))); }
+      if (deep && surf > -90 && surf > c.y - 0.1) { const so = M.max(0, c.y - (surf - SS.water.depth(S, c.x, c.z))); Wc = Wkg * M.exp(-so / (0.6 * M.cbrt(Wkg))); }
     }
     const cr = BL.crater(c, Wc);
     S.lastCrater = cr.box;
-    const ev = sim.emit(S, 'explode', { x: c.x, y: c.y, z: c.z, R: 3 * M.cbrt(Wkg), W: Wkg, kind: o.kind || 'blast', removed: cr.removed, byMat: Array.from(cr.byMat), wet });
+    const ev = sim.emit(S, 'explode', { x: c.x, y: c.y, z: c.z, R: 3 * M.cbrt(Wkg), W: Wkg, kind: o.kind || 'blast', removed: cr.removed, byMat: Array.from(cr.byMat), wet, pushes: [] });   // pushes: the shove of every worm it threw (render: the per-node wave of the soft body)
     // worms (after the crater: the wave travels through the opened hole)
     const d = SS.plane.dir(S);
     let hits = 0;
@@ -153,13 +153,21 @@
           w.air = true; w.vs += e.dv * (e.dir[0] * d.x + e.dir[2] * d.z); w.vy += e.dv * e.dir[1];
           if (S.rope) S.rope = null; S.hook = null;
         } else {
-          w.rest = false; w.vel.x += e.dv * e.dir[0]; w.vel.y += e.dv * e.dir[1]; w.vel.z += e.dv * e.dir[2];
+          // P37-2: a worm on the section (|t| <= C.SECT_BAND) is thrown ALONG it: the shove keeps its strength but its
+          // direction is flattened into the plane (the part along the normal is dropped and the rest renormalised)
+          let dx = e.dir[0], dy = e.dir[1], dz = e.dir[2];
+          if (SS.sim.in_band(S, w.pos)) {
+            const n = SS.plane.nrm(S), dn = dx * n.x + dz * n.z; dx -= dn * n.x; dz -= dn * n.z;
+            const l = M.nz(M.len3(dx, dy, dz), 1); dx /= l; dy /= l; dz /= l;
+          }
+          w.rest = false; w.vel.x += e.dv * dx; w.vel.y += e.dv * dy; w.vel.z += e.dv * dz;
           if (w.rope) w.rope = null;
         }
         w.slide = true; w.flip = false; w.hop = false;
+        ev.pushes.push({ wormId: w.id, dv: e.dv, r: e.r });
       }
-      const dmg = Math.round(e.dmg);
-      if (dmg >= 1) { const l = e.r || 1; S.hitDir = e.r > 0.05 ? { x: (w.pos.x - c.x) / l, y: (w.pos.y - c.y) / l, z: (w.pos.z - c.z) / l } : { x: 0, y: -1, z: 0 }; sim.hurt(S, w, dmg, 'the blast'); hits++; }
+      const dmg = Math.round(e.dmg * (SS.lab ? SS.lab.dmg_k(S, o.owner, w) : 1));     // (P42: Lab damage factors; 1 when off)
+      if (dmg >= 1) { const l = e.r || 1; S.hitDir = e.r > 0.05 ? { x: (w.pos.x - c.x) / l, y: (w.pos.y - c.y) / l, z: (w.pos.z - c.z) / l } : { x: 0, y: -1, z: 0 }; sim.hurt(S, w, dmg, C.DS.BLAST); hits++; }
     }
     ev.hits = hits;
     // other subsystems
@@ -170,6 +178,7 @@
     if (SS.ice) SS.ice.blast(S, c, Wkg);                     // Step I: holes / floes in sea ice (wider under water; BEFORE the water cavity lowers the surface it measures the charge's depth from)
     if (SS.water && SS.water.blast) SS.water.blast(S, c, Wkg);
     if (SS.struct) SS.struct.blast(S, c, Wkg);               // M: steel members cut by close charges, spans fall
+    if (SS.alien && SS.alien.blast) SS.alien.blast(S, c, Wkg, o.dmg);   // P37: the alien takes the blast too; eggs / huggers break
     if (SS.spatter) SS.spatter.blast(S, c, Wkg);             // LV4: loosen landed clots (before lava.blast throws new ones)
     if (SS.lava && SS.lava.blast) SS.lava.blast(S, c, Wkg);
     if (S.settings.collapse && SS.collapse_hook && cr.removed > 0) SS.collapse_hook(S, cr.box);

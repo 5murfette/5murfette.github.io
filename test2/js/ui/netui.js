@@ -28,8 +28,19 @@
     p.innerHTML = list.map((x, i) => `<div class="pl">● ${esc(x.name)}${i === 0 ? ' (host)' : ''}</div>`).join('');
     const go = q('#nuStart'); if (go) go.disabled = !(SS.net.isHost && list.length > 1);
   }
+  /* P38 R6 (R7): the build / desync banners (a fixed strip; plain DOM). desync(k, onStop): "Stop multiplayer" ends the lockstep and goes on
+   * locally; "Keep playing" dismisses. refused(msg): the host / guest runs another build. */
+  function banner(id, html, buttons) {
+    let b = document.getElementById(id); if (b) b.remove();
+    b = el('div', html); b.id = id;
+    b.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:60;max-width:min(560px,92vw);background:rgba(60,20,20,.96);color:#ffe0d8;border:1px solid #ff8a70;border-radius:12px;padding:12px 16px;font:600 14px var(--f-ui);box-shadow:0 10px 30px rgba(0,0,0,.5)';
+    for (const [t, fn] of buttons) { const x = el('button', t); x.type = 'button'; x.style.cssText = 'margin:8px 8px 0 0;padding:6px 12px;border:0;border-radius:8px;background:#ffb02e;color:#2a1606;font:400 13px var(--f-display);cursor:pointer'; x.onclick = () => { b.remove(); if (fn) fn(); }; b.appendChild(x); }
+    document.body.appendChild(b); return b;
+  }
+  NU.desync = (k, onStop) => banner('nudesync', `Desync at step ${esc(k)}: the players' games no longer match, so what you see may differ from theirs.`, [['Stop multiplayer', onStop], ['Keep playing', null]]);
+  NU.refused = msg => { banner('nurefused', esc(msg), [['OK', null]]); status(msg); };
   NU.toggle = function (settings) {
-    if (box) { box.remove(); box = null; return; }
+    if (box) { box.remove(); box = null; if (!SS.net.started && SS.net.mode) SS.net.close(); return; }     // (R11: closing the panel before the match starts leaves the lobby: the room is released)
     curSettings = settings;
     if (!document.getElementById('netui-css')) { const s = el('style', css); s.id = 'netui-css'; document.head.appendChild(s); }
     box = el('div'); box.id = 'netui';
@@ -80,6 +91,7 @@
       SS.net.on('open', () => status('Connected. Waiting for the host to start the match.'));
       SS.net.on('start', () => { if (box) NU.toggle(); });
       SS.net.on('close', () => status('The connection to the host was lost.'));
+      SS.net.on('refused', d => status(d.msg || (d.name + ' runs another game build and was turned away.')));
     }
   };
 })(window.SS = window.SS || {});

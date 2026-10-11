@@ -6,24 +6,28 @@
  * around the hole more and more toward it, an Einstein ring forms at thetaE, inside it the mirrored second image; a
  * black event horizon (no light escapes) with a thin bright photon ring at its edge. The effect fades to nothing at
  * R_FX x thetaE, so there is no seam with the rest of the frame. Without holes the normal render path runs (no cost).
- * API: SS.lens.render(renderer, scene, camera, holes) — holes: [{ x, y, z, s }] (s = the hole's visual scale, m).
+ * P38-R8: the same pass draws SHOCK RINGS (a blast's refraction front: a thin moving band where the air is compressed bends the view,
+ * a hot core shimmers): SS.lens.shock(x, y, z, R, strength) adds one (R = metres reached, ~0.45 s); the pass only runs while a ring (or hole) lives.
+ * API: SS.lens.render(renderer, scene, camera, holes) — holes: [{ x, y, z, s }] (s = the hole's visual scale, m); LN.active() = a ring lives.
  * Porting: a post-process pass (any engine) over the scene colour buffer; per hole 4 floats. */
 (function (SS) {
   'use strict';
   const T = window.THREE;
   const LN = SS.lens = {};
-  const MAXH = 4, R_E = 2.6, R_H = 1.0, R_FX = 2.4;        // Einstein / horizon radius per unit of visual scale; effect reach
+  const MAXR = 3, RING_T = 0.5, MAXH = 4, R_E = 2.6, R_H = 1.0, R_FX = 2.4;        // Einstein / horizon radius per unit of visual scale; effect reach
+  const rings = [];                     // { x, y, z, R, k, t }
   let rt = null, quadScene = null, quadCam = null, mat = null;
   const v = new T.Vector3(), r = new T.Vector3(), size = new T.Vector2();
   function init(renderer) {
-    rt = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, samples: 4 });
+    rt = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, samples: SS.view && SS.view.msaa ? SS.view.msaa() : 4 });
     mat = new T.ShaderMaterial({
       uniforms: { tScene: { value: rt.texture }, uRes: { value: new T.Vector2(1, 1) }, uN: { value: 0 },
-        uH: { value: [0, 1, 2, 3].map(() => new T.Vector4()) } },
+        uH: { value: [0, 1, 2, 3].map(() => new T.Vector4()) }, uNR: { value: 0 }, uR: { value: [0, 1, 2].map(() => new T.Vector4()) }, uRk: { value: [0, 1, 2].map(() => new T.Vector2()) },
+        uNZ: { value: 0 }, uZ: { value: [0, 1, 2, 3].map(() => new T.Vector4()) }, uT: { value: 0 } },
       depthTest: false, depthWrite: false,
       vertexShader: 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: /* glsl */`
-        uniform sampler2D tScene; uniform vec2 uRes; uniform int uN; uniform vec4 uH[${MAXH}];
+        uniform sampler2D tScene; uniform vec2 uRes; uniform float uT; uniform int uNZ; uniform vec4 uZ[4]; uniform int uN; uniform vec4 uH[${MAXH}]; uniform int uNR; uniform vec4 uR[${MAXR}]; uniform vec2 uRk[${MAXR}];
         varying vec2 vUv;
         void main(){
           vec2 asp = vec2(uRes.x / uRes.y, 1.0), uv = vUv;
@@ -39,16 +43,40 @@
             dark *= smoothstep(rh, rh * 1.2, rr);                                 // the event horizon
             ring += vec3(1.0, 0.86, 0.62) * exp(-pow((rr - rh * 1.16) / (rh * 0.07), 2.0)) * 0.9;   // photon ring
           }
+          for (int i = 0; i < ${MAXR}; i++) {                                      // shock rings: x,y = centre uv, z = front radius, w = amplitude; uRk = (band width, core radius)
+            if (i >= uNR) break;
+            vec2 dv = (vUv - uR[i].xy) * asp; float rr = length(dv), band = (rr - uR[i].z) / uRk[i].x;
+            float d = uR[i].w * (exp(-band * band) * (band > 0.0 ? 1.0 : 0.6) - 0.5 * exp(-pow((band + 1.8) * 0.6, 2.0)));
+            d += uR[i].w * 0.35 * exp(-pow(rr / uRk[i].y, 2.0)) * sin(rr * 260.0 - uR[i].z * 90.0);          // the hot core shimmers
+            uv += dv / max(rr, 1e-4) / asp * d;
+          }
+          for (int i = 0; i < 4; i++) {                                              // heat haze over fires: x,y = the flame top (uv), z = half width (uv-height units), w = strength
+            if (i >= uNZ) break;
+            vec2 dv = (vUv - uZ[i].xy) * asp; float R = uZ[i].z;
+            float m = smoothstep(R * 1.3, R * 0.2, abs(dv.x)) * smoothstep(-R * 0.5, R * 0.1, dv.y) * smoothstep(R * 3.4, R * 0.4, dv.y) * uZ[i].w;
+            if (m <= 0.0) continue;
+            vec2 q = vec2(vUv.x * 46.0, vUv.y * 38.0 - uT * 2.6);                       // rising ripples (cheap value noise, scrolled up)
+            vec2 ip = floor(q), fp = fract(q); fp = fp * fp * (3.0 - 2.0 * fp);
+            float a0 = fract(sin(dot(ip, vec2(127.1, 311.7))) * 43758.5), a1 = fract(sin(dot(ip + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5);
+            float a2 = fract(sin(dot(ip + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5), a3 = fract(sin(dot(ip + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5);
+            float n = mix(mix(a0, a1, fp.x), mix(a2, a3, fp.x), fp.y) - 0.5;
+            uv += vec2(n * 0.9, sin(q.y * 1.7 + n * 6.0) * 0.25) * 0.0075 * m / asp;
+          }
           vec3 col = texture2D(tScene, clamp(uv, vec2(0.001), vec2(0.999))).rgb * dark + ring;
           gl_FragColor = vec4(col, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`
     });
+    SS.section.exempt(mat, 'post: full-screen lens quad');
     quadScene = new T.Scene(); quadCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const q = new T.Mesh(new T.PlaneGeometry(2, 2), mat); q.frustumCulled = false; quadScene.add(q);
   }
-  LN.render = function (renderer, scene, camera, holes) {
+  LN.shock = function (x, y, z, R, k) { if (rings.length >= MAXR) rings.shift(); rings.push({ x, y, z, R: Math.max(2, R), k: k || 1, t: 0 }); };
+  LN.active = () => rings.length > 0;
+  LN.clear = function () { rings.length = 0; };
+  LN.tick = function (dt) { for (let i = rings.length - 1; i >= 0; i--) if ((rings[i].t += dt) > RING_T) rings.splice(i, 1); };
+  LN.render = function (renderer, scene, camera, holes, haze) {
     if (!rt) init(renderer);
     renderer.getDrawingBufferSize(size);
     if (rt.width !== size.x || rt.height !== size.y) rt.setSize(size.x, size.y);
@@ -66,9 +94,30 @@
       const px = Math.hypot((v.x * 0.5 + 0.5 - cx) * size.x / size.y, v.y * 0.5 + 0.5 - cy);   // 1 m of scale in uv-y units
       mat.uniforms.uH.value[n++].set(cx, cy, px * R_E, px * R_H);
     }
+    let nr = 0;                                                                     // shock rings: front radius in uv-height units from a metre offset along camera right
+    for (const g of rings) {
+      v.set(g.x, g.y, g.z).project(camera); if (v.z > 1 || v.z < -1) continue;
+      const cx = v.x * 0.5 + 0.5, cy = v.y * 0.5 + 0.5, f = g.t / RING_T, front = g.R * (1 - Math.exp(-4.5 * f)) / (1 - Math.exp(-4.5));
+      v.set(g.x, g.y, g.z).addScaledVector(r, 1).project(camera);
+      const px = Math.hypot((v.x * 0.5 + 0.5 - cx) * size.x / size.y, v.y * 0.5 + 0.5 - cy);
+      mat.uniforms.uR.value[nr].set(cx, cy, front * px, 0.02 * g.k * (1 - f) * (1 - f) * Math.min(1, 6 / g.R + 0.3));
+      mat.uniforms.uRk.value[nr].set(Math.max(0.01, 0.35 * px * (0.6 + f)), Math.max(0.01, 0.6 * g.R * px * 0.3));
+      nr++;
+    }
+    mat.uniforms.uNR.value = nr;
+    let nz = 0;                                                                     // heat haze: the strongest fire clusters (render/flame.js): flame top, half width in uv-height units
+    if (haze) for (let i = 0; i < haze.n && nz < 4; i++) {
+      v.set(haze.d[i * 4], haze.d[i * 4 + 1], haze.d[i * 4 + 2]).project(camera); if (v.z > 1 || v.z < -1) continue;
+      const cx = v.x * 0.5 + 0.5, cy = v.y * 0.5 + 0.5;
+      v.set(haze.d[i * 4], haze.d[i * 4 + 1], haze.d[i * 4 + 2]).addScaledVector(r, 1 + 1.2 * haze.d[i * 4 + 3]).project(camera);
+      const px = Math.hypot((v.x * 0.5 + 0.5 - cx) * size.x / size.y, v.y * 0.5 + 0.5 - cy);
+      mat.uniforms.uZ.value[nz++].set(cx, cy, px, 0.35 + 0.65 * haze.d[i * 4 + 3]);
+    }
+    mat.uniforms.uNZ.value = nz; mat.uniforms.uT.value += 1 / 60;
     mat.uniforms.uN.value = n; mat.uniforms.uRes.value.set(size.x, size.y);
     renderer.setRenderTarget(prev);
     renderer.render(quadScene, quadCam);
   };
-  LN.stats = () => ({ on: !!rt, size: rt ? [rt.width, rt.height] : null });
+  LN.ensure = function () { if (!rt) init(); };                 // (P38-R4: the pre-warm creates the target and the quad before the first hole)
+  LN.stats = () => ({ on: !!rt, size: rt ? [rt.width, rt.height] : null, samples: rt ? rt.samples : 0 });
 })(window.SS = window.SS || {});

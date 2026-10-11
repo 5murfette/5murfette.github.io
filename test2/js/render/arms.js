@@ -20,6 +20,7 @@
     stoneD: std(0x6e665c, { roughness: 1, metalness: 0 }), magnet: std(0xd23a2a, { metalness: 0.5 }), coil: std(0xc9cdd2, { metalness: 0.9, roughness: 0.25 }), plate: std(0xf0c030),
     plane: std(0x6f7a68, { metalness: 0.4 }), foam: std(0xf6fbff, { roughness: 0.9 })
   };
+  for (const k in M) M[k].userData.shared = true;          // (P38 R1: projectile models built by projMesh() are disposed per shot by actors.js / ffield.js without KEEP: these must survive)
   const KEEP = new Set(Object.values(M));                  // the shared materials above survive a removed object's dispose
   const G = {
     sph: r => new T.SphereGeometry(r, 14, 10), cyl: (r0, r1, h, n) => new T.CylinderGeometry(r0, r1, h, n || 12), box: (x, y, z) => new T.BoxGeometry(x, y, z)
@@ -99,13 +100,16 @@
       let L = torches[i]; if (!L) { L = new T.PointLight(0xffa860, 0, 9, 1.8); scene.add(L); torches.push(L); }
       L.position.set(R[i].x, R[i].y + R[i].rh - 0.5, R[i].z); L.intensity = 9 * (0.85 + 0.15 * Math.sin(t * 13 + i * 2) * Math.sin(t * 7.3 + i));
     }
-    for (let i = R.length; i < torches.length; i++) torches[i].intensity = 0;
+    while (torches.length > R.length) { const L = torches.pop(); scene.remove(L); L.dispose(); }      // (P38-R2: a map with fewer rooms drops the extra lights: they stayed in every shader)
   }
   AV.clear = function () {
-    for (const k in live) { for (const o of live[k].values()) groupDyn.remove(o); live[k].clear(); }
-    for (const f of fx) groupDyn.remove(f.obj); fx.length = 0;
+    // (P38-R2: dispose what is dropped: it leaked ~5 geometries per cycle; the shared M.* materials stay)
+    for (const k in live) { for (const o of live[k].values()) { groupDyn.remove(o); SS.mat.disposeTree(o, KEEP); } live[k].clear(); }
+    for (const f of fx) { groupDyn.remove(f.obj); SS.mat.disposeTree(f.obj, KEEP); } fx.length = 0;
   };
   function addFx(obj, life) { groupDyn.add(obj); fx.push({ obj, t: 0, life }); }
+  // P38-R2: an effect between two points is drawn when either end is in the drawn slab (it ignored the section clip: a bolt across the hidden map)
+  const clipOk = (S, a, b) => !SS.view || !SS.view.inSlab || SS.view.inSlab(S, a) || SS.view.inSlab(S, b) || (S.inspect || 0) > 0.05;
   // a thin additive line (tracer, beam) between two world points
   function streak(a, b, col, w, life) {
     const d = new T.Vector3(b.x - a.x, b.y - a.y, b.z - a.z), L = d.length() || 0.01;
@@ -124,15 +128,15 @@
     addFx(line, life);
   }
   AV.onEvent = function (S, e) {
-    if (e.type === 'shot' && e.weapon === 'shotgun' && e.from && e.to) { streak(e.from, e.to, 0xffe9a0, 0.025, 0.16); SS.fx.spark(e.to.x, e.to.y, e.to.z); }
+    if (e.type === 'shot' && e.weapon === 'shotgun' && e.from && e.to && clipOk(S, e.from, e.to)) { streak(e.from, e.to, 0xffe9a0, 0.025, 0.16); SS.fx.spark(e.to.x, e.to.y, e.to.z); }
     if (e.type === 'shot' && e.end && e.to) SS.fx.spark(e.to.x, e.to.y, e.to.z);
-    if (e.type === 'zap') arc(e.from, e.to, 0.3);
+    if (e.type === 'zap' && clipOk(S, e.from, e.to)) arc(e.from, e.to, 0.3);
     // (teleport: the PoC beams + ghosts live in render/actors.js teleStart)
     if (e.type === 'airburst') SS.fx.explosion({ x: e.x, y: e.y, z: e.z, W: 0.05, R: 1 }, 20);
     if (e.type === 'sparks') SS.fx.spark(e.x, e.y, e.z);
     if (e.type === 'shatter') { SS.fx.dust(e.x, e.y, e.z, 14, 1.0, 0x8d857a); SS.fx.dust(e.x, e.y + 0.8, e.z, 8, 0.6, 0x6e665c); }
     if (e.type === 'foam') SS.fx.dust(e.x, e.y, e.z, 8, 0.5, 0xf0f6ff);
-    if (e.type === 'blow') { const d = P.dir(S); for (let i = 0; i < 10; i++) SS.fx.dust(e.x + d.x * e.ds * i * 0.5, e.y + e.dy * i * 0.5, e.z + d.z * e.ds * i * 0.5, 1, 0.4, 0xe8eef2); }
+    if (e.type === 'blow') { const d = P.dir(S); for (let i = 0; i < 6; i++) SS.fx.dust(e.x + d.x * e.ds * i * 1.2, e.y + e.dy * i * 1.2 - (e.dy < 0.3 ? 0.4 : 0), e.z + d.z * e.ds * i * 1.2, 1, 0.5, 0xd8d0c0); }   // (the gust itself: polish.js)
     if (e.type === 'devbreak') SS.fx.spark(e.x, e.y, e.z);
     if (e.type === 'spring') SS.fx.dust(e.x, e.y, e.z, 4, 0.3, 0xf0c030);
     if (e.type === 'searise' && SS.view.seaChanged) SS.view.seaChanged(e.sea);
@@ -166,6 +170,8 @@
   }
   // ASSET: strike_plane (models/strike_plane.glb)
   function planeMesh() {
+    const baked = SS.models && SS.models.mesh('strike_plane');          // baked model (assets/models.js) when present
+    if (baked) return baked;
     const g = new T.Group();
     add(g, G.cyl(0.35, 0.25, 5.2, 12), M.plane, 0, 0, 0, 0, 0, Math.PI / 2);
     add(g, G.box(1.2, 0.08, 7.5), M.plane, 0.3, 0, 0); add(g, G.box(0.6, 0.06, 2.6), M.plane, -2.4, 0.1, 0); add(g, G.box(0.6, 1.1, 0.06), M.plane, -2.4, 0.55, 0);
@@ -179,8 +185,23 @@
    * every frame from the deformed canopy */
   const crateTex = {};
   // ASSET: crate_weapon / crate_health textures (models/crate_*.glb)
+  // P37 W4: tool deliveries: a steel-blue crate with a white gear and spanner stencilled on every face
+  function toolTexture() {
+    const N = 128, cv = document.createElement('canvas'); cv.width = cv.height = N; const x = cv.getContext('2d');
+    x.fillStyle = '#2d5f86'; x.fillRect(0, 0, N, N);
+    for (let p = 0; p < 4; p++) { x.fillStyle = p % 2 ? '#2a5780' : '#336a96'; x.fillRect(0, p * N / 4 + 1, N, N / 4 - 2); x.fillStyle = '#17364d'; x.fillRect(0, p * N / 4, N, 1.5); }
+    x.fillStyle = '#1b4466'; x.fillRect(0, 0, N, 10); x.fillRect(0, N - 10, N, 10); x.fillRect(0, 0, 10, N); x.fillRect(N - 10, 0, 10, N);
+    x.fillStyle = '#c9d6e0'; for (const [nx, ny] of [[5, 5], [N - 5, 5], [5, N - 5], [N - 5, N - 5]]) { x.beginPath(); x.arc(nx, ny, 1.8, 0, 7); x.fill(); }
+    x.save(); x.translate(N / 2, N / 2); x.fillStyle = '#eef4f8'; x.strokeStyle = '#eef4f8';
+    for (let i = 0; i < 8; i++) { x.save(); x.rotate(i * Math.PI / 4); x.fillRect(-6, -33, 12, 14); x.restore(); }       // gear teeth
+    x.beginPath(); x.arc(0, 0, 27, 0, 7); x.arc(0, 0, 13, 0, 7, true); x.fill('evenodd');
+    x.rotate(-0.8); x.fillRect(-3.5, -40, 7, 80); x.beginPath(); x.arc(0, -40, 9, 0, 7); x.fill(); x.fillStyle = '#2d5f86'; x.fillRect(-3, -50, 6, 11);   // spanner
+    x.restore();
+    const t = new T.CanvasTexture(cv); t.anisotropy = 4; if (T.SRGBColorSpace) t.colorSpace = T.SRGBColorSpace; return t;
+  }
   function crateTexture(kind) {
     if (crateTex[kind]) return crateTex[kind];
+    if (kind === 'tool') return (crateTex.tool = toolTexture());
     const N = 128, cv = document.createElement('canvas'); cv.width = cv.height = N; const x = cv.getContext('2d');
     const health = kind === 'health';
     x.fillStyle = health ? '#e9e4d8' : '#9a6a3c'; x.fillRect(0, 0, N, N);
@@ -209,13 +230,24 @@
   const CANOPY_R = 1.15, CANOPY_H = 0.75, CANOPY_UP = 2.0;
   // ASSET: crate_weapon / crate_health + parachute (models/crate_*.glb, models/parachute.glb)
   function crateMesh(c) {
-    const g = new T.Group(), kind = c && c.kind === 'health' ? 'health' : 'weapon';
-    const box = add(g, G.box(0.6, 0.6, 0.6), new T.MeshStandardMaterial({ map: crateTexture(kind), roughness: 0.85, metalness: 0 }));
+    const g = new T.Group(), kind = c && c.kind === 'health' ? 'health' : c && c.kind === 'tool' ? 'tool' : 'weapon';
+    const bid = kind === 'weapon' ? 'crate_weapon' : kind === 'health' ? 'crate_health' : null, baked = bid && SS.models && SS.models.mesh(bid);
+    let box;
+    if (baked) {
+      /* P42c: the baked AI crate (assets/models.js), stretched to the 0.6 m sim cube; own material copies so the gravity
+       * gun glow lights only this crate */
+      box = baked.children[0];
+      box.castShadow = false;
+      box.material = Array.isArray(box.material) ? box.material.map(m => m.clone()) : box.material.clone();
+      const sz = SS.MODELS[bid].size;
+      baked.scale.set(0.6 / sz[0], 0.6 / sz[1], 0.6 / sz[2]);
+      g.add(baked);
+    } else box = add(g, G.box(0.6, 0.6, 0.6), new T.MeshStandardMaterial({ map: crateTexture(kind), roughness: 0.85, metalness: 0 }));
     box.receiveShadow = true;
     // canopy: a dome of 8 gores (vertex colours), pivoting above the crate
     const pivot = new T.Group(); pivot.position.set(0, 0.3, 0); g.add(pivot);
     const geo = new T.SphereGeometry(1, 24, 7, 0, Math.PI * 2, 0, 1.25), pa = geo.attributes.position, col = new Float32Array(pa.count * 3);
-    for (let i = 0; i < pa.count; i++) { const gore = Math.floor(((Math.atan2(pa.getZ(i), pa.getX(i)) + Math.PI) / (Math.PI * 2)) * 8 + 0.5) % 2; const c3 = gore ? [0.86, 0.16, 0.12] : [0.95, 0.92, 0.84]; col[i * 3] = c3[0]; col[i * 3 + 1] = c3[1]; col[i * 3 + 2] = c3[2]; }
+    for (let i = 0; i < pa.count; i++) { const gore = Math.floor(((Math.atan2(pa.getZ(i), pa.getX(i)) + Math.PI) / (Math.PI * 2)) * 8 + 0.5) % 2; const c3 = gore ? (kind === 'tool' ? [0.14, 0.5, 0.86] : [0.86, 0.16, 0.12]) : [0.95, 0.92, 0.84]; col[i * 3] = c3[0]; col[i * 3 + 1] = c3[1]; col[i * 3 + 2] = c3[2]; }
     geo.setAttribute('color', new T.BufferAttribute(col, 3));
     const base = Float32Array.from(pa.array);
     const canopy = new T.Mesh(geo, new T.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, side: T.DoubleSide }));
@@ -226,9 +258,12 @@
     return g;
   }
   const cv3 = new T.Vector3();
+  const CRATE_CORNERS = [[0.3, 0.3], [0.3, -0.3], [-0.3, -0.3], [-0.3, 0.3]];      // (P38-R2: hoisted: 40 arrays per crate per frame)
   function crateFrame(m, c, t, dt) {
-    const u = m.userData, flying = !c.landed;
+    const u = m.userData, flying = !c.landed && !c.thrown && !c.held;
     u.pivot.visible = u.lines.visible = flying;
+    if (c.held) { m.rotation.set(0.12 * Math.sin(t * 2.3 + u.seed), t * 0.6 + u.seed, 0.1 * Math.sin(t * 1.7)); return; }                       // P38-A4: in the gravity beam
+    if (c.thrown) { m.rotation.set(t * (c.spin || 2) * 1.3 + u.seed, t * (c.spin || 2) + u.seed * 2, t * (c.spin || 2) * 0.7); return; }      // ... tumbling in flight
     if (!flying) { m.rotation.set(0, m.rotation.y, 0); return; }
     // pendulum: the canopy sways (wind + slow oscillation), the crate lags behind it under the lines
     const sw = Math.sin(t * 1.1 + u.seed) * 0.13 + Math.sin(t * 2.7 + u.seed * 2) * 0.04, sw2 = Math.sin(t * 0.9 + u.seed * 3) * 0.08;
@@ -246,7 +281,7 @@
     const lp = u.lines.geometry.attributes.position, ring = 7 * 25;   // last ring index base (widthSegments + 1 per ring)
     for (let q = 0; q < 8; q++) {
       const vi = ring + q * 3; cv3.set(pa.getX(vi), pa.getY(vi), pa.getZ(vi)).applyMatrix4(u.canopy.matrix).applyMatrix4(u.pivot.matrix);
-      const corner = [[0.3, 0.3], [0.3, -0.3], [-0.3, -0.3], [-0.3, 0.3]][Math.floor(((q + 0.5) / 8) * 4) % 4];
+      const corner = CRATE_CORNERS[Math.floor(((q + 0.5) / 8) * 4) % 4];
       lp.setXYZ(q * 2, cv3.x, cv3.y, cv3.z); lp.setXYZ(q * 2 + 1, corner[0], 0.3, corner[1]);
     }
     lp.needsUpdate = true;
@@ -256,6 +291,16 @@
     for (const o of list) { let m = map.get(o); if (!m) { m = make(o); groupDyn.add(m); map.set(o, m); } seen.add(o); upd(o, m); }
     for (const [o, m] of map) if (!seen.has(o)) { groupDyn.remove(m); map.delete(o); SS.mat.disposeTree(m, KEEP); }   // devices, holes, crates, ... (shared M.* materials kept)
   }
+  /* P38-A4: the gravity gun's cyan glow on a supply crate (level 0 = off, 1 = aimed, > 1 held) */
+  AV.crateGlow = function (c, level, t) {
+    const m = live.crates.get(c); if (!m) return;
+    const mt = m.userData.box.material, ms = Array.isArray(mt) ? mt : [mt];
+    for (const x of ms) {
+      if (!x.emissive) continue;
+      if (!(level > 0)) x.emissive.setHex(0);
+      else x.emissive.setRGB(0.1, 0.55, 0.7).multiplyScalar(Math.min(1.6, level) * (0.7 + 0.3 * Math.sin((t || 0) * 7)));
+    }
+  };
   AV.frame = function (S, view, camera, dt) {
     if (!scene) return;
     const t = view.time || 0, d = P.dir(S);
@@ -306,13 +351,13 @@
       sniperLine.geometry.setDrawRange(0, n); sniperLine.geometry.attributes.position.needsUpdate = true; sniperLine.computeLineDistances(); sniperLine.visible = n > 1;
       if (n > 1) { tgtCross.visible = true; tgtCross.position.set(pts[(n - 1) * 3], pts[(n - 1) * 3 + 1], pts[(n - 1) * 3 + 2]); }
     }
-    if (S.tgt && wd.target) { const p = P.to_world(S, S.tgt.s, S.tgt.y); tgtCross.position.set(p.x, p.y, p.z); tgtCross.visible = true; tgtCross.material.rotation = -t * 2; }
+    if (S.tgt && (wd.target || wd.twostep)) { const p = P.to_world(S, S.tgt.s, S.tgt.y); tgtCross.position.set(p.x, p.y, p.z); tgtCross.visible = true; tgtCross.material.rotation = -t * 2; }
     let cur = null;
     if (AV.cursor && (wd.kind === 'target' || wd.target)) cur = SS.view.pickPlane(S, AV.cursor.x, AV.cursor.y);
     if (cur) {
       const p = P.to_world(S, cur.s, cur.y);
       if (S.weapon === 'girder') {
-        const K = C.ARMS.GIRDER, ang = (S.girderA || 0) * Math.PI / K.ANGLES, ap = P.to_plane(S, a.pos), ok = Math.hypot(cur.s - ap.s, cur.y - a.pos.y) <= K.REACH;
+        const K = C.ARMS.GIRDER, ang = S.plateAng || 0, ap = P.to_plane(S, a.pos), ok = Math.hypot(cur.s - ap.s, cur.y - a.pos.y) <= K.REACH;
         ghost.visible = true; ghost.scale.set(K.L, K.T, K.D * 2); ghost.position.set(p.x, p.y, p.z); ghost.rotation.set(0, -S.theta, ang, 'YXZ');
         ghost.material.color.set(ok ? 0x79d98b : 0xff5b4f);
       } else { curCross.visible = true; curCross.position.set(p.x, p.y, p.z); curCross.material.rotation = t; }

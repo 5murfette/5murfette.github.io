@@ -67,7 +67,7 @@
     }`;
   const FCLIP = /* glsl */`
     varying vec3 vTW; varying vec4 vTr; varying float vLeafF; varying float vCut; varying float vRootT; varying vec3 vCenT; varying float vRoot;
-    uniform vec3 uO, uN, uHaze; uniform float uBack, uAlpha, uInsp, uCtxSolid, uCtxHaze;
+    uniform vec3 uO, uN, uHaze; uniform float uBack, uAlpha, uInsp, uCtxSolid, uCtxHaze, uSecG;
     float treeA = 1.0;
     // context behind the slab: same haze as the terrain ghost
     vec3 treeHaze(vec3 c) {
@@ -96,7 +96,7 @@
      #else
       float a = 1.0;
       if (vRootT < -uBack - ${CTX_M}) discard;
-      if (t > 0.02 - jag) { if (uInsp < 0.02) discard; a = uInsp * 0.3 * exp(-max(t, 0.0) / 12.0); }
+      if (uSecG < 0.5 && t > 0.02 - jag) { if (uInsp < 0.02) discard; a = uInsp * 0.3 * exp(-max(t, 0.0) / 12.0); }
       if (a < 0.995 && a <= bayer4(gl_FragCoord.xy)) discard;
      #endif
     #endif
@@ -112,7 +112,7 @@
       uBarkTint: { value: new T.Color(1, 1, 1) }, uLeafTint: { value: new T.Color(1, 1, 1) }, uCore: { value: new T.Color(0.05, 0.08, 0.03) },
       uInsp: { value: 0 }, tLeaf: { value: tx.foliage || null }
     };
-    const shared = () => Object.assign({}, own, { uO: U.uO, uN: U.uN, uBack: U.uBack, uAlpha: U.uAlpha, uCtxSolid: U.uCtxSolid, uCtxHaze: U.uCtxHaze, tNoise: U.tNoise, uHaze: U.uHaze || { value: new T.Color(0.6, 0.7, 0.8) } });
+    const shared = () => Object.assign({}, own, { uO: U.uO, uN: U.uN, uBack: U.uBack, uAlpha: U.uAlpha, uSecG: SS.section.uniforms.uSecG, uCtxSolid: U.uCtxSolid, uCtxHaze: U.uCtxHaze, tNoise: U.tNoise, uHaze: U.uHaze || { value: new T.Color(0.6, 0.7, 0.8) } });
     const woodFS = sh => {
       sh.fragmentShader = FCLIP + `
         uniform float uTime; uniform vec3 uBarkTint; uniform sampler2D tNoise;
@@ -428,7 +428,10 @@
     for (const g of geos) g.dispose();
     meshes = []; tris = 0;
   }
+  const REBUILD_MIN = 0.3, REBUILD_LAG = 0.07;
+  let rebuildWanted = false, rebuildAt = -1e9, wantedAt = 0;     // (the throttle of the rebuild after a blast; presentation only)
   function rebuild(S) {
+    rebuildWanted = false; rebuildAt = performance.now();
     drop();
     builtFor = S.trees;
     const trees = S.trees || [];
@@ -465,28 +468,6 @@
     scene = sc; tx = textures || {}; Q = quality; U = SS.terrain.uniforms;
     stTex = new T.DataTexture(new Float32Array(ROW * 4), ROW, 1, T.RGBAFormat, T.FloatType); stTex.needsUpdate = true;
     makeMats();
-    // grass fire: instanced procedural flame quads on burning cells
-    maxFire = Math.round(1400 * (Q && Q.particles ? Q.particles : 1));
-    const fg = new T.PlaneGeometry(1, 1); fg.translate(0, 0.5, 0);
-    const ig = new T.InstancedBufferGeometry(); ig.index = fg.index; ig.setAttribute('position', fg.attributes.position); ig.setAttribute('uv', fg.attributes.uv);
-    fireSeed = new T.InstancedBufferAttribute(new Float32Array(maxFire), 1); fireSeed.setUsage(T.DynamicDrawUsage); ig.setAttribute('seed', fireSeed);
-    const fm = new T.ShaderMaterial({
-      uniforms: { uTime: { value: 0 }, uInt: { value: 1 } },
-      vertexShader: /* glsl */`
-        attribute float seed; varying vec2 vUv; varying float vSeed;
-        void main() {
-          vUv = uv; vSeed = seed;
-          vec4 mv = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          vec3 sc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), 1.0);
-          mv.xy += position.xy * sc.xy;
-          gl_Position = projectionMatrix * mv;
-        }`,
-      fragmentShader: SS.bodyView && SS.bodyView.FLAME_FS ? SS.bodyView.FLAME_FS : 'void main(){ gl_FragColor = vec4(1.0, 0.5, 0.1, 1.0); }',
-      transparent: true, depthWrite: false, blending: T.AdditiveBlending
-    });
-    fire = new T.InstancedMesh(ig, fm, maxFire); fire.count = 0; fire.frustumCulled = false; fire.renderOrder = 9;
-    fire.instanceMatrix.setUsage(T.DynamicDrawUsage);
-    scene.add(fire);
   };
 
   const mtx = new T.Matrix4();
@@ -497,17 +478,22 @@
     if (builtFor !== S.trees) { for (const id of [...flames.keys()]) freeFlames(id); rebuild(S); lastBoom = S.lastExplosion; }
     // T3: a blast near a tree may have uncovered / torn its roots: rebuild the wood (root segments now in air dropped).
     // Keyed on the explosion record itself (S.lastBoom also moves on every shot fired / projectile removed)
-    else if (S.lastExplosion !== lastBoom) {
-      lastBoom = S.lastExplosion; const e = S.lastExplosion;
-      if (e && (S.trees || []).some(t => Math.hypot(t.x - e.x, t.z - e.z) < Math.max(C.TREES.ROOT_R_MIN, C.TREES.ROOT_R_K * (t.crown || 1.5)) * 1.1 + e.R + 1)) rebuild(S);
+    else {
+      if (S.lastExplosion !== lastBoom) {
+        lastBoom = S.lastExplosion; const e = S.lastExplosion;
+        if (e && (S.trees || []).some(t => Math.hypot(t.x - e.x, t.z - e.z) < Math.max(C.TREES.ROOT_R_MIN, C.TREES.ROOT_R_K * (t.crown || 1.5)) * 1.1 + e.R + 1)) { if (!rebuildWanted) wantedAt = performance.now(); rebuildWanted = true; }
+      }
+      // P38-R4: the rebuild of all the wood (up to 28 ms) runs at most every REBUILD_MIN s of real time: a barrage near trees coalesces into one
+      if (rebuildWanted && performance.now() - rebuildAt > REBUILD_MIN * 1000 && performance.now() - wantedAt > REBUILD_LAG * 1000) rebuild(S);   // (REBUILD_LAG: not in the frame of the blast, which also remeshes terrain and spawns the effects)
     }
     own.uTime.value = time; own.uInsp.value = view.insp || 0;
     const wm = S.wind && S.wind.mean; if (wm) own.uWind.value.set(wm.x, 0, wm.z);
     const trees = S.trees || [], O = S.O, n = SS.plane.nrm(S), back = U.uBack.value, insp = view.insp || 0, ctx = view.ctxA || 0;
     const tOf = (x, z) => (x - O.x) * n.x + (z - O.z) * n.z;
-    const visT = t => (t <= 0.3 || insp > 0.05) && (t >= -back - 0.5 || ctx > 0.25);
+    const gf = SS.section.frontOn;
+    const visT = t => (t <= 0.3 || insp > 0.05 || gf) && (t >= -back - 0.5 || ctx > 0.25);
     const slabTree = t => tOf(t.x, t.z) >= -back - CTX_M;                 // same split as the shaders
-    const visL = (tr, t) => (t <= 0.3 || insp > 0.05) && (slabTree(tr) || ctx > 0.25);
+    const visL = (tr, t) => (t <= 0.3 || insp > 0.05 || gf) && (slabTree(tr) || ctx > 0.25);
     // state texture
     if (stData && trees.length) {
       for (let i = 0; i < trees.length && i < nRows; i++) {
@@ -534,28 +520,12 @@
       }
       while (fl.length > want.length) SS.bodyView.unflame(fl.pop());
       for (let i = 0; i < want.length; i++) {
-        if (!fl[i]) fl[i] = SS.bodyView.flame(((t.id * 0.37 + i * 0.211) % 1));
+        if (!fl[i]) { fl[i] = SS.bodyView.flame(((t.id * 0.37 + i * 0.211) % 1)); fl[i].big = 1; }
         const w = want[i]; fl[i].position.set(w[0], w[1], w[2]); fl[i].scale.set(w[3], w[4], 1);
       }
     }
-    // grass fire field
-    const st = S.veg; let k = 0;
-    if (st && st.nAct && fire) {
-      const H = SS.world.H, nn = st.n, top = SS.world.top, stride = Math.max(1, Math.ceil(st.nAct / maxFire));
-      for (let a = 0; a < st.nAct && k < maxFire; a += stride) {
-        const c = st.act[a]; if (st.burnT[c] <= 0) continue;
-        const x = (c % nn) * H, z = ((c / nn) | 0) * H, tt = tOf(x, z);
-        if (!visT(tt)) continue;
-        const h1 = M.hash3(c, 1, 9), h2 = M.hash3(c, 2, 9), s = st.burnI[c] * Math.min(1, st.burnT[c] / 0.8) * (0.7 + 0.6 * h1) * (stride > 1 ? 1.2 : 1);
-        if (s < 0.05) continue;
-        mtx.makeScale(0.75 * s, 1.05 * s, 1).setPosition(x + (h1 - 0.5) * 0.35, top[c] - 0.08, z + (h2 - 0.5) * 0.35);
-        fire.setMatrixAt(k, mtx); fireSeed.array[k] = h2; k++;
-      }
-    }
-    if (fire) {
-      fire.count = k; fireN = k;
-      if (k) { fire.instanceMatrix.needsUpdate = true; fireSeed.needsUpdate = true; fire.material.uniforms.uTime.value = time; }
-    }
+    // grass fire: burning cells are flame sources of the fire system (render/fire.js heat field); only those inside the drawn slab (same rule as the shaders)
+    if (SS.fireView) SS.fireView.vis = (x, z) => visT(tOf(x, z));
   };
 
   /* a broken tree part (body space): same look, no clipping (bodies are drawn whole like props) */
@@ -588,5 +558,5 @@
     return { group: g, meshes: parts };
   };
   TV.debug = () => ({ meshes, woodMats, leafMats, coreMats, state: stData, ROW, LEAF0 });   // dev tools (shot scripts, verify)
-  TV.stats = () => ({ tris, fire: fireN, flames: [...flames.values()].reduce((a, f) => a + f.length, 0) });
+  TV.stats = () => ({ tris, fire: SS.fireView ? SS.fireView.stats().cells : 0, flames: [...flames.values()].reduce((a, f) => a + f.length, 0) });
 })(window.SS = window.SS || {});

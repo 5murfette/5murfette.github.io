@@ -1,11 +1,15 @@
-/* ui/menu.js — map menu (biome, seed, collapse, weather, lava, wind, quality, slice view) and the loading progress bar.
- * DOM only; returns plain settings objects to main.js, which hands them to the sim. */
+/* ui/menu.js — the main menu (P37 W5 redesign) and the loading progress bar.
+ * DOM only; returns plain settings objects to main.js, which hands them to the sim. All options are DATA (tables below):
+ * the form is built from MATCH / RULES / DISPLAY / FIELD (+ the DENSITY rows) by one generic row builder
+ * (segmented buttons, toggles, selects). Layout: left = live map preview (hero: click = new seed; Top / Side minis: click =
+ * the battlefield sub-menu), right = a page ('main' or 'field'). Everything is set in the display font (Bungee).
+ * The preview data come from SS.worldgen.preview (the 2D stage of the real generator) via ui/mappreview.js. */
 (function (SS) {
   'use strict';
-  const C = SS.CFG;
+  const C = SS.CFG, D = C.DENSITY;
   const MN = SS.menu = {};
   const KEY = 'burrowBrawl3d.settings';
-  let root, panel, prog, bar, lbl, pct, cur, onStart, onResume;
+  let lastShow = null, root, panel, prog, bar, lbl, pct, cur, onStart, onResume, page = 'main', pv = null, pvTimer = 0, cv = {}, rowsEl = null;
 
   const BIOME_LOOK = {
     random: 'linear-gradient(135deg,#6b5b95,#3a7bd5 50%,#d76d77)',
@@ -15,21 +19,106 @@
     desert: 'linear-gradient(160deg,#fff1cf 0%,#f0d08a 45%,#d8a860 75%,#a07040)',
     volcanic: 'linear-gradient(160deg,#4a4048 0%,#2a2426 45%,#ff5a10 75%,#3a2a24)'
   };
+  const LV = [['none', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
   const OPTS = {
-    weather: [['auto', 'Auto (from biome)'], ['clear', 'Clear'], ['cloudy', 'Cloudy'], ['rain', 'Rain'], ['storm', 'Thunderstorm'], ['snow', 'Snow'], ['blizzard', 'Blizzard'], ['ashfall', 'Ash fall'], ['fog', 'Fog']],
-    lava: [['auto', 'Auto'], ['on', 'Hidden pockets'], ['off', 'None (volcano keeps its crater lake)']],
+    weather: [['auto', 'Auto'], ['clear', 'Clear'], ['cloudy', 'Cloudy'], ['rain', 'Rain'], ['storm', 'Storm'], ['snow', 'Snow'], ['blizzard', 'Blizzard'], ['ashfall', 'Ash fall'], ['fog', 'Fog']],
+    lava: [['auto', 'Auto'], ['on', 'Pockets'], ['off', 'None']],
     wind: [['auto', 'Auto'], ['calm', 'Calm'], ['breeze', 'Breeze'], ['strong', 'Strong'], ['gale', 'Gale']],
-    under: [['off', 'Surface (island / desert)'], ['on', 'Underground (cave system)']],
     skill: [['easy', 'Rookie'], ['normal', 'Soldier'], ['hard', 'Sharpshooter']],
     teams: [['2', '2'], ['3', '3'], ['4', '4']], worms: [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']],
     hp: [['80', '80'], ['100', '100'], ['150', '150']],
-    onoff: [['off', 'Off'], ['on', 'On']],
     time: [['random', 'Random'], ['day', 'Day'], ['dusk', 'Dusk'], ['night', 'Night']],
-    shape: [['random', 'Random'], ['islands', 'Islands'], ['hills', 'Hills'], ['caverns', 'Caverns'], ['canyon', 'Canyon and bridge']],
-    art: [['painted', 'Painted icons'], ['procedural', 'Original vector icons']],
-    placement: [['random', 'Random'], ['user', 'You place them (15 s each)']], volcanoes: [['auto', 'Random (70 / 35 / 17 %)'], ['0', 'None'], ['1', 'One (big)'], ['2', 'Two'], ['3', 'Three']], first: [['random', 'Random team (PoC)'], ['0', 'Team 1'], ['1', 'Team 2'], ['2', 'Team 3'], ['3', 'Team 4']], turnTime: [['30', '30 s'], ['45', '45 s'], ['60', '60 s'], ['90', '90 s'], ['0', 'No limit']],
-    quality: null,
-    slice: [['thin', 'Thin · 1.5 m behind the slice'], ['thick', 'Thick · 6 m behind'], ['full', 'Full · everything behind']]
+    shape: [['random', 'Random'], ['islands', 'Islands'], ['hills', 'Hills'], ['caverns', 'Caverns'], ['canyon', 'Canyon']],
+    mapSize: [['auto', 'Auto'], ['normal', 'Normal'], ['large', 'Large']],   // P38: 96 m / 128 m (Auto: the biome's default, the volcano island is large)
+    art: [['painted', 'Painted'], ['procedural', 'Vector']],
+    placement: [['random', 'Random'], ['user', 'You place']],
+    volcanoes: [['auto', 'Random'], ['0', 'None'], ['1', 'One'], ['2', 'Two'], ['3', 'Three']],
+    first: [['random', 'Random'], ['0', 'Team 1'], ['1', 'Team 2'], ['2', 'Team 3'], ['3', 'Team 4']],
+    turnTime: [['30', '30 s'], ['45', '45 s'], ['60', '60 s'], ['90', '90 s'], ['0', 'No limit']],
+    mineFuse: [['random', 'Random'], ['0', '0 s'], ['1', '1 s'], ['2', '2 s'], ['3', '3 s']],
+    toolCrates: [['off', 'Off'], ['low', 'Few'], ['normal', 'Normal'], ['high', 'Many']],
+    slice: [['thin', 'Thin'], ['thick', 'Thick'], ['full', 'Full']],
+    ghost: [['0', 'Off'], ['15', '15 %'], ['30', '30 %'], ['50', '50 %'], ['75', '75 %'], ['100', '100 %']]      // P46: the front of the section as a ghost image (render/section.js)
+  };
+  /* row: k key, t label, o options (or null = toggle), n = numeric value, w = widget ('seg' | 'sel'), h = hint */
+  const MATCH = [
+    { k: 'teams', t: 'Teams', o: OPTS.teams, n: 1, w: 'seg', teams: 1 }, { k: 'worms', t: 'Worms per team', o: OPTS.worms, n: 1, w: 'seg' },
+    { k: 'hp', t: 'Worm health', o: OPTS.hp, n: 1, w: 'seg' }, { k: 'turnTime', t: 'Turn time', o: OPTS.turnTime, n: 1, w: 'seg' },
+    { k: 'skill', t: 'CPU skill', o: OPTS.skill, w: 'seg' }, { k: 'placement', t: 'Worm placement', o: OPTS.placement, w: 'seg' },
+    { k: 'first', t: 'Who starts', o: OPTS.first, w: 'sel', fn: v => (v === 'random' ? 'random' : parseInt(v, 10)) }
+  ];
+  const RULES = [
+    { k: 'rotLock', t: 'Rotation lock', b: true, d: true, h: 'random start worm, rotate for 10 s, then fixed' },
+    { k: 'mineFuse', t: 'Mine fuse', o: OPTS.mineFuse, w: 'seg', fn: v => (v === 'random' ? 'random' : parseInt(v, 10)) },
+    { k: 'toolCrates', t: 'Tool crates', o: OPTS.toolCrates, w: 'seg' },
+    { k: 'sd', t: 'Sudden death', b: true, d: true, h: 'the sea rises from round 8' },
+    { k: 'collapse', t: 'Land collapse', b: true, d: true, h: 'unsupported land breaks' },
+    { k: 'blood', t: 'Blood and gibs', b: true, d: false }, { k: 'teamBlood', t: 'Team-coloured blood', b: true, d: false },
+    { k: 'select', t: 'Worm select', b: true, d: false }, { k: 'rooms', t: 'Buried rooms', b: true, d: false }, { k: 'keepRope', t: 'Keep ropes', b: true, d: false, h: 'a worm stays hanging' }
+  ];
+  const DISPLAY = [
+    { k: 'quality', t: 'Visual quality', w: 'seg', dyn: 'quality' }, { k: 'slice', t: 'Slice view', o: OPTS.slice, w: 'seg' }, { k: 'ghost', t: 'Front ghost', o: OPTS.ghost, n: 1, w: 'seg', h: 'how visible the part of the world in front of the section is (Off = hidden)' }, { k: 'art', t: 'Artwork', o: OPTS.art, w: 'seg' },
+    { k: 'idle', t: 'Idle antics', b: true, d: true, h: 'bored worms juggle, scroll a phone, doze off ...' }
+  ];
+  const FIELD = [
+    { k: 'shape', t: 'Terrain shape', o: OPTS.shape, w: 'seg' },
+    { k: 'mapSize', t: 'Map size', o: OPTS.mapSize, w: 'seg', h: 'caves and the desert are always normal' },
+    { k: 'volcanoes', t: 'Volcanoes', o: OPTS.volcanoes, w: 'seg', only: 'volcanic' },
+    { k: 'time', t: 'Time of day', o: OPTS.time, w: 'seg' }, { k: 'weather', t: 'Weather', o: OPTS.weather, w: 'sel' },
+    { k: 'wind', t: 'Wind', o: OPTS.wind, w: 'seg' }, { k: 'lava', t: 'Lava', o: OPTS.lava, w: 'seg' }
+  ];
+  const DENSITY = [
+    { k: 'dTrees', t: 'Trees' }, { k: 'dRocks', t: 'Rocks and boulders' }, { k: 'dProps', t: 'Cars, junk, monuments' }, { k: 'dBarrels', t: 'Explosive barrels' },
+    { k: 'dCrates', t: 'Crates' }, { k: 'dMines', t: 'Mines' }, { k: 'dBunkers', t: 'Bunkers' },
+    { k: 'dTown', t: 'Ruined town', only: 'volcanic' }, { k: 'dEggs', t: 'Alien eggs', only: 'volcanic' }
+  ];
+  /* P42 Lab: the experimental mechanics (bits = C.LAB.FLAG, rules in sim/lab.js); every one is OFF by default and applies to the next match */
+  const LAB = [
+    { id: 'BANK', t: 'Bank shots', d: 'A grenade (or any bouncing shell) that ricochets hard off the terrain before it explodes deals +20 % blast damage per bounce, up to +60 %, to the other teams. Rewards geometry and trick shots over plain lobbing.' },
+    { id: 'UNDERDOG', t: 'Underdog', d: 'A team holding half the HP (or less) of the strongest other team deals +35 % blast damage until it catches up. A comeback mechanic: being behind makes every shot scarier.' },
+    { id: 'GUSTS', t: 'Wind gusts', d: 'While you aim, the wind keeps shifting every 6-12 seconds, in strength and heading. Check the wind bar right before you fire: a perfect shot can be blown off at the last second.' },
+    { id: 'METEORS', t: 'Meteor shower', d: 'Every third turn two or three meteors are announced by red rings on the ground and strike 2.2 seconds later near the action. They hit everyone, so shelter matters.' },
+    { id: 'CLOCK', t: 'Pressure clock', d: 'An overtime mode: the turn clock shrinks by 10 % every round, down to 15 seconds. Needs a turn time (not "No limit"). Long games get frantic.' },
+    { id: 'MOON', t: 'Moon phase', d: 'Every third round gravity halves for worms and props: jumps are huge and floaty, falls are gentle. Shells keep their normal flight, so rope and jump routes change.' }
+  ];
+  MN.LAB = LAB;
+  const labBits = () => LAB.reduce((n, r) => n + (((cur.labFlags | 0) & C.LAB.FLAG[r.id]) ? 1 : 0), 0);
+  /* settings keys the host sends to net guests (js/main.js adds them to its whitelist) */
+  MN.NET_KEYS = ['rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags'].concat(D.KEYS);
+
+  /* P38 R6 (R2/R3): saved settings, URL parameters and net starts are untrusted data (an old build, a foreign key, a hand edit):
+   * coerce every field into its legal range / type so the form and the generator never see a hole. Pure (tools/dev/gen/robusttest.cjs).
+   * def = the defaults for a field that cannot be repaired. Returns a new object. */
+  const ENUM_KEYS = ['weather', 'lava', 'wind', 'skill', 'time', 'shape', 'mapSize', 'art', 'placement', 'slice', 'toolCrates', 'mineFuse', 'first', 'volcanoes', 'quality'];
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const intIn = (v, lo, hi, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
+  MN.biome_ok = id => typeof id === 'string' && (id === 'random' || C.BIOMES.some(b => b.id === id));
+  MN.sanitize = function (s, def) {
+    def = def || C.SETTINGS;
+    const o = Object.assign({}, s && typeof s === 'object' ? s : {});
+    if (!MN.biome_ok(o.biome)) o.biome = MN.biome_ok(def.biome) ? def.biome : 'random';
+    o.teams = intIn(o.teams, 2, 4, intIn(def.teams, 2, 4, 2));
+    o.worms = intIn(o.worms, 1, 4, intIn(def.worms, 1, 4, 3));
+    o.hp = intIn(o.hp, 1, 999, intIn(def.hp, 1, 999, 100));
+    o.turnTime = intIn(o.turnTime, 0, 600, intIn(def.turnTime, 0, 600, 0));
+    o.ghost = intIn(o.ghost, 0, 100, intIn(def.ghost, 0, 100, 0));       // P46: front ghost opacity, percent (0 = off)
+    o.labFlags = intIn(o.labFlags, 0, C.LAB.ALL, 0);                  // P42: the Lab's mechanics (bit mask, 0 = off)
+    o.seed = intIn(o.seed, 0, 99999999, intIn(def.seed, 0, 99999999, 7));
+    const dctl = Array.isArray(def.ctl) ? def.ctl : ['human', 'cpu', 'cpu', 'cpu'];
+    const ctl = Array.isArray(o.ctl) ? o.ctl.slice(0, 4) : (o.ctl == null ? null : dctl.slice());
+    if (ctl) { for (let i = 0; i < 4; i++) ctl[i] = ctl[i] === 'human' || ctl[i] === 'cpu' ? ctl[i] : dctl[i] || (i ? 'cpu' : 'human'); }
+    o.ctl = ctl;
+    const dn = Array.isArray(def.names) ? def.names : [];
+    if (Array.isArray(o.names)) { const n = o.names.slice(0, 4); for (let i = 0; i < 4; i++) n[i] = typeof n[i] === 'string' ? n[i].slice(0, 18) : (dn[i] || C.TEAMS[i].name); o.names = n; }
+    else o.names = o.names == null ? null : dn.length ? dn.slice(0, 4) : C.TEAMS.map(t => t.name);
+    for (const k of ENUM_KEYS) {
+      const v = o[k];
+      if (v == null) continue;
+      if (typeof v !== 'string' && typeof v !== 'number') { if (def[k] != null) o[k] = def[k]; else delete o[k]; }
+    }
+    for (const k of D.KEYS) if (o[k] != null && D.LEVELS.indexOf(o[k]) < 0) o[k] = def[k] != null && D.LEVELS.indexOf(def[k]) >= 0 ? def[k] : 'medium';
+    for (const k of ['sd', 'collapse', 'blood', 'teamBlood', 'select', 'rooms', 'keepRope', 'rotLock']) if (o[k] != null && typeof o[k] !== 'boolean') o[k] = !!o[k] && o[k] !== '0' && o[k] !== 'off';
+    return o;
   };
 
   MN.load = function () {
@@ -37,20 +126,186 @@
     try { s = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { s = {}; }
     // P9: the PoC match defaults (2 teams of 3, 100 HP, 45 s turns, sudden death, team 1 human, others CPU)
     const d = Object.assign({}, C.SETTINGS, { biome: 'random', teams: 2, worms: 3, hp: 100, turnTime: 45, sd: true, skill: 'normal', cpu: 'off', ctl: ['human', 'cpu', 'cpu', 'cpu'], names: C.TEAMS.map(t => t.name),
-      first: 'random', volcanoes: 'auto', blood: false, select: false, rooms: false, keepRope: false, time: 'random', shape: 'random', art: 'painted' }, s);
+      first: 'random', volcanoes: 'auto', blood: false, teamBlood: false, mineFuse: 'random', select: false, rooms: false, keepRope: false, time: 'random', shape: 'random', art: 'painted' }, s);
     if (d.under === 'on' && !s.shape) d.shape = 'caverns';            // (older saved settings: World underground)
     d.under = 'off';                                                  // the terrain shape 'caverns' is the underground map now
     d.cpu = 'off';                                       // (the legacy per-map CPU switch is replaced by ctl[])
-    return d;
+    return MN.sanitize(d, { biome: 'random', teams: 2, worms: 3, hp: 100, turnTime: 45, seed: 7, ctl: ['human', 'cpu', 'cpu', 'cpu'], names: C.TEAMS.map(t => t.name) });
   };
   MN.save = function (s) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* private mode */ } };
 
   function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
-  function select(name, opts, val, num, onch) {
-    const s = el('select'); s.name = name;
+  /* the biome a 'random' choice resolves to: by the seed, so the preview shows exactly what Start will build */
+  MN.resolve_biome = s => {
+    if (s.biome !== 'random') return s.biome;
+    return C.BIOMES[(Math.imul((s.seed | 0) + 12345, 2654435761) >>> 11) % C.BIOMES.length].id;
+  };
+  const resolved = () => Object.assign({}, cur, { biome: MN.resolve_biome(cur) });
+
+  /* ---------- generic rows ---------- */
+  function seg(opts, val, onpick) {
+    const w = el('div', 'seg');
+    for (const [v, t] of opts) {
+      const b = el('button', 'sg' + (String(v) === String(val) ? ' on' : ''), t); b.type = 'button'; b.dataset.v = v;
+      b.onclick = () => { for (const x of w.children) x.classList.remove('on'); b.classList.add('on'); onpick(v); };
+      w.appendChild(b);
+    }
+    return w;
+  }
+  function selectW(opts, val, onpick) {
+    const s = el('select', 'sel');
     for (const [v, t] of opts) { const o = el('option'); o.value = v; o.textContent = t; if (String(v) === String(val)) o.selected = true; s.appendChild(o); }
-    s.onchange = () => { cur[name] = num ? parseInt(s.value, 10) : s.value; if (onch) onch(); };
+    s.onchange = () => onpick(s.value);
     return s;
+  }
+  function toggle(val, onpick) {
+    const b = el('button', 'tg' + (val ? ' on' : ''), '<i></i>'); b.type = 'button'; b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', val ? 'true' : 'false');
+    b.onclick = () => { const v = !b.classList.contains('on'); b.classList.toggle('on', v); b.setAttribute('aria-checked', v ? 'true' : 'false'); onpick(v); };
+    return b;
+  }
+  function rowOf(r, host, after) {
+    const qOpts = [['auto', 'Auto (' + SS.quality.detect() + ')'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
+    const row = el('div', 'row'), lab = el('div', 'lab', r.t + (r.h ? `<em>${r.h}</em>` : ''));
+    let w;
+    if (r.b) w = toggle(cur[r.k] == null ? r.d : !!cur[r.k], v => { cur[r.k] = v; if (after) after(r); });
+    else {
+      const o = r.dyn === 'quality' ? qOpts : r.o, conv = r.fn || (r.n ? (v => parseInt(v, 10)) : (v => v));
+      const pick = v => { cur[r.k] = conv(v); if (after) after(r); };
+      w = (r.w === 'sel' || o.length > 5) ? selectW(o, cur[r.k], pick) : seg(o, cur[r.k], pick);
+    }
+    row.append(lab, w); host.appendChild(row); return row;
+  }
+
+  /* ---------- the map preview ---------- */
+  function previewSettings() { const s = resolved(); s.shape = cur.shape; return s; }
+  function refreshPreview(now) {
+    clearTimeout(pvTimer);
+    const run = () => {
+      if (!cv.top || !SS.mappreview || !SS.worldgen.preview) return;
+      const s = previewSettings();
+      try { pv = SS.mappreview.compute(s, 96); } catch (e) { console.warn('preview failed', e); return; }
+      SS.mappreview.drawHero(cv.hero, pv); SS.mappreview.drawTop(cv.top, pv, s); SS.mappreview.drawSide(cv.side, pv);
+      const B = C.BIOMES.find(b => b.id === pv.biome);
+      cv.cap.innerHTML = `<b>${B ? B.name : pv.biome}</b><span>seed ${cur.seed} · ${pv.under ? 'caverns' : pv.shape + ' · ' + pv.sx + ' m'}</span>`;
+    };
+    if (now) run(); else pvTimer = setTimeout(run, 60);
+  }
+  function newSeed() { cur.seed = Math.floor(Math.random() * 99999); if (cv.seed) cv.seed.value = cur.seed; refreshPreview(true); cv.hero.classList.remove('pop'); void cv.hero.offsetWidth; cv.hero.classList.add('pop'); if (page === 'field') syncField(); }
+
+  function buildPreview(host) {
+    const box = el('div', 'pvbox');
+    cv.hero = el('canvas', 'hero'); cv.hero.width = 480; cv.hero.height = 270; cv.hero.title = 'Click: new map (new seed)';
+    cv.hero.onclick = newSeed;
+    const heroWrap = el('div', 'herowrap'); heroWrap.appendChild(cv.hero);
+    heroWrap.appendChild(el('div', 'herohint', '<span>⚄</span> CLICK FOR A NEW MAP'));
+    cv.cap = el('div', 'pvcap');
+    heroWrap.appendChild(cv.cap);
+    const minis = el('div', 'minis');
+    cv.top = el('canvas'); cv.top.width = 192; cv.top.height = 192; cv.side = el('canvas'); cv.side.width = 288; cv.side.height = 192;
+    for (const [c, name] of [[cv.top, 'Top'], [cv.side, 'Side']]) {
+      const f = el('button', 'mini'); f.type = 'button'; f.title = 'Battlefield settings'; f.append(c, el('span', 'mtag', name), el('span', 'mgo', 'EDIT ▸'));
+      f.onclick = () => { page = 'field'; buildRows(); }; minis.appendChild(f);
+    }
+    const sr = el('div', 'seedrow2', '<span>SEED</span>');
+    cv.seed = el('input'); cv.seed.type = 'number'; cv.seed.min = 0; cv.seed.max = 99999; cv.seed.value = cur.seed;
+    cv.seed.oninput = () => { cur.seed = Math.min(99999, Math.max(0, parseInt(cv.seed.value, 10) || 0)); if (+cv.seed.value > 99999) cv.seed.value = cur.seed; refreshPreview(); if (page === 'field') syncField(); };
+    const dice = el('button', 'dice', '⚄'); dice.type = 'button'; dice.title = 'New map'; dice.onclick = newSeed;
+    sr.append(cv.seed, dice);
+    box.append(heroWrap, sr, minis); host.appendChild(box);                 // (P38 R3: the seed row right under the hero: never pushed out of a short window)
+  }
+
+  /* ---------- the right column ---------- */
+  function sec(host, title) { const s = el('div', 'msec', title); host.appendChild(s); return s; }
+  function teamsBlock(host) {
+    const tbox = el('div', 'tbox');
+    const draw = () => {
+      tbox.innerHTML = '';
+      cur.ctl = (cur.ctl || []).slice(); cur.names = (cur.names || []).slice();
+      for (let i = 0; i < (cur.teams | 0 || 2); i++) {
+        const row = el('div', 'tcfg'); row.style.setProperty('--team', C.css(C.TEAMS[i].rgb));
+        const nm = el('input'); nm.maxLength = 18; nm.value = cur.names[i] || C.TEAMS[i].name; nm.oninput = () => { cur.names[i] = nm.value; };
+        cur.ctl[i] = cur.ctl[i] || (i ? 'cpu' : 'human');
+        const ct = seg([['human', 'Human'], ['cpu', 'CPU']], cur.ctl[i], v => { cur.ctl[i] = v; });
+        row.append(el('i'), nm, ct); tbox.appendChild(row);
+      }
+    };
+    draw(); host.appendChild(tbox); return draw;
+  }
+  function buildRows() {
+    rowsEl.innerHTML = '';
+    if (page === 'field') return buildField();
+    if (page === 'lab') return buildLab();
+    sec(rowsEl, 'Match');
+    let redraw = () => {};
+    for (const r of MATCH) { rowOf(r, rowsEl, r.teams ? () => redraw() : null); if (r.teams) redraw = teamsBlock(rowsEl); }
+    sec(rowsEl, 'Rules');
+    for (const r of RULES) rowOf(r, rowsEl);
+    const bf = el('button', 'bfbtn', '<span>BATTLEFIELD</span><em>Biome, terrain, trees, rocks, props, bunkers ...</em><b>▸</b>'); bf.type = 'button';
+    bf.onclick = () => { page = 'field'; buildRows(); };
+    sec(rowsEl, 'Battlefield'); rowsEl.appendChild(bf);
+    const lb = el('button', 'bfbtn', `<span>LAB</span><em>Experimental mechanics: ${labBits() ? labBits() + ' active' : 'all off'}</em><b>▸</b>`); lb.type = 'button';
+    lb.onclick = () => { page = 'lab'; buildRows(); };
+    sec(rowsEl, 'Lab'); rowsEl.appendChild(lb);
+    sec(rowsEl, 'Display');
+    for (const r of DISPLAY) rowOf(r, rowsEl, r.k === 'idle' ? () => { if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false; if (SS.idleView) SS.idleView.enabled = cur.idle !== false; } : null);
+    sec(rowsEl, 'Sound');
+    musicRow(rowsEl);
+  }
+  /* P42b: the music volume (platform/music.js keeps and persists it, not part of the map settings) */
+  function musicRow(host) {
+    const M = SS.music; if (!M) return;
+    const row = el('div', 'row'), lab = el('div', 'lab', 'Music volume'), w = el('input', 'vslider');
+    w.type = 'range'; w.min = 0; w.max = 100; w.step = 1; w.value = Math.round(M.volume * 100); w.id = 'musicvol'; w.setAttribute('aria-label', 'Music volume');
+    w.oninput = () => M.set_volume(w.value / 100);
+    row.append(lab, w); host.appendChild(row);
+  }
+  /* P42: the Lab screen: one card per experimental mechanic (toggle, description, status). Saved at once (applies to the next match, local or hosted) */
+  function buildLab() {
+    const head = el('div', 'fhead'), back = el('button', 'back', '◂ BACK'); back.type = 'button'; back.onclick = () => { page = 'main'; buildRows(); };
+    head.append(back, el('span', '', 'LAB')); rowsEl.appendChild(head);
+    rowsEl.appendChild(el('div', 'labintro', 'New game mechanics to try out. Everything here is off by default, applies to the next match (also an online match you host) and shows as a badge in the game.'));
+    const cnt = el('div', 'labcount');
+    const upd = () => { cnt.textContent = labBits() ? labBits() + ' of ' + LAB.length + ' active' : 'all off'; };
+    for (const r of LAB) {
+      const bit = C.LAB.FLAG[r.id], card = el('div', 'labcard');
+      const top = el('div', 'labtop'), nm = el('div', 'labname', r.t);
+      const st = el('span', 'labstatus', 'EXPERIMENTAL'); nm.appendChild(st);
+      const tg = toggle(((cur.labFlags | 0) & bit) !== 0, v => { cur.labFlags = v ? ((cur.labFlags | 0) | bit) : ((cur.labFlags | 0) & ~bit); MN.save(cur); upd(); });
+      tg.dataset.lab = r.id;
+      top.append(nm, tg); card.append(top, el('div', 'labdesc', r.d)); rowsEl.appendChild(card);
+    }
+    const bar = el('div', 'labbar'), all = el('button', 'back', 'Enable all'), none = el('button', 'back', 'Disable all');
+    all.type = none.type = 'button';
+    const set = v => { cur.labFlags = v; MN.save(cur); buildRows(); };
+    all.onclick = () => set(C.LAB.ALL); none.onclick = () => set(0);
+    bar.append(cnt, all, none); rowsEl.appendChild(bar); upd();
+  }
+  function buildField() {
+    const head = el('div', 'fhead'), back = el('button', 'back', '◂ BACK'); back.type = 'button'; back.onclick = () => { page = 'main'; buildRows(); };
+    head.append(back, el('span', '', 'BATTLEFIELD')); rowsEl.appendChild(head);
+    sec(rowsEl, 'Biome');
+    const cards = el('div', 'biomes');
+    for (const b of [{ id: 'random', name: 'Surprise me' }].concat(C.BIOMES)) {
+      const c = el('button', 'bcard' + (cur.biome === b.id ? ' on' : ''), `<span>${b.name}</span>`);
+      c.style.background = BIOME_LOOK[b.id]; c.type = 'button'; c.dataset.biome = b.id;
+      c.onclick = () => { cur.biome = b.id; for (const x of cards.children) x.classList.remove('on'); c.classList.add('on'); refreshPreview(true); syncField(); };
+      cards.appendChild(c);
+    }
+    rowsEl.appendChild(cards);
+    sec(rowsEl, 'Terrain and sky');
+    const fhost = el('div', 'fieldrows'); rowsEl.appendChild(fhost);
+    for (const r of FIELD) { const row = rowOf(r, fhost, () => refreshPreview()); row.dataset.only = r.only || ''; }
+    sec(rowsEl, 'How much of everything');
+    const dhost = el('div', 'fieldrows'); rowsEl.appendChild(dhost);
+    for (const r of DENSITY) {
+      const row = rowOf({ k: r.k, t: r.t, o: LV, w: 'seg' }, dhost, () => refreshPreview()); row.dataset.only = r.only || '';
+    }
+    syncField();
+  }
+  /* biome-specific rows (volcanoes, ruined town, eggs) show only on that biome */
+  function syncField() {
+    const b = MN.resolve_biome(cur);
+    for (const r of rowsEl.querySelectorAll('.row[data-only]')) r.style.display = (!r.dataset.only || r.dataset.only === b) ? '' : 'none';
   }
 
   MN.init = function () {
@@ -60,86 +315,62 @@
     root.appendChild(panel);
     prog = el('div', 'mprog', '<h2>BURROW BRAWL</h2><div class="pbar"><i></i></div><div class="plabel"><span></span><b></b></div>');
     root.appendChild(prog);
+    // P38 R3: Esc closes the in-game menu (Resume); on the battlefield page it goes back first. (input.js skips keys while a button has the focus)
+    addEventListener('keydown', e => {
+      if (e.code !== 'Escape' || e.repeat || !onResume || !MN.visible() || panel.style.display === 'none') return;
+      e.preventDefault(); e.stopImmediatePropagation();                 // (R4: the game's own Escape handler must not reopen the menu in the same event)
+      if (page === 'field' || page === 'lab') { page = 'main'; buildRows(); return; }
+      MN.hide(); onResume();
+    });
     bar = prog.querySelector('i'); lbl = prog.querySelector('span'); pct = prog.querySelector('b');
   };
 
   /* Show the settings form. opts.inGame adds a Resume button. */
   MN.show = function (settings, start, opts) {
     opts = opts || {};
-    cur = Object.assign({}, settings);
+    cur = MN.sanitize(settings, MN.load()); page = 'main'; lastShow = [settings, start, opts];
+    for (const k of D.KEYS) if (D.LEVELS.indexOf(cur[k]) < 0) cur[k] = 'medium';
     onStart = start; onResume = opts.onResume;
     root.classList.remove('gone'); root.classList.add('menu'); root.classList.toggle('ingame', !!opts.inGame); prog.style.display = 'none'; panel.style.display = '';
-    panel.innerHTML = '<img class="mlogo" src="assets/logo.webp" alt="Burrow Brawl"><div class="sub">Turn-based worm warfare on a rotatable cross-section of a fully destructible 3D world.</div>';
-    // P9 match setup (PoC): teams with names + human / CPU, worms per team, health, turn time, CPU skill, sudden death
-    panel.appendChild(el('div', 'msec', 'Match'));
-    const mg = el('div', 'mgrid'), tbox = el('div');
-    const teamsRow = () => {
-      tbox.innerHTML = '';
-      cur.ctl = (cur.ctl || []).slice(); cur.names = (cur.names || []).slice();
-      for (let i = 0; i < (cur.teams | 0 || 2); i++) {
-        const row = el('div', 'tcfg'); row.style.setProperty('--team', C.css(C.TEAMS[i].rgb));
-        const nm = el('input'); nm.maxLength = 18; nm.value = cur.names[i] || C.TEAMS[i].name; nm.oninput = () => { cur.names[i] = nm.value; };
-        const ct = el('select'); for (const [v, t] of [['human', 'Human'], ['cpu', 'CPU']]) { const o = el('option'); o.value = v; o.textContent = t; if ((cur.ctl[i] || (i ? 'cpu' : 'human')) === v) o.selected = true; ct.appendChild(o); }
-        cur.ctl[i] = ct.value; ct.onchange = () => { cur.ctl[i] = ct.value; };
-        row.append(el('i'), nm, ct); tbox.appendChild(row);
-      }
-    };
-    const rowsM = [['teams', 'Teams', OPTS.teams, teamsRow], ['worms', 'Worms per team', OPTS.worms], ['hp', 'Worm health', OPTS.hp], ['turnTime', 'Turn time', OPTS.turnTime], ['skill', 'CPU skill', OPTS.skill], ['placement', 'Worm placement', OPTS.placement], ['first', 'Who starts', OPTS.first]];
-    for (const [k, t, o, ch] of rowsM) { const l = el('label', '', `<span>${t}</span>`); l.appendChild(select(k, o, cur[k], k !== 'skill' && k !== 'placement' && k !== 'first', ch)); mg.appendChild(l); }
-    // the PoC's on / off options (blood, worm select, buried rooms) and the two checkboxes
-    for (const [k, t] of [['blood', 'Blood'], ['select', 'Worm select'], ['rooms', 'Buried rooms']]) {
-      const l = el('label', '', `<span>${t}</span>`), sl = select(k, OPTS.onoff, cur[k] ? 'on' : 'off'); sl.onchange = () => { cur[k] = sl.value === 'on'; }; l.appendChild(sl); mg.appendChild(l);
-    }
-    const check = (k, html, dflt) => { const l = el('label', 'check'), c = el('input'); c.type = 'checkbox'; c.checked = cur[k] == null ? dflt : !!cur[k]; c.onchange = () => { cur[k] = c.checked; }; l.append(c, el('span', '', html)); mg.appendChild(l); };
-    check('sd', 'Sudden death <em>(the sea rises after every turn from round ~8)</em>', true);
-    check('keepRope', 'Keep ropes between turns <em>(a hanging worm stays on its rope)</em>', false);
-    panel.appendChild(mg); panel.appendChild(tbox); teamsRow();
-    panel.appendChild(el('div', 'msec', 'Battlefield'));
-    const cards = el('div', 'biomes');
-    for (const b of [{ id: 'random', name: 'Surprise me' }].concat(C.BIOMES)) {
-      const c = el('button', 'bcard' + (cur.biome === b.id ? ' on' : ''), `<span>${b.name}</span>`);
-      c.style.background = BIOME_LOOK[b.id]; c.type = 'button';
-      c.onclick = () => { cur.biome = b.id; for (const x of cards.children) x.classList.remove('on'); c.classList.add('on'); };
-      cards.appendChild(c);
-    }
-    panel.appendChild(cards);
-    const grid = el('div', 'mgrid');
-    const seedRow = el('label', '', '<span>Seed</span>');
-    const seed = el('input'); seed.type = 'number'; seed.min = 0; seed.max = 99999; seed.value = cur.seed;
-    seed.oninput = () => { cur.seed = Math.max(0, parseInt(seed.value, 10) || 0); };
-    const dice = el('button', 'dice', '⚄'); dice.type = 'button'; dice.title = 'Random seed';
-    dice.onclick = () => { cur.seed = Math.floor(Math.random() * 99999); seed.value = cur.seed; };
-    const sw = el('div', 'seedrow'); sw.append(seed, dice); seedRow.appendChild(sw); grid.appendChild(seedRow);
-    const qOpts = [['auto', 'Auto (' + SS.quality.detect() + ')'], ['low', 'Low · mobile'], ['medium', 'Medium'], ['high', 'High']];
-    const rows = [['shape', 'Terrain shape', OPTS.shape], ['volcanoes', 'Volcanoes (volcanic island)', OPTS.volcanoes], ['time', 'Time of day', OPTS.time], ['art', 'Artwork', OPTS.art], ['weather', 'Weather', OPTS.weather], ['wind', 'Wind', OPTS.wind], ['lava', 'Lava', OPTS.lava], ['quality', 'Visual quality', qOpts], ['slice', 'Slice view', OPTS.slice]];
-    for (const [k, t, o] of rows) { const l = el('label', '', `<span>${t}</span>`); l.appendChild(select(k, o, cur[k])); grid.appendChild(l); }
-    const col = el('label', 'check');
-    const cb = el('input'); cb.type = 'checkbox'; cb.checked = cur.collapse !== false; cb.onchange = () => { cur.collapse = cb.checked; };
-    col.append(cb, el('span', '', 'Unsupported land collapses into pieces <em>(off = classic floating terrain)</em>'));
-    grid.appendChild(col);
-    panel.appendChild(grid);
+    panel.innerHTML = '';
+    const head = el('div', 'mhead', '<img class="mlogo" src="assets/logo.webp" alt="Burrow Brawl"><div class="sub">Turn-based worm warfare on a rotatable cross-section of a fully destructible 3D world</div>');
+    const body = el('div', 'mbody'), left = el('div', 'mleft'), right = el('div', 'mright');
+    buildPreview(left); rowsEl = el('div', 'rows'); right.appendChild(rowsEl); buildRows();
+    body.append(left, right);
     const btns = el('div', 'mbtns');
+    btns.appendChild(el('div', 'hint', 'Generation runs on this device (10-20 s on phones)'));
     if (onResume) { const r = el('button', 'ghost', 'Resume'); r.type = 'button'; r.onclick = () => { MN.hide(); onResume(); }; btns.appendChild(r); }
     if (MN.onOnline) { const on = el('button', 'ghost', 'Play online'); on.type = 'button'; on.onclick = () => { MN.save(cur); MN.onOnline(); }; btns.appendChild(on); }
     const go = el('button', 'go', opts.inGame ? 'New battle' : 'Start battle'); go.type = 'button';
-    go.onclick = () => { MN.save(cur); const s = Object.assign({}, cur); if (s.biome === 'random') s.biome = C.BIOMES[Math.floor(Math.random() * C.BIOMES.length)].id; onStart(s); };
+    go.onclick = () => { MN.save(cur); const s = Object.assign({}, cur); s.biome = MN.resolve_biome(cur); onStart(s); };
     btns.appendChild(go);
-    panel.appendChild(btns);
-    panel.appendChild(el('div', 'hint', 'Generation runs on this device and may take 10–20 s on phones.'));
+    panel.append(head, body, btns);
+    refreshPreview(true);
     go.focus();
   };
   MN.visible = () => root && !root.classList.contains('gone');
+  MN.state = () => cur;                                     // (tests / tools)
 
   /* Loading progress (0..1) with a stage label. */
   MN.progress = function (f, label) {
+    clearTimeout(pvTimer); pvTimer = 0; pv = null;          // (P38 R1: a pending preview must not compute (a 96 px map) while the real map loads)
     root.classList.remove('gone'); root.classList.remove('menu'); root.classList.remove('ingame');
     panel.style.display = 'none'; prog.style.display = '';
     bar.style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(1) + '%';
     if (label) lbl.textContent = label;
     pct.textContent = Math.round(f * 100) + '%';
   };
-  MN.error = function (msg) { MN.progress(0, 'Failed to start: ' + msg); prog.classList.add('err'); };
+  /* a failed start is not a dead end (R3): "Back to menu" returns to the settings form (the saved settings) */
+  MN.error = function (msg) {
+    MN.progress(0, 'Failed to start: ' + msg); prog.classList.add('err');
+    let b = prog.querySelector('.back');
+    if (!b) { b = el('button', 'back', 'Back to menu'); b.type = 'button'; prog.appendChild(b); }
+    b.style.display = '';
+    b.onclick = () => { prog.classList.remove('err'); b.style.display = 'none'; const l = lastShow; if (MN.onBack) MN.onBack(); MN.show(MN.load(), (l && l[1]) || onStart || MN.defaultStart, {}); };
+    b.focus();
+  };
   MN.hide = function (instant) {
+    clearTimeout(pvTimer); pvTimer = 0; pv = null;
     if (instant) { root.style.transition = 'none'; root.classList.add('gone'); void root.offsetWidth; root.style.transition = ''; }
     else root.classList.add('gone');
   };

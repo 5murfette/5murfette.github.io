@@ -57,10 +57,10 @@
     MOAI: { V0: 260 * kT, SMASH_V: 170 * kT, SMASH_N: 2, W: Wr(32), LIFE: 3.5, ALT: 14, KG: 900 },
     SHOTGUN: { RANGE: 25, DMG: 25, PUSH: 240 * kL, PUSH_UP: 90 * kL, W: 0.012, SHOTS: 2 },
     SNIPER: { V: 3600 * kV, G: 0.5, RANGE: 60, PEN: 0.45, DMG: 45, PUSH: 120 * kL, KEEP: 0.92, PEN_STEP: 7 / 0.45, LIFE: 1.2 },
-    BAT: { REACH: 1.2, DMG: 30, PUSH: 640 * kL, PUSH_UP: 60 * kL },
-    DIG: { TORCH_V: 30 * kT, TORCH_T: 3.2, DRILL_V: 36 * kT, DRILL_T: 2.6, R: 0.62, TICK: 0.05, DMG: 15, PUSH: 160 * kL },
+    BAT: { DELAY: 0.22, REACH: 1.2, DMG: 30, PUSH: 640 * kL, PUSH_UP: 60 * kL },
+    DIG: { TORCH_V: 30 * kT, TORCH_T: 3.2, DRILL_V: 36 * kT, DRILL_T: 2.6, R: 0.62, TICK: 0.05, DMG: 15, PUSH: 160 * kL, WARM: 0.5, COOL: 0.45 },   // P37 W4: WARM s the worm puts on its welding mask and lights the torch before it cuts; COOL s the mask goes back up
     TELEPORT: { BEAM: 1.5 },
-    GIRDER: { L: 5.9, T: 0.6, D: 1.5, REACH: 14, ANGLES: 8 },
+    GIRDER: { L: 5.9, T: 1.1, D: 1.5, REACH: 14, ANGLES: 8, TURN: 1.9, STEP: Math.PI / 8 },   // P37 W4: ANGLES / STEP = the old 22.5° steps (touch / tests); TURN rad/s = the held keys (free angle); T 1.1 (was 0.6): both faces of the plate must lie on the linear part of its distance field (half thickness >= the 0.5 m voxel), or the faces come out lumpy
     // PoC bellows: 460 (1 - d / R) + 60 px/s within 170 px (10.9 m); worms on kL, shells on kT
     BELLOWS: { RANGE: 170 * kL, COS: 0.82, V0: 460 * kL, V1: 60 * kL, UP: 65 * kL, PV0: 460 * kT, PV1: 60 * kT, PUP: 65 * kT },
     MAGNET: { R: 9.3, A: 650 * kA, TURNS: 4, MAX: 4, ARM: 1, KG_CAP: 180 },
@@ -82,29 +82,40 @@
     cluster: { name: 'Cluster', kind: 'charge', ammo: 3, key: '3', vmax: 28, payload: 1, crate: 1, info: 'Bursts into five bomblets' },
     shotgun: { name: 'Shotgun', kind: 'hitscan', ammo: Infinity, key: '4', info: 'Two shots per turn' },
     bat: { name: 'Baseball Bat', kind: 'melee', ammo: 2, key: 'Z', retreat: 3, info: 'Knocks a worm far away' },
-    homing: { name: 'Homing', kind: 'charge', target: 1, ammo: 2, key: '5', vmax: 1050 * kV, payload: 1, crate: 1, info: 'Click a target, then fire: the missile steers to it' },
-    dynamite: { name: 'Dynamite', kind: 'drop', ammo: 2, key: '6', payload: 1, crate: 1, info: 'Drop it and run: 5 s fuse, big blast' },
+    homing: { name: 'Homing', kind: 'charge', target: 1, ammo: 1, key: '5', vmax: 1050 * kV, payload: 1, crate: 1, info: 'Click a target, then fire: the missile steers to it' },
+    dynamite: { name: 'Dynamite', kind: 'drop', ammo: 2, key: '6', payload: 1, crate: 1, info: 'Drop it and run: 5 s fuse (adjustable), big blast' },
     banana: { name: 'Banana', kind: 'charge', ammo: 1, key: '7', vmax: 28, payload: 1, crate: 1, info: 'Very bouncy; splits into five heavy bomblets' },
     airstrike: { name: 'Air Strike', kind: 'target', ammo: 1, key: '8', retreat: 4, strike: 1, crate: 1, info: 'Click the target; ← → choose the side the plane comes from' },
-    holy: { name: 'Holy Grenade', kind: 'charge', ammo: 1, key: '9', vmax: 775 * kT, payload: 1, crate: 1, info: 'Fixed 3 s fuse, the biggest blast' },
+    holy: { name: 'Holy Grenade', kind: 'charge', ammo: 0, key: '9', vmax: 775 * kT, payload: 1, crate: 1, info: 'Adjustable fuse (3 s by default), the biggest blast' },
     sheep: { name: 'Sheep', kind: 'drop', ammo: 2, key: '0', retreat: 10, payload: 1, crate: 1, info: 'Walks and hops; fire again to set it off' },
-    boulder: { name: 'Boulder', kind: 'charge', ammo: 2, key: 'B', vmax: 730 * kT, payload: 1, crate: 1, info: 'A heavy rock that rolls and crushes' },
-    blackhole: { name: 'Black Hole', kind: 'charge', ammo: 1, key: 'H', vmax: 730 * kT, payload: 1, crate: 1, info: 'Pulls everything in for 3 s, then bursts' },
+    boulder: { name: 'Boulder', kind: 'charge', ammo: 1, key: 'B', vmax: 730 * kT, payload: 1, crate: 1, info: 'A heavy rock that rolls and crushes' },
+    blackhole: { name: 'Black Hole', kind: 'charge', ammo: 0, key: 'H', vmax: 730 * kT, payload: 1, crate: 1, info: 'Pulls everything in for 3 s, then bursts' },
     tesla: { name: 'Thunder Strike', kind: 'target', ammo: 1, key: 'L', retreat: 4, crate: 1, info: 'Thunderstorms only: lightning on the target; arcs jump between worms and metal' },
     napalm: { name: 'Napalm', kind: 'target', ammo: 1, key: 'N', retreat: 4, strike: 1, crate: 1, info: 'Fire bombs burst in the air and rain burning gel' },
-    moai: { name: 'Moai Drop', kind: 'target', ammo: 1, key: 'O', retreat: 4, crate: 1, info: 'A stone head falls from the sky' },
+    moai: { name: 'Moai Drop', kind: 'target', ammo: 0, key: 'O', retreat: 4, crate: 1, info: 'A stone head falls from the sky' },
     mine: { name: 'Mine', kind: 'drop', ammo: 2, key: 'X', payload: 1, crate: 1, info: 'Buried: only your team sees it; arms after 3 s, any worm close by sets it off' },
     drill: { name: 'Torch / Drill', kind: 'dig', ammo: 2, key: 'Y', retreat: 4, crate: 1, info: 'Aim level to burn a tunnel, down to drill' },
-    rope: { name: 'Ninja Rope', kind: 'rope', ammo: Infinity, key: 'R', info: 'Swing; Enter drops the selected weapon' },
+    rope: { name: 'Ninja Rope', kind: 'rope', ammo: Infinity, key: 'R', info: 'Space shoots / lets go: shoot again in the air at the same angle (press at once: the opposite way). ← → pump the swing, ↑ ↓ reel' },
+    // P37 W2 (sim/traverse.js): the parachute opens by itself in a fast fall while selected (or Space in the air) and drifts
+    // with the wind; the zipline shoots a bolt level or downward and the worm slides down the line
+    parachute: { name: 'Parachute', kind: 'chute', ammo: 3, key: 'M', crate: 1, info: 'Select it, then fall: it opens by itself (or Space in the air); ← → steer, the wind carries you' },
+    zipline: { name: 'Zipline', kind: 'zip', ammo: 2, key: 'N9', crate: 1, info: 'Crossbow: a line to the first surface, aim level or down; you slide down it (Enter drops off)' },
     teleport: { name: 'Teleport', kind: 'target', ammo: 2, key: 'T', retreat: 3, crate: 1, info: 'Click a free spot on the section' },
-    girder: { name: 'Girder', kind: 'target', ammo: 3, key: 'G', retreat: 3, crate: 1, info: 'Indestructible steel beam; ↑ ↓ turn it' },
+    girder: { name: 'Girder Plate', kind: 'target', ammo: 3, key: 'G', retreat: 3, crate: 1, info: 'A shiny bolted steel plate, strong but not unbreakable; hold ↑ ↓ to turn it to any angle (Shift: fine)' },
     bellows: { name: 'Bellows', kind: 'utility', ammo: 3, key: '-', retreat: 3, crate: 1, info: 'A detector blast: sets off and reveals mines, traps and bombs in its cone, blows worms away, puts out fire' },
     sniper: { name: 'Sniper Rifle', kind: 'hitscan', ammo: 3, key: 'C', retreat: 4, crate: 1, info: 'Fast bullet with drop; goes through thin cover' },
     foam: { name: 'Foam Mortar', kind: 'charge', ammo: 3, key: 'P', vmax: 730 * kT, payload: 1, crate: 1, info: 'Builds a block of weak foam (floats on water)' },
     magnet: { name: 'Pocket Magnet', kind: 'drop', ammo: 2, key: 'I', retreat: 3, payload: 1, crate: 1, info: 'Pulls metal shells and mines for 4 turns' },
     spring: { name: 'Spring Mine', kind: 'drop', ammo: 2, key: 'J', retreat: 3, payload: 1, crate: 1, info: 'Buried trap only your team sees: throws an enemy worm high (20 HP + a hard fall)' },
     scrambler: { name: 'Fuse Scrambler', kind: 'utility', ammo: 2, key: 'U', retreat: 3, crate: 1, info: 'Adds 2 s to the fuses around you' },
-    skip: { name: 'Skip Go', kind: 'skip', ammo: Infinity, key: 'K', info: 'End the turn' }
+    // P37 W4 (weapons B; sim/gadgets.js, sim/ffield.js): vec = no painted icon, the vector one is used
+    dog: { name: 'Robo Dog', kind: 'drop', ammo: 2, key: '`', retreat: 4, crate: 1, vec: 1, info: 'Runs at the nearest foe, hops small obstacles, blows up on reaching it or when its 8 s timer ends' },
+    punch: { name: 'Knockout Punch', kind: 'melee', ammo: 3, key: 'N0', retreat: 3, crate: 1, vec: 1, info: 'Jump on the spot and uppercut the worm beside you: it flies off, flipping' },
+    sentry: { name: 'Sentry Gun', kind: 'drop', ammo: 1, key: ';', retreat: 3, crate: 1, vec: 1, info: 'Plant it: a spinning laser scanner shoots any foe crossing the beam (100 rounds); a blast can knock it over' },
+    claymore: { name: 'Claymore', kind: 'drop', ammo: 2, key: "'", retreat: 3, crate: 1, vec: 1, info: 'Sticks to a tree, wall or the ground; arms in 10 s; a 3 m laser: walk into it and it fires a cone of pellets' },
+    ffield: { name: 'Force Field', kind: 'drop', ammo: 1, key: '/', retreat: 3, crate: 1, vec: 1, info: 'A glass dome: the next shell bounces off into a random 3D direction; a blast inside is contained' },
+    gravgun: { name: 'Gravity Gun', kind: 'charge', ammo: 5, key: 'N.', vmax: 24, retreat: 3, crate: 1, vec: 1, info: 'Fire: grab the outlined mine / barrel / crate / rock; hold fire and release to throw it' },
+    skip: { name: 'Skip Go', kind: 'skip', ammo: Infinity, key: 'K', info: 'End the turn: select, then press fire' }
   };
   C.ARSENAL_ORDER = Object.keys(A);
   C.CRATE_POOL = C.ARSENAL_ORDER.filter(k => A[k].crate);
