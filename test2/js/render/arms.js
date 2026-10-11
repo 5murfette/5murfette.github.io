@@ -35,17 +35,20 @@
     for (let i = 0; i < 3; i++) add(g, G.box(0.12 * s, 0.01, 0.12 * s), M.dark, -0.22 * s, 0, 0, i * 2.09, 0, 0);
     return g;
   }
+  /* P64: baked projectile models (centre pivot) when present, else the procedural builder */
+  function baked(id, proc) { return () => { const m = SS.models && SS.models.mesh(id); if (!m) return proc(); const g = new T.Group(); g.add(m); return g; }; }
   const BUILD = {
+    grenade: baked('proj_grenade', () => { const g = new T.Group(); add(g, G.sph(0.1), M.green || M.dark); return g; }),
     cluster: () => { const g = new T.Group(); add(g, G.sph(0.13), M.red); for (let i = 0; i < 6; i++) add(g, G.sph(0.03), M.yellow, Math.cos(i) * 0.12, Math.sin(i * 2) * 0.06, Math.sin(i) * 0.12); return g; },
     clusterlet: () => { const g = new T.Group(); add(g, G.sph(0.07), M.dark); return g; },
-    banana: () => { const g = new T.Group(); add(g, new T.TorusGeometry(0.16, 0.055, 8, 16, Math.PI * 0.9), M.yellow, 0, 0, 0, 0, 0, 0.6); add(g, G.sph(0.025), M.black, 0.16, 0.02, 0); return g; },
+    banana: baked('proj_banana', () => { const g = new T.Group(); add(g, new T.TorusGeometry(0.16, 0.055, 8, 16, Math.PI * 0.9), M.yellow, 0, 0, 0, 0, 0, 0.6); add(g, G.sph(0.025), M.black, 0.16, 0.02, 0); return g; }),
     bananalet: () => { const g = BUILD.banana(); g.scale.setScalar(0.65); return g; },
     // an original orb: gilded sphere with a band and a little crown of studs (no cross)
-    holy: () => { const g = new T.Group(); add(g, G.sph(0.15), M.gold); add(g, new T.TorusGeometry(0.152, 0.018, 6, 24), M.steel, 0, 0, 0, Math.PI / 2); for (let i = 0; i < 5; i++) add(g, G.sph(0.03), M.blue, Math.cos(i * 1.257) * 0.08, 0.14, Math.sin(i * 1.257) * 0.08); return g; },
+    holy: baked('proj_holy', () => { const g = new T.Group(); add(g, G.sph(0.15), M.gold); add(g, new T.TorusGeometry(0.152, 0.018, 6, 24), M.steel, 0, 0, 0, Math.PI / 2); for (let i = 0; i < 5; i++) add(g, G.sph(0.03), M.blue, Math.cos(i * 1.257) * 0.08, 0.14, Math.sin(i * 1.257) * 0.08); return g; }),
     homing: () => rocket(M.blue), missile: () => rocket(M.plane, 0.8), napalm: () => { const g = rocket(M.orange, 0.9); return g; },
     flame: () => { const s = new T.Sprite(new T.SpriteMaterial({ map: tx.glow, color: 0x8a3a0a, blending: T.AdditiveBlending, depthWrite: false, transparent: true })); s.scale.set(0.38, 0.38, 1); const g = new T.Group(); g.add(s); return g; },
     fuel: () => BUILD.flame(),
-    dynamite: () => { const g = new T.Group(); for (const z of [-0.06, 0, 0.06]) add(g, G.cyl(0.035, 0.035, 0.32), M.red, 0, 0, z); add(g, G.box(0.04, 0.06, 0.2), M.cream, 0, 0.05, 0); add(g, G.cyl(0.008, 0.008, 0.12), M.dark, 0, 0.2, 0); return g; },
+    dynamite: baked('proj_dynamite', () => { const g = new T.Group(); for (const z of [-0.06, 0, 0.06]) add(g, G.cyl(0.035, 0.035, 0.32), M.red, 0, 0, z); add(g, G.box(0.04, 0.06, 0.2), M.cream, 0, 0.05, 0); add(g, G.cyl(0.008, 0.008, 0.12), M.dark, 0, 0.2, 0); return g; }),
     blackhole: () => { const g = new T.Group(); add(g, G.sph(0.11), M.black); add(g, new T.TorusGeometry(0.12, 0.02, 6, 20), M.steel, 0, 0, 0, Math.PI / 2); return g; },
     foam: () => { const g = new T.Group(); add(g, G.sph(0.11), M.foam); add(g, new T.SphereGeometry(0.115, 12, 6, 0, Math.PI * 2, 0, 1.0), M.blue); return g; },
     // ASSET: proj_sheep (models/proj_sheep.glb, clips walk / hop)

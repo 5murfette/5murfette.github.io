@@ -154,30 +154,42 @@
     g.userData = { kind: 'tumble', spin, R: R, a: Math.random() * 6.28, wob: Math.random() * 6.28 };
     return g;
   }
+  /* P64: a baked projectile (SS.models id, centre pivot) as a tumbler; null when it is not baked (the caller falls back to the procedural mesh) */
+  function bakedTumble(id, R) {
+    const m = SS.models && SS.models.mesh(id); if (!m) return null;
+    const g = new T.Group(), spin = new T.Group(); g.add(spin); spin.add(m);
+    m.traverse(o => { if (o.isMesh) o.castShadow = true; });
+    g.userData = { kind: 'tumble', spin, R: R, a: Math.random() * 6.28, wob: Math.random() * 6.28 };
+    return g;
+  }
   function tumbleOf(build, R) { return () => { const g = new T.Group(), spin = new T.Group(); g.add(spin); build(spin); g.userData = { kind: 'tumble', spin, R, a: Math.random() * 6.28, wob: Math.random() * 6.28 }; return g; }; }
 
   // ASSET: proj_clusterlet, proj_banana, proj_holy, proj_dynamite, proj_blackhole, proj_foam (models/proj_*.glb)
   const BUILD = {
     bazooka: () => rocket('bazooka'), homing: () => rocket('homing'), missile: () => rocket('missile'), napalm: () => rocket('napalm'),
-    grenade: () => grenade(MAT.green, 0.1),
+    grenade: () => bakedTumble('proj_grenade', 0.1) || grenade(MAT.green, 0.1),
     cluster: () => grenade(MAT.red, 0.11, (s, R, H) => {
       const b = mesh(new T.CylinderGeometry(R * 1.02, R * 1.02, R * 0.25, 24), MAT.yellow); s.add(b);
       for (let i = 0; i < 8; i++) { const st = mesh(new T.CylinderGeometry(R * 0.12, R * 0.12, R * 0.14, 8), MAT.steel, Math.cos(i * 0.785) * R * 0.97, -H * 0.2, Math.sin(i * 0.785) * R * 0.97); st.rotation.set(0, -i * 0.785, PI / 2); s.add(st); }
     }),
     clusterlet: tumbleOf(s => { s.add(mesh(new T.SphereGeometry(0.06, 10, 8), MAT.dark)); s.add(mesh(new T.ConeGeometry(0.035, 0.05, 8), MAT.red, 0, 0.065, 0)); }, 0.06),
-    banana: tumbleOf(s => {
+    banana: () => bakedTumble('proj_banana', 0.12) || BUILD.banana_proc(),
+    banana_proc: tumbleOf(s => {
       const b = mesh(new T.TorusGeometry(0.15, 0.055, 10, 20, PI * 0.95), MAT.banana); b.rotation.z = PI * 1.02; s.add(b);
       s.add(mesh(new T.SphereGeometry(0.03, 8, 6), MAT.black, -0.15, -0.015)); s.add(mesh(new T.CylinderGeometry(0.018, 0.022, 0.05, 6), MAT.wood, 0.155, -0.02));
     }, 0.12),
     bananalet: () => { const g = BUILD.banana(); g.userData.spin.scale.setScalar(0.65); g.userData.R = 0.08; return g; },
     // (both bananas tumble freely on all three axes: FREE3 in OR.proj)
     // an original orb: gilded sphere with a band and a little crown of studs (no cross; LEGAL.md)
-    holy: tumbleOf(s => {
+    holy: () => bakedTumble('proj_holy', 0.15) || BUILD.holy_proc(),
+    holy_proc: tumbleOf(s => {
       s.add(mesh(new T.SphereGeometry(0.15, 22, 16), MAT.gold));
       const band = mesh(new T.TorusGeometry(0.152, 0.018, 6, 28), MAT.steel); band.rotation.x = PI / 2; s.add(band);
       for (let i = 0; i < 5; i++) s.add(mesh(new T.SphereGeometry(0.028, 8, 6), MAT.blue, Math.cos(i * 1.257) * 0.08, 0.135, Math.sin(i * 1.257) * 0.08));
     }, 0.15),
     dynamite: () => {
+      const bk = bakedTumble('proj_dynamite', 0.1);
+      if (bk) { const sp = spark(0.03); sp.position.set(0.012, 0.155, 0.01); bk.userData.spin.add(sp); return bk; }
       const g = tumbleOf(s => {
         for (const [x, z] of [[-0.045, 0], [0.045, 0], [0, 0.04]]) { const st = mesh(new T.CylinderGeometry(0.036, 0.036, 0.3, 12), MAT.red, x, 0, z); s.add(st); }
         for (const y of [-0.08, 0.08]) s.add(mesh(new T.CylinderGeometry(0.088, 0.088, 0.04, 16), MAT.tape, 0, y, 0.01));
