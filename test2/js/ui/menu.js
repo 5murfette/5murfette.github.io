@@ -19,7 +19,8 @@
     alpine: 'linear-gradient(160deg,#dfefff 0%,#f6fbff 40%,#9fc7e8 65%,#5f6f80)',
     canyon: 'linear-gradient(160deg,#ffd8a8 0%,#e08a50 45%,#a8502e 75%,#6e3420)',
     desert: 'linear-gradient(160deg,#fff1cf 0%,#f0d08a 45%,#d8a860 75%,#a07040)',
-    volcanic: 'linear-gradient(160deg,#4a4048 0%,#2a2426 45%,#ff5a10 75%,#3a2a24)'
+    volcanic: 'linear-gradient(160deg,#4a4048 0%,#2a2426 45%,#ff5a10 75%,#3a2a24)',
+    eow: 'radial-gradient(circle at 70% 30%,#ffb24a 0 6%,transparent 7%),radial-gradient(circle at 40% 62%,#ff6a1a 0 9%,#3a1a10 10% 14%,transparent 15%),linear-gradient(160deg,#05060f 0%,#1a1230 55%,#3a1840 100%)'   // P68c
   };
   const LV = [['none', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
   const OPTS = {
@@ -149,7 +150,8 @@
   /* the biome a 'random' choice resolves to: by the seed, so the preview shows exactly what Start will build */
   MN.resolve_biome = s => {
     if (s.biome !== 'random') return s.biome;
-    return C.BIOMES[(Math.imul((s.seed | 0) + 12345, 2654435761) >>> 11) % C.BIOMES.length].id;
+    const pool = C.BIOMES.filter(b => !b.experimental);            // (P68c: an experimental biome is never a surprise)
+    return pool[(Math.imul((s.seed | 0) + 12345, 2654435761) >>> 11) % pool.length].id;
   };
   const resolved = () => Object.assign({}, cur, { biome: MN.resolve_biome(cur) });
 

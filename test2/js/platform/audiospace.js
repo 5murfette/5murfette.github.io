@@ -205,7 +205,7 @@
     const calm = fair && !under && !L.uw ? open * (1 - A.hush) : 0;
     A.birds = (tod === 'day' ? bday : tod === 'dusk' ? bday * 0.3 : 0) * calm;
     A.crickets = (tod === 'night' ? bnight : tod === 'dusk' ? bnight * 0.5 : 0) * calm;
-    A.cave = under ? 0.7 : A.enc > 0.6 ? (A.enc - 0.6) : 0;
+    A.cave = under ? 0.7 : W.eow ? 0.45 : A.enc > 0.6 ? (A.enc - 0.6) : 0;          // (P68c: space is silence over the cave bed's low rumble)
     // fire: nearest burning thing (props, napalm, grass cells), by distance
     let fv = 0, fp = 0;
     if (S.flames) for (let i = 0; i < S.flames.length && i < 40; i++) {

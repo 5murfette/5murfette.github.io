@@ -174,7 +174,7 @@
     const reelV = (r.len - len0) / dt, lim = M.min(0, reelV), h = dt / NSUB;
     let ns = s, ny = y;
     for (let k = 0; k < NSUB; k++) {
-      a.vy -= GW * h;
+      if (S.eow) SS.eow.rope_g(S, a, h); else a.vy -= GW * h;      // P68c: the pendulum under the chunk fields
       dx = ns - r.s; dy = ny - r.y; L = M.nz(M.len2(dx, dy), 1);
       // pumping: a tangential push toward the pressed side while the rope is taut (an upward push when the rope lies
       // almost horizontal and the tangent is vertical)

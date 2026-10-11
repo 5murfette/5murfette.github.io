@@ -30,7 +30,7 @@
   // C1: the cut face's 3D noise and pinned-coordinate offset (τ = s + uS0, see the cap shader); MORPH_CELL = the world
   // cell size (m) of the texture-offset grid: a face point that moves ~one cell while the section turns has fully
   // changed its texture (at s = 20 m a 7° turn; under the worm never)
-  const CAPU = { tN3: { value: null }, uS0: { value: 0 }, uCapK: { value: new T.Vector4(1, 1, 1, 1) } };   // uCapK: night / dusk grade of the cut face: rgb tint x brightness, w = saturation
+  const CAPU = { tN3: { value: null }, uS0: { value: 0 }, uCapK: { value: new T.Vector4(1, 1, 1, 1) }, uEow: { value: 0 } };   // uCapK: night / dusk grade of the cut face: rgb tint x brightness, w = saturation
   const MORPH_CELL = 2.5;
   let capPivot = null;
   let farData = null, farKey = '', farRange = null;
@@ -621,7 +621,7 @@
         uniform highp sampler3D tVol; uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tCover; uniform highp sampler2D tLavaS;
         uniform vec3 uVolSize, uO, uN, uGrassTint; uniform float uTime, uSea, uHalf, uVolc; uniform vec3 uMatTint[12];
         uniform highp sampler2D tFar; uniform vec4 uFar; uniform vec2 uLat; uniform vec3 uLatR;   // D5 far strip: u0, du, n, on; lattice size; D6 disc
-        uniform highp sampler3D tN3; uniform float uS0; uniform float uNL, uSL;
+        uniform highp sampler3D tN3; uniform float uS0; uniform float uNL, uSL; uniform float uEow;
         varying vec3 vW;
         ${CRACK_GLSL}
         ${FOAM_GLSL}
@@ -781,6 +781,7 @@
           // worlds it is rock under the open sea's bed line (the same line as render/water.js's aquarium face), water above
           // it (drawn by that face). The cap plane reaches DEEP m down and EXT m sideways (TR.update).
           bool wetOut = !farOn && eB < 0.0;
+          if (uEow > 0.5 && (vW.y < 0.02 || wetOut)) discard;      // P68c: space has no bedrock below the lattice and no rock beyond it
           vec2 oL = max(max(-vW.xz, vW.xz - uLat), 0.0);
           if (wetOut && vW.y >= max(1.08 - length(oL) * 0.06, 0.02)) discard;
           bool deepR = vW.y < 0.02 || wetOut;
@@ -1141,6 +1142,7 @@
   TR.slabMaterial = () => slabMat;
   TR.cloudShadow = function (dx, dz, cover, k) { U.uCloudSh.value.set(dx, dz, cover, k); };
   TR.capLook = function (r, g, b, sat) { CAPU.uCapK.value.set(r, g, b, sat); };
+  TR.capEow = function (v) { CAPU.uEow.value = v ? 1 : 0; };               // P68c: End of the World (render/eowview.js)
   TR.capN = capN;                                // debug/tests
   TR.ctxMaterial = () => ctxFar;
   TR.slabDepthMaterial = () => slabDepth;

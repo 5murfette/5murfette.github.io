@@ -898,6 +898,8 @@
     }
   }
   G.begin = function (world, settings) {
+    world.eow = false;                                                 // P68c: the End of the World biome (sim/eow.js) generates itself
+    if (settings.biome === 'eow' && SS.eow) return SS.eow.gen_begin(world, settings);
     W = world; NX = W.NX; NY = W.NY; NZ = W.NZ; H = W.H; ISL_MAX = W.PR;
     const biome = SPEC[settings.biome] ? settings.biome : 'temperate';
     G.shape = G.shape_of(settings);                                    // PoC "Terrain shape": islands | hills | caverns | canyon
@@ -922,6 +924,7 @@
   };
   const ROWS = 12;
   G.step = function (job) {
+    if (job.eow) return SS.eow.gen_step(job);
     const biome = job.biome, spec = job.spec, NC = NX * NZ;
     switch (job.stage) {
       case 0: { // heightfield (+ volcano and its canals) and landmarks
@@ -1000,6 +1003,7 @@
  *   caves (underground maps only): { SX, SZ, SY, ch[{x,y,z,rx,ry,rz}], tu[[x0,y0,z0,x1,y1,z1,r]], ni[{x,y,z,r}] } = the cave plan,
    *   volcanoes: [{x, z, Rc, Rb}], biome, shape } */
   G.preview = function (settings, n) {
+    if (settings.biome === 'eow' && SS.eow) { const r0 = W || SS.world; return SS.eow.preview(settings, n, r0.size_of ? r0.size_of(settings) : r0.SX); }
     const sv = { W, NX, NY, NZ, H, SEA, ISL_MAX, rng, seed, hgt, ginv, lavaZone, canalD, extra, F, shape: G.shape };
     const real = W || SS.world, sx = real.size_of ? real.size_of(settings) : real.SX;   // P38: the preview has the size of the map it previews
     const dummy = { NX: Math.round(sx / real.H) + 1, NY: real.NY, NZ: Math.round(sx / real.H) + 1, H: real.H, SX: sx, SZ: sx, SY: real.SY, MX: sx / 2, MZ: sx / 2, PR: sx / 2 - 3.5, SC: sx / 96, SEA: 3, SEA_WET: real.SEA_WET, dry: false, under: false, features: {} };

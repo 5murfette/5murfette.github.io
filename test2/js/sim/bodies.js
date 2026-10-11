@@ -136,7 +136,7 @@
     b.age += dt;
     if (b.iceLock) { b.vel.x = b.vel.y = b.vel.z = 0; b.w.x = b.w.y = b.w.z = 0; b.floatT = (b.floatT || 0) + dt; return 0; }   // Step I: frozen in
     // gravity, water (buoyancy of the submerged share + drag), air damping
-    b.vel.y -= G * dt;
+    if (S.eow) SS.eow.body_g(S, b, dt); else b.vel.y -= G * dt;     // P68c: the summed chunk fields
     const sea = SS.sim.surface_at ? SS.sim.surface_at(S, b.pos.x, b.pos.z) : w.SEA;
     let sub = 0;
     if (b.pos.y < sea + b.rb * 0.5) {
@@ -416,6 +416,7 @@
     }
   }
 
+  const gdv = { x: 0, y: -1, z: 0 };
   B.step = function (S, dt) {
     if (!S.bodies.length) return;
     const w = W();
@@ -426,7 +427,8 @@
         // re-check support now and then: wake when the ground under it was blasted away
         if (S.tick % 30 === b.id % 30) {
           let touch = false;
-          for (let k = 0; k < b.np && !touch; k++) { M.q_rot(b.q, b.pts[k * 4], b.pts[k * 4 + 1], b.pts[k * 4 + 2], tp); if (contact(b.pos.x + tp.x, b.pos.y + tp.y - 0.08, b.pos.z + tp.z, b.pts[k * 4 + 3], tn) > 0) touch = true; }
+          const ge = S.eow ? SS.eow.gdir(S, b.pos, gdv) : null, gx = ge ? ge.x : 0, gy = ge ? ge.y : -1, gz = ge ? ge.z : 0;   // P68c: the probe goes along the local down
+          for (let k = 0; k < b.np && !touch; k++) { M.q_rot(b.q, b.pts[k * 4], b.pts[k * 4 + 1], b.pts[k * 4 + 2], tp); if (contact(b.pos.x + tp.x + gx * 0.08, b.pos.y + tp.y + gy * 0.08, b.pos.z + tp.z + gz * 0.08, b.pts[k * 4 + 3], tn) > 0) touch = true; }
           if (!touch) wake(b);
           // LV3: lava reached it (it rises over its base): it floats or is dragged along
           else if (SS.lava && S.lava && SS.lava.surface_at(S, b.pos.x, b.pos.z) > b.pos.y - b.rb * 0.7) wake(b);

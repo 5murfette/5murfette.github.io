@@ -685,6 +685,7 @@
         }
       }
       v.tilt = 0; v.root.rotation.z = 0;                                  // (the body lies along the slope by itself: contact + the ground frame)
+      if (S.eow && SS.eowView) SS.eowView.orient(S, w, v, f, dt);          // P68c: lies along the surface it is stuck to
       v.ghost.visible = !inSec && insp > 0.01;
       v.ghost.position.copy(v.root.position);
       v.ghostMats[0].opacity = 0.45 * insp; v.ghostMats[1].opacity = 0.6 * insp;

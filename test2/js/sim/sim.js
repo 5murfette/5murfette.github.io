@@ -253,6 +253,7 @@
     S.settings = Object.assign({}, C.SETTINGS, settings || S.settings);
     // P38 R7 (P5): the seed is an i32 from here on (every seed mix is Math.imul / u32 wrap-around, identical in C); ?seed= and net settings are unbounded
     if (typeof S.settings.seed !== 'number' || S.settings.seed !== (S.settings.seed | 0)) S.settings.seed = S.settings.seed | 0;
+    if (S.settings.biome === 'eow') S.settings.dim = '3d';            // P68c: space is never sliced (the floating chunks need the full volume)
     return { stage: 0, gen: W().gen_begin(S.settings), label: 'Shaping the land' };
   };
   sim.reset_step = function (S, job) {
@@ -316,6 +317,7 @@
     });
     S.events.length = 0;
     S.biome = W().biome;
+    if (SS.eow) SS.eow.init(S);                                    // P68c: the End of the World biome (S.eow = null elsewhere)
     if (SS.shrapnel) SS.shrapnel.init(S);                         // P38 R7: every RNG stream is created here (S.rng above; weapons.init: armRng, ...)
     if (SS.spatter) SS.spatter.init(S);
     if (SS.ai) SS.ai.init(S);
@@ -337,16 +339,19 @@
       S.worms.push(sim.worm_make(i, team, names[i], hp0, spot));
     }
     const flat = W().flat;                                         // P68a: the 2D slab has no room for the 3D structure stamps
+    if (S.eow) SS.eow.spawned(S);                                  // P68c: the worms' suit state (no bridges, bunkers, ruins, aliens, trees in space)
     if (S.settings.rooms && !W().under && !flat) SS.game.rooms(S); else S.rooms = [];   // PoC buried rooms (option)
+    if (!S.eow) {
     if (SS.struct && !flat) SS.struct.populate(S, taken);                  // M: steel bridges (before props / trees: they avoid the abutments)
     if (SS.bunker && !flat) SS.bunker.populate(S, taken);                  // P29d: concrete bunkers (before props / trees too)
     if (SS.derelict && !flat) SS.derelict.populate(S, taken);              // P37: the crashed derelict alien ship (voxel stamp)
     if (SS.ruins && !flat) SS.ruins.populate(S, taken);                    // P37: volcanic ruined town + rocks (voxel stamps, before the props)
     if (SS.alien) SS.alien.populate(S, taken);                    // P37: face-hugger eggs (after the ship: the nest)
     sim.unbury_worms(S, taken);                                          // P38 R1: lift a worm the hull / rubble stamps entombed (before the props use taken)
+    } else if (SS.alien) SS.alien.populate(S, taken);                 // (P68c: in space only the alien state is made)
     if (SS.scatter) SS.scatter.populate(S, taken);
     SS.game.furnish_rooms(S);
-    if (SS.trees && !W().under) SS.trees.populate(S, taken);           // U: no trees (no light) underground
+    if (SS.trees && !W().under && !S.eow) SS.trees.populate(S, taken);           // U: no trees (no light) underground
     if (S.settings.placement === 'user') SS.game.begin_placement(S);  // P13: the players place their worms first
     else sim.next_turn(S, true);
     S.verBase = W().version;
@@ -691,6 +696,7 @@
     } else a.pinProbe = null;
   }
   function step2D(S, a, dt, mv) {
+    if (S.eow) return SS.eow.step2d(S, a, dt, mv);                 // P68c: planetoid gravity, a magnetic suit on any surface
     let s = P.to_plane(S, a.pos).s, y = a.pos.y;
     a.walking = false;
     if (!a.air && mv) a.facing = mv;
@@ -835,6 +841,7 @@
         emit(S, 'salto', { wormId: a.id});
       }
       // no walking while charging a shot (PoC L5148)
+      if (S.eow) SS.eow.jump_fix(S, a);                                   // P68c: a jump leaves along the worm's own up
       step2D(S, a, dt, a.air || S.charging || a.windUp > 0 ? 0 : mv);
       recoverPinned(S, a, dt);
       const kind = C.WEAPONS[S.weapon].kind, ready = sim.weapon_ready(S, a);
@@ -902,7 +909,7 @@
   }
   function removeProj(S, p) { const i = S.proj.indexOf(p); if (i >= 0) S.proj.splice(i, 1); S.lastBoom = S.time; }
   sim.surface_at = (S, x, z) => (SS.water && S.water ? SS.water.surface(S, x, z) : W().SEA);
-  const wv = { x: 0, y: 0, z: 0 };
+  const wv = { x: 0, y: 0, z: 0 }, eg = { s: 0, y: 0 };
   function stepProjectiles(S, dt) {
     const w = W();
     const WP = SS.weapons;
@@ -926,10 +933,12 @@
       }
       if (def.drag) { const dr = M.exp(-def.drag * dt); p.vs *= dr; p.vy *= dr; }
       const gk = p.gk != null ? p.gk : 1, imp = !!def.impact && !(def.arm && p.age < def.arm);
+      const ddx = M.cos(S.theta), ddz = M.sin(S.theta);               // (P68c: the plane direction for the field)
       const n = M.max(1, Math.ceil(M.len2(p.vs, p.vy) * dt / 0.06)), h = dt / n;
       let done = false;
       for (let i = 0; i < n && !done; i++) {
         if (p.wet) { const dr = M.exp(-2.6 * h); p.vs *= dr; p.vy = p.vy * dr - C.G * 0.55 * h; }
+        else if (S.eow) { SS.eow.proj_acc(S, wp0.x, p.y, wp0.z, ddx, ddz, eg); p.vs += eg.s * gk * h; p.vy += eg.y * gk * h; }   // P68c: the summed chunk fields
         else p.vy -= C.G * gk * h;
         const ns = p.s + p.vs * h, ny = p.y + p.vy * h, wp = P.to_world(S, ns, ny);
         if ((w.dry ? sim.arena_r(wp.x, wp.z) > DRY.FAR_R : wp.x < -OOB_SEA || wp.z < -OOB_SEA || wp.x > w.SX + OOB_SEA || wp.z > w.SZ + OOB_SEA) || ny < 0.2) {
@@ -1084,6 +1093,7 @@
     w.dmgAcc += dps * dt;
     if (w.dmgAcc >= 1 && S.time - w.dmgT > 0.5) { const n = Math.floor(w.dmgAcc); w.dmgAcc -= n; w.dmgT = S.time; hurt(S, w, n, src, flags | HF.DOT); }
   };
+  sim.kill = (S, w, how) => kill(S, w, how);                      // P68c (eow.js: lost in the void)
   sim.kill_now = (S, w, how) => { if (!w.dead) { kill(S, w, how); if (S.settings.blood) emit(S, 'gib', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z }); } };
   function kill(S, w, how) {
     // the grave: its BASE (ground contact) under the worm; it falls / settles in stepGraves (user 2026-10-08: graves
@@ -1267,6 +1277,7 @@
   }
   sim.plane_lock = planeLock;
   function body3D(S, b, dt) {
+    if (S.eow) return SS.eow.body3d(S, b, dt);                     // P68c
     const w = W(), foot = b.foot;
     // LV3: afloat on open lava: ride the surface flow, held at the lava floor (never 'at rest': the lava moves)
     const lf0 = lavaFloor(S, b.pos.x, b.pos.z, b);
@@ -1344,6 +1355,7 @@
   /* environmental hazards for every worm: water (waves, drowning), lava, fire */
   function hazards(S, wm, dt) {
     const w = W();
+    if (S.eow) SS.eow.hazard(S, wm, dt);                           // P68c: the core and the void
     const surf = sim.surface_at(S, wm.pos.x, wm.pos.z);
     if (wm.pos.y < surf - 0.1) {
       // P33c: on the ninja rope the worm stays in control under water (it can climb back out), losing SWIM_DPS
@@ -1451,6 +1463,7 @@
     const w = W();
     for (const o of S.worms) {
       const g = o.grave; if (!o.dead || !g) continue;
+      if (S.eow) { SS.eow.grave(S, o, g); continue; }                 // P68c: graves float where the worm died
       if (g.rest) {
         const df = deckFloor(S, g.x, g.y + 0.1, g.z);
         if (w.sample(g.x, g.y - 0.12, g.z) > 0 || Math.abs(df - g.y) < 0.12) continue;
@@ -1572,7 +1585,7 @@
     if (SS.water) SS.water.step(S, dt);
     if (SS.ice) SS.ice.step(S, dt);
     if (SS.veg) SS.veg.step(S, dt);
-    if (SS.lava) SS.lava.step(S, dt);
+    if (SS.lava && !S.eow) SS.lava.step(S, dt);                    // (P68c: the magma pockets stay put in space)
     if (SS.alien) SS.alien.step(S, dt);                           // P37: eggs, face huggers, the alien, acid
     for (const w of S.worms) {
       if (w.dead) continue;

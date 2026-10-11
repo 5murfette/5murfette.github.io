@@ -140,7 +140,7 @@
       const d = W.far(x, z) - y;
       return d > 3 ? 3 : d < -3 ? -3 : d;
     }
-    if (y <= 0) return 3;
+    if (y <= 0) return W.eow ? -3 : 3;                              // (P68c: no floor in space)
     if (y >= W.SY) return -3;
     const fx = x / H, fy = y / H, fz = z / H;
     let i = Math.floor(fx), j = Math.floor(fy), k = Math.floor(fz);

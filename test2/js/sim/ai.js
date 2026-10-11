@@ -46,6 +46,7 @@
     }
     PW.length = n; return PW;
   }
+  const eg = { s: 0, y: 0 };                                  // (P68c: the chunk field's pull on a predicted shell)
   const NB = [];                                              // the non-worm plane bodies of one predict call (worm discs are skipped anyway)
   function predict(S, weapon, aim, facing, power, tgt) {      // tgt { s, y }: the homing missile's target (plane coordinates)
     // P11: any charged projectile of the arsenal (impact vs bouncy, its speed, restitution, friction, fuse, wind)
@@ -73,7 +74,7 @@
       if (SS.weather && !wet && wke > 0) { SS.weather.wind_at(S, wp0.x, y, wp0.z, wv); const ws = wv.x * d.x + wv.z * d.z; vs += ws / C.WIND_UNIT * C.WIND_ACC * wke * dt; vy += (wv.y - vy) * C.WIND_GAIN * wke * dt * 0.04; }   // = stepProjectiles
       const n = M.max(1, Math.ceil(M.len2(vs, vy) * dt / 0.12)), h = dt / n;
       for (let i = 0; i < n; i++) {
-        if (wet) { const dr = M.exp(-2.6 * h); vs *= dr; vy = vy * dr - C.G * 0.55 * h; } else vy -= C.G * gk * h;
+        if (wet) { const dr = M.exp(-2.6 * h); vs *= dr; vy = vy * dr - C.G * 0.55 * h; } else if (S.eow) { SS.eow.proj_acc(S, wp0.x, y, wp0.z, d.x, d.z, eg); vs += eg.s * gk * h; vy += eg.y * gk * h; } else vy -= C.G * gk * h;   // P68c: the same fields as the real shell
         const ns = s + vs * h, ny = y + vy * h; wp.x = ox + ns * co; wp.y = ny; wp.z = oz + ns * si;
         if ((w.dry ? SS.sim.arena_r(wp.x, wp.z) > C.DRY.FAR_R : wp.x < -120 || wp.z < -120 || wp.x > w.SX + 120 || wp.z > w.SZ + 120) || ny < 0.2) return null;   // (= sim.js OOB_SEA)
         // sea ice (as sim.js: before the water entry): a rocket bursts on it, a grenade bounces unless it punches through

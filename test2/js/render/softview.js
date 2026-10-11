@@ -58,6 +58,7 @@
   /* c = { f, sNow, airborne, wet (0..1), surf, vs (crawl velocity), grounded, slope (rad, ground frame in the plane), hang (angle rad or null), swim, lean, spin,
    *       sx, sy, ox, oy (goal scale / offset: the muscles), dt, dizzy } */
   SV.update = function (S, w, v, sp, c) {
+    if (S.eow && SS.eowView) return SS.eowView.goal(OUT, sp, c);      // P68c: no jelly solver in space (its gravity and ground are the upright world's): the muscle pose, turned by the suit
     let sw = v.sw; const created = !sw; if (created) sw = v.sw = SW.make();
     const I = sw.in, f = c.f, s0 = c.sNow, y0 = w.pos.y;
     // the goal pose: the animator's spine sampled at N nodes, scaled by the muscles (crouch, stretch, breathing) about the ground line

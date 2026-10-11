@@ -516,7 +516,7 @@
   /* ---------- per frame ---------- */
   LV.frame = function (S, view, camera, dt) {
     if (!on) return;
-    if (SS.world.under || !S.wind) { wings.count = flies.count = liz.count = leaves.count = 0; fishM.visible = false; for (const p of [ffP, embP, ashP]) p.p.visible = false; return; }
+    if (SS.world.under || SS.world.eow || !S.wind) { wings.count = flies.count = liz.count = leaves.count = 0; fishM.visible = false; for (const p of [ffP, embP, ashP]) p.p.visible = false; return; }
     dt = Math.min(dt, 0.1);
     const d = P.dir(S), n = P.nrm(S), ft = view.camT, a = S.active;
     F.S = S; F.ox = S.O.x; F.oz = S.O.z; F.dx = d.x; F.dz = d.z; F.nx = n.x; F.nz = n.z; F.dt = dt; F.time = view.time;

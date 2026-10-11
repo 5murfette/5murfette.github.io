@@ -317,7 +317,7 @@
     const f = Math.min(1, Math.abs(along) / 12) * 50;
     setHTML('tbWind', `<div class="lbl">Wind</div><div class="wbar"><i class="${along < 0 ? 'l' : 'r'}" style="left:${along < 0 ? 50 - f : 50}%;width:${f.toFixed(1)}%"></i></div><div class="wt">${Math.abs(along) < 0.3 ? 'calm' : (along < 0 ? '◀ ' : '') + Math.abs(along).toFixed(1) + ' m/s' + (along > 0 ? ' ▶' : '')}</div>`);
     const we = S.weather, name = we ? ((C.WEATHER_NAME && C.WEATHER_NAME[we.kind]) || we.kind) : 'Caves';
-    setHTML('tbWx', `<div class="lbl">Weather</div><div class="wxn">${SS.world.under ? 'Underground' : (WX_ICON[we && we.kind] || '') + ' ' + name}</div><div class="wxs">${SS.world.under ? 'no wind' : (SS.ice && SS.ice.air_temp ? Math.round(SS.ice.air_temp(S)) + ' °C · ' : '') + sp.toFixed(1) + ' m/s full wind'}${SS.view.timeOfDay && !SS.world.under && SS.view.timeOfDay(S) !== 'day' ? ' · ' + SS.view.timeOfDay(S) : ''}</div>`);
+    setHTML('tbWx', `<div class="lbl">Weather</div><div class="wxn">${SS.world.eow ? 'Open space' : SS.world.under ? 'Underground' : (WX_ICON[we && we.kind] || '') + ' ' + name}</div><div class="wxs">${SS.world.eow ? 'vacuum, no wind' : SS.world.under ? 'no wind' : (SS.ice && SS.ice.air_temp ? Math.round(SS.ice.air_temp(S)) + ' °C · ' : '') + sp.toFixed(1) + ' m/s full wind'}${SS.view.timeOfDay && !SS.world.under && !SS.world.eow && SS.view.timeOfDay(S) !== 'day' ? ' · ' + SS.view.timeOfDay(S) : ''}</div>`);
   }
   /* P9 weapon grid (built per match), info line */
   let gridBuilt = null; const gridBtn = {};

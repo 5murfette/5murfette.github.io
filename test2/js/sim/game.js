@@ -77,12 +77,12 @@
     if (S.sudden) {
       const d = SS.world;
       if (d.dry) S.playR = M.max(K.SD_DRY_MIN, S.playR - K.SD_DRY_STEP);
-      else if (!d.under && SS.water && SS.water.raise) SS.water.raise(S, M.min(K.SD_RISE, M.max(0, d.SY - K.SD_SEA_GAP - d.SEA)));   // (P38 R9: the sea stops at the cap)
+      else if (!d.under && !d.eow && SS.water && SS.water.raise) SS.water.raise(S, M.min(K.SD_RISE, M.max(0, d.SY - K.SD_SEA_GAP - d.SEA)));   // (P38 R9: the sea stops at the cap)
       // the final stage: nothing is left to take (caves have no sea to rise, the sea is at its cap, the dry play circle is at its minimum)
-      const spent = d.under || (d.dry ? S.playR <= K.SD_DRY_MIN : d.SEA >= d.SY - K.SD_SEA_GAP - 1e-6);
+      const spent = d.under || d.eow || (d.dry ? S.playR <= K.SD_DRY_MIN : d.SEA >= d.SY - K.SD_SEA_GAP - 1e-6);
       if (spent) {
         if (S.sdFinal === 0) {
-          SS.sim.emit(S, 'banner', { title: 'Final stand', sub: d.under ? 'The cave air turns foul' : d.dry ? 'The heat is unbearable' : 'The cold sea has risen as far as it will' });
+          SS.sim.emit(S, 'banner', { title: 'Final stand', sub: d.eow ? 'The planet\'s radiation floods the wreck' : d.under ? 'The cave air turns foul' : d.dry ? 'The heat is unbearable' : 'The cold sea has risen as far as it will' });
           SS.sim.log(S, 'Final stand: every worm now loses health, a little more every turn.', 0xff7a5a);
         }
         S.sdFinal++;

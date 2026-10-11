@@ -22,6 +22,7 @@
   const supports = (W, o) => W.d[o] > 0 && W.mat[o] !== MAT.LAVA && !(W.crack && W.crack[o] >= CK_BREAK);   // P66b: an open crack carries nothing
   function anchored(W, o) {
     const j = Math.floor(o / W.NX) % W.NY;
+    if (W.eow) return W.mat[o] === MAT.BEDROCK || W.mat[o] === MAT.STEEL;   // P68c: only a chunk's bedrock nub / the hull's steel hold in space
     if (j <= 2) return true;
     if (W.mat[o] === MAT.ICE || W.mat[o] === MAT.FOAM) { const y = j * W.H; return y <= W.SEA + 0.6 && y >= W.SEA - 1.6; }   // floats (ice, P2 foam)
     if (W.mat[o] === MAT.STEEL) return true;                 // P2: a girder holds (PoC: steel is an anchor)

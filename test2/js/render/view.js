@@ -496,6 +496,7 @@
     if (SS.alienView) SS.alienView.reset(S);
     if (SS.bodyView) SS.bodyView.clear();
     if (SS.edgeView) SS.edgeView.reset(S);
+    if (SS.eowView) SS.eowView.reset(S);                  // P68c: back to the normal look when the new world is not the End of the World
     S.sectionDirty = true;
   };
   V.buildTerrain = onProgress => SS.terrain.buildAll(renderer, onProgress);
@@ -593,7 +594,7 @@
         case 'kill': if (e.worm) { deathId = e.worm.id; deathT = view.time; } break;
         case 'hurt': if (e.worm && !e.dot) { hurtId = e.worm.id; hurtT = view.time; } break;   // the camera follows the damage (interest)
         case 'explode': if (SS.bodyView && SS.bodyView.noteBlast) SS.bodyView.noteBlast(e);
-          SS.fx.env.tod = view.tod; SS.fx.env.under = !!SS.world.under; SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
+          SS.fx.env.tod = view.tod; SS.fx.env.under = !!(SS.world.under || SS.world.eow); SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
         case 'splash': SS.fx.splash(e.x, e.y, e.z, e.size); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'waterblast': SS.fx.waterBlast(e); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'lavaplop': SS.fx.lava(e.x, e.y, e.z, Math.min(1.4, 0.35 + (e.speed || 0) * 0.06)); break;
@@ -789,6 +790,7 @@
         headSpot.target.updateMatrixWorld();
       }
     }
+    if (S.eow && SS.eowView) SS.eowView.frame(S, view, camera, { scene, renderer, sun, hemi, fill, lamp, sky, motes, stars, Q, tx });   // P68c: the space look (lights, sky, core, debris)
     {                                    // P65i: ambient bounce inside caves. The eye adapts to a cave's gloom, so the level is nearly constant (about 1.1 / pi irradiance); only its tint follows the light that comes in (sky + sun / moon)
       const cs = hemi.color, cg = hemi.groundColor, sc = sun.color, hi = hemi.intensity, si = sun.intensity * 0.4;
       const lr = (cs.r * 0.65 + cg.r * 0.35) * hi + sc.r * si, lg = (cs.g * 0.65 + cg.g * 0.35) * hi + sc.g * si, lb = (cs.b * 0.65 + cg.b * 0.35) * hi + sc.b * si;

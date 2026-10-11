@@ -142,7 +142,8 @@
       { id: 'alpine', name: 'Alpine ice', lavaChance: 0.15, storm: 0.45 },
       { id: 'canyon', name: 'Red canyon', lavaChance: 0.3, storm: 0.2 },
       { id: 'desert', name: 'Desert dunes', lavaChance: 0.25, storm: 0.1, dry: true },   // dry: no sea (C.DRY, Step D)
-      { id: 'volcanic', name: 'Volcano', lavaChance: 1, storm: 0.6 }
+      { id: 'volcanic', name: 'Volcano', lavaChance: 1, storm: 0.6 },
+      { id: 'eow', name: 'End of the World (experimental)', lavaChance: 0, storm: 0, experimental: true }   // P68c: sim/eow.js (never a 'random' pick)
     ],
     /* Weather patterns (C: enum Weather). */
     WEATHER: ['clear', 'cloudy', 'rain', 'storm', 'snow', 'blizzard', 'ashfall', 'fog'],
@@ -167,7 +168,8 @@
       alpine: [['clear', 0.2], ['cloudy', 0.15], ['snow', 0.45], ['blizzard', 0.2]],
       canyon: [['clear', 0.5], ['cloudy', 0.25], ['rain', 0.1], ['storm', 0.15]],
       desert: [['clear', 0.7], ['cloudy', 0.2], ['storm', 0.1]],
-      volcanic: [['cloudy', 0.2], ['storm', 0.35], ['ashfall', 0.45]]
+      volcanic: [['cloudy', 0.2], ['storm', 0.35], ['ashfall', 0.45]],
+      eow: [['clear', 1]]
     },
     /* Wind classes (menu / URL 'wind'): speed at 10 m (m/s) and gust amplitude (fraction). */
     WIND: {
@@ -230,7 +232,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p68a-2d-crk',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p68c-eow2',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
