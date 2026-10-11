@@ -251,4 +251,27 @@
   SS.SFX_FILES['worm_yawn@t3'] = ['worm_yawn_t3_1.ogg', 'worm_yawn_t3_2.ogg', 'worm_yawn_t3_3.ogg'];
   SS.SFX_FILES['worm_yawn@t4'] = ['worm_yawn_t4_1.ogg', 'worm_yawn_t4_2.ogg'];
   /* END sfx */
+  /* BEGIN P65j surface / ambience sounds (tools/dev/gen/p65jsfx.py) */
+  SS.SFX_FILES.step_soil = ['step_soil_1.ogg', 'step_soil_2.ogg'];
+  SS.SFX_FILES.step_rock = ['step_rock_1.ogg', 'step_rock_2.ogg'];
+  SS.SFX_FILES.step_sand = ['step_sand_1.ogg', 'step_sand_2.ogg'];
+  SS.SFX_FILES.step_snow = ['step_snow_1.ogg'];
+  SS.SFX_FILES.step_ash = ['step_ash_1.ogg'];
+  SS.SFX_FILES.step_metal = ['step_metal_1.ogg'];
+  SS.SFX_FILES.step_wade = ['step_wade_1.ogg', 'step_wade_2.ogg'];
+  SS.SFX_FILES.land_rock = ['land_rock_1.ogg', 'land_rock_2.ogg'];
+  SS.SFX_FILES.land_sand = ['land_sand_1.ogg'];
+  SS.SFX_FILES.land_metal = ['land_metal_1.ogg', 'land_metal_2.ogg'];
+  SS.SFX_FILES.bounce_soil = ['bounce_soil_1.ogg', 'bounce_soil_2.ogg'];
+  SS.SFX_FILES.bounce_rock = ['bounce_rock_1.ogg', 'bounce_rock_2.ogg'];
+  SS.SFX_FILES.bounce_sand = ['bounce_sand_1.ogg'];
+  SS.SFX_FILES.bounce_snow = ['bounce_snow_1.ogg', 'bounce_snow_2.ogg'];
+  SS.SFX_FILES.bounce_concrete = ['bounce_concrete_1.ogg', 'bounce_concrete_2.ogg'];
+  SS.SFX_FILES.land_snow = SS.SFX_FILES.bounce_snow;
+  SS.SFX_FILES.amb_whirl = ['amb_whirl_1.ogg'];
+  SS.SFX_FILES.amb_birds = ['amb_birds_1.ogg'];
+  SS.SFX_FILES.amb_crickets = ['amb_crickets_1.ogg'];
+  SS.SFX_FILES.amb_snowfall = ['amb_snowfall_1.ogg'];
+  SS.SFX_FILES.amb_cave = ['amb_cave_1.ogg'];
+  /* END P65j */
 })(window.SS = window.SS || {});

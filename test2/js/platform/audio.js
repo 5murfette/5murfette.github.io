@@ -248,33 +248,55 @@
     };
     setTimeout(next, 200);
   }
-  function start_buf(b, vol, rate) {
+  /* P65j: a voice with a spatial result sp (audiospace.js eval): gain -> low-pass (air absorption / occlusion / water) -> pan -> master, plus a send
+   * to the reverb (wet: more in caves). Node count is tracked (AU.nodes) for the perf check. */
+  let liveNodes = 0, peakNodes = 0;
+  function start_buf(b, vol, rate, sp) {
     const s = ctx.createBufferSource(); s.buffer = b; s.playbackRate.value = rate;
-    const g = ctx.createGain(); g.gain.value = vol; s.connect(g); g.connect(master); s.start(0);
+    const g = ctx.createGain(); g.gain.value = vol * (sp ? sp.gain : 1); s.connect(g);
+    let last = g, n = 2;
+    if (sp) {
+      if (sp.fc < 16000) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = sp.fc; f.Q.value = 0.5; last.connect(f); last = f; n++; }
+      if (Math.abs(sp.pan) > 0.03 && ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = sp.pan; last.connect(p); last = p; n++; }
+      if (sp.wet > 0.03 && verbIn) { const w = ctx.createGain(); w.gain.value = sp.wet; last.connect(w); w.connect(verbIn); n++; }
+    }
+    last.connect(master);
+    liveNodes += n; if (liveNodes > peakNodes) peakNodes = liveNodes;
+    s.onended = () => { liveNodes -= n; };
+    s.start(ctx.currentTime + (sp && sp.delay > 0.02 ? sp.delay : 0));
     if (AM) AM.stat.buf_started++;
   }
-  /* jit = the random detune of this play (fraction of the speed): one-shots +-4 % (MU.JIT_SHOT), worm voices +-2 %
-   * (MU.JIT_VOICE, platform/music.js); a caller that wants a wider spread passes its own.
-   * -> true when a recording was started (or queued on the element); false -> the caller's synthesised fallback runs. */
-  AU.play = function (id, vol, rate, jit) {
+  /* position of the event being dispatched (AU.onEvent sets it): every AU.play inside gets spatialised without its caller knowing */
+  let curPos = null, curOpt = null;
+  AU.nodes = () => ({ live: liveNodes, peak: peakNodes });
+  AU.play = function (id, vol, rate, jit, pos, opt) {
     if (muted || !(AM ? AM.gestured : ctx) || !AU.has(id)) return false;
     const all = SS.SFX_FILES[id], files = all.map(resolve).filter(Boolean), f = files[(rand() * files.length) | 0];
     const v = clamp((vol == null ? 1 : vol) * 0.85, 0, 1), r = clamp((rate || 1) * SS.music.jitter(rand(), jit == null ? SS.music.JIT_SHOT : jit), 0.5, 2);
-    if (web && ctx && ctx.state === 'running' && bufs[f]) { try { start_buf(bufs[f], v / 0.6, r); return true; } catch (e) { if (AM) AM.warn('buffer start failed', String(e)); } }
+    if (pos === undefined) { pos = curPos; if (opt === undefined) opt = curOpt; }
+    let sp = null;
+    if (pos && AU.space) { try { sp = AU.space.eval(pos, opt); } catch (e) { sp = null; } }
+    if (sp && v * sp.gain < 0.012) return true;                      // inaudible at this distance: handled, no fallback
+    if (web && ctx && ctx.state === 'running' && bufs[f]) { try { start_buf(bufs[f], v / 0.6, r, sp); return true; } catch (e) { if (AM) AM.warn('buffer start failed', String(e)); } }
     if (web) load_buf(f);
     if (!AM) return false;
-    const el = AM.acquire('assets/sfx/' + f, { onerror: () => { badFile[f] = true; } });
-    if (!el) return false;
-    try { el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; } catch (e) { /* */ }
-    el.volume = v; el.playbackRate = r;
-    return AM.play(el);
+    const vol2 = sp ? v * sp.gain * (1 - 0.35 * sp.muffle) : v;     // (HTMLAudio cannot filter or pan: volume only)
+    const go = () => {
+      const el = AM.acquire('assets/sfx/' + f, { onerror: () => { badFile[f] = true; } });
+      if (!el) return false;
+      try { el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; } catch (e) { /* */ }
+      el.volume = clamp(vol2, 0, 1); el.playbackRate = r;
+      return AM.play(el);
+    };
+    if (sp && sp.delay > 0.05) { setTimeout(go, sp.delay * 1000); return true; }
+    return go();
   };
   AU.status = function () {
     let rms = 0;
     if (meter) { const d = new Float32Array(meter.fftSize); meter.getFloatTimeDomainData(d); let a = 0; for (let i = 0; i < d.length; i++) a += d[i] * d[i]; rms = Math.sqrt(a / d.length); }
-    return { path: web ? 'webaudio+pool' : 'pool', ctx: ctx ? ctx.state : 'none', muted, rms, decoded: nbuf.length, loading: Object.keys(loading).length, bad: Object.keys(badFile).length, media: AM ? AM.status() : null, buf_started: AM ? AM.stat.buf_started : 0, last_error: AM ? AM.stat.last_error : '' };
+    return { nodes: liveNodes, peakNodes, path: web ? 'webaudio+pool' : 'pool', ctx: ctx ? ctx.state : 'none', muted, rms, decoded: nbuf.length, loading: Object.keys(loading).length, bad: Object.keys(badFile).length, media: AM ? AM.status() : null, buf_started: AM ? AM.stat.buf_started : 0, last_error: AM ? AM.stat.last_error : '' };
   };
-  const S2 = (id, vol, rate, fallback) => { if (!AU.play(id, vol, rate) && fallback) fallback(); };
+  const S2 = (id, vol, rate, fallback, pos, opt) => { if (!AU.play(id, vol, rate, undefined, pos, opt) && fallback) fallback(); };
   /* worm voices (P42b): team identity comes from distinct voice BANKS, not from pitch (pitched-up voices sounded like chipmunks):
    * SS.SFX_FILES['worm_hurt_small@t1'] ... '@t4' (team 1..4) when delivered, else the shared id at pitch 1.0. Detune only +-2 %.
    * Throttled per worm. */
@@ -283,21 +305,30 @@
     if (!w) return false;
     const t = ctx ? ctx.currentTime : 0, l = lastVoice.get(w.id) || -9;   // (by id: a replay restore replaces the worm objects)
     if (t - l < (minGap == null ? 0.6 : minGap)) return false;
-    if (!AU.play(SS.music.bank_id(AU.has, id, w.team), vol == null ? 0.9 : vol, 1, SS.music.JIT_VOICE)) return false;
+    if (!AU.play(SS.music.bank_id(AU.has, id, w.team), vol == null ? 0.9 : vol, 1, SS.music.JIT_VOICE, w.pos ? { x: w.pos.x, y: w.pos.y + 0.3, z: w.pos.z } : null, { cls: 'norm' })) return false;
     lastVoice.set(w.id, t); return true;
   };
   const hurtLine = e => e.src === SS.CFG.DS.BAT ? 'worm_bat_hit' : (SS.CFG.DS_FLAGS[e.src | 0] & SS.CFG.DSF.FX_HOT) ? 'worm_burn' : e.amount >= 25 ? 'worm_hurt_big' : 'worm_hurt_small';
+  /* P65j: how far each event type carries: loud = blasts / collapses (speed-of-sound delay, long reach), quiet = footfall-sized, else normal */
+  const LOUD = { explode: 1, waterblast: 1, airburst: 1, collapse: 1, bridgefall: 1, holy: 1, lightning: 1, lavabreach: 1, hole: 1, treeshatter: 1, moai: 0 };
+  const QUIET = { land: 1, bodyhit: 1, fuse: 1, minearm: 1, pickup: 1, jump: 1, switch: 1, rope_hook: 1 };
   AU.onEvent = function (S, e) {
     if (!ctx && !(AM && AM.gestured)) return;
+    const wp = e.worm && e.worm.pos;
+    curPos = e.x != null && e.y != null && e.z != null ? { x: e.x, y: e.y, z: e.z } : wp ? { x: wp.x, y: wp.y, z: wp.z } : null;
+    curOpt = { cls: LOUD[e.type] ? 'loud' : QUIET[e.type] ? 'quiet' : 'norm' };
+    try { onEvent2(S, e); } finally { curPos = null; curOpt = null; }
+  };
+  function onEvent2(S, e) {
     switch (e.type) {
-      case 'explode': { const R = 44 * Math.cbrt(e.W || 1); if (e.wet != null && e.wet > 0.25) break; if (SS.music) SS.music.duck(SS.music.duck_gain(R));   // a charge under the water: its own sound is the 'waterblast' event (no second, dry boom)
+      case 'explode': { const R = 44 * Math.cbrt(e.W || 1); if (e.wet != null && e.wet > 0.25) break; if (SS.music) { const dk = SS.music.duck_gain(R), dl = AU.space ? AU.space.eval(e, { cls: 'loud' }).delay : 0; if (dl > 0.05) setTimeout(() => SS.music.duck(dk), dl * 1000); else SS.music.duck(dk); } if (AU.space) AU.space.hush(R / 50);   // a charge under the water: its own sound is the 'waterblast' event (no second, dry boom)
         S2(R > 60 ? 'explosion_large' : R > 30 ? 'explosion_medium' : 'explosion_small', clamp(R / 60, 0.4, 1), 1, () => SFX.boom(R, e));
         // a gasp from the worm on turn when a blast goes off close to it
         const a = S.active; if (a && !a.dead && Math.hypot(a.pos.x - e.x, a.pos.y - e.y, a.pos.z - e.z) < 7) AU.voice('worm_flinch', a, 0.7, 1.5); break; }
       case 'waterblast': S2('explosion_water', 1, 1, () => SFX.boomWater(44 * Math.cbrt(e.W || 1))); break;
       case 'fire': if (AU.ext && AU.ext(S, e)) break; S2(ROCKETS[e.weapon] ? 'launch_rocket' : 'launch_throw', 0.9, 1, () => SFX.launch(ROCKETS[e.weapon] ? 'rocket' : 'thrown')); if (rand() < 0.35) AU.voice('worm_attack', S.active, 0.8); break;
       case 'use': if (e.weapon === 'boulder') S2('launch_boulder', 1, 1, () => SFX.launch('boulder')); else if (e.weapon === 'skip') { S2('ui_click', 0.6, 1, () => SFX.click()); AU.voice('worm_skip', S.active, 0.8); } break;
-      case 'bounce': S2('bounce_metal', clamp((e.speed || 3) / 10, 0.1, 1), 1, () => SFX.bounce(clamp((e.speed || 3) / 10, 0.1, 1))); break;
+      case 'bounce': { const k = clamp((e.speed || 3) / 10, 0.1, 1), cls = AU.space && e.mat != null ? AU.space.matClass(e.mat) : 'metal'; S2(AU.space ? AU.space.bounceId(cls) : 'bounce_metal', k, 1, () => S2('bounce_metal', k, 1, () => SFX.bounce(k))); break; }
       case 'splash': S2(e.size > 0.9 ? 'splash_big' : 'splash_small', Math.min(1, e.size || 0.6), 1, () => SFX.splash(Math.min(1.5, e.size || 0.6))); break;
       case 'hurt': if (!AU.voice(hurtLine(e), e.worm, 1, 0.35) && !AU.has(hurtLine(e))) SFX.ouch(); break;   // (the synth only when there is no recording, not when the voice is merely throttled)
       case 'jump': S2('worm_jump_whoosh', 0.6, 1, () => SFX.jump()); AU.voice('worm_jump', S.active, 0.7, 0.4); break;
@@ -332,7 +363,7 @@
       case 'minearm': S2('mine_beep', 0.8, 1, () => SFX.beep()); break;
       case 'propbreak': S2(e.kind === 'barrel' ? 'metal_crunch' : 'wood_break', 0.8, 1, () => SFX.wood(0.7)); break;
       case 'collapse': S2('rock_collapse', Math.min(1, (e.pieces || 1) / 4), 1, () => SFX.crack(Math.min(1, (e.pieces || 1) / 4))); break;
-      case 'land': if ((e.speed || 0) > 5) { S2(e.hard ? 'worm_land_hard_thud' : 'worm_land_thud', Math.min(1, e.speed / 12), 1, () => SFX.thud(Math.min(1, e.speed / 12))); if (e.hard) AU.voice('worm_land_hard', e.worm, 1, 0.3); } break;
+      case 'land': if ((e.speed || 0) > 5) { const k = Math.min(1, e.speed / 12), cls = AU.space && e.mat != null ? AU.space.matClass(e.mat) : 'soil', lid = AU.space ? AU.space.landId(cls) : 'worm_land_thud'; S2(lid, k, 1, () => S2('worm_land_thud', k, 1, () => SFX.thud(k))); if (e.hard) { if (cls === 'soil' || cls === 'ash') S2('worm_land_hard_thud', k, 1, null); AU.voice('worm_land_hard', e.worm || (S.worms && S.worms.find(w => w.id === e.wormId)), 1, 0.3); } } break;
       case 'bodyhit': S2('body_hit', 0.4, 1, () => SFX.crunch(0.15)); break;
       case 'gameover': S2('fanfare_win', 1, 1, () => SFX.fanfare()); { const w = S.worms.find(o => !o.dead); if (w) AU.voice('worm_victory', w, 1, 0); } break;
       case 'turn': S2('turn_start', 0.7, 1, () => SFX.chirp()); AU.voice('worm_turn_start', e.worm || S.active, 0.85, 0); break;
@@ -359,17 +390,45 @@
     }
     if (AU.extra) AU.extra(S, e);
   };
-  // looping ambient samples: one <audio loop> per id, its volume eased toward the wanted level
-  const loops = {};
-  function ambLoop(id, lvl) {
+  /* looping ambient beds (P65j: spatial). http(s): the decoded buffer loops through gain -> low-pass -> pan on the master bus (pan = where the source
+   * is, low-pass = distance / shelter / water); file:// (no decode): one <audio loop> per id from the pool, volume only (no pan / filter).
+   * o = { pan, fc, rate, muffle }. -> true when the id has a recording. */
+  const loops = {}, wbeds = {};
+  function ambLoop(id, lvl, o) {
     if (!AU.has(id)) return false;
+    o = o || {};
+    const f = resolve(SS.SFX_FILES[id][0]); if (!f) return false;
+    if (web && ctx) {
+      if (bufs[f]) {
+        const t = ctx.currentTime, want = muted ? 0 : clamp(lvl, 0, 1);
+        let b = wbeds[id];
+        if (!b) {
+          if (want < 0.004) return true;
+          const s = ctx.createBufferSource(); s.buffer = bufs[f]; s.loop = true;
+          const g = ctx.createGain(); g.gain.value = 0; const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = o.fc || 20000; lp.Q.value = 0.5;
+          const pn = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+          s.connect(lp); lp.connect(g); if (pn) { pn.pan.value = o.pan || 0; g.connect(pn); pn.connect(master); } else g.connect(master);
+          s.start(0, rand() * bufs[f].duration);
+          b = wbeds[id] = { s, g, lp, pn, lowT: 0 }; liveNodes += 4; if (liveNodes > peakNodes) peakNodes = liveNodes;
+          if (loops[id]) { loops[id].pause(); loops[id].volume = 0; }
+        }
+        b.g.gain.setTargetAtTime(want, t, 0.45);
+        b.lp.frequency.setTargetAtTime(clamp(o.fc || 20000, 300, 20000), t, 0.35);
+        if (b.pn) b.pn.pan.setTargetAtTime(clamp(o.pan || 0, -1, 1), t, 0.35);
+        if (o.rate) b.s.playbackRate.setTargetAtTime(o.rate, t, 0.6);
+        if (want < 0.004) { if (!b.lowT) b.lowT = t; else if (t - b.lowT > 3) { try { b.s.stop(); b.s.disconnect(); } catch (e) { /* */ } delete wbeds[id]; liveNodes -= 4; } } else b.lowT = 0;
+        return true;
+      }
+      if (lvl >= 0.004) load_buf(f);                                 // (decode in the background, only once the bed is audible; the pool element covers the first seconds)
+    }
+    if (!AM) return false;
     let el = loops[id];
+    if (!el && lvl < 0.004) return true;                              // (no pool element for a bed nobody hears)
     if (!el) {
-      const f = resolve(SS.SFX_FILES[id][0]); if (!f || !AM) return false;
       el = AM.acquire('assets/sfx/' + f, { keep: true, onerror: () => { badFile[f] = true; if (loops[id]) AM.release(loops[id]); delete loops[id]; } }); if (!el) return false;
       el.loop = true; el.volume = 0; loops[id] = el;
     }
-    const want = muted ? 0 : clamp(lvl, 0, 1) * 0.6;
+    const want = muted ? 0 : clamp(lvl, 0, 1) * 0.6 * (1 - 0.4 * (o.muffle || 0));
     el.volume += (want - el.volume) * 0.05;
     if (el.volume > 0.005 && el.paused) { AM.play(el); } else if (el.volume <= 0.005 && !el.paused) el.pause();
     return true;
@@ -381,11 +440,12 @@
     on = !!on; if (on === held) return; held = on;
     if (on) {
       for (const id in loops) if (!loops[id].paused) loops[id].pause();
+      if (ctx) for (const id in wbeds) wbeds[id].g.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
       if (amb && ctx) for (const k in amb) amb[k].gain.setTargetAtTime(0, ctx.currentTime, 0.05);
       SFX.chargeStop(); wasCharging = false;
     }
   };
-  let wasCharging = false;
+  let wasCharging = false, lastFrameMs = 0;
   const screamed = new WeakSet();   // (audio state stays off the sim objects)
   AU.frame = function (S) {
     if (!ctx || held) return;
@@ -397,15 +457,30 @@
       const vy = w === S.active ? (w.air ? w.vy : 0) : (!w.rest && w.vel ? w.vel.y : 0);
       if (vy < -12 && !screamed.has(w)) { screamed.add(w); AU.voice('worm_fall_scream', w, 1, 0.5); } else if (vy > -2) screamed.delete(w);
     }
+    const nowMs = performance.now(), fdt = clamp((nowMs - lastFrameMs) / 1000, 0, 0.25); lastFrameMs = nowMs;
+    const SPc = AU.space;
+    if (SPc) { SPc.frame(S, fdt); if (S.phase === 'play' || S.phase === 'turn' || S.worms) SPc.steps(S, fdt); }
     if (!amb) return;
-    const t = ctx.currentTime, we = S.weather, w = S.wind && !SS.world.under ? Math.hypot(S.wind.mean.x, S.wind.mean.z) : 0;
-    const rain = we ? Math.min(1, (we.rain || 0) * 1.4) : 0, fire = Math.min(1, ((S.flames && S.flames.length) || 0) / 6 + (SS.veg && SS.veg.burning ? Math.min(1, SS.veg.burning(S) / 40) : 0));
-    const lava = S.biome === 'volcanic' && !SS.world.under ? 0.6 : 0;
-    // ambient beds: a looping sample (amb_*) replaces the synthesised loop when it exists
-    const sea = SS.world.dry || SS.world.under ? 0 : 0.5;
-    const bed = (id, synth, lvl, k) => { if (ambLoop(id, lvl)) synth.gain.setTargetAtTime(0, t, 0.3); else synth.gain.setTargetAtTime(lvl * k, t, 0.6); };
-    bed('amb_rain', amb.rain, rain, 0.42); bed('amb_wind', amb.wind, Math.min(1, w / 14), 0.3); bed('amb_fire', amb.fire, fire, 0.35); bed('amb_lava', amb.lava, lava, 0.3);
-    ambLoop('amb_sea_surf', sea);
+    const t = ctx.currentTime;
+    const A = SPc ? SPc.amb : null, L = SPc ? SPc.L : null;
+    // ambient beds: a looping sample (amb_*) replaces the synthesised loop when it exists; levels come from what is near the camera focus (audiospace.js)
+    const bed = (id, synth, lvl, k, o) => { if (ambLoop(id, lvl, o)) synth.gain.setTargetAtTime(0, t, 0.3); else synth.gain.setTargetAtTime(lvl * k, t, 0.6); };
+    if (!A || !L.ok) {
+      const we = S.weather, w = S.wind && !SS.world.under ? Math.hypot(S.wind.mean.x, S.wind.mean.z) : 0;
+      bed('amb_rain', amb.rain, we ? Math.min(1, (we.rain || 0) * 1.4) : 0, 0.42); bed('amb_wind', amb.wind, Math.min(1, w / 14), 0.3);
+      return;
+    }
+    const base = L.uw ? 450 : 20000 / (1 + 2.5 * A.enc), mu = A.muffle;
+    bed('amb_rain', amb.rain, A.rain, 0.42, { fc: base, muffle: mu });
+    bed('amb_wind', amb.wind, Math.max(A.wind, A.whirl * 0.5), 0.3, { fc: base, muffle: mu });
+    bed('amb_fire', amb.fire, A.fire, 0.35, { pan: A.firePan, fc: base, muffle: mu });
+    bed('amb_lava', amb.lava, A.lava, 0.3, { pan: A.lavaPan, fc: Math.min(base, 9000), muffle: mu });
+    ambLoop('amb_sea_surf', A.surf, { pan: A.surfPan, fc: Math.min(base, 12000), muffle: mu });
+    ambLoop('amb_whirl', A.whirl, { pan: A.whirlPan, fc: Math.min(base, A.whirlFc), rate: A.whirlRate, muffle: mu });
+    ambLoop('amb_snowfall', Math.max(A.snow * 0.8, A.ash * 0.55), { fc: Math.min(base, A.ash > A.snow ? 5000 : 12000), muffle: mu });
+    ambLoop('amb_birds', A.birds * 0.8, { fc: base, muffle: mu });
+    ambLoop('amb_crickets', A.crickets * 0.8, { fc: base, muffle: mu });
+    ambLoop('amb_cave', A.cave, { fc: L.uw ? 450 : 20000, muffle: L.uw ? 0.9 : 0 });
   };
   AU.setMuted = function (m) { muted = !!m; if (master) master.gain.value = muted ? 0 : 0.6; try { localStorage.setItem('burrowBrawl3d.muted', muted ? '1' : '0'); } catch (e) { /* */ } };
   Object.defineProperty(AU, 'muted', { get: () => muted });
