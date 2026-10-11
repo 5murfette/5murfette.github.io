@@ -17,17 +17,17 @@
   const NS = 150;
   const OUT = { x: new Float32Array(NS), y: new Float32Array(NS), a: new Float32Array(NS), r: new Float32Array(NS), dx: 0, dy: 0 };   // dx, dy: how far the shoulder is from its goal (m): a held weapon rides with it
   const TMP = { x: 0, y: 0 };
-  const MAT_ICE = 7, MAT_SNOW = 6;
+  const MAT_ICE = 7, MAT_SNOW = 6, SINK = { 6: 0.1, 4: 0.055, 11: 0.05, 12: 0.03 };   // sink depth (m) by ground material: snow, sand, ash, scree
   const BAT_SPEED = 38, BAT_DELAY = 0.06, HIT_R = 0.32;
   let clock = 0;
   const pend = [];                          // delayed bat hits { t, w, cs, cy, dx, dy }
   const batW = [];                          // worms hit by a bat this step (until the 'swing' event with the contact point arrives)
 
   /* ---------- the world seen from one worm's plane ---------- */
-  const E = { S: null, c: 1, s: 0, t: 0, nb: 0, bs: [], bY: [], bK: [], bA: [], bB: [], sample: null };
+  const E = { S: null, c: 1, s: 0, t: 0, sink: 0, nb: 0, bs: [], bY: [], bK: [], bA: [], bB: [], sample: null };
   E.sample = function (s, y) {
     const S = E.S, nx = -E.s, nz = E.c;
-    let d = SS.world.sample(S.O.x + s * E.c + E.t * nx, y, S.O.z + s * E.s + E.t * nz);
+    let d = SS.world.sample(S.O.x + s * E.c + E.t * nx, y, S.O.z + s * E.s + E.t * nz) - E.sink;
     for (let i = 0; i < E.nb; i++) {                       // a prop / trunk cross-section: a signed field (m * 0.7) like the terrain's
       const ds = s - E.bs[i], dy = y - E.bY[i];
       const f = E.bK[i] === 0 ? (E.bA[i] - M.len2(ds, dy)) * 0.7 : Math.min(E.bA[i] - Math.abs(ds), E.bB[i] - Math.abs(dy)) * 0.7;
@@ -73,13 +73,17 @@
     I.ground = c.grounded ? 1 : 0; I.thG = c.slope + f * c.lean;
     I.spin = c.spin; I.tone = c.dizzy ? 0.75 : 1; I.vref = c.grounded && c.vs ? c.vs : 0;
     I.surf = c.surf > -1e8 ? c.surf : -1e9; I.g = 9.81 * (SS.sim && SS.sim.gravity_k ? SS.sim.gravity_k(S, w) : 1);
-    if (c.hang != null) { I.extTh = f * c.hang; I.extW = 0.9; } else if (c.swim) { I.extTh = 0; I.extW = 0.5; } else I.extW = 0;
+    if (c.hang != null) { I.extTh = f * c.hang; I.extW = 0.9; } else if (c.fly) { I.extTh = c.fly.a; I.extW = c.fly.w; } else if (c.swim) { I.extTh = 0; I.extW = 0.5; } else I.extW = 0;
     if (c.pull) { I.hx = c.pull.x * I.g * SW.K.PULL; I.hy = c.pull.y * I.g * SW.K.PULL; } else I.hx = I.hy = 0;   // rope / riser tension on the head
     I.mu = SW.K.MU;
+    let sinkT = 0;
     if (c.grounded) {
       const m = SS.world.mat_at(w.pos.x, w.pos.y - 0.7, w.pos.z);
       if (m === MAT_ICE) I.mu = 0.1; else if (m === MAT_SNOW) I.mu = 0.5;
+      sinkT = SINK[m] || 0;                                  // P65h: a worm sinks into loose ground (the surface the body meets is lowered by that depth)
     }
+    v.sinkD = (v.sinkD || 0) + (sinkT - (v.sinkD || 0)) * M.min(1, c.dt * 3.5);
+    E.sink = v.sinkD * 0.7;
     if (!sw.init) { I.px = s0; I.py = y0; SW.reset(sw, s0, y0); }
     else if (Math.abs(s0 - I.px) + Math.abs(y0 - I.py) > 1.2 + 1.6 * c.speed * c.dt) {
       // a teleport / a respawn (a fast flight is not). P38 R3: while the section turns, the in-plane coordinates of a worm far from the pivot

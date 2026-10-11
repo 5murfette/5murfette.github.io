@@ -84,14 +84,18 @@
       k += (p.headD + (p.wob || 0)) / (0.22) * smooth01(0.88, 0.92, u);
       // a slow sway travelling up the neck (parts move one after another)
       k += 0.9 * Math.sin(2 * Math.PI * (u * 1.3 - p.t * 0.22)) * smooth01(B.uBase, 1, u) * (0.6 + 0.4 * (1 - p.crawl)) * (1 - p.air);
+      // P65h: the head and neck ride the wave (each passing hump nods the neck), the lying part ripples a little: a visible crawl, not a sliding rigid shape
+      if (cw > 0.02) k += (1.7 * smooth01(B.uBase, 1, u) + 0.9 * (1 - smooth01(B.uBase, B.uBase + 0.1, u))) * cw * (1 - p.air) * Math.sin(2 * Math.PI * (u * 3.2 + wph));
       // the tail tip curls up a little
       k += 2.2 * (1 - smooth01(0, 0.07, u)) * (0.4 + 0.6 * p.air);
       if (p.thr > 0.02) k += p.thr * 5 * Math.sin(2 * Math.PI * (u * 1.5 - p.t * 2.6)) * smooth01(0.04, 0.25, u);     // P57: writhing in the air after a blow
       return k;
     };
     // integrate from the base's front corner (the anchor) both ways; contracted rings are shorter
+    // P65h: while crawling the contraction waves are bolder (a contracted ring is shorter and fatter and grips; the extended ones between lift and stretch forward)
+    const cw = p.crawl || 0, ef = p.eff || 0, lenK = 0.2 + 0.2 * cw + 0.08 * ef, bulK = 0.16 + 0.14 * cw + 0.06 * ef;
     const iC = Math.round(B.uBase * (NS - 1)), bump = u => { const q = Math.sin(2 * Math.PI * (u * 3.2 + wph)); return q > 0 ? q * q : 0; };
-    const len = u => ds * (1 - 0.2 * bump(u));
+    const len = u => ds * (1 - lenK * bump(u));
     SP.x[iC] = 0.14; SP.y[iC] = -0.5 + R_FRONT; SP.a[iC] = 0.04 * (1 - p.air);
     for (let i = iC + 1; i < NS; i++) {
       const u = (i - 0.5) / (NS - 1), a = SP.a[i - 1] + kappa(u) * len(u) * 0.5;
@@ -105,10 +109,10 @@
     if (p.air > 0) { let cx = 0, cy = 0; for (let i = 0; i < NS; i++) { cx += SP.x[i]; cy += SP.y[i]; } cx /= NS; cy /= NS; for (let i = 0; i < NS; i++) { SP.x[i] -= cx * p.air; SP.y[i] -= (cy) * p.air; } }
     for (let i = 0; i < NS; i++) {
       const u = i / (NS - 1), seg = (u > SADDLE0 - 0.01 && u < SADDLE1 + 0.01) || u > 0.9 ? 1 : 0.9 + 0.1 * Math.pow(Math.abs(Math.sin(u * Math.PI * SEGS)), 0.45);   // annuli: bulges with grooves between
-      SP.r[i] = radius(u) * seg * (1 + 0.16 * bump(u)) * (1 + 0.02 * Math.sin(p.t * 2.4)); SP.b[i] = bump(u);
+      SP.r[i] = radius(u) * seg * (1 + bulK * bump(u)) * (1 + 0.02 * Math.sin(p.t * 2.4)); SP.b[i] = bump(u);
     }
     // the lying part keeps its belly on the ground (its centre line rises and falls with its girth)
-    if (p.air < 1) for (let i = 0; i < iC; i++) { const g = -0.5 + SP.r[i] + (SP.y[i] - (-0.5 + R_FRONT)); SP.y[i] += (g - SP.y[i]) * (1 - p.air); }
+    if (p.air < 1) for (let i = 0; i < iC; i++) { const g = -0.5 + SP.r[i] + (SP.y[i] - (-0.5 + R_FRONT)); SP.y[i] += (g - SP.y[i]) * (1 - p.air); SP.y[i] += 0.05 * cw * (1 - bump(i / (NS - 1))) * Math.min(1, i / 12) * (1 - p.air); }   // P65h: the moving (extended) rings lift a little, the gripping ones stay down
     return SP;
   }
   /* P38-R4: BufferGeometry.computeVertexNormals without its per-triangle Vector3 work and attribute accessors (it was ~40 % of the
@@ -270,7 +274,7 @@
     const gRim = new T.Mesh(RIM_GEO, new T.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0.5, depthTest: false, depthWrite: false, side: T.BackSide }));
     gBody.renderOrder = 11; gRim.renderOrder = 10; ghost.add(gRim, gBody);
     scene.add(root, ghost);
-    const pose = { t: 0, crawl: 0, air: 0, headD: 0, arcD: 0, wave: (w.id || 0) * 0.37 };
+    const pose = { t: 0, crawl: 0, eff: 0, air: 0, headD: 0, arcD: 0, wave: (w.id || 0) * 0.37 };
     return { root, body, mesh, geo, eyes, pupils, lids, glints, mouth, held, hands, heldBy: {}, batT: 0, flinchT: 0, stars: null, ghost, ghostMats: [gBody.material, gRim.material], phase: (w.id || 0) * 1.7, flash: 0, flame: null, pose, tilt: 0, lastS: null };
   };
 
@@ -511,7 +515,8 @@
       if (v.handsBig && !(idl && idl.pk > 0.02)) { for (const hd of v.hands) hd.hand.scale.setScalar(1); v.handsBig = false; }
       ps.crawl += (crawlT - ps.crawl) * Math.min(1, dt * 5);
       ps.air += ((airborne ? 1 : 0) - ps.air) * Math.min(1, dt * 4);
-      ps.wave += dt * (0.12 + 1.6 * ps.crawl);                       // contraction waves run head -> tail (u + wave)
+      ps.eff += (M.clamp((v.slope || 0) * f / 0.6, 0, 1) * ps.crawl - ps.eff) * Math.min(1, dt * 4);      // P65h: effort: climbing a slope (bigger contractions, a slower cadence)
+      ps.wave += dt * (0.12 + 2.6 * ps.crawl * (1 - 0.15 * ps.eff));      // contraction waves run head -> tail (u + wave); P65h: the cadence follows the measured ground speed (the hump pattern moves back at ~0.75 of the walk speed)
       // P33: swimming / struggling in the water: fast contraction waves, the head thrown up and about
       if (w.swim || w.ropeWet) ps.wave += dt * 3.2;
       let look = aiming && !w.ropeWet ? S.aim : w.swim || w.ropeWet ? 1.1 + 0.5 * Math.sin(ps.t * 9.0) : 0.25 * Math.sin(ps.t * 0.37);
@@ -532,8 +537,11 @@
       v.lean = (v.lean || 0) + (skid - (v.lean || 0)) * Math.min(1, dt * 8);
       v.hangA = (v.hangA || 0) + ((SS.travView ? SS.travView.hang_pose(S, w, a, sNow, f) : 0) - (v.hangA || 0)) * Math.min(1, dt * 10);   // hanging on the rope / line / canopy
       const sqT = w.squash != null ? (S.time - w.squash) / 0.28 : 9, sq = sqT >= 0 && sqT < 1 ? 0.08 * Math.sin(Math.PI * sqT) * (1 - sqT * 0.5) : 0;   // (P40: was 0.24: the crumple and the rebound are the soft body's now, the muscles only brace a little)
-      const vyb = w === a ? (a.air ? a.vy : 0) : (!w.rest && w.vel ? w.vel.y : 0), stch = vyb > 2.5 ? Math.min(0.12, vyb * 0.012) : 0, crch = 0.2 * windE;
-      let gsx = 1 + sq * 0.55 - stch * 0.3 + crch * 0.4, gsy = 1 - sq + stch - crch, gox = 0, goy = 0;
+      const vyb = w === a ? (a.air ? a.vy : 0) : (!w.rest && w.vel ? w.vel.y : 0), stch = vyb > 2.5 ? Math.min(0.2, vyb * 0.02) : vyb < -6 && airborne ? Math.min(0.14, -vyb * 0.009) : 0, crch = 0.2 * windE;
+      if (v.lastF != null && v.lastF !== f && w === a && !airborne) v.turnT = 0.34;                    // P65h: turning round: the body bunches up, rises and the head swings over
+      v.lastF = f; v.turnT = Math.max(0, (v.turnT || 0) - dt);
+      const tk = v.turnT > 0 ? Math.sin(Math.PI * (1 - v.turnT / 0.34)) : 0;
+      let gsx = 1 + sq * 0.55 - stch * 0.3 + crch * 0.4 - 0.2 * tk, gsy = 1 - sq + stch - crch + 0.1 * tk, gox = 0, goy = 0;
       if (rx) { gsx *= rx.sx; gsy *= rx.sy; goy += rx.oy; gox += rx.ox; }
       if (idl) { gsx *= idl.sx; gsy *= idl.sy; goy += idl.oy; gox += idl.ox; }
       { const sh = SS.polishView ? SS.polishView.shudder(S, w) : null; if (sh) { gox += sh.dx; gsx *= sh.sc; gsy *= sh.sc; } }   // P38 A5: the dying beat: it trembles and swells
@@ -545,8 +553,13 @@
       const hanging = w === a && !!(S.rope || (S.zip && S.zip.state === 2) || (S.chute && S.chute.open));
       { const nn = P.normal2(S, sNow, w.pos.y - 0.55); v.slope = M.clamp(M.atan2(-nn.s, nn.y), -1.2, 1.2); }       // the ground frame: the slope under it
       const grounded = (!airborne || P.grounded2(S, sNow, w.pos.y)) && !w.swim && !w.ropeWet;      // (a sliding worm is on the ground, whatever its rest flag says)
+      // P65h: a worm that jumped by itself flies along its velocity (stretched, nose up on the way up, nose down on the way down); a blast / bat victim keeps the soft body's own tumble
+      if (grounded) v.selfJump = false; else if (v.wasGr && w === a && !(v.flinchT > 0) && !(v.batT > 0) && vyP > 2 && !w.swim) v.selfJump = true;
+      v.wasGr = grounded;
+      const flyW = v.selfJump && !hanging && !spin && !burnNow && Math.hypot(vsP, vyP) > 2.5 ? 0.6 * M.clamp((Math.hypot(vsP, vyP) - 2.5) / 4, 0, 1) : 0;
+      const flyA = flyW > 0 ? M.atan2(vyP, vsP) - (f < 0 ? Math.PI : 0) : 0;
       if (inSec || insp > 0.01) {
-        const sp = buildRings(v.geo, alienPre(S, w, v, dt, SS.softView.update(S, w, v, spine(ps), { f, sNow, grounded, slope: v.slope || 0, lean: v.lean + (rx ? rx.lean : 0), spin, hang: hanging ? v.hangA : null, pull: hanging ? (S.rope ? ropePull(S, w, sNow) : PULL_UP) : null, swim: !!(w.swim || w.ropeWet) && !grounded, speed: Math.hypot(vsP, vyP), surf: surfY, vs: crawlT > 0.1 && !w.slide ? vsP : 0,
+        const sp = buildRings(v.geo, alienPre(S, w, v, dt, SS.softView.update(S, w, v, spine(ps), { f, sNow, grounded, slope: v.slope || 0, lean: v.lean + (rx ? rx.lean : 0), spin, hang: hanging ? v.hangA : null, pull: hanging ? (S.rope ? ropePull(S, w, sNow) : PULL_UP) : null, swim: !!(w.swim || w.ropeWet) && !grounded, speed: Math.hypot(vsP, vyP), fly: flyW > 0 ? { a: flyA, w: flyW } : null, surf: surfY, vs: crawlT > 0.1 && !w.slide ? vsP : 0,
           sx: gsx, sy: gsy, ox: gox, oy: goy, dt: M.clamp(dt, 0, 0.05), dizzy: w.dizzyUntil > S.time }))), hi = NS - 4, ha = sp.a[hi];
         if (SS.alienView && SS.alienView.worm_post) SS.alienView.worm_post(S, w, v, sp, dt, view);                  // P47: the face frame (a hugger sits on it), the infected look
         if (v.zap) updateZap(v, sp, Math.min(1, (viewTime - v.zapT) / ZAP_T));

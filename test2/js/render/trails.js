@@ -83,8 +83,15 @@
       else if (step > 1e-4 && step / Math.max(dt, 1e-3) > 0.3) {
         tr.acc += step; tr.mAcc += step; tr.rAcc += step;
         const feetY = w.pos.y - 0.5;
-        if (tr.acc > 0.55) {
-          tr.acc = 0; mk.steps = (mk.steps || 0) + 1; SS.fx.dustAt(x, feetY, z, Q.trail > 0.8 ? 2 : 1, 0.2);
+        // P65h: the puff is synced to the crawl: one per contraction hump that pushes off at the tail (render/actors.js pose.wave); by distance when the worm has no view
+        const vv = SS.actors && SS.actors.vis ? SS.actors.vis(w) : null, ps = vv && vv.v && vv.v.pose;
+        let stepNow = false;
+        if (ps && ps.crawl > 0.25) { const ph = Math.floor(ps.wave + 0.07); if (tr.ph == null) tr.ph = ph; if (ph !== tr.ph) { tr.ph = ph; stepNow = true; } }
+        else if (tr.acc > 0.55) stepNow = true;
+        if (stepNow) {
+          tr.acc = 0; mk.steps = (mk.steps || 0) + 1;
+          const px = x - d.x * w.facing * 0.5, pz = z - d.z * w.facing * 0.5, py = Math.min(feetY, W.topHeight(px, pz)) + 0.02;
+          SS.fx.dustAt(px, py, pz, Q.trail > 0.8 ? 2 : 1, 0.2);
         }
         const surf = SS.sim.surface_at(S, x, z);
         if (surf > feetY + 0.05 && surf < feetY + 0.75) {                                   // wading: rings + a few droplets
@@ -97,7 +104,7 @@
             const gr = SS.grass && SS.grass.cover ? SS.grass.cover(bx, bz) : 0;
             if (c && (m !== MT.SOIL || gr < 0.25) && !(S.weather && S.weather.rain > 0.5)) {
               const gx = W.topHeight(bx + 0.2, bz) - W.topHeight(bx - 0.2, bz), gz = W.topHeight(bx, bz + 0.2) - W.topHeight(bx, bz - 0.2);
-              addMark(bx, g, bz, Math.atan2(dx, dz), -gx * 2.5, 1, -gz * 2.5, c, m === MT.SNOW ? 16 : 11, 0.34, 0.15);
+              addMark(bx, g, bz, Math.atan2(dx, dz), -gx * 2.5, 1, -gz * 2.5, c, m === MT.SNOW ? 16 : 11, 0.34, m === MT.SNOW ? 0.21 : m === MT.SAND ? 0.18 : 0.15);       // P65h: the groove of a worm sunk into deep snow / sand is wider
             }
           }
         }
