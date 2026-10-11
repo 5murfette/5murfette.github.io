@@ -431,9 +431,9 @@
     return { buf, n };
   }
   /* P38-R8: blast scorch on any ground (the sim's char channel only knows grass cells): a render-only soot map, OR-ed into the char (b) channel of the uploaded surface texture */
-  let scorchMap = null, scorchDirty = false, scorchY = null;
-  V.scorch = function (x, z, r, a, y) {
-    const n = NS, H = SS.world.H; if (!scorchMap || scorchMap.length !== n * n) { scorchMap = new Uint8Array(n * n); scorchY = new Uint8Array(n * n * 2); }
+  let scorchMap = null, scorchDirty = false, scorchY = null, freshMap = null;       // freshMap (P65k): freshly dug ground, darker and damper than the weathered surface (scyTex.b)
+  V.scorch = function (x, z, r, a, y, fresh) {
+    const n = NS, H = SS.world.H; if (!scorchMap || scorchMap.length !== n * n) { scorchMap = new Uint8Array(n * n); scorchY = new Uint8Array(n * n * 2); freshMap = new Uint8Array(n * n); }
     const yq = y == null ? 0 : Math.max(1, Math.min(255, Math.round(y * 4))), hq = Math.max(1, Math.min(255, Math.round((0.9 + 0.75 * r) * 8)));
     const ci = x / H, ck = z / H, rc = r / H, i0 = Math.max(0, Math.floor(ci - rc)), i1 = Math.min(n - 1, Math.ceil(ci + rc)), k0 = Math.max(0, Math.floor(ck - rc)), k1 = Math.min(n - 1, Math.ceil(ck + rc));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
@@ -441,6 +441,7 @@
       const rag = 0.82 + 0.18 * Math.sin(i * 12.9898 + k * 78.233) * Math.sin(k * 4.1 + i * 2.3), an = Math.atan2(k - ck, i - ci);
       const ray = 0.62 + 0.38 * Math.sin(an * 7.0 + x * 3.7) * Math.sin(an * 3.0 - z * 2.9 + 1.0) + 0.12 * Math.sin(an * 17.0 + x), rim = 1 + 0.5 * Math.exp(-Math.pow((d - 0.62) / 0.16, 2));   // blast rays and a burnt rim around the crater edge
       const f = Math.min(1, Math.min(1, (1 - d) * 1.8 * Math.max(0.35, ray)) * rim) * a * rag;
+      if (fresh > 0) { const fv = Math.round(255 * Math.min(1, fresh * Math.pow(1 - d, 0.55) * (0.85 + 0.15 * rag))); if (fv > freshMap[k * n + i]) { freshMap[k * n + i] = fv; scorchY[(k * n + i) * 2] = y == null ? 0 : yq; scorchY[(k * n + i) * 2 + 1] = y == null ? 0 : hq; } }
       const v = Math.round(255 * f); if (v > scorchMap[k * n + i]) { scorchMap[k * n + i] = v; scorchY[(k * n + i) * 2] = y == null ? 0 : yq; scorchY[(k * n + i) * 2 + 1] = y == null ? 0 : hq; }
     }
     scorchDirty = true;
@@ -449,7 +450,7 @@
     const e = scyTex.image.data; e.fill(0);
     if (!scorchMap) return;
     const d = surfTex.image.data;
-    for (let q = 0; q < scorchMap.length; q++) { const v = scorchMap[q]; if (v && v > d[q * 4 + 2]) { d[q * 4 + 2] = v; e[q * 4] = scorchY[q * 2]; e[q * 4 + 1] = scorchY[q * 2 + 1]; } }
+    for (let q = 0; q < scorchMap.length; q++) { const v = scorchMap[q], fv = freshMap[q]; if (fv) { e[q * 4 + 2] = fv; e[q * 4] = scorchY[q * 2]; e[q * 4 + 1] = scorchY[q * 2 + 1]; } if (v && v > d[q * 4 + 2]) { d[q * 4 + 2] = v; e[q * 4] = scorchY[q * 2]; e[q * 4 + 1] = scorchY[q * 2 + 1]; } }
     scyTex.needsUpdate = true;
   }
   function uploadSurface(S) {
@@ -483,7 +484,7 @@
     V.resizeWorld();
     clearActors();
     applyLook(S);
-    scorchMap = null; scorchY = null; scorchDirty = false; uploadSurface(S);
+    scorchMap = null; scorchY = null; freshMap = null; scorchDirty = false; uploadSurface(S);
     buildHeights();
     V.seaChanged(SS.world.SEA);                           // per world (dry worlds: below the floor): terrain, outer ocean, face
     SS.terrain.uniforms.uCtxSolid.value = 1;   // D3 (dry) + CX1 (all worlds): the far context is drawn solid

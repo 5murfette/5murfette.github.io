@@ -21,7 +21,7 @@
   const P = { x: new Float32Array(MAX), y: new Float32Array(MAX), z: new Float32Array(MAX), vx: new Float32Array(MAX), vy: new Float32Array(MAX), vz: new Float32Array(MAX),
     age: new Float32Array(MAX), life: new Float32Array(MAX), s0: new Float32Array(MAX), s1: new Float32Array(MAX), rot: new Float32Array(MAX), spin: new Float32Array(MAX),
     kind: new Uint8Array(MAX), seed: new Float32Array(MAX), c0: new Float32Array(MAX * 3), c1: new Float32Array(MAX * 3), a0: new Float32Array(MAX), drag: new Float32Array(MAX),
-    grav: new Float32Array(MAX), buoy: new Float32Array(MAX) };
+    grav: new Float32Array(MAX), buoy: new Float32Array(MAX), hug: new Float32Array(MAX), y0: new Float32Array(MAX), ang: new Float32Array(MAX) };   // hug: > 0 = a ground-hugging dust that follows the terrain at that height; y0: where it was born (wind shear grows with height); ang: how angular a chunk is (0 clod .. 1 broken rock)
   const KEYS = Object.keys(P);
   let n = 0, scene = null, flash = null, flashT = 9, glowT = 9, glowI = 0, shake = 0, add = null, alp = null;
   const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9;   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
@@ -73,14 +73,20 @@
         float Tk = mix(vC.x, vC.y, ph) * (0.78 + 0.32 * (1.0 - r) + 0.18 * (nz - 0.5));
         float L = pow(Tk / 2200.0, 4.0) * 1.6;
         gl_FragColor = vec4(bb(Tk) * L * edge * vAl, 1.0);
-      } else if (kind > 5.5) {                               // debris chunk: a hard-edged lumpy solid, lit from the sun
+      } else if (kind > 5.5) {                               // debris chunk: a hard-edged lumpy solid (clod) or a faceted broken rock (angular), lit from the sun
+        float angK = clamp((kind - 6.0) / 0.4, 0.0, 1.0);
         float ang = atan(vUv.y, vUv.x); float lump = 0.5 + 0.28 * nz + 0.14 * sin(ang * 3.0 + sd * 40.0) + 0.08 * sin(ang * 5.0 + sd * 17.0);
-        float a = 1.0 - smoothstep(lump, lump + 0.12, r); if (a < 0.02) discard;
+        float nS = 4.0 + floor(fract(sd * 7.3) * 3.0), sec = 6.2832 / nS, th = ang + sd * 6.28 + 20.0 * 6.2832, fi = floor(th / sec), ph2 = th - fi * sec - sec * 0.5;
+        float poly = 0.6 * cos(sec * 0.5) / cos(ph2) * (0.85 + 0.3 * fract(sin((fi + sd) * 12.9898) * 43758.5453));
+        lump = mix(lump, poly, angK);
+        float a = 1.0 - smoothstep(lump, lump + 0.12 - 0.08 * angK, r); if (a < 0.02) discard;
         vec3 nrm = normalize(vec3(vUv * 0.9, sqrt(max(0.0, 1.0 - r * r)) + 0.15));
+        float fsh = 0.72 + 0.5 * fract(sin((fi + sd) * 78.233) * 43758.5453);
+        nrm = normalize(mix(nrm, normalize(vec3(cos(th - ph2) * 0.8, sin(th - ph2) * 0.8, 0.6)), angK * 0.7));
         vec3 sunV = normalize((viewMatrix * vec4(uSun, 0.0)).xyz);
         float lam = clamp(dot(nrm, sunV) * 0.6 + 0.5, 0.0, 1.0);
         vec3 amb = mix(uGnd, uSky, 0.5 + 0.5 * vUv.y);
-        gl_FragColor = vec4(vC * (0.4 * amb + uSunC * lam * 0.55) * (0.7 + 0.6 * nz), a * vAl);
+        gl_FragColor = vec4(vC * (0.6 * amb + uSunC * lam * 0.8) * 1.15 * mix(0.7 + 0.6 * nz, fsh, angK), a * vAl);
       } else if (kind < 1.5 || kind > 4.5) {               // spark / glowing lava blob: small, round, hot
         float a = exp(-r * r * 5.0);
         float Tk = mix(vC.x, vC.y, ph);
@@ -141,7 +147,8 @@
     else n++;
     P.x[i] = x; P.y[i] = y; P.z[i] = z; P.vx[i] = o.vx || 0; P.vy[i] = o.vy || 0; P.vz[i] = o.vz || 0;
     P.age[i] = 0; P.life[i] = o.life || 1; P.s0[i] = o.s0 || 0.5; P.s1[i] = o.s1 || 1; P.rot[i] = rnd(0, 6.283); P.spin[i] = rnd(-0.6, 0.6);
-    P.kind[i] = kind; P.seed[i] = Math.random() * 100; P.a0[i] = o.a0 == null ? 1 : o.a0; P.drag[i] = o.drag || 0; P.grav[i] = o.grav || 0; P.buoy[i] = o.buoy || 0;
+    P.kind[i] = kind; P.seed[i] = Math.random() * 100; P.a0[i] = o.a0 == null ? 1 : o.a0; P.drag[i] = o.drag || 0; P.grav[i] = o.grav || 0; P.buoy[i] = o.buoy || 0; P.hug[i] = o.hug || 0; P.y0[i] = y; P.ang[i] = o.ang || 0;
+    if (o.spin != null) P.spin[i] = o.spin;
     const c0 = o.c0 || [1, 1, 1], c1 = o.c1 || c0;
     P.c0[i * 3] = c0[0]; P.c0[i * 3 + 1] = c0[1]; P.c0[i * 3 + 2] = c0[2]; P.c1[i * 3] = c1[0]; P.c1[i * 3 + 1] = c1[1]; P.c1[i * 3 + 2] = c1[2];
   }
@@ -152,7 +159,7 @@
   /* per material: dust colour (rgb 0..1), fines amount, puff size, lift of the fountain, chunk count, chunk colour, 'hardness' (sparks, fast chunks),
    * loft (how much the dirt masks the soot), cold (white powder mist), scorch (how much the ground blackens) */
   const MFX = {};
-  function mfx(id, dust, amt, puff, lift, chunks, hard, loft, cold, scorch, chunkc) { MFX[id] = { dust, amt, puff, lift, chunks, hard, loft, cold, scorch, chunk: chunkc || dust }; }
+  function mfx(id, dust, amt, puff, lift, chunks, hard, loft, cold, scorch, chunkc) { MFX[id] = { dust, amt, puff, lift, chunks, hard, loft, cold, scorch, chunk: chunkc || dust, grain: 0 }; }
   (function () {
     const M2 = SS.CFG.MAT, h = SS.fx.hex, mix = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
     const g = (id, k) => mix(h(SS.CFG.MATS[id].rgb), [0.55, 0.53, 0.5], k);      // dust: the material's colour dulled toward a dry grey
@@ -171,6 +178,7 @@
     mfx(M2.CONCRETE, [0.6, 0.59, 0.57], 1.0, 1.1, 0.9, 1.6, 0.9, 0.4, 0, 0.8, [0.55, 0.54, 0.52]);
     mfx(M2.OBSIDIAN, [0.2, 0.19, 0.2], 0.5, 0.8, 0.8, 1.8, 1.0, 0.1, 0, 0.2, [0.12, 0.11, 0.13]);
     mfx(M2.BEDROCK, g(M2.BEDROCK, 0.4), 0.7, 0.9, 0.9, 1.2, 0.9, 0.3, 0, 0.5);
+    MFX[M2.SAND].grain = 1.3; MFX[M2.SNOW].grain = 0.6; MFX[M2.ASH].grain = 0.5; MFX[M2.SOIL].grain = 0.35; MFX[M2.FOAM].grain = 0.3;
   })();
   /* the blast's ground: blend of the materials the crater removed (e.byMat), weighted by voxel count */
   function matMix(e) {
@@ -178,14 +186,40 @@
     if (!e.byMat) return o;
     let tot = 0; for (let k = 1; k < e.byMat.length; k++) tot += e.byMat[k] || 0;
     if (tot <= 0) return o;
-    o.best = tot; o.dust = [0, 0, 0]; o.chunk = [0, 0, 0]; o.amt = o.puff = o.lift = o.chunks = o.hard = o.loft = o.cold = o.scorch = 0;
+    o.best = tot; o.dust = [0, 0, 0]; o.chunk = [0, 0, 0]; o.amt = o.puff = o.lift = o.chunks = o.hard = o.loft = o.cold = o.scorch = o.grain = 0;
     for (let k = 1; k < e.byMat.length; k++) {
       const c = e.byMat[k]; if (!c) continue;
       const f = MFX[k] || MFX[SS.CFG.MAT.ROCK], w = c / tot;
       for (let q = 0; q < 3; q++) { o.dust[q] += f.dust[q] * w; o.chunk[q] += f.chunk[q] * w; }
-      o.amt += f.amt * w; o.puff += f.puff * w; o.lift += f.lift * w; o.chunks += f.chunks * w; o.hard += f.hard * w; o.loft += f.loft * w; o.cold += f.cold * w; o.scorch += f.scorch * w;
+      o.amt += f.amt * w; o.puff += f.puff * w; o.lift += f.lift * w; o.chunks += f.chunks * w; o.hard += f.hard * w; o.loft += f.loft * w; o.cold += f.cold * w; o.scorch += f.scorch * w; o.grain += f.grain * w;
     }
     return o;
+  }
+  /* the blast's surface frame, read from the carved lattice: the free-space direction the crater opens to (outward normal n, tilt from the vertical), probed with
+   * 26 rays; flat ground gives up, a slope leans downhill, a wall gives the horizontal (the blast vents sideways). t1, t2 span the plane across n. */
+  const DIRS = (function () { const a = []; for (let z = -1; z <= 1; z++) for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) if (x || y || z) { const l = Math.hypot(x, y, z); a.push([x / l, y / l, z / l]); } return a; })();
+  const FR = { nx: 0, ny: 1, nz: 0, t1x: 1, t1y: 0, t1z: 0, t2x: 0, t2y: 0, t2z: 1, tilt: 0, hx: 1, hz: 0 };
+  function frame(e, D) {
+    const W = SS.world; FR.nx = 0; FR.ny = 1; FR.nz = 0; FR.tilt = 0;
+    if (W && W.raycast) {
+      D = Math.min(8, D); let sx = 0, sy = 0, sz = 0;
+      for (let q = 0; q < DIRS.length; q++) { const d = DIRS[q], r = W.raycast(e.x, e.y, e.z, d[0], d[1], d[2], D), f = r < 0 ? 1 : r / D; sx += d[0] * f; sy += d[1] * f; sz += d[2] * f; }
+      const l = Math.hypot(sx, sy, sz);
+      if (l > 1.2) { FR.nx = sx / l; FR.ny = sy / l; FR.nz = sz / l; }
+    }
+    FR.tilt = Math.acos(Math.max(-1, Math.min(1, FR.ny)));
+    const rx = Math.abs(FR.ny) < 0.9 ? 0 : 1, ry = rx ? 0 : 1;                       // t1 = n x ref, t2 = n x t1
+    let ax = FR.ny * 0 - FR.nz * ry, ay = FR.nz * rx - FR.nx * 0, az = FR.nx * ry - FR.ny * rx; const al = Math.hypot(ax, ay, az) || 1; ax /= al; ay /= al; az /= al;
+    FR.t1x = ax; FR.t1y = ay; FR.t1z = az; FR.t2x = FR.ny * az - FR.nz * ay; FR.t2y = FR.nz * ax - FR.nx * az; FR.t2z = FR.nx * ay - FR.ny * ax;
+    const hl = Math.hypot(FR.nx, FR.nz); FR.hx = hl > 0.05 ? FR.nx / hl : 1; FR.hz = hl > 0.05 ? FR.nz / hl : 0;
+    return FR;
+  }
+  const dirv = [0, 0, 0];
+  /* a unit direction inside the ejecta cone around the frame's normal, polar angle phi0..phi1 from it (denser toward phi0) */
+  function cone(phi0, phi1) {
+    const ph = phi0 + (phi1 - phi0) * Math.pow(Math.random(), 0.85), a = rnd(0, 6.2832), sp = Math.sin(ph), c = Math.cos(ph), u = Math.cos(a) * sp, w = Math.sin(a) * sp;
+    dirv[0] = FR.nx * c + FR.t1x * u + FR.t2x * w; dirv[1] = FR.ny * c + FR.t1y * u + FR.t2y * w; dirv[2] = FR.nz * c + FR.t1z * u + FR.t2z * w;
+    return dirv;
   }
   FX.explosion = function (e, camDist) {
     const W3 = Math.cbrt(e.W || Math.pow((e.R || 3) / 3, 3)), Rf = R_FB * W3 * (W3 > 1.8 ? 1 + 0.2 * Math.min(2, W3 - 1.8) : 1) * (W3 > 2.2 ? 1.3 : 1);   // (a big one reads bigger; P61: the holy grenade bigger still)
@@ -218,10 +252,13 @@
       }
     }
     const hit = mf.best > 0, cave = env.under ? 1.35 : 1, wetK = 1 - 0.35 * rain, Rr = Math.min(7, 0.9 + 0.62 * e.R);
+    const fr = frame(e, Rr * 2 + 1.5), ventK = hit ? Math.max(0, Math.min(1, (fr.tilt - 0.5) / 0.7)) : 0, nx = fr.nx, ny = fr.ny, nz = fr.nz;      // P65k: which way the ground opens (up on the flat, downhill on a slope, sideways at a wall)
     // P58 the flash: a hard white core with rays (a few frames), then a wider orange bloom, and the shock front: a thin ring (camera-facing) and, over ground, a ring lying on it
     spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.07 + 0.025 * W3, s0: Rf * 1.7, s1: Rf * (3.2 + 0.6 * W3), c0: big ? [5, 4.6, 3.8] : [4.2, 3.2, 1.7], c1: [2.0, 1.0, 0.4], a0: 1 });
     spawn(K_FLASH, e.x, e.y + 0.4, e.z, { life: 0.2 + 0.05 * W3, s0: Rf * 2.2, s1: Rf * 4.2, c0: [1.1, 0.5, 0.16], c1: [0.4, 0.14, 0.04], a0: 0.55 });
     if (W3 > 0.6) spawn(K_RING, e.x, e.y + 0.4, e.z, { life: 0.3 + 0.06 * W3, s0: Rf * 1.4, s1: Rf * (5.5 + 1.5 * W3), c0: [0.8, 0.72, 0.6], c1: [0.5, 0.52, 0.6], a0: 0.3 + 0.08 * Math.min(2, W3) });
+    // shock condensation (Wilson cloud): the rarefaction behind a big blast wave cools humid air below its dew point, a white dome that blinks on for a few tenths of a second
+    if (W3 > 1.3 && !env.under) spawn(K_STEAM, e.x, e.y + Rf * 1.1, e.z, { life: 0.35 + 0.1 * W3, s0: Rf * 2.2, s1: Rf * (4.2 + 0.8 * W3), c0: [0.96, 0.97, 1], c1: [0.9, 0.93, 0.97], a0: Math.min(0.45, 0.2 * W3) * (0.6 + 0.6 * rain) });
     // P61: the holy grenade (the biggest blast, W3 > 2.2) reads big at the game camera: a wide golden-white wash, two slow shock rings
     // (camera-facing and on the ground), a second pulse and a crown of sparks
     const huge = /holy/.test(kd) || W3 > 2.2;
@@ -249,7 +286,7 @@
     const nSmoke = cnt(14 * (0.8 + 0.2 * wetK)), colH = Rf * (1.5 + 0.6 * W3) * (isBarrel || isCar ? 1.3 : 1);
     for (let i = 0; i < nSmoke; i++) {
       const d = sphereDir(), sp = rnd(0.5, 2.5) * W3;
-      spawn(K_SMOKE, e.x + d[0] * Rf * 0.4, e.y + 0.2 + Math.abs(d[1]) * Rf * 0.3, e.z + d[2] * Rf * 0.4, { vx: d[0] * sp + wx * 0.2, vy: rnd(1.5, 3.5) * W3 * wetK, vz: d[2] * sp + wz * 0.2, drag: 1.2 + rain * 0.6, buoy: 0.8 * wetK,
+      spawn(K_SMOKE, e.x + d[0] * Rf * 0.4, e.y + 0.2 + Math.abs(d[1]) * Rf * 0.3, e.z + d[2] * Rf * 0.4, { vx: d[0] * sp + wx * 0.2 + nx * ventK * 2.2 * W3, vy: rnd(1.5, 3.5) * W3 * wetK * (1 - 0.45 * ventK), vz: d[2] * sp + wz * 0.2 + nz * ventK * 2.2 * W3, drag: 1.2 + rain * 0.6, buoy: 0.8 * wetK,
         life: rnd(2.8, 5.0) * (1 - 0.25 * rain) * cave, s0: Rf * 0.5, s1: Rf * rnd(2.2, 3.4), c0: sc0, c1: sc1, a0: 0.8 });
     }
     const nStem = cnt(4 + 3 * W3);
@@ -273,31 +310,48 @@
     if (hit) {
       const col = mf.dust, nd = cnt(Math.min(22, 4 + mf.best / 30) * mf.amt * (1 - 0.5 * rain));
       for (let i = 0; i < nd; i++) {
-        const a = rnd(0, 6.283), sp = rnd(1.5, 5) * W3;
-        spawn(K_DUST, e.x + Math.cos(a) * 0.4, e.y + 0.1, e.z + Math.sin(a) * 0.4, { vx: Math.cos(a) * sp + wx * 0.15, vy: rnd(2, 6) * W3 * mf.lift, vz: Math.sin(a) * sp + wz * 0.15, drag: 2.2, grav: 2.5,
+        const d = cone(0.05, 1.2), sp = rnd(2.5, 7) * W3 * mf.lift;
+        spawn(K_DUST, e.x + nx * 0.2 + d[0] * 0.3, e.y + ny * 0.2 + d[1] * 0.3, e.z + nz * 0.2 + d[2] * 0.3, { vx: d[0] * sp + wx * 0.15, vy: d[1] * sp, vz: d[2] * sp + wz * 0.15, drag: 2.2, grav: 2.5,
           life: rnd(1.5, 2.8) * cave, s0: 0.5 * W3, s1: rnd(1.5, 2.6) * W3 * mf.puff, c0: col, c1: col.map(v => v * 1.1 + 0.05), a0: 0.62 + 0.2 * mf.amt });
       }
       const nr = cnt(Math.min(30, 10 + 12 * W3) * Math.min(1.4, mf.amt) * (1 - 0.4 * rain));      // the skirt: low dust rolling out along the ground, fast at first
       for (let i = 0; i < nr; i++) {
-        const a = i / nr * 6.283 + rnd(-0.2, 0.2), v = rnd(5, 11) * Math.sqrt(W3) * mf.puff;
-        spawn(K_DUST, e.x + Math.cos(a) * Rr * 0.3, e.y + 0.18, e.z + Math.sin(a) * Rr * 0.3, { vx: Math.cos(a) * v, vy: rnd(0.15, 0.7), vz: Math.sin(a) * v, drag: 2.6,
+        const a = i / nr * 6.283 + rnd(-0.2, 0.2), v = rnd(5, 11) * Math.sqrt(W3) * mf.puff; let dx = Math.cos(a), dz = Math.sin(a);
+        const into = dx * fr.hx + dz * fr.hz; if (ventK > 0 && into < 0) { dx -= 2 * into * fr.hx * ventK; dz -= 2 * into * fr.hz * ventK; }                    // at a wall the skirt cannot go into the rock: it is turned back out along it
+        spawn(K_DUST, e.x + dx * Rr * 0.3, e.y + 0.18, e.z + dz * Rr * 0.3, { vx: dx * v, vy: 0, vz: dz * v, hug: rnd(0.12, 0.3), drag: 2.6,
           life: rnd(1.0, 1.9), s0: 0.4 * W3, s1: rnd(1.1, 1.9) * W3 * mf.puff, c0: col.map(v2 => v2 * 1.05), c1: col.map(v2 => v2 * 1.12 + 0.06), a0: 0.5 * Math.min(1.2, mf.amt) });
       }
       const wood = isBarrel || /crate/.test(kd), mcol = isBarrel || isCar ? [0.28, 0.27, 0.27] : wood ? [0.5, 0.33, 0.18] : null;
-      const ncz = FX.env.noChunks ? 0 : cnt(Math.min(34, (4 + mf.best / 22) * mf.chunks * (0.7 + 0.5 * W3)));
+      const ncz = FX.env.noChunks ? 0 : cnt(Math.min(44, (5 + mf.best / 18) * mf.chunks * (0.7 + 0.5 * W3)));
       for (let i = 0; i < ncz; i++) {
-        const a = rnd(0, 6.283), sp = rnd(3.5, 11) * Math.sqrt(W3) * (0.7 + 0.3 * hard), up = rnd(0.55, 1.25), sh = rnd(0.5, 1.05), bigC = i % 6 === 0 ? 2.0 : 1, base = mcol && i % 3 === 0 ? mcol : mf.chunk, c = base.map(v2 => Math.min(1, v2 * sh));
-        const vx = Math.cos(a) * sp * (1.1 - 0.5 * up), vy = sp * up + 2, vz = Math.sin(a) * sp * (1.1 - 0.5 * up), sz = rnd(0.12, 0.26) * (0.7 + 0.6 * W3) * bigC;
-        spawn(K_CHUNK, e.x + Math.cos(a) * 0.3, e.y + 0.1, e.z + Math.sin(a) * 0.3, { vx, vy, vz, grav: 17, drag: 0.1, life: rnd(1.4, 2.4), s0: sz, s1: sz, c0: c, a0: 1 });
-        if (bigC > 1 && mf.amt > 0.3 && !isMine) spawn(K_DUST, e.x + Math.cos(a) * 0.3, e.y + 0.1, e.z + Math.sin(a) * 0.3, { vx: vx * 0.9, vy: vy * 0.9, vz: vz * 0.9, grav: 11, drag: 0.9, life: rnd(0.9, 1.5), s0: 0.15 * W3, s1: 0.55 * W3 * mf.puff, c0: col, c1: col.map(v2 => v2 * 1.1 + 0.05), a0: 0.4 });   // the dust a big clod drags behind it
+        const d = cone(0.12, 1.1), sp = rnd(3.5, 11) * Math.sqrt(W3) * (0.7 + 0.3 * hard) + 2, sh = rnd(0.5, 1.05), bigC = i % 6 === 0 ? 2.0 : 1, base = mcol && i % 3 === 0 ? mcol : mf.chunk, c = base.map(v2 => Math.min(1, v2 * sh));
+        const vx = d[0] * sp, vy = d[1] * sp, vz = d[2] * sp, sz = rnd(0.16, 0.34) * (0.7 + 0.6 * W3) * bigC, angK = Math.min(1, hard * 1.15) * (0.7 + 0.3 * Math.random());      // rock / concrete break into faceted shards that tumble, soil into rounded clods
+        spawn(K_CHUNK, e.x + nx * 0.3 + d[0] * 0.2, e.y + ny * 0.3 + d[1] * 0.2, e.z + nz * 0.3 + d[2] * 0.2, { vx, vy, vz, grav: 17, drag: 0.1, life: rnd(1.4, 2.4), s0: sz, s1: sz, c0: c, a0: 1, ang: angK, spin: rnd(-1, 1) * (1.5 + 7 * hard) });
+        if (bigC > 1 && mf.amt > 0.3 && !isMine) spawn(K_DUST, e.x + nx * 0.3, e.y + ny * 0.3, e.z + nz * 0.3, { vx: vx * 0.9, vy: vy * 0.9, vz: vz * 0.9, grav: 11, drag: 0.9, life: rnd(0.9, 1.5), s0: 0.15 * W3, s1: 0.55 * W3 * mf.puff, c0: col, c1: col.map(v2 => v2 * 1.1 + 0.05), a0: 0.4 });   // the dust a big clod drags behind it
       }
       const npb = FX.env.noChunks ? 0 : cnt((12 + 10 * W3) * (0.5 + 0.5 * mf.chunks) * (isMine ? 1.6 : 1));          // pebbles and crumbs thrown far and high: they come down as a rain of dirt
       for (let i = 0; i < npb; i++) {
-        const a = rnd(0, 6.283), sp = rnd(2, 9) * Math.sqrt(W3), sh = rnd(0.55, 1.1), c = (mcol && i % 5 === 0 ? mcol : mf.chunk).map(v2 => Math.min(1, v2 * sh)), sz = rnd(0.05, 0.1);
-        spawn(K_CHUNK, e.x + Math.cos(a) * 0.4, e.y + 0.2, e.z + Math.sin(a) * 0.4, { vx: Math.cos(a) * sp, vy: rnd(5, 14) * Math.sqrt(W3) + 2, vz: Math.sin(a) * sp, grav: 15, drag: 0.15, life: rnd(1.6, 2.8), s0: sz, s1: sz, c0: c, a0: 1 });
+        const d = cone(0.05, 0.75), sp = rnd(5, 14) * Math.sqrt(W3) + 3, sh = rnd(0.55, 1.1), c = (mcol && i % 5 === 0 ? mcol : mf.chunk).map(v2 => Math.min(1, v2 * sh)), sz = rnd(0.07, 0.13);
+        spawn(K_CHUNK, e.x + nx * 0.4, e.y + ny * 0.4, e.z + nz * 0.4, { vx: d[0] * sp, vy: d[1] * sp, vz: d[2] * sp, grav: 15, drag: 0.15, life: rnd(1.6, 2.8), s0: sz, s1: sz, c0: c, a0: 1, ang: Math.min(1, hard * 1.1), spin: rnd(-1, 1) * 10 });
       }
       if (mf.cold > 0.3) for (let i = 0; i < cnt(6 + 6 * W3); i++) { const d = sphereDir(); spawn(K_STEAM, e.x, e.y + 0.2, e.z, { vx: d[0] * 2, vy: Math.abs(d[1]) * 3 + 1, vz: d[2] * 2, drag: 1.6, life: rnd(0.8, 1.6), s0: 0.2 * W3, s1: rnd(0.8, 1.4) * W3, a0: 0.45 * mf.cold, c0: [0.96, 0.98, 1] }); }   // powder / frost mist
       if (mf.cold > 0.3 && mf.hard > 0.3) for (let i = 0; i < cnt(10 + 8 * W3); i++) { const a = rnd(0, 6.283), sp = rnd(2, 7) * Math.sqrt(W3); spawn(K_SPARK, e.x, e.y + 0.2, e.z, { vx: Math.cos(a) * sp, vy: rnd(3, 9), vz: Math.sin(a) * sp, life: rnd(0.4, 0.9), s0: 0.07, s1: 0.04, c0: [5200, 4200, 0], grav: 12, drag: 0.4 }); }   // ice glints
+    }
+    if (hit && !env.under) {
+      // P65k: a blast against a wall / steep face vents out along the opening: a tongue of fire and dust jetting out of the notch (the column still rises, but leans out)
+      if (ventK > 0.05) {
+        const nv = cnt(7 + 9 * W3 * ventK), col = mf.dust;
+        for (let i = 0; i < nv; i++) { const d = cone(0, 0.55), v = rnd(4, 11) * Math.sqrt(W3) * (0.5 + 0.5 * ventK);
+          spawn(K_DUST, e.x + nx * 0.3, e.y + ny * 0.3, e.z + nz * 0.3, { vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, drag: 2.4, grav: 1.2, life: rnd(1.2, 2.2), s0: 0.35 * W3, s1: rnd(1.2, 2.0) * W3 * mf.puff, c0: col, c1: col.map(v2 => v2 * 1.1 + 0.05), a0: 0.55 * ventK + 0.15 });
+          if (i % 2 === 0) spawn(K_FIRE, e.x + nx * 0.3, e.y + ny * 0.3, e.z + nz * 0.3, { vx: d[0] * v * 0.8, vy: d[1] * v * 0.8, vz: d[2] * v * 0.8, drag: 6, life: rnd(0.18, 0.35), s0: Rf * 0.3, s1: Rf * 0.75, c0: [rnd(2000, 2600), 1000, 0], a0: 0.85 * ventK }); }
+      }
+      // granular spray: sand throws a fine bright curtain of grains, snow a powder puff with soft clumps, ash a dark feathery cloud
+      const gr = mf.grain || 0;
+      if (gr > 0.05 && !FX.env.noChunks) {
+        const ng = cnt(Math.min(40, 14 * gr * (0.6 + 0.6 * W3))), gc = mf.chunk;
+        for (let i = 0; i < ng; i++) { const d = cone(0.08, 1.0), sp = rnd(4, 12) * Math.sqrt(W3), sh = rnd(0.85, 1.12), sz = rnd(0.03, 0.06);
+          spawn(K_CHUNK, e.x + nx * 0.3, e.y + ny * 0.3, e.z + nz * 0.3, { vx: d[0] * sp, vy: d[1] * sp, vz: d[2] * sp, grav: 13, drag: 0.6, life: rnd(1.0, 1.8), s0: sz, s1: sz, c0: gc.map(v2 => Math.min(1, v2 * sh)), a0: 0.9, spin: rnd(-4, 4) }); }
+      }
     }
     // burning bits (the casing's hot fragments are drawn by render/shrapnel.js): sparks; hard ground (rock, concrete, steel) and metal props strike more
     const metal = isBarrel || isCar ? 1 : 0, nsp = cnt(10 * (0.6 + 0.9 * Math.max(hard, metal) * Math.max(hard, metal)) * (1 + 0.5 * W3));
@@ -311,7 +365,7 @@
     // camera shake: the charge (W^1/3) over the distance to the camera's focus (camDist = metres), none when far away
     const d = Math.max(0, camDist), amp = 0.62 * W3 / (1 + (d / (5 * W3 + 2)) * (d / (5 * W3 + 2)));
     shake = Math.min(huge ? 1.6 : 1.2, shake + (amp < 0.02 ? 0 : amp * (huge ? 1.5 : 1)));
-    if (SS.view && SS.view.scorch && hit && !env.under) SS.view.scorch(e.x, e.z, 0.6 + 0.55 * e.R, Math.min(1, 0.55 + 0.25 * W3) * mf.scorch * (1 - 0.7 * rain), e.y);
+    if (SS.view && SS.view.scorch && hit && !env.under) SS.view.scorch(e.x, e.z, 0.6 + 0.55 * e.R, Math.min(1, 0.55 + 0.25 * W3) * mf.scorch * (1 - 0.7 * rain), e.y, Math.min(1, 0.35 + 0.7 * mf.loft) * (1 - 0.5 * rain));
   };
   FX.dust = function (x, y, z, cnt, size, col) {
     const c = hex(col == null ? 0xb8a080 : col);
@@ -451,6 +505,25 @@
     for (let i = 0; i < p - 1; i++) spawn(K_STEAM, x + rnd(-sp, sp), y + 0.05, z + rnd(-sp, sp), { vy: rnd(3, 5), life: rnd(0.5, 0.9), s0: 0.2, s1: 0.9, a0: 0.6, c0: [0.97, 0.97, 0.98], drag: 2.2 });
   };
 
+  /* a chunk meets the real terrain (solid lattice, not only the column tops: it bounces off a wall, rolls down a slope, lies still where the ground is flat enough) */
+  const cn = { x: 0, y: 1, z: 0 };
+  function chunkHit(i, px, py, pz, dt) {
+    const W = SS.world, x = P.x[i], y = P.y[i], z = P.z[i], r = P.s0[i] * 0.4;
+    if (W.sample(x, y - r, z) <= 0) return;
+    let hx = px, hy = py, hz = pz;
+    if (W.sample(px, py - r, pz) > 0) { hx = x; hz = z; hy = W.top_at(x, z) + r + 0.01; }                      // born inside the ground: stand on the column top
+    W.normal(x, y - r, z, cn);
+    P.x[i] = hx; P.y[i] = hy; P.z[i] = hz;
+    const vx = P.vx[i], vy = P.vy[i], vz = P.vz[i], vn = vx * cn.x + vy * cn.y + vz * cn.z;
+    if (vn >= 0) return;
+    const sp = -vn, e = 0.36, mu = 0.62;
+    const tx = vx - vn * cn.x, ty = vy - vn * cn.y, tz = vz - vn * cn.z;
+    P.vx[i] = tx * mu + cn.x * sp * e; P.vy[i] = ty * mu + cn.y * sp * e; P.vz[i] = tz * mu + cn.z * sp * e; P.spin[i] *= 0.6;
+    if (sp < 2.0 || P.age[i] > 1.8) {
+      if (cn.y > 0.62) { const gy = W.top_at(P.x[i], P.z[i]) + r; if (Math.abs(P.y[i] - gy) < 0.3) P.y[i] = gy; P.vx[i] = P.vy[i] = P.vz[i] = 0; P.grav[i] = 0; P.spin[i] = 0; if (P.life[i] - P.age[i] > 0.9) P.life[i] = P.age[i] + 0.9; }    // flat enough: lies still and fades
+      else { P.vx[i] *= 0.9; P.vz[i] *= 0.9; P.vy[i] = Math.min(P.vy[i], 0.5); }                                                                   // too steep: keeps sliding down
+    }
+  }
   FX.shake = () => shake;
   FX.addShake = v => { shake = Math.min(1.2, shake + v); };           // P38 A5: small kicks (a bat hit, a bazooka shot)
   let nAdd = 0, nAlp = 0;
@@ -466,17 +539,19 @@
         continue;
       }
       const dr = Math.exp(-P.drag[i] * dt), kk = P.kind[i];
-      if (kk >= K_SMOKE && kk <= K_STEAM && P.age[i] > 0.25) { const wk = (1 - Math.exp(-0.4 * dt)) * (kk === K_SMOKE ? 1 : 0.7); P.vx[i] += (FX.env.wx * 0.9 - P.vx[i]) * wk; P.vz[i] += (FX.env.wz * 0.9 - P.vz[i]) * wk; }   // the wind carries smoke, dust and steam along
+      if (kk >= K_SMOKE && kk <= K_STEAM && P.age[i] > 0.25) {           // the wind carries smoke, dust and steam along; it blows harder with height (shear: the column bends over, the cap runs ahead)
+        const sh = 0.55 + 0.9 * Math.min(1.2, Math.max(0, P.y[i] - P.y0[i]) / 7), wk = (1 - Math.exp(-0.4 * dt)) * (kk === K_SMOKE ? 1 : 0.7);
+        P.vx[i] += (FX.env.wx * 0.9 * sh - P.vx[i]) * wk; P.vz[i] += (FX.env.wz * 0.9 * sh - P.vz[i]) * wk; }
+      const px = P.x[i], py = P.y[i], pz = P.z[i];
       P.vx[i] *= dr; P.vz[i] *= dr; P.vy[i] = P.vy[i] * dr + (P.buoy[i] - P.grav[i]) * dt;
       P.x[i] += P.vx[i] * dt; P.y[i] += P.vy[i] * dt; P.z[i] += P.vz[i] * dt; P.rot[i] += P.spin[i] * dt;
-      if (P.kind[i] === K_CHUNK && P.vy[i] < 0 && SS.world) {            // a chunk lands: bounces twice, then lies still and fades
-        const gy = SS.world.top_at(P.x[i], P.z[i]) + P.s0[i] * 0.5;
-        if (P.y[i] < gy) {
-          P.y[i] = gy; const sp = Math.abs(P.vy[i]);
-          if (sp < 2.2 || P.age[i] > 1.6) { P.vx[i] = P.vy[i] = P.vz[i] = 0; P.grav[i] = 0; P.spin[i] = 0; if (P.life[i] - P.age[i] > 0.9) P.life[i] = P.age[i] + 0.9; }
-          else { P.vy[i] = sp * 0.38; P.vx[i] *= 0.55; P.vz[i] *= 0.55; }
-        }
+      if (P.hug[i] > 0 && SS.world && SS.world.top_at) {                 // a dust skirt hugs the ground: climbs the rim, pours down a slope (a dense dust cloud is a gravity current), thickens as it ages
+        const W = SS.world, x = P.x[i], z = P.z[i], gx = (W.top_at(x + 0.6, z) - W.top_at(x - 0.6, z)) / 1.2, gz = (W.top_at(x, z + 0.6) - W.top_at(x, z - 0.6)) / 1.2;
+        P.vx[i] -= gx * 5 * dt; P.vz[i] -= gz * 5 * dt;
+        const f = P.age[i] / P.life[i], ty = W.top_at(x, z) + P.hug[i] * (1 + 2.2 * f);
+        P.y[i] += (ty - P.y[i]) * Math.min(1, 12 * dt); P.vy[i] = 0;
       }
+      if (kk === K_CHUNK && SS.world && SS.world.sample && P.grav[i] > 0) chunkHit(i, px, py, pz, dt);
       i++;
     }
     nAdd = 0; nAlp = 0;
@@ -485,7 +560,7 @@
       const f = P.age[k] / P.life[k], sz = P.s0[k] + (P.s1[k] - P.s0[k]) * (1 - (1 - f) * (1 - f));
       const ip = s.iPos.array, ia = s.iA.array, ic = s.iC.array;
       ip[q * 4] = P.x[k]; ip[q * 4 + 1] = P.y[k]; ip[q * 4 + 2] = P.z[k]; ip[q * 4 + 3] = sz;
-      ia[q * 4] = P.rot[k]; ia[q * 4 + 1] = f; ia[q * 4 + 2] = P.kind[k]; ia[q * 4 + 3] = P.seed[k];
+      ia[q * 4] = P.rot[k]; ia[q * 4 + 1] = f; ia[q * 4 + 2] = P.kind[k] + (P.kind[k] === K_CHUNK ? 0.4 * P.ang[k] : 0); ia[q * 4 + 3] = P.seed[k];
       if (hot && P.kind[k] >= K_FLASH) for (let c = 0; c < 3; c++) ic[q * 3 + c] = P.c0[k * 3 + c] + (P.c1[k * 3 + c] - P.c0[k * 3 + c]) * f;
       else if (hot) { ic[q * 3] = P.c0[k * 3]; ic[q * 3 + 1] = P.c0[k * 3 + 1]; ic[q * 3 + 2] = 0; }
       else for (let c = 0; c < 3; c++) ic[q * 3 + c] = P.c0[k * 3 + c] + (P.c1[k * 3 + c] - P.c0[k * 3 + c]) * f;

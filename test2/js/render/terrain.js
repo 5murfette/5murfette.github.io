@@ -339,8 +339,10 @@
       rough = mix(rough, 0.95, ashC); RA = mix(RA, uRelief[10], ashC); GD = mix(GD, uGlint[10], ashC);
       // char / scorch
       // P65b: blast soot is gated to the height it was made at (+- its radius): a wall keeps no stripe down the whole column
-      vec2 scy = texture(tScY, (vT.xz * 2.0 + 0.5) / uNL).rg * 255.0;
+      vec4 scy4 = texture(tScY, (vT.xz * 2.0 + 0.5) / uNL); vec2 scy = scy4.rg * 255.0;
       float scGate = scy.y > 0.0 ? 1.0 - smoothstep(0.55, 1.0, abs(vW.y - scy.x * 0.25) / (scy.y * 0.125)) : 1.0;
+      // P65k: freshly dug ground (the crater and its rim): moister, darker, redder subsoil under the weathered surface, drying out with distance from the pit
+      col *= mix(vec3(1.0), vec3(0.6, 0.53, 0.47), scy4.b * scGate * (0.8 + 0.4 * nb));
       col = mix(col, vec3(0.045, 0.04, 0.038) + col * 0.12, sf.b * scGate * (0.65 + 0.35 * nb));
       // overhangs / cave ceilings: darker, cooler
       col *= mix(1.0, 0.6, (1.0 - smoothstep(-0.8, -0.2, up)));
