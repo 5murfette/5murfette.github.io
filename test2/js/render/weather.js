@@ -4,7 +4,7 @@
  *     mean wind and the fall speed (wind changes never make the field jump); hidden below the top-height map
  *     (overhangs shelter), near / box-edge / fog fades; thin streaks keep >= 1.2 px and lose alpha instead.
  *   - rain splashes on the ground behind slice zero; rain rings on water (render/water.js `weather`).
- *   - whirlwinds: spiral particle columns per S.wind.whirls entry (dust / snow / leaves / ash by place and biome).
+ *   - whirlwinds: render/whirl.js (funnel, terrain-draped skirt and gust ring, spiral strokes).
  *   - lightning: a branched ribbon bolt per 'lightning' event (midpoint displacement seeded by the event), additive,
  *     2-4 return strokes in ~0.4 s; flash = sky uFlash + hemisphere boost + the fill light turned toward the bolt;
  *     thunder ('thunder' event) = WebAudio brown noise through low-pass filters, delayed by distance / 343 m/s,
@@ -19,8 +19,8 @@
   const WX = SS.weatherView = {};
   let N1 = 193;                          // lattice columns per side (P38: per map)
   const COVER_MAX = 0.4;
-  const RAIN_N = 20000, FLAKE_N = 24000, SPLASH_N = 1600, WHIRL_N = 520, WHIRL_MAX = 4;
-  let scene, Q, P = null, rain, flake, splash, whirl, coverTex, coverData, coverRef = null, coverVer = -1, coverUploads = 0;
+  const RAIN_N = 34000, FLAKE_N = 30000, SPLASH_N = 1600;
+  let scene, Q, P = null, rain, flake, splash, coverTex, coverData, coverRef = null, coverVer = -1, coverUploads = 0;
   const base = { sun: 3, hemi: 1.15, fill: 0.45, fog: 0.006, motes: 0.55, storm: false, fillPos: new T.Vector3(-30, 20, -40), fillCol: new T.Color(0x9cc0ff),
     haze: new T.Color(0xf1d9c0), skyH: new T.Color(0x9aa0a8), ov: -1, sunEl: 0.6 };
   const fogC = new T.Color(), FLASH_C = new T.Color(0.75, 0.8, 1.0);
@@ -110,9 +110,9 @@
         tHeight: { value: null }, uC: { value: new T.Vector3() }, uB: { value: new T.Vector3(56, 34, 56) },
         uOff: { value: new T.Vector3() }, uVel: { value: new T.Vector3(0, -8, 0) }, uTime: { value: 0 },
         uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uInsp: { value: 0 },
-        uSize: { value: round ? 0.05 : 0.016 }, uExpo: { value: round ? 0.022 : 0.05 }, uSway: { value: round ? 0.35 : 0 },
+        uSize: { value: round ? 0.05 : 0.024 }, uExpo: { value: round ? 0.022 : 0.065 }, uSway: { value: round ? 0.35 : 0 },
         uFallVar: { value: round ? 0.35 : 0.15 }, uPix: { value: 0.001 }, uFogD: { value: 0.006 }, uFlick: { value: 0 },
-        uRound: { value: round ? 1 : 0 }, uCol: { value: new T.Color(0.7, 0.74, 0.8) }, uFlash: { value: 0 }, uAlpha: { value: round ? 0.85 : 0.6 }
+        uRound: { value: round ? 1 : 0 }, uCol: { value: new T.Color(0.7, 0.74, 0.8) }, uFlash: { value: 0 }, uAlpha: { value: round ? 0.85 : 0.8 }
       }
     });
   }
@@ -153,94 +153,7 @@
       ${OUT}
     }`;
 
-  /* ---------- whirlwind columns: WHIRL_N particles per whirl (attribute wi), spiralling up and wrapping ----------
-   * W (user 2026-10-07): dust / snow / ash particles are STROKES, not blobs: a ribbon strip (SEG segments) laid along
-   * the particle's own helical path behind it (the arc it just flew: angle ang - dth·u, lower by the rise per angle),
-   * length = (5 + 4 r / rc) x the old sprite size (>= 5x, growing with the radius from the axis), width 0.75 x the old
-   * size, alpha x 1.8 (same column density as the blobs);
-   * bright head, fading tail. Its alpha random-walks SLOWLY (two incommensurate sines, 0.08-0.3 rad/s per particle)
-   * between the old alpha (most opaque) and 0. Leaves stay small tumbling cards. */
-  const WSEG = 8;
-  const WH_V = /* glsl */`
-    attribute vec4 seed; attribute float wi;
-    uniform sampler2D tHeight;
-    uniform vec4 uWA[4], uWB[4], uWC[4], uWD[4];   // A: x, z, rc, env; B: height, sign, vmax, rise m/s; C: dust rgb, leaf share; D: lift (m), skirt (0..1)
-    uniform float uTime, uPix, uFogD, uLit;
-    varying vec2 vUv; varying float vA; varying vec3 vCol; varying float vLeaf;
-    ${HASH}
-    void main(){
-      int i = int(wi + 0.5);
-      vec4 A = uWA[i], B = uWB[i], Cc = uWC[i], Dd = uWD[i];
-      vLeaf = step(1.0 - Cc.w, seed.w);
-      if (A.w < 0.01) { hide(); vA = 0.0; vUv = vec2(0.0); vCol = vec3(0.0); return; }
-      float hgt = max(B.x, 2.0);
-      float rise = B.w / hgt * (0.6 + 0.8 * seed.y);
-      float f = fract(seed.x + uTime * rise);
-      float skirt = step(seed.z, 0.28) * (1.0 - vLeaf);           // a low, wide dust skirt at the base
-      float rr = A.z * mix(0.45 + 1.0 * f, 1.0 + 1.6 * seed.y, skirt) * (0.75 + 0.5 * h1(seed.w * 71.0));
-      float fh = mix(f, f * 0.1, skirt);
-      float om = B.z / max(A.z * (0.8 + 0.6 * seed.z), 0.3) * B.y * 0.8;
-      float ang = seed.y * 6.2832 + om * uTime;
-      // user 2026-10-08: the ground skirt (the 'plate') only while the funnel touches down; lifted (touch-down at birth,
-      // lift-off near the end) the column flies alone, its base Dd.x m above the ground
-      float g0 = topAt(A.xy) + 0.1 + Dd.x * (1.0 - skirt);
-      vec3 p = vec3(A.x + cos(ang) * rr, g0 + fh * hgt, A.y + sin(ang) * rr);
-      vec3 toC = cameraPosition - p; float d = length(toC);
-      float s = vLeaf > 0.5 ? 0.08 : mix(0.35 + 0.7 * f, 0.6, skirt);
-      s = max(s, uPix * d * 1.5);
-      float a = A.w * smoothstep(0.0, 0.1, f) * (1.0 - smoothstep(0.55, 1.0, f)) * (vLeaf > 0.5 ? 1.0 : mix(0.11, 0.07 * Dd.y, skirt));
-      a *= exp(-uFogD * uFogD * d * d) * smoothstep(0.5, 2.0, d);
-      vCol = (vLeaf > 0.5 ? mix(vec3(0.2, 0.24, 0.07), vec3(0.42, 0.27, 0.09), h1(seed.y * 9.1)) : Cc.rgb * (0.85 + 0.3 * seed.z)) * uLit;
-      if (vLeaf > 0.5) {
-        // leaves: a small card tumbling at the particle (the strip's u folds into the card's y)
-        vec3 R = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]), U = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
-        vec2 c = vec2(position.x, position.y - 0.5);
-        float ra = seed.w * 40.0 + uTime * (3.0 + 5.0 * seed.y);
-        c = mat2(cos(ra), sin(ra), -sin(ra), cos(ra)) * c;
-        vUv = vec2(position.x * 2.0, position.y * 2.0 - 1.0); vA = a;
-        gl_Position = projectionMatrix * viewMatrix * vec4(p + (R * c.x + U * c.y) * s, 1.0);
-        return;
-      }
-      // slow random alpha walk (between the old alpha and 0)
-      float wk = 0.5 + 0.5 * sin(uTime * (0.08 + 0.12 * seed.z) + seed.w * 31.0) * sin(uTime * (0.11 + 0.19 * seed.y) + seed.x * 17.0 + 1.3);
-      a *= smoothstep(0.0, 1.0, wk) * 1.8;          // a thin stroke covers far fewer pixels than the old blob: same column density
-      // the stroke: the helix behind the particle (u = 0 head .. 1 tail)
-      float u = position.y, sg = om < 0.0 ? -1.0 : 1.0;
-      float Ls = s * (5.0 + 4.0 * clamp(rr / max(A.z, 0.2), 0.0, 3.0));
-      float dth = min(Ls / max(rr, 0.15), 2.6);
-      float au = ang - sg * dth * u;
-      float yu = p.y - min(rise * hgt / max(abs(om), 0.2), 3.0) * dth * u * (1.0 - skirt);
-      vec3 q = vec3(A.x + cos(au) * rr, max(yu, g0), A.y + sin(au) * rr);
-      vec3 tg = normalize(vec3(-sin(au), 0.0, cos(au)) * sg * rr + vec3(0.0, rise * hgt / max(abs(om), 0.2), 0.0) * (1.0 - skirt));
-      vec3 sd = side(tg, normalize(cameraPosition - q));
-      float wdt = s * 0.75 * (1.0 - 0.5 * u);
-      vUv = vec2(position.x * 2.0, u); vA = a;
-      gl_Position = projectionMatrix * viewMatrix * vec4(q + sd * position.x * wdt, 1.0);
-    }`;
-  const WH_F = /* glsl */`
-    varying vec2 vUv; varying float vA; varying vec3 vCol; varying float vLeaf;
-    void main(){
-      float a = vLeaf > 0.5 ? (1.0 - smoothstep(0.8, 1.0, length(vec2(vUv.x, vUv.y * 2.2))))
-                            : exp(-vUv.x * vUv.x * 2.5) * smoothstep(0.0, 0.15, vUv.y + 0.05) * pow(1.0 - vUv.y, 1.3);   // stroke: head .. fading tail
-      a *= vA;
-      if (a < 0.003) discard;
-      gl_FragColor = vec4(vCol, a);
-      ${OUT}
-    }`;
-  // strip geometry: (WSEG + 1) x 2 vertices, position.x = -0.5 / 0.5 across, position.y = u along
-  function stripGeo(n, extra) {
-    const g = new T.InstancedBufferGeometry(), P = [], I = [];
-    for (let k = 0; k <= WSEG; k++) P.push(-0.5, k / WSEG, 0, 0.5, k / WSEG, 0);
-    for (let k = 0; k < WSEG; k++) { const v = k * 2; I.push(v, v + 1, v + 3, v, v + 3, v + 2); }
-    g.setAttribute('position', new T.BufferAttribute(new Float32Array(P), 3)); g.setIndex(I);
-    const sd = new Float32Array(n * 4); for (let i = 0; i < sd.length; i++) sd[i] = Math.random();
-    g.setAttribute('seed', new T.InstancedBufferAttribute(sd, 4));
-    if (extra) extra(g, n);
-    g.instanceCount = 0;
-    return g;
-  }
-  const DUST = { temperate: [0.55, 0.47, 0.36], alpine: [0.7, 0.7, 0.72], canyon: [0.78, 0.52, 0.36], desert: [0.86, 0.7, 0.5], volcanic: [0.24, 0.22, 0.21] };
-  const LEAVES = { temperate: 0.3, canyon: 0.08 };
+  /* whirlwinds: render/whirl.js (SS.whirlView, P65a) */
 
   /* ---------- lightning bolt: camera-facing ribbon per segment, two layers (core, glow), additive ---------- */
   const BOLT_V = /* glsl */`
@@ -379,7 +292,7 @@
   }
 
   /* ---------- public hooks (view.js) ---------- */
-  let txRef = null, camRef = null, nBolts = 0, wn = 0, fogMul = 1, oc = 0;
+  let txRef = null, camRef = null, nBolts = 0, fogMul = 1, oc = 0;
   WX.init = function (sc, textures, quality, parts) {
     scene = sc; txRef = textures; Q = quality; P = parts || null;
     const q = Q.particles || 1;
@@ -394,15 +307,7 @@
         uPix: { value: 0.001 }, uCol: { value: new T.Color(0.8, 0.84, 0.9) }, uAlpha: { value: 0.55 }
       }
     }), 6);
-    wn = Math.round(WHIRL_N * q);
-    const v4 = () => [0, 1, 2, 3].map(() => new T.Vector4());
-    whirl = mesh(stripGeo(wn * WHIRL_MAX, (g, n) => {
-      const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = Math.floor(i / wn);
-      g.setAttribute('wi', new T.InstancedBufferAttribute(a, 1));
-    }), new T.ShaderMaterial({
-      vertexShader: WH_V, fragmentShader: WH_F, transparent: true, depthWrite: false, side: T.DoubleSide,
-      uniforms: { tHeight: { value: null }, uWA: { value: v4() }, uWB: { value: v4() }, uWC: { value: v4() }, uWD: { value: v4() }, uTime: { value: 0 }, uPix: { value: 0.001 }, uFogD: { value: 0.006 }, uLit: { value: 1 } }
-    }), 6);
+    if (SS.whirlView) SS.whirlView.init(scene, Q, P);
     N1 = SS.world.NX;
     coverData = new Uint8Array(N1 * N1 * 4);
     coverTex = new T.DataTexture(coverData, N1, N1, T.RGBAFormat);
@@ -504,28 +409,8 @@
       su.uCol.value.setRGB(0.8 * lum, 0.84 * lum, 0.9 * lum);
     }
 
-    // whirlwind columns
-    const wl = (wind && wind.whirls) || [], wu = whirl.material.uniforms;
-    let nW = 0;
-    for (let i = 0; i < WHIRL_MAX; i++) {
-      const w = wl[i], A = wu.uWA.value[i], B = wu.uWB.value[i], Cc = wu.uWC.value[i];
-      if (!w || !(w.env > 0.01)) { A.w = 0; continue; }
-      nW = i + 1;
-      A.set(w.x, w.z, w.rc, w.env); B.set(w.h, w.sign, w.vmax, w.up);
-      // touch-down over the first 12 % of its life, lift-off over the last 30 %: base height and the skirt's share
-      const kl = w.life > 0 ? w.age / w.life : 0.5, sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-      const lift = (1 - sm(0, 0.12, kl)) * w.h * 0.45 + sm(0.7, 1, kl) * w.h * 0.7;
-      wu.uWD.value[i].set(lift, 1 - sm(0.05, 0.6, lift), 0, 0);
-      const ci = Math.min(N1 - 1, Math.max(0, Math.round(w.x * 2))), ck = Math.min(N1 - 1, Math.max(0, Math.round(w.z * 2)));
-      const snowy = we && we.snowD && we.snowD[ck * N1 + ci] > 0.02;
-      const dc = snowy ? [0.92, 0.94, 0.98] : DUST[biome] || DUST.temperate;
-      Cc.set(dc[0], dc[1], dc[2], snowy ? 0 : LEAVES[biome] || 0);
-    }
-    whirl.visible = nW > 0; whirl.geometry.instanceCount = nW * wn;
-    if (nW) {
-      if (!wu.tHeight.value && P) wu.tHeight.value = P.heightTex;
-      wu.uTime.value = time; wu.uPix.value = pix; wu.uFogD.value = fogD; wu.uLit.value = lum;
-    }
+    // whirlwind columns, funnels and skirts (render/whirl.js)
+    if (SS.whirlView) SS.whirlView.frame(S, wind, we, biome, { time, pix, fogD, lum });
 
     // lightning bolts and the flash
     flash = 0;
@@ -577,10 +462,10 @@
   };
   WX.stats = () => ({
     rain: rain.visible ? rain.geometry.instanceCount : 0, flakes: flake.visible ? flake.geometry.instanceCount : 0,
-    splash: splash.visible ? splash.geometry.instanceCount : 0, whirl: whirl.visible ? whirl.geometry.instanceCount : 0,
+    splash: splash.visible ? splash.geometry.instanceCount : 0, whirl: SS.whirlView ? SS.whirlView.stats().strokes : 0,
     bolts: bolts.length, boltsTotal: nBolts, flash: +flash.toFixed(3), coverUploads, overcast: +oc.toFixed(3), fogMul: +fogMul.toFixed(3),
     audio: !!ac, ms: +cpuMs.toFixed(3)
   });
-  WX.meshes = () => [rain, flake, splash, whirl];
+  WX.meshes = () => [rain, flake, splash].concat(SS.whirlView ? SS.whirlView.meshes() : []);
   WX.cover = () => coverTex;
 })(window.SS = window.SS || {});

@@ -187,7 +187,19 @@
       CHAN: [1.5, 5],       // valley depth (-e, m) where channelling starts / is full
       CHAN_MIX: 0.8,        // how far the flow turns toward the valley axis
       /* whirlwinds (dust / snow / leaf devils): Lamb-Oseen vortex v(r) = G/(2 pi r) (1 - exp(-r^2/rc^2)) + core updraft */
-      WHIRL: { MAX: 4, RATE: 0.08, NEAR: 30, MIN_WIND: 2, RC: [0.7, 1.6], VMAX: [4, 9], UP: [2, 5], H: [6, 18], LIFE: [6, 15] }
+      WHIRL: {
+        MAX: 4, RATE: 0.08, NEAR: 30, MIN_WIND: 2, RC: [0.7, 1.6], VMAX: [4, 9], UP: [2, 5], H: [6, 18],
+        /* P65a life cycle (s): FORMING T_FORM, MATURE LIFE (SHORT_P of them the short LIFE_SHORT: an abrupt collapse), DECAYING T_DECAY */
+        T_FORM: [3, 5.5], LIFE: [8, 22], LIFE_SHORT: [3, 6], SHORT_P: 0.25, T_DECAY: [2.5, 4.5], FLUCT: 0.25,
+        /* track: wind(2 m) x TRACK_K + downslope SLOPE_K (m/s per unit slope) + wander (m/s); STEEP = the rise per metre it cannot climb, BLOCK_T s blocked = collapse */
+        TRACK_K: 0.6, SLOPE_K: 0.9, WANDER: 0.5, STEEP: 1.4, BLOCK_T: 1.2,
+        /* lean (m per m of height) per m/s of wind shear, max; snake amplitude (x rc) */
+        LEAN_K: 0.04, LEAN_MAX: 0.4, SNAKE: [0.3, 0.9],
+        /* disband gust: peak = BURST_K x vmax, ring speed BURST_V m/s, e-fold BURST_T s, whirl removed BURST_END s after it starts */
+        BURST_K: 0.8, BURST_V: 6, BURST_T: 1.3, BURST_END: 4,
+        /* respawn: RESP s after death, RESP_NEAR of them 5..16 m (RESP_R) from the old one; FLAT_W = weight of plain flat ground (not desert) */
+        RESP: [1.5, 5], RESP_NEAR: 0.55, RESP_R: [5, 16], FLAT_W: 0.12
+      }
     },
     /* Precipitation and surface state (sim/weather.js, 5c). Game-time rates (visual cover, no collision). */
     PRECIP: {
@@ -212,7 +224,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'r11-perkkeys',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p65a-whirl',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
@@ -577,7 +589,7 @@
    * section is dropped). The numbers are well above what the longest CPU matches / all weapon shots reached (measured max in brackets) so no rule changes: proj
    * [136], flames [45], pending [?], devices [1], holes [1], strikes [1], bullets [1], zaps [1], moais [1], fx [8], planeBodies [56], bodies [49], events [166].
    * Caps that already existed live in their module tables (BODY.MAX, SHRAPNEL.MAX, SPATTER.MAX, WP crate CR.MAX / MAX_TOOL, ICE.FLOE_MAX, ffield / gadgets MAX, alien MAX_*). */
-  SS.CFG.LIMITS = { WORMS: 16, PROJ: 512, PENDING: 256, FLAMES: 512, DEVICES: 64, HOLES: 16, STRIKES: 16, BULLETS: 64, ZAPS: 16, MOAIS: 16, FX: 256, PLANE_BODIES: 512, EVENTS: 4096, LOG: 7, LAB_METEORS: 8 };
+  SS.CFG.LIMITS = { WORMS: 16, PROJ: 512, PENDING: 256, FLAMES: 512, DEVICES: 64, HOLES: 16, STRIKES: 16, BULLETS: 64, ZAPS: 16, MOAIS: 16, FX: 256, PLANE_BODIES: 512, EVENTS: 4096, LOG: 7, LAB_METEORS: 8, WHIRLS: 4, WHIRL_RESP: 4 };
   /* P42 Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic */
   SS.CFG.LAB = {
     FLAG: { BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32, PERKS: 64, STREAK: 128, LONGSHOT: 256, FATIGUE: 512 }, ALL: 1023,

@@ -101,6 +101,7 @@
     }
     if (SS.gadgets && S.dogs) SS.gadgets.hash(S, mix);                         // P37 W4: dogs, sentries, claymores, ...
     if (SS.ffield && S.ffields) SS.ffield.hash(S, mix);
+    if (SS.weather && S.weather && SS.weather.hash) SS.weather.hash(S, mix);   // P65a: wind, whirlwind life cycle, respawn queue
     if (SS.skills && S.skRng) SS.skills.hash(S, mix);
     if (SS.lab && S.lab) SS.lab.hash(S, mix);                                  // P42: only with a Lab flag on (baseline hashes unchanged)
     // (review P36: the fluid / ice state too, so a divergence there shows before it moves a worm; a sum per field,

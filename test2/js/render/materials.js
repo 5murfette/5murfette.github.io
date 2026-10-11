@@ -120,13 +120,13 @@
     const m = new T.MeshStandardMaterial({ roughness: 0.85, side: T.DoubleSide });
     const U = m.userData.uniforms = {
       uTime: { value: 0 }, tNoise: { value: tx.noise }, tSurf: { value: null }, uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHalf: { value: C.HALF }, uBack: { value: C.HALF },
-      uWind: { value: new T.Vector3(1, 0, 0) }, uWhirl: { value: [new T.Vector4(), new T.Vector4(), new T.Vector4(), new T.Vector4()] },
+      uWind: { value: new T.Vector3(1, 0, 0) }, uWhirl: { value: [new T.Vector4(), new T.Vector4(), new T.Vector4(), new T.Vector4()] }, uWhirlB: { value: [new T.Vector4(), new T.Vector4(), new T.Vector4(), new T.Vector4()] },
       uBase: { value: new T.Color(0.09, 0.22, 0.05) }, uTip: { value: new T.Color(0.55, 0.78, 0.25) }, uDryTip: { value: new T.Color(0.78, 0.66, 0.36) }, uSnow: { value: 0 }, uAcid: { value: Array.from({ length: 8 }, () => new T.Vector4(0, 0, 0, 0)) }
     };
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
       sh.vertexShader = /* glsl */`
-        uniform float uTime, uHalf, uBack, uSnow; uniform sampler2D tNoise, tSurf; uniform vec3 uO, uN, uWind; uniform vec4 uWhirl[4]; uniform vec4 uAcid[8];
+        uniform float uTime, uHalf, uBack, uSnow; uniform sampler2D tNoise, tSurf; uniform vec3 uO, uN, uWind; uniform vec4 uWhirl[4], uWhirlB[4]; uniform vec4 uAcid[8];
         varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid; varying float vGust; varying float vPatch;
       ` + sh.vertexShader
         .replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
@@ -139,10 +139,12 @@
           float wn = texture2D(tNoise, ip.xz * 0.03 - uWind.xz * uTime * 0.012).a;
           vec2 w = uWind.xz * (0.35 + 0.9 * wn) * 0.09 + vec2(sin(uTime * 2.1 + ip.x * 0.7 + ip.z * 0.5), cos(uTime * 1.7 + ip.z * 0.6)) * 0.04 * (0.3 + length(uWind.xz) * 0.1);
           for (int i = 0; i < 4; i++) {
-            vec4 wh = uWhirl[i]; if (wh.w <= 0.0) continue;
+            vec4 wh = uWhirl[i]; if (abs(wh.w) <= 0.001 && uWhirlB[i].y <= 0.0) continue;
             vec2 r = ip.xz - wh.xy; float d = length(r) + 1e-3;
             float f = wh.w * exp(-d * d / (wh.z * wh.z * 2.5));
-            w += vec2(-r.y, r.x) / d * f * 0.12;
+            w += vec2(-r.y, r.x) / d * f * 0.12 - r / d * f * 0.05;           // P65a: the swirl and the inflow (blades lean toward the axis)
+            vec4 wb = uWhirlB[i];                                              // the outgoing gust ring of a disbanding whirl (ring radius, amplitude)
+            if (wb.y > 0.0) { float g = exp(-pow((d - wb.x) / wb.z, 2.0)) * wb.y; w += r / d * g * 0.1; }
           }
           // P61: travelling gust waves along the wind direction (a slow broad front modulated by a noise), the blades lean and flutter in them
           float wsp = length(uWind.xz), wk = clamp(wsp * 0.22, 0.0, 1.6);

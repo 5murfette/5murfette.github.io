@@ -21,6 +21,8 @@
  *   flat desert) within NEAR m of the section origin. Lamb-Oseen tangential speed + radial inflow near the ground +
  *   core updraft up to its height h; grows 1.5 s, decays over its last 2 s, drifts with the 2 m wind.
  *   S.wind.whirls[] {x, z, r (shader radius), s (signed peak speed x envelope), rc, G, up, h, sign, age, life}.
+ *   P65a: each whirl has a life cycle FORMING -> MATURE -> DECAYING (outward gust ring) -> DEAD, tracks the terrain
+ *   (wind + downslope + wander, blocked by walls), leans / snakes, and respawns (see the block comment above makeWhirl).
  * - Precipitation (5c, C.PRECIP): rain / snow / ash move toward the kind's targets (rT, sT, aT) at RAMP; ground
  *   wetness `wet` rises with rain and dries in its absence (faster in wind) — veg spreads like rain on soaked fuel,
  *   tree ignition thresholds scale by (1 + TREE_WET wet). Per-column cover depth grids `snowD` / `ashD` (193², m),
@@ -109,7 +111,6 @@
     const ux = M.cos(w.dir), uz = M.sin(w.dir), samp = (x, z) => {        // ground at a point (nearest cell)
       const i = M.clamp(Math.floor(x / GC), 0, GN - 1), k = M.clamp(Math.floor(z / GC), 0, GN - 1); return hg[k * GN + i];
     };
-    const desert = S.biome === 'desert' && S.weather.kind === 'clear';
     let nc = 0;
     for (let k = 0; k < GN; k++) for (let i = 0; i < GN; i++) {
       const c = k * GN + i, x = (i + 0.5) * GC, z = (k + 0.5) * GC, g = hg[c], e = g - mn[c];
@@ -130,8 +131,8 @@
       f.fz[c] = dz * sp * (1 - lee) - uz * K.LEE_REV * lee;
       f.sp[c] = sp; f.crest[c] = lee > 0 ? crest : g;
       // whirl candidates: cliff feet in the lee, canyon floors, flat hot desert (above the sea)
-      const wgt = M.max(M.max(lee > 0.3 ? 1 : 0, chan > 0.4 ? 1 : 0), desert && gl < 0.08 && g > wd.SEA + 0.5 ? 0.5 : 0);
-      if (wgt > 0 && g > wd.SEA + 0.3) { f.cand[nc] = c; f.candW[nc] = wgt; nc++; }
+      const mask = (lee > 0.3 ? 1 : 0) | (chan > 0.4 ? 2 : 0) | (gl < 0.08 && g > wd.SEA + 0.5 ? 4 : 0);
+      if (mask > 0 && g > wd.SEA + 0.3) { f.cand[nc] = c; f.candW[nc] = mask; nc++; }
     }
     f.nCand = nc; f.ver = wd.version - (S.verBase || 0); f.dir = w.dir; f.t = S.time; f.builds++;   // (no timing here: the sim never reads the wall clock; profile from the platform)
   }
@@ -140,58 +141,181 @@
     return !f || f.dir !== S.wind.dir || (f.ver !== W().version - (S.verBase || 0) && S.time - f.t >= 0.5);
   }
 
-  /* ---------- whirlwinds (5b) ---------- */
+  /* ---------- whirlwinds (5b, P65a life cycle) ----------
+   * A dust devil forms over hot, flat or sheltered ground, grows, wanders downslope and downwind, and dies:
+   *   FORMING (T_FORM s): radius, height and strength grow from 0 (smoothstep), the track starts slowly.
+   *   MATURE (life s): strength fluctuates (three sines), it follows wind(2 m) x TRACK_K + slope + a random walk,
+   *     leans with the wind shear (lean m per m of height, LEAN_MAX) and snakes (sa, a sine along the axis); a rise
+   *     steeper than STEEP, water or the map edge for BLOCK_T s ends it.
+   *   DECAYING (T_DECAY s): rotation falls (1 - d)^1.5, the column shrinks and widens (it spreads out) and an outward
+   *     gust ring (bst, expanding at BURST_V, e-folding BURST_T) blows radially over the ground in all directions.
+   *   DEAD: removed once the ring has faded; with probability RESP_NEAR a new one is queued a few metres away
+   *     (RESP s later), else at a random plausible spot (lee wall / cliff foot, canyon floor, hot flat sand).
+   * All randomness: the weather RNG, a fixed number of draws per event; the per-step motion uses only the whirl's own
+   * phases (sines of its age). C: struct Whirl { f32 x, z, gy, rc, rc0, vmax, G, h, h0, up, sign, age, t, life, tf, td, grow, env, str,
+   *   lx, lz, px, pz, sa, vx, vz, bst, bt, blk, ph, ph2, ph3, r, s; u8 st; }; Whirl whirls[C.LIMITS.WHIRLS]; Respawn resp[WHIRL_RESP]. */
+  const FORMING = 0, MATURE = 1, DECAYING = 2;
+  const flatCand = (S, mask) => {                          // spawn weight of a candidate by its kind bits (1 lee, 2 canyon floor, 4 flat)
+    const we = S.weather, hot = S.biome === 'desert' && we.kind === 'clear';
+    let wgt = 0; if (mask & 3) wgt = 1;
+    if ((mask & 4) && wgt < 1) { const v = hot ? 0.5 : (we.kind === 'clear' || we.kind === 'cloudy') && we.wet < 0.3 ? K.WHIRL.FLAT_W : 0; if (v > wgt) wgt = v; }
+    return wgt;
+  };
   function makeWhirl(S, x, z, o) {
     const r = S.weather.rng, WH = K.WHIRL, rr = (a) => M.rng_range(r, a[0], a[1]);
     const rc = o && o.rc || rr(WH.RC), vmax = o && o.vmax || rr(WH.VMAX), sign = o && o.sign || (M.rng_next(r) < 0.5 ? -1 : 1);
-    const wl = { x, z, rc, vmax, G: vmax * 2 * Math.PI * rc / 0.6382, sign, up: o && o.up || rr(WH.UP), h: o && o.h || rr(WH.H),
-      life: o && o.life || rr(WH.LIFE), age: o && o.age || 0, ph: M.rng_range(r, 0, 6.2832), env: 0, r: rc * 1.6, s: 0 };
-    S.wind.whirls.push(wl);
+    const up = o && o.up || rr(WH.UP), h = o && o.h || rr(WH.H), shortLife = M.rng_next(r) < WH.SHORT_P;
+    const life = o && o.life || (shortLife ? rr(WH.LIFE_SHORT) : rr(WH.LIFE)), tf = rr(WH.T_FORM), td = rr(WH.T_DECAY);
+    const ph = M.rng_range(r, 0, 6.2832), ph2 = M.rng_range(r, 0, 6.2832), ph3 = M.rng_range(r, 0, 6.2832), sa = rr(WH.SNAKE) * rc;
+    const gy = SS.world.topHeight(x, z), full = !!(o && o.age != null);
+    const wl = { x, z, gy, rc: rc, rc0: rc, vmax, G: vmax * 2 * Math.PI * rc / 0.6382, sign, up, h, h0: h, life, tf, td,
+      st: full ? MATURE : FORMING, t: full ? o.age : 0, age: full ? o.age + tf : 0, grow: full ? 1 : 0, env: 0, str: 1, lx: 0, lz: 0, px: 1, pz: 0, sa,
+      vx: 0, vz: 0, bst: 0, bt: 0, blk: 0, ph, ph2, ph3, r: rc * 1.6, s: 0 };
+    if (full) { wl.env = 1; wl.s = sign * vmax; }
+    SS.sim.pool_push(S.wind.whirls, C.LIMITS.WHIRLS, wl);
     return wl;
   }
+  /* pick a candidate cell (weighted by kind); near = {x, z, r0, r1} prefers an annulus about the old whirl (when it has
+   * candidates), else any cell within NEAR of the section origin. Always three draws (pick, jitter x, jitter z) once there is a candidate. */
+  function pickSpot(S, near) {
+    const f = S.wind.field, we = S.weather; if (!f || !f.nCand) return null;
+    const WH = K.WHIRL, O = S.O || { x: W().MX, z: W().MZ };
+    const inR = (c, ann) => {
+      const x = (c % f.GN + 0.5) * GC, z = ((c / f.GN | 0) + 0.5) * GC;
+      if (M.len2(x - O.x, z - O.z) >= WH.NEAR || x < 4 || z < 4 || x > W().NX * W().H - 4 || z > W().NZ * W().H - 4) return false;
+      if (!ann) return true;
+      const d = M.len2(x - ann.x, z - ann.z); return d >= ann.r0 && d <= ann.r1;
+    };
+    const total = ann => { let t = 0; for (let q = 0; q < f.nCand; q++) if (inR(f.cand[q], ann)) t += flatCand(S, f.candW[q]); return t; };
+    let ann = near, tot = near ? total(near) : 0;
+    if (tot <= 0) { ann = null; tot = total(null); }
+    if (tot <= 0) return null;
+    let pick = M.rng_next(we.rng) * tot; const jx = M.rng_next(we.rng) - 0.5, jz = M.rng_next(we.rng) - 0.5;
+    let c0 = -1;
+    for (let q = 0; q < f.nCand; q++) {
+      if (!inR(f.cand[q], ann)) continue;
+      const wg = flatCand(S, f.candW[q]); if (wg <= 0) continue;
+      c0 = f.cand[q]; pick -= wg; if (pick < 0) break;
+    }
+    const x = (c0 % f.GN + 0.5) * GC, z = ((c0 / f.GN | 0) + 0.5) * GC, wd = W();
+    const jxx = x + jx * GC * 0.9, jzz = z + jz * GC * 0.9;
+    return wd.topHeight(jxx, jzz) > wd.SEA + 0.3 ? { x: jxx, z: jzz } : { x, z };
+  }
+  function canSpawn(S) {
+    const w = S.wind, WH = K.WHIRL, hot = S.biome === 'desert' && S.weather.kind === 'clear';
+    return w.whirls.length < WH.MAX && (w.speed >= WH.MIN_WIND || hot);
+  }
+  const noise3 = (t, a, b, c) => 0.55 * M.sin(0.9 * t + a) + 0.3 * M.sin(2.1 * t + b) + 0.15 * M.sin(3.7 * t + c);
+  const tmpW = { x: 0, y: 0, z: 0 };
+  function startDecay(S, wl) {
+    if (wl.st === DECAYING) return;
+    wl.st = DECAYING; wl.t = 0; wl.bt = 0; wl.bst = K.WHIRL.BURST_K * wl.vmax * M.clamp(wl.env, 0.2, 1.1);
+  }
   function stepWhirls(S, dt) {
-    if (W().under) { S.wind.whirls.length = 0; return; }              // U: no whirlwinds in the caves
+    if (W().under) { S.wind.whirls.length = 0; S.weather.resp.length = 0; return; }   // U: no whirlwinds in the caves
     const w = S.wind, we = S.weather, WH = K.WHIRL, wd = W();
     // one draw per second of sim time: deterministic spawn cadence
     we.whirlAcc += dt;
     while (we.whirlAcc >= 1) {
       we.whirlAcc -= 1;
       const u = M.rng_next(we.rng);
-      const hot = S.biome === 'desert' && we.kind === 'clear';
-      if (w.whirls.length >= WH.MAX || (w.speed < WH.MIN_WIND && !hot) || u >= WH.RATE) continue;
-      const f = w.field; if (!f || !f.nCand) continue;
-      let tot = 0; const O = S.O || { x: W().MX, z: W().MZ };
-      for (let q = 0; q < f.nCand; q++) { const c = f.cand[q], x = (c % f.GN + 0.5) * GC, z = ((c / f.GN | 0) + 0.5) * GC; if (M.len2(x - O.x, z - O.z) < WH.NEAR) tot += f.candW[q]; }
-      if (tot <= 0) continue;
-      let pick = M.rng_next(we.rng) * tot;
-      for (let q = 0; q < f.nCand; q++) {
-        const c = f.cand[q], x = (c % f.GN + 0.5) * GC, z = ((c / f.GN | 0) + 0.5) * GC;
-        if (M.len2(x - O.x, z - O.z) >= WH.NEAR) continue;
-        pick -= f.candW[q]; if (pick < 0) { makeWhirl(S, x, z, null); break; }
-      }
+      if (!canSpawn(S) || u >= WH.RATE) continue;
+      const sp = pickSpot(S, null);
+      if (sp) makeWhirl(S, sp.x, sp.z, null);
     }
+    // respawns queued by dead whirls
+    for (let q = 0; q < we.resp.length; q++) {
+      const rs = we.resp[q]; if (S.time < rs.t) continue;
+      we.resp.splice(q, 1); q--;
+      if (!canSpawn(S)) continue;
+      const sp = pickSpot(S, rs.near ? { x: rs.x, z: rs.z, r0: WH.RESP_R[0], r1: WH.RESP_R[1] } : null);
+      if (sp) makeWhirl(S, sp.x, sp.z, null);
+    }
+    const X1 = wd.NX * wd.H - 1, Z1 = wd.NZ * wd.H - 1;
     for (let q = w.whirls.length - 1; q >= 0; q--) {
       const wl = w.whirls[q];
-      wl.age += dt;
-      if (wl.age >= wl.life || wl.x < 1 || wl.z < 1 || wl.x > wd.NX * wd.H - 1 || wl.z > wd.NZ * wd.H - 1) { w.whirls.splice(q, 1); continue; }
-      // drift with the wind near the ground (~2 m: 0.6 of the 10 m wind) + a slow wander
-      const wa = 0.4 * M.sin(wl.age * 0.9 + wl.ph);
-      wl.x += (w.mean.x * 0.6 + M.cos(wl.ph + wl.age * 0.5) * wa) * dt;
-      wl.z += (w.mean.z * 0.6 + M.sin(wl.ph + wl.age * 0.5) * wa) * dt;
-      wl.env = M.min(M.min(1, wl.age / 1.5), (wl.life - wl.age) / 2);
+      wl.age += dt; wl.t += dt;
+            if (wl.st === FORMING) {
+        wl.grow = sstep(0, wl.tf, wl.t); wl.env = wl.grow;
+        if (wl.t >= wl.tf) { wl.st = MATURE; wl.t = 0; }
+      } else if (wl.st === MATURE) {
+        wl.grow = 1; wl.str = M.clamp(1 + WH.FLUCT * noise3(wl.age, wl.ph, wl.ph2, wl.ph3), 0.4, 1.3);
+        wl.env = wl.str;
+        if (wl.t >= wl.life) startDecay(S, wl);
+        else if (w.speed < WH.MIN_WIND * 0.5 && !(S.biome === 'desert' && we.kind === 'clear') && wl.t > 2) startDecay(S, wl);
+      } else {
+        const d = M.min(1, wl.t / wl.td);
+        wl.env = wl.str * M.pow(1 - d, 1.5); wl.grow = 1 - 0.35 * d;
+        wl.bt += dt; wl.bst *= M.exp(-dt / WH.BURST_T);
+        if (wl.t >= wl.td && wl.bt >= WH.BURST_END) {
+          w.whirls.splice(q, 1);
+          if (M.rng_next(we.rng) < WH.RESP_NEAR) we.resp.push({ t: S.time + M.rng_range(we.rng, WH.RESP[0], WH.RESP[1]), x: wl.x, z: wl.z, near: 1 });
+          else we.resp.push({ t: S.time + M.rng_range(we.rng, WH.RESP[0], WH.RESP[1]) * 1.6, x: wl.x, z: wl.z, near: 0 });
+          if (we.resp.length > C.LIMITS.WHIRL_RESP) we.resp.shift();
+          continue;
+        }
+      }
+      // size: grows while forming, spreads and shrinks when decaying
+      const dk = wl.st === DECAYING ? M.min(1, wl.t / wl.td) : 0;
+      wl.rc = wl.rc0 * (0.55 + 0.45 * wl.grow) * (1 + 0.9 * dk);
+      wl.h = wl.h0 * (0.3 + 0.7 * wl.grow);
+      // track: the 2 m wind x TRACK_K, downslope drift, a random walk; slows while forming / decaying
+      windBase(S, wl.x, wl.gy + 2, wl.z, tmpW);
+      const gx = (wd.topHeight(wl.x + 1, wl.z) - wd.topHeight(wl.x - 1, wl.z)) * 0.5, gz = (wd.topHeight(wl.x, wl.z + 1) - wd.topHeight(wl.x, wl.z - 1)) * 0.5;
+      const wa = WH.WANDER * M.sin(wl.age * 0.9 + wl.ph), th = wl.ph + wl.age * 0.5 + 1.2 * M.sin(wl.age * 0.23 + wl.ph2);
+      const mv = wl.st === MATURE ? 1 : wl.st === FORMING ? 0.3 + 0.7 * wl.grow : 0.5 * (1 - dk) + 0.2;
+      const tx = (tmpW.x * WH.TRACK_K + M.cos(th) * wa - gx * WH.SLOPE_K) * mv, tz = (tmpW.z * WH.TRACK_K + M.sin(th) * wa - gz * WH.SLOPE_K) * mv;
+      wl.vx += (tx - wl.vx) * M.min(1, dt * 0.9); wl.vz += (tz - wl.vz) * M.min(1, dt * 0.9);
+      // a wall 1 m ahead (rise > STEEP per metre): slide along it or stop; BLOCK_T s of that ends the whirl
+      const sp = M.len2(wl.vx, wl.vz);
+      if (sp > 0.05) {
+        const ax = wl.vx / sp, az = wl.vz / sp;
+        if (wd.topHeight(wl.x + ax, wl.z + az) - wl.gy > WH.STEEP) {
+          const sx = wl.vx < 0 ? -1 : 1, sz = wl.vz < 0 ? -1 : 1, riseX = wd.topHeight(wl.x + sx, wl.z) - wl.gy, riseZ = wd.topHeight(wl.x, wl.z + sz) - wl.gy;
+          if (riseX <= WH.STEEP && riseX <= riseZ) wl.vz *= 0.3; else if (riseZ <= WH.STEEP) wl.vx *= 0.3; else { wl.vx = 0; wl.vz = 0; }
+          wl.blk += dt;
+        } else wl.blk = M.max(0, wl.blk - dt * 0.5);
+      } else wl.blk = M.max(0, wl.blk - dt * 0.5);
+      const nx = wl.x + wl.vx * dt, nz = wl.z + wl.vz * dt, gn = wd.topHeight(nx, nz);
+      wl.x = nx; wl.z = nz; wl.gy = gn;
+      if (wl.st !== DECAYING && (wl.blk > WH.BLOCK_T || gn < wd.SEA + 0.15 || wl.x < 2 || wl.z < 2 || wl.x > X1 - 1 || wl.z > Z1 - 1)) startDecay(S, wl);
+      // lean with the wind shear (upper 10 m wind - 2 m wind), clamped; the snake runs perpendicular to the lean
+      const sh = WH.LEAN_K * M.clamp(w.speed * w.gust, 0, 12) * (wl.st === FORMING ? wl.grow : 1) * (1 - 0.5 * dk);
+      let ux = w.mean.x, uz = w.mean.z; const ul = M.len2(ux, uz);
+      if (ul > 1e-3) { ux /= ul; uz /= ul; wl.lx = ux * M.min(WH.LEAN_MAX, sh); wl.lz = uz * M.min(WH.LEAN_MAX, sh); wl.px = -uz; wl.pz = ux; }
+      else { wl.lx = wl.lz = 0; wl.px = M.cos(wl.ph3); wl.pz = M.sin(wl.ph3); }
       wl.s = wl.sign * wl.vmax * wl.env;
+      wl.r = wl.rc * 1.6;
     }
   }
+  /* the axis of a whirl at height hh above its base: the lean (m per m) + the snake (a sine along the column) */
+  WE.whirl_axis = function (wl, hh, out) {
+    const k = M.min(1, hh / M.max(wl.h, 1)), sn = wl.sa * k * M.sin(hh * 0.45 - wl.age * 1.4 + wl.ph2);
+    out.x = wl.x + wl.lx * hh + wl.px * sn; out.z = wl.z + wl.lz * hh + wl.pz * sn;
+    return out;
+  };
+  const tmpA = { x: 0, z: 0 };
   /* whirl velocity added at a point (h = height above the local ground) */
   function whirlAt(w, x, y, z, h, out) {
     for (let q = 0; q < w.whirls.length; q++) {
-      const wl = w.whirls[q], dx = x - wl.x, dz = z - wl.z, r2 = dx * dx + dz * dz, rc2 = wl.rc * wl.rc;
-      if (r2 > 36 * rc2 || h > wl.h) continue;
+      const wl = w.whirls[q];
+      // the outgoing gust ring of a dying whirl: radial, near the ground, expanding
+      if (wl.bst > 0.02 && h < 4) {
+        const bx = x - wl.x, bz = z - wl.z, br = M.len2(bx, bz), rb = wl.rc0 * 1.5 + K.WHIRL.BURST_V * wl.bt, ww = wl.rc0 + 1.5 + 0.8 * wl.bt;
+        if (br > 1e-3 && br < rb + 3 * ww) {
+          const g = M.exp(-((br - rb) / ww) * ((br - rb) / ww)) * wl.bst * (1 - sstep(1.5, 4, h));
+          out.x += bx / br * g; out.z += bz / br * g;
+        }
+      }
+      if (wl.env <= 0.001 || h > wl.h) continue;
+      WE.whirl_axis(wl, h, tmpA);
+      const dx = x - tmpA.x, dz = z - tmpA.z, r2 = dx * dx + dz * dz, rcz = wl.rc * (1 + 0.4 * M.min(1, h / M.max(wl.h, 1))), rc2 = rcz * rcz;
+      if (r2 > 36 * rc2) continue;
       const hf = wl.env * (1 - sstep(wl.h * 0.7, wl.h, h));
       if (hf <= 0) continue;
       const r = Math.sqrt(r2), ex = M.exp(-r2 / rc2);
       if (r > 1e-4) {
-        const vt = wl.G / (2 * Math.PI * r) * (1 - ex) * hf, inflow = -0.15 * vt * (1 - sstep(1, 3, h));
+        const vt = wl.G * (rcz / wl.rc) / (2 * Math.PI * r) * (1 - ex) * hf, inflow = -0.25 * vt * (1 - sstep(0.5, 3, h));
         out.x += (wl.sign * -dz / r) * vt + dx / r * inflow;
         out.z += (wl.sign * dx / r) * vt + dz / r * inflow;
       }
@@ -326,7 +450,7 @@
     const r = M.rng_make(((C.LAYOUT_SEED * 31 + Math.imul(S.settings.seed | 0, 104729) + bi * 7919 + 0x9e37) >>> 0) || 1);
     const kind = pickKind(S, r), KD = C.WEATHER_KIND[kind];
     S.weather = { kind, rain: KD.rain, snow: KD.snow, ash: KD.ash, cloud: KD.cloud, storm: KD.storm, sky: KD.sky,
-      rT: KD.rain, sT: KD.snow, aT: KD.ash, wet: 0, snowCover: 0, rng: r, changes: 0, strikes: 0, whirlAcc: 0, nextStrike: null,
+      rT: KD.rain, sT: KD.snow, aT: KD.ash, wet: 0, snowCover: 0, rng: r, changes: 0, strikes: 0, whirlAcc: 0, resp: [], nextStrike: null,
       ph: [M.rng_range(r, 0, 6.2832), M.rng_range(r, 0, 6.2832), M.rng_range(r, 0, 6.2832)] };
     initCover(S);
     const b = windBand(S, kind, r);
@@ -388,7 +512,7 @@
 
   /* wind velocity (m/s, world xz + vertical y) at a point: gusted wind x log height profile over the local ground,
    * steered by the terrain field (ridge, lee below the crest, channelling), plus the whirlwinds */
-  WE.wind_at = function (S, x, y, z, out) {
+  function windBase(S, x, y, z, out) {
     const w = S.wind;
     out.x = out.y = out.z = 0;
     if (!w) return out;
@@ -409,10 +533,30 @@
       }
       out.x = fx * v; out.z = fz * v;
     }
-    if (w.whirls.length && !under) whirlAt(w, x, y, z, M.max(0, y - ground), out);
+    return out;
+  }
+  WE.wind_at = function (S, x, y, z, out) {
+    const w = S.wind;
+    windBase(S, x, y, z, out);
+    if (w && w.whirls.length) {
+      const wd = W(), i = Math.round(x / wd.H), k = Math.round(z / wd.H);
+      const ground = i >= 0 && k >= 0 && i < wd.NX && k < wd.NZ ? wd.top[k * wd.NX + i] : wd.SEA;
+      if (y >= ground - 0.5) whirlAt(w, x, y, z, M.max(0, y - ground), out);
+    }
     return out;
   };
 
+  /* lockstep hash: weather RNG, wind, the whirlwinds' life cycle and the respawn queue */
+  WE.hash = function (S, mix) {
+    const we = S.weather, w = S.wind; if (!we || !w) return;
+    mix(we.rng.s % 100003); mix(w.dir); mix(w.speed); mix(we.whirlAcc); mix(w.whirls.length);
+    for (let q = 0; q < w.whirls.length; q++) {
+      const a = w.whirls[q];
+      mix(a.x); mix(a.z); mix(a.gy); mix(a.rc); mix(a.h); mix(a.env); mix(a.st); mix(a.t); mix(a.age); mix(a.vx); mix(a.vz); mix(a.bst); mix(a.bt); mix(a.blk);
+    }
+    mix(we.resp.length);
+    for (let q = 0; q < we.resp.length; q++) { mix(we.resp[q].t); mix(we.resp[q].x); mix(we.resp[q].z); }
+  };
   WE.spawn_whirl = function (S, x, z, o) { return makeWhirl(S, x, z, o); };
   WE.field = function (S) { if (S.wind && needField(S)) buildField(S); return S.wind && S.wind.field; };
 
