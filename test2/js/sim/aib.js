@@ -23,7 +23,7 @@
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane;
   const AB = SS.aib = {};
-  const K = AB.K = { WALK_TOL: 0.45, FETCH_R: 16, FETCH_HP: 55, MOVE_MIN: 6, SWING_T: 5, LAND_V: 26, XENO_PAD: 2.5, ROPE_AIMS: 9, MAX_MOVES: 2, FF_THREAT_R: 35, BAD_TURNS: 8, DETOUR_R: 10, DETOUR_NEAR: 4, SHOT_OK: 45, FETCH_HP_NOFOE: 25, RETREAT_R: 9, BONUS_K: 0.6, WALK_V: 2.0, BIG_WORTH: 37 };
+  const K = AB.K = { WALK_TOL: 0.45, FETCH_R: 16, FETCH_HP: 55, MOVE_MIN: 6, SWING_T: 5, LAND_V: 26, XENO_PAD: 2.5, ROPE_AIMS: 9, MAX_MOVES: 2, FF_THREAT_R: 35, BAD_TURNS: 8, DETOUR_R: 10, DETOUR_NEAR: 4, SHOT_OK: 45, FETCH_HP_NOFOE: 25, RETREAT_R: 9, BONUS_K: 0.6, WALK_V: 2.0, BIG_WORTH: 37, SHOT_WEAK: 22, CRATE_PREF: 0.8, COLLECT_SC: 0.9, COLLECT_NEAR: 7, FAR_R: 45, FAR_MIN: 20, TP_HP: 40 };
   const sim = () => SS.sim, WPm = () => SS.weapons, W = () => SS.world;
   const canK = (S, k) => WPm().can_use(S, k);
   const hasSkill = (a, k) => !!(a.skills && a.skills[k] > 0);
@@ -45,7 +45,7 @@
     return null;
   }
   // may the worm take a step in `dir`? (no water / lava, no xeno within its range, no drop over 4.5 m)
-  AB.safe_step = function (S, a, dir) {
+  AB.safe_step = function (S, a, dir, maxDrop) {
     const ap = P.to_plane(S, a.pos), ah = ap.s + dir * 0.7, wp = P.to_world(S, ah, a.pos.y);
     if (wetAt(S, ah, a.pos.y)) return false;
     if (xenoNear(S, wp.x, a.pos.y, wp.z, 0.5)) return false;
@@ -59,7 +59,8 @@
       if (M.seg_dist(wp.x, a.pos.y, wp.z, sa, sb) < C.WORM_R + 0.6) return false;
     }
     const g = WPm().ground_below(S, ah, a.pos.y + 0.5);
-    if (g < -1e8 || a.pos.y - g > 4.5) return false;
+    if (g < -1e8 || a.pos.y - g > (maxDrop || 4.5)) return false;
+    if (a.pos.y - g > 1.2 && wetAt(S, ah, g + 0.3)) return false;                // (P99: a drop that ends in water / lava is no step)
     if (SS.lab4 && S.settings.labFlags && SS.lab4.magnet(S, wp.x, g + a.foot, wp.z) && !SS.lab4.magnet(S, a.pos.x, a.pos.y, a.pos.z)) return false;   // P79: not onto a lightning magnet in a storm
     return true;
   };
@@ -74,6 +75,31 @@
     }
     return true;
   }
+  /* P99: can the worm WALK from s0 to s1 the way sim.js walkWorm lets it: per move step it climbs up to STEP_UP (0.64 m, a step of 0.033 m: slopes to about 85 degrees, so a mountain
+   * side is fine, a vertical face is not), follows the ground down STEP_DOWN, and at a ledge drops (it falls on to the ground below: at most MAXDROP m, not into water / lava). The old
+   * walkable() (rise <= 0.7 per 0.4 m) rejected most alpine / canyon slopes, so nearly every crate fetch was marked 'bad' at the first step (P99: 3 of 52 crates picked). Steps of 0.12 m
+   * (the climb allowance per step stays 0.64: a bit stricter than the sim at 0.033 m). C: same loop over the voxel lattice, no allocation. */
+  const WR = { STEP: 0.12, UP: 0.64, DOWN: 0.64, MAXDROP: 11, DL: 0.08, JUMP: 1.4 };         // (a drop of up to 13.6 m is safe: WORM_DYN.FALL_SAFE; 11 keeps a margin)
+  function walkReach(S, s0, s1, y0) {
+    const dir = s1 >= s0 ? 1 : -1, g0 = WPm().ground_below(S, s0, y0 + 0.6); if (g0 < -1e8) return false;
+    const off = y0 - g0; let s = s0, y = y0;
+    while ((s1 - s) * dir > 0) {
+      const ns = dir > 0 ? M.min(s + WR.STEP, s1) : M.max(s - WR.STEP, s1), base = P.overlap2(S, s, y);
+      let moved = false;
+      for (let l = 0; l <= WR.UP + 1e-6; l += WR.DL) if (P.overlap2(S, ns, y + l) <= base) { s = ns; y += l; moved = true; break; }
+      for (let l = WR.UP + WR.DL; !moved && l <= WR.JUMP + 1e-6; l += WR.DL) if (P.overlap2(S, ns, y + l) <= base) { s = ns; y += l; moved = true; }      // (a ledge up to the jump's apex: the walk hops when it stops)
+      if (!moved) return false;
+      let snapped = P.grounded2(S, s, y);
+      if (!snapped) for (let l = WR.DL; l <= WR.DOWN + 1e-6; l += WR.DL) if (P.grounded2(S, s, y - l)) { y -= l; snapped = true; break; }
+      if (!snapped) {                                                            // a ledge: the worm drops to the ground below
+        const g = WPm().ground_below(S, s, y); if (g < -1e8 || y - (g + off) > WR.MAXDROP) return false;
+        y = g + off;
+      }
+      if (wetAt(S, s, y - off + 0.3)) return false;
+    }
+    return true;
+  }
+  AB.walk_reach = walkReach;
   // where a worm released with (vs, vy) from (s, y) comes down: { s, y, vy, wet, t } (the ballistic flight under the worm gravity)
   AB.walkable = (S, s0, s1, y0) => walkable(S, s0, s1, y0);
   AB.walk_to = (S, pl, a, goalS, why, tmax) => startWalk(S, pl, a, goalS, why, tmax, 0, null);
@@ -121,6 +147,12 @@
     const B = SS.balance, r = B && c.weapon ? B.row(c.weapon) : null;
     return r ? M.clamp(10 + 0.5 * B.value(r), 10, 60) : 22;
   };
+  // P99: what the crate is worth to THIS worm's team right now: a weapon the team lacks counts a quarter more, a third copy of one it already has a quarter less (finite stock only)
+  const crateNeed = (S, a, c) => {
+    const w = crateWorth(S, a, c);
+    if (c.kind === 'weapon' && c.weapon) { const have = SS.game.ammo(S, a.team, c.weapon); if (have !== Infinity) return w * (have <= 0 ? 1.25 : have >= 3 ? 0.75 : 1); }
+    return w;
+  };
   AB.crate_worth = crateWorth;
   const crateValue = crateWorth;
   /* crates the worm could not reach: remembered per match in S.aiMem.bad (i32 crate ids + turn numbers), K.BAD_TURNS turns
@@ -147,6 +179,7 @@
     return false;
   }
   /* P38-R5 (B9): a crate worth more than an average one (22 HP-eq) is worth a longer walk: + (worth - 22) x BONUS_K m (super ~ +23 m, rare ~ +14, uncommon ~ +6) */
+  const dyOk = dy => dy <= 4 && dy >= -WR.MAXDROP;                      // P99: climbing is limited, dropping is free (see walkReach)
   const bonusR = (S, a, c) => M.max(0, crateWorth(S, a, c) - 22) * K.BONUS_K;
   // the best crate to fetch: landed, within FETCH_R m (3D), not tried before this turn; value / (distance + 6)
   function crateGoal(S, pl, a, minHp) {
@@ -154,11 +187,34 @@
     for (const c of S.crates) {
       if (!c.landed || isBad(S, pl, c.id)) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z);
-      if (d > K.FETCH_R + bonusR(S, a, c) || Math.abs(c.pos.y - a.pos.y) > 4) continue;
+      if (d > K.FETCH_R + bonusR(S, a, c) || !dyOk(c.pos.y - a.pos.y)) continue;
       if (minHp != null && !(c.kind === 'health' && (a.hp <= minHp || needsCure(a)))) continue;
       if (minHp != null && a.hp > K.FETCH_HP_NOFOE && !needsCure(a) && !foeOnCratePlane(S, a, c)) continue;      // (P38-R2: else the walk ends with no target on the new plane: 48 % of those turns had no shot)
       const sc = crateValue(S, a, c) / (d + 6);
       if (!best || sc > best.sc) best = { c, sc, d };
+    }
+    return best;
+  }
+  // P99: is a crate safe to walk to: not on / in water or lava, and (when hurt) no foe within 8 m of it
+  function crateSafe(S, a, c) {
+    const cp = P.to_plane(S, c.pos);
+    if (wetAt(S, cp.s, c.pos.y)) return false;
+    if (a.hp < 45) for (let i = 0; i < S.worms.length; i++) { const o = S.worms[i]; if (!o.dead && o.hp > 0 && o.team !== a.team && M.len3(o.pos.x - c.pos.x, o.pos.y - c.pos.y, o.pos.z - c.pos.z) < 8) return false; }
+    return true;
+  }
+  /* P99: the CPU picked up about 1 crate in 10 (P95). Any crate worth the walk, valued by worth / (distance + 6) >= COLLECT_SC (a common weapon crate to 16 m, a tool to 9 m,
+   * rare ones farther through bonusR, a health crate when hurt), safe to reach, and either close (COLLECT_NEAR) or with a foe on the plane the walk turns the section to */
+  function collectGoal(S, pl, a) {
+    if (S.eow) return null;                                              // (the End of the World has its own hop planner: a walk along a flat section means nothing on a planetoid)
+    let best = null;
+    for (let i = 0; i < S.crates.length; i++) {
+      const c = S.crates[i]; if (!c.landed || isBad(S, pl, c.id)) continue;
+      const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z);
+      if (d > K.FETCH_R + bonusR(S, a, c) || !dyOk(c.pos.y - a.pos.y)) continue;
+      const w = crateNeed(S, a, c), sc = w / (d + 6);
+      if (w <= 8 || sc < K.COLLECT_SC || (best && sc <= best.sc) || !crateSafe(S, a, c)) continue;
+      if (!(d < K.COLLECT_NEAR || foeOnCratePlane(S, a, c))) continue;
+      best = { c, sc, d };
     }
     return best;
   }
@@ -168,7 +224,7 @@
       const c = S.crates[i]; if (!c.landed || c.kind !== 'weapon' || isBad(S, pl, c.id)) continue;
       const w = crateWorth(S, a, c); if (w < K.BIG_WORTH) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z);
-      if (d > K.FETCH_R + bonusR(S, a, c) || Math.abs(c.pos.y - a.pos.y) > 4) continue;
+      if (d > K.FETCH_R + bonusR(S, a, c) || !dyOk(c.pos.y - a.pos.y)) continue;
       const sc = w / (d + 6); if (!best || sc > best.sc) best = { c, sc, d };
     }
     return best;
@@ -224,23 +280,32 @@
     /* P38-R5 (B9): a rare / super weapon crate (worth >= BIG_WORTH HP-eq) is worth more than this turn's shot (the CPU's shots average 15-35 HP): go and get it,
      * turning the section to it while the rotation is free; the turn goes on from the new spot with whatever targets are on that plane */
     if (pl.moves < K.MAX_MOVES) { const g = bigCrate(S, pl, a); if (g) { pl.moves++; return startFetch(S, pl, a, g); } }
+    if (pl.moves < K.MAX_MOVES && !pl.collected) { const g = collectGoal(S, pl, a); if (g) { pl.collected = 1; pl.moves++; return startFetch(S, pl, a, g); } }      // P99
+    if (a.hp <= K.FETCH_HP && AB.crate_far(S, pl, a, true)) return true;                  // P99: a hurt worm and a health crate out of a walk's reach (a ledge above): rope, or the teleport when very low
     return false;
   };
 
   /* P38-R2: a shot exists but is weak (< SHOT_OK): first pick up a weapon / tool crate lying within DETOUR_R m on the shot's own
    * plane (no realign: the target stays on it; any shot: a crate within K.DETOUR_NEAR m), then search again from there. Crates were picked in 3 % of the turns. */
   AB.mark_bad = markBad; AB.is_bad = isBad;
-  AB.detour = function (S, pl, a, maxD) {
+  /* P99: rv = the value of the shot the CPU has. A crate worth more than that (worth x CRATE_PREF > rv: a health crate for a hurt worm, a rare weapon, a tool when the shot is weak) is fetched
+   * even off the shot's plane (the shot is lost only when no foe is on the new plane: its value was lower anyway). The P38 rule stays: a non-health crate within maxD m (plus the rarity bonus). */
+  AB.detour = function (S, pl, a, maxD, loose, rv) {
     if (pl.moves >= K.MAX_MOVES || a.air || S.rope || pl.detour) return false;
     let best = null; const rot = !SS.rotlock || SS.rotlock.allowed(S);
     for (const c of S.crates) {
-      if (!c.landed || c.kind === 'health' || isBad(S, pl, c.id)) continue;
-      const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z), cp = P.to_plane(S, c.pos);
-      if (d > maxD + bonusR(S, a, c) || Math.abs(c.pos.y - a.pos.y) > 3) continue;
+      if (!c.landed || isBad(S, pl, c.id)) continue;
+      const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z), cp = P.to_plane(S, c.pos), w = crateNeed(S, a, c);
+      if (!dyOk(c.pos.y - a.pos.y)) continue;
+      const legacy = c.kind !== 'health' && d <= maxD + bonusR(S, a, c) && Math.abs(c.pos.y - a.pos.y) <= 3;
+      const valued = rv != null && !S.eow && w > 8 && w * K.CRATE_PREF > rv && d <= K.FETCH_R + bonusR(S, a, c) && w / (d + 6) >= K.COLLECT_SC;
+      if (!legacy && !valued) continue;
       const on = Math.abs(cp.t) <= 1.2;                                   // on the shot's plane, or (rotation still free) a plane that has a foe on it
-      if (!on && !(rot && foeOnCratePlane(S, a, c))) continue;
-      if (on && !walkable(S, P.to_plane(S, a.pos).s, cp.s, a.pos.y)) continue;     // (an off-plane crate is checked after the turn to it: moveWalk 'align')
-      if (!best || d < best.d) best = { c, d, sc: 1, on };
+      if (!on && !(rot && (loose || valued || foeOnCratePlane(S, a, c)))) continue;
+      if (!crateSafe(S, a, c)) continue;
+      if (on && !walkReach(S, P.to_plane(S, a.pos).s, cp.s, a.pos.y)) continue;     // (an off-plane crate is checked after the turn to it: moveWalk 'align')
+      const sc = valued ? w / (d + 6) : 0.5;
+      if (!best || sc > best.sc) best = { c, d, sc, on };
     }
     if (!best) return false;
     pl.detour = 1; pl.moves++; return startFetch(S, pl, a, best, best.on);
@@ -256,18 +321,38 @@
       if (!c.landed || isBad(S, null, c.id) || (c.kind === 'health' && a.hp >= 80 && !needsCure(a))) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z), cp = P.to_plane(S, c.pos);
       if (d > M.min(K.RETREAT_R + bonusR(S, a, c), S.retreatT > 0 ? K.WALK_V * S.retreatT : 1e9) || Math.abs(c.pos.y - a.pos.y) > 3 || Math.abs(cp.t) > 1.0 || Math.abs(cp.s - ap.s) < K.WALK_TOL) continue;
-      if (!walkable(S, ap.s, cp.s, a.pos.y) || shellNear(S, a, cp.s)) continue;
+      if (!walkReach(S, ap.s, cp.s, a.pos.y) || shellNear(S, a, cp.s)) continue;
       if (!best || d < best.d) best = { d, dir: cp.s > ap.s ? 1 : -1 };
     }
     return best ? best.dir : 0;
   };
 
+  /* P99: no shot and no crate within a walk, but a worthwhile one lies on a ledge / across a gap / far off: swing toward it on the rope when it is on the plane, else
+   * teleport onto it (the crate is picked up the moment the worm stands within 1.1 m). Only crates worth >= FAR_MIN, safe, within FAR_R m, once per turn. */
+  AB.crate_far = function (S, pl, a, hurt) {
+    if (S.eow || pl.far || pl.moves >= K.MAX_MOVES || a.air || S.rope) return false;
+    let best = null;
+    for (let i = 0; i < S.crates.length; i++) {
+      const c = S.crates[i]; if (!c.landed || (hurt && c.kind !== 'health')) continue;
+      if (hurt && dyOk(c.pos.y - a.pos.y)) continue;                                // (before the search only what a walk cannot reach: the rest is fetched on foot)
+      const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z), w = crateNeed(S, a, c);
+      if (d > K.FAR_R || w < K.FAR_MIN || d < 3 || !crateSafe(S, a, c)) continue;
+      const sc = w / (d + 10); if (!best || sc > best.sc) best = { c, sc, d, w };
+    }
+    if (!best) return false;
+    pl.far = 1;
+    const c = best.c, cp = P.to_plane(S, c.pos), ap = P.to_plane(S, a.pos);
+    if (SS.aic && SS.aic.crate_teleport && best.w >= 30 && (!hurt || a.hp <= K.TP_HP) && SS.aic.crate_teleport(S, pl, a, c, cp)) return true;
+    if (Math.abs(cp.t) < 1.2 && best.d < 30 && ropeStart(S, pl, a, { type: 0, s: cp.s, y: c.pos.y, dangerY: 0 }, [cp.s >= ap.s ? 1 : -1])) { pl.moves++; return true; }
+    return false;
+  };
   // no shot from here
   AB.reposition = function (S, pl, a) {
     if (pl.moves >= K.MAX_MOVES || a.air || S.rope) return false;
     const AIx = SS.ai, tgt = AIx.foe(S, pl, pl.fi) || (pl.foes0 && AIx.foe_of(S, pl, pl.foes0[0])); if (!tgt) return false;
     const g = crateGoal(S, pl, a, null);
     if (g && g.sc * 20 > 8 && (!SS.rotlock || SS.rotlock.allowed(S) || Math.abs(P.to_plane(S, g.c.pos).t) < 0.8)) { pl.moves++; return startFetch(S, pl, a, g); }
+    if (AB.crate_far(S, pl, a)) return true;
     const tp = P.to_plane(S, tgt.pos);
     if (Math.abs(tp.t) > 3) return false;                                     // the target is not on this section: rope / zip only work in it
     const goal = { type: 0, s: tp.s, y: tgt.pos.y, dangerY: 0 }, dir = tp.s >= P.to_plane(S, a.pos).s ? 1 : -1;
@@ -429,17 +514,19 @@
     const m = pl.mv, ap = P.to_plane(S, a.pos);
     if (m.st === 'align') {
       if (S.thetaGoal != null) return false;
-      if (m.kind === 4) { m.goalS = P.to_plane(S, { x: m.wx, y: m.wy, z: m.wz }).s; m.st = 'go'; m.t0 = S.time; m.lastS = ap.s; m.tChk = S.time; return false; }       // (P95: the cave leg)
+      if (m.kind === 4) { m.goalS = P.to_plane(S, { x: m.wx, y: m.wy, z: m.wz }).s; m.dir = m.goalS >= ap.s ? 1 : -1; if (m.wy < a.pos.y - 1.5) m.goalS += m.dir * 2.5; m.st = 'go'; m.t0 = S.time; m.lastS = ap.s; m.tChk = S.time; return false; }       // (P95: the cave leg)
       const c = S.crates.find(q => q.id === m.crate); if (!c) return true;
       const cp = P.to_plane(S, c.pos);
-      if (Math.abs(cp.t) > 0.9 || !walkable(S, ap.s, cp.s, a.pos.y)) { markBad(S, pl, m.crate); return true; }
+      if (Math.abs(cp.t) > 0.9 || !walkReach(S, ap.s, cp.s, a.pos.y)) { markBad(S, pl, m.crate); return true; }
       m.goalS = cp.s; m.st = 'go'; m.t0 = S.time; m.lastS = ap.s; m.tChk = S.time; return false;
     }
     if (m.kind === 1) { const c = S.crates.find(q => q.id === m.crate); if (!c) return true; if (m.st === 'go') m.goalS = P.to_plane(S, c.pos).s; }
     const ds = m.goalS - ap.s;
+    if (m.kind === 4 && ds * m.dir <= 0) return true;                          // (P99: the cave leg ends on a drop: the goal lies 2.5 m past the edge, the worm falls over it and stops once it has passed it)
+    if (m.kind === 1 && Math.abs(ds) < K.WALK_TOL) { const c1 = S.crates.find(q => q.id === m.crate); if (c1 && Math.abs(c1.pos.y - a.pos.y) > 1.6) markBad(S, pl, m.crate); }      // (P99: right above / below the crate but not on it: a cliff between, give it up)
     if (Math.abs(ds) < K.WALK_TOL || S.time - m.t0 > m.tmax) return true;
     const dir = ds > 0 ? 1 : -1;
-    if (!AB.safe_step(S, a, dir)) { if (m.kind === 1) markBad(S, pl, m.crate); return true; }
+    if (!AB.safe_step(S, a, dir, m.kind === 1 ? WR.MAXDROP : 0)) { if (m.kind === 1) markBad(S, pl, m.crate); return true; }
     inp.move = dir;
     if (S.time - m.tChk > 0.8) {                                               // no progress for 0.8 s: hop once or twice, then give up
       if (Math.abs(ap.s - m.lastS) < 0.25) { if (m.jumps++ >= 2) { if (m.kind === 1) markBad(S, pl, m.crate); return true; } inp.jump = 1; }

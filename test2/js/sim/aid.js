@@ -12,7 +12,7 @@
   'use strict';
   const C = SS.CFG, M = SS.math;
   const ND = SS.nav = {};
-  const K = ND.K = { STEP: 2, FL: 6, CLEAR: 1.4, UP: 1.6, DOWN: 3.5, LEG_MAX: 16, WALK_UP: 1.2, WALK_DOWN: 3.0, MAX_NODES: 90000 };
+  const K = ND.K = { STEP: 2, FL: 6, CLEAR: 1.4, UP: 1.6, DOWN: 3.5, LEG_MAX: 16, WALK_UP: 1.2, WALK_DOWN: 3.0, MAX_NODES: 90000, DIG: 1 };
   let ncx = 0, ncz = 0, ncol = 0, fl = null, nfl = null, stamp = null, dist = null, queue = null, tick = 0, sizeVer = -1;
   const DI = [1, -1, 0, 0, 1, 1, -1, -1], DK = [0, 0, 1, -1, 1, -1, 1, -1];
   function ensure(w) {
@@ -49,36 +49,35 @@
     const i = ci * K.STEP + di * (K.STEP >> 1), k = ck * K.STEP + dk * (K.STEP >> 1), j = Math.floor((M.max(y1, y2) + 0.7) / w.H);
     return !(w.d[(k * w.NY + j) * w.NX + i] > 0);
   }
-  ND.leg = function (S, a) {
-    const w = SS.world; if (!w || w.flat) return null;
-    ensure(w); tick++;
-    const cs = K.STEP * w.H, FLn = K.FL;
-    const wi = Math.round(a.pos.x / cs), wk = Math.round(a.pos.z / cs), wf = nearest(S, w, wi, wk, a.pos.y - (a.foot || 0.5), 1.6, 1.6);
-    if (wf < 0) return null;
-    // the sources: every living enemy not in the water
-    let head = 0, tail = 0; dist.fill(-1);
-    for (let q = 0; q < S.worms.length; q++) {
-      const o = S.worms[q]; if (o.dead || o.hp <= 0 || o.team === a.team || o.swim || o.drowning) continue;
-      const ci = Math.round(o.pos.x / cs), ck = Math.round(o.pos.z / cs), f = nearest(S, w, ci, ck, o.pos.y - (o.foot || 0.5), 1.6, 1.6);
-      if (f < 0) continue;
-      const id = (ck * ncx + ci) * FLn + f; if (dist[id] < 0) { dist[id] = 0; queue[tail++] = id; }
-    }
-    if (!tail) return null;
-    const goal = (wk * ncx + wi) * FLn + wf;
-    while (head < tail && dist[goal] < 0 && tail < K.MAX_NODES) {
+  // the standable cell (column ci, ck; floor index) of a worm: its own column, else one of the 8 neighbours (a narrow pocket has no floor at the column centre); -1 = none
+  function cellOf(S, w, o, out) {
+    const cs = K.STEP * w.H; let ci = Math.round(o.pos.x / cs), ck = Math.round(o.pos.z / cs);
+    let f = nearest(S, w, ci, ck, o.pos.y - (o.foot || 0.5), 1.6, 1.6);
+    for (let n = 0; n < 8 && f < 0; n++) { f = nearest(S, w, ci + DI[n], ck + DK[n], o.pos.y - (o.foot || 0.5), 1.6, 1.6); if (f >= 0) { ci += DI[n]; ck += DK[n]; } }
+    if (f < 0) return -1;
+    return (ck * ncx + ci) * K.FL + f;
+  }
+  /* breadth-first search over the standable cells from the cells already in queue[0..tail) (dist = 0). rev (the foes' search): the worm walks from the neighbour TO this cell, so a step
+   * up here is a drop there; forward (the worm's own region): the worm walks from this cell to the neighbour. Stops when `stop` has a distance (-1: never). Returns the new tail. */
+  function bfs(S, w, tail, stop, rev) {
+    const FLn = K.FL; let head = 0;
+    while (head < tail && (stop < 0 || dist[stop] < 0) && tail < K.MAX_NODES) {
       const id = queue[head++], f = id % FLn, col = (id - f) / FLn, ci = col % ncx, ck = (col - ci) / ncx, y1 = fl[id], dd = dist[id];
       for (let n = 0; n < 8; n++) {
         const ni = ci + DI[n], nk = ck + DK[n]; if (ni < 1 || nk < 1 || ni >= ncx - 1 || nk >= ncz - 1) continue;
         const cnt = floors(S, w, ni, nk), nc = nk * ncx + ni;
         for (let g = 0; g < cnt; g++) {
           const y2 = fl[nc * FLn + g], dy = y2 - y1, nid = nc * FLn + g;
-          if (dist[nid] >= 0 || dy > K.DOWN || dy < -K.UP || !gapOpen(w, ci, ck, DI[n], DK[n], y1, y2)) continue;      // (the search runs from the foe: the worm walks from the neighbour TO this cell, so a step up here is a drop there)
+          if (dist[nid] >= 0 || (rev ? dy > K.DOWN || dy < -K.UP : dy > K.UP || dy < -K.DOWN) || !gapOpen(w, ci, ck, DI[n], DK[n], y1, y2)) continue;
           dist[nid] = dd + 1; queue[tail++] = nid;
         }
       }
     }
-    if (dist[goal] < 0) return null;
-    // the path from the worm: always to a neighbour one step nearer (the first in a fixed order, the straight continuation first)
+    return tail;
+  }
+  // from the worm's cell `goal` (it has a distance from a rev search) the path with decreasing distance, then the farthest cell a straight walk from the worm reaches: { x, y, z, rem, n }
+  function legFrom(S, w, goal) {
+    const FLn = K.FL, cs = K.STEP * w.H;
     const path = [goal]; let cur = goal, pd = -1;
     while (dist[cur] > 0 && path.length <= K.LEG_MAX) {
       const f = cur % FLn, col = (cur - f) / FLn, ci = col % ncx, ck = (col - ci) / ncx, y1 = fl[cur]; let nxt = -1, nn = -1;
@@ -109,5 +108,54 @@
     }
     if (best < 0) best = 1;
     return { x: px[best], y: py[best], z: pz[best], rem: dist[goal], n: best };
+  }
+  const cellPos = id => { const f = id % K.FL, col = (id - f) / K.FL, ci = col % ncx, ck = (col - ci) / ncx, cs = K.STEP * SS.world.H; return { x: ci * cs, y: fl[id], z: ck * cs }; };
+  let listA = null, listB = null;
+  /* the worm cannot walk to any foe (a pocket cut off by rock / a drop it cannot climb): the cells it CAN walk to (forward search) against the cells the foes can walk to (the search from them, finished
+   * because it never reached the worm); the pair with the least 3D distance = where a tunnel is shortest. Returns { a: cell id the worm should stand on, b: cell id on the other side, d } or null.
+   * Both lists are thinned to about 600 cells each. */
+  function closest(S, w, goal, tailB) {
+    if (!listA) { listA = new Int32Array(K.MAX_NODES); listB = new Int32Array(K.MAX_NODES); }
+    let nb = 0; for (let q = 0; q < tailB; q++) listB[nb++] = queue[q];
+    dist.fill(-1); dist[goal] = 0; queue[0] = goal;
+    const tailA = bfs(S, w, 1, -1, false);
+    const sa = M.max(1, Math.floor(tailA / 600)), sb = M.max(1, Math.floor(nb / 600));
+    let best = null, bd = 1e18;
+    for (let i = 0; i < tailA; i += sa) {
+      const pa = cellPos(queue[i]);
+      for (let j = 0; j < nb; j += sb) {
+        const pb = cellPos(listB[j]), dx = pa.x - pb.x, dy = pa.y - pb.y, dz = pa.z - pb.z, d = dx * dx + dy * dy + dz * dz;
+        if (d < bd) { bd = d; best = { a: queue[i], b: listB[j], d: Math.sqrt(d), na: tailA }; }
+      }
+    }
+    return best;
+  }
+  /* the CPU's cave plan: { x, y, z (the waypoint of one straight leg), rem (cells of path left), n } toward the nearest foe by path; when every foe is cut off by rock: the same toward the
+   * best digging spot, with dig = 1 and the far side (bx, by, bz, bd = its distance in m); rem 0 once the worm already stands on that spot. null: nothing to do. */
+  ND.leg = function (S, a) {
+    const w = SS.world; if (!w || w.flat) return null;
+    ensure(w); tick++;
+    const goal = cellOf(S, w, a); if (goal < 0) return null;
+    // the sources: every living enemy not in the water
+    let tail = 0; dist.fill(-1);
+    for (let q = 0; q < S.worms.length; q++) {
+      const o = S.worms[q]; if (o.dead || o.hp <= 0 || o.team === a.team || o.swim || o.drowning) continue;
+      const id = cellOf(S, w, o); if (id < 0) continue;
+      if (dist[id] < 0) { dist[id] = 0; queue[tail++] = id; }
+    }
+    if (!tail) return null;
+    tail = bfs(S, w, tail, goal, true);
+    if (dist[goal] >= 0) return legFrom(S, w, goal);
+    // cut off: where is the rock between the worm's region and the foes' the thinnest?
+    if (!K.DIG) return null;
+    const c = closest(S, w, goal, tail); if (!c) return null;
+    const pa = cellPos(c.a), pb = cellPos(c.b);
+    const out = { dig: 1, na: c.na, bx: pb.x, by: pb.y, bz: pb.z, bd: c.d, ax: pa.x, ay: pa.y, az: pa.z, x: pa.x, y: pa.y, z: pa.z, rem: 0, n: 0 };
+    if (c.a === goal) return out;
+    dist.fill(-1); dist[c.a] = 0; queue[0] = c.a;
+    bfs(S, w, 1, goal, true);
+    if (dist[goal] < 0) return null;
+    const g = legFrom(S, w, goal); out.x = g.x; out.y = g.y; out.z = g.z; out.rem = g.rem; out.n = g.n;
+    return out;
   };
 })(window.SS = window.SS || {});

@@ -96,6 +96,14 @@
            + texture2D(tNoise, chopUV(pc*0.11) - vec2(D*0.0067, 0.0)).a * 0.3
            + texture2D(tNoise, chopUV(pc*0.33) - vec2(D*0.0130, 0.0)).g * 0.1;
     }
+    // P101: finer ripple layers (cat's-paw): two small wavelengths riding on the chop, rotated against it so no lattice shows. The wind scales the
+    // amplitude (calm = glassy, a gale = rough), the camera distance fades them (they alias and are sub-pixel beyond ~80 m), and the drift is the same
+    // low-passed scalar D as the chop (no speed jump when the wind changes).
+    float hfine(vec2 p, float k){
+      vec2 pc = p - vec2(48.0, 48.0); float D = uWindD.x;
+      vec2 a = chopUV(vec2(pc.x * 0.8 - pc.y * 0.6, pc.x * 0.6 + pc.y * 0.8) * (0.7 * k)) - vec2(D * 0.0190 * sqrt(k), 0.0);
+      return texture2D(tNoise, a).a;
+    }
     vec4 shade(float depth, float foamS, float dA){          // dA: apparent depth (colour / opacity; LS1 shelf)
       float tD = dot(vW - uO, uN);
       if (depth < 0.006) discard;
@@ -106,6 +114,15 @@
       float wsp = uWindD.z, wk = (0.55 + 1.6 * (1.0 - exp(-wsp / 6.0))) / 1.18;   // chop height by wind speed (1 at a breeze)
       float amp = 2.2 * wk * smoothstep(0.0, 0.5, depth);    // ripples calm down in the shallows
       vec3 n = normalize(vNg + vec3((h0 - hx) * amp, 0.0, (h0 - hz) * amp));
+      { float fdist = length(cameraPosition - vW), fk = 1.0 - smoothstep(30.0, 90.0, fdist);
+        float fa = fk * (0.35 + 0.9 * (1.0 - exp(-wsp / 6.0))) * smoothstep(0.0, 0.35, depth);
+        if (fa > 0.01) {
+          float f0 = hfine(p, 1.0), fx = hfine(p + vec2(0.05, 0.0), 1.0), fz = hfine(p + vec2(0.0, 0.05), 1.0);
+          vec2 g = vec2(f0 - fx, f0 - fz) * 1.6;
+          float fb = 1.0 - smoothstep(12.0, 40.0, fdist);
+          if (fb > 0.01) { float b0 = hfine(p, 2.7), bx = hfine(p + vec2(0.025, 0.0), 2.7), bz = hfine(p + vec2(0.0, 0.025), 2.7); g += vec2(b0 - bx, b0 - bz) * 0.9 * fb; }
+          n = normalize(n + vec3(g.x, 0.0, g.y) * fa);
+        } }
       if (uRain > 0.01) { vec2 rr = rainRings(p, uWTime) * 0.45 * smoothstep(0.01, 0.15, depth); n = normalize(n + vec3(rr.x, 0.0, rr.y)); }
       vec3 rg = seaRings(p); n = normalize(n + vec3(rg.x, 0.0, rg.y) * 0.9);
       vec3 V = normalize(cameraPosition - vW);
@@ -251,7 +268,7 @@
     // plumes and settling streaks (more under a storm sky and on the volcanic coast), a murky bed layer, aerated rain bubbles under the surface,
     // and a churned top edge (chop height + foam rim) instead of the flat meniscus line
     faceMat = new T.ShaderMaterial({
-      transparent: true, depthWrite: false, fog: false, side: T.DoubleSide,
+      transparent: true, depthWrite: false, fog: false, side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,   // P109: the face lies exactly on the terrain cap's plane: without the offset the two z-fight (flicker, stipple along the rock edge)
       uniforms: Object.assign(shared(), { tVol: { value: null }, uVolSize: { value: new T.Vector3(SS.world.NX, SS.world.NY, SS.world.NZ) }, uFaceK: { value: new T.Vector4(1, 1, 1, 1) }, uFaceH: { value: 0 } }),
       vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */`
@@ -286,7 +303,7 @@
             if (sw < 1e-3 || dep < ${WETH}) discard;
             surf = sh / sw; inl /= sw;
             if (vW.y > surf + rip) discard;
-            if (texture(tVol, (vW / 0.5 + 0.5) / uVolSize).r > 0.0) discard;   // rock: the terrain cap
+            if (texture(tVol, (vW / 0.5 + 0.5) / uVolSize).r > -0.04) discard;   // rock: the terrain cap (a hair of margin: no water sliver on the rock edge)
           }
           float dd = surf + rip - vW.y;
           // bed proximity: rock a few decimetres below (inside the lattice), the sloping seabed beyond it
@@ -476,7 +493,11 @@
     own.uInsp.value = view.insp || 0;
     const L = (view.look && view.look.sunDir) || [-0.42, 0.62, 0.66];
     own.uSun.value.set(L[0], L[1], L[2]).normalize();
-    if (!faceMat.uniforms.tVol.value && SS.terrain.vol) faceMat.uniforms.tVol.value = SS.terrain.vol();
+    if (SS.terrain.vol) {                  // P109: the face must test the SAME volume texture the terrain cap uses, at the size of THAT texture (not of SS.world: a 2D <-> 3D switch of the same map width changes only NZ and the lookup then hit the wrong slice: water filled rock, user's side-on shots)
+      const v = SS.terrain.vol(); faceMat.uniforms.tVol.value = v;
+      const im = v && v.image;
+      if (im) { const us = faceMat.uniforms.uVolSize.value; if (us.x !== im.width || us.y !== im.height || us.z !== im.depth) us.set(im.width, im.height, im.depth); }
+    }
     if (!on) return;
     if (st !== stateRef) { stateRef = st; foam.fill(0); wetA.fill(0); ver = -1; shelfT = -9; }
     if (view.time - shelfT > SHELF_T || view.time < shelfT) { buildShelf(st); shelfT = view.time; }

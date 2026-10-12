@@ -21,12 +21,16 @@
   const uT = { value: 0 };
   const R = () => M.rng_next(rg), RR = (a, b) => a + (b - a) * M.rng_next(rg);
   const sm = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-  const F = { ox: 0, oz: 0, dx: 1, dz: 0, nx: 0, nz: 1, cs: 0, fy: 10, tod: 'day', biome: 'temperate', rain: 0, wx: 0, wz: 0, wsp: 0, sea: 0, day: true, night: false, dt: 0.016, time: 0, S: null };
+  const F = { flat: false, ox: 0, oz: 0, dx: 1, dz: 0, nx: 0, nz: 1, cs: 0, fy: 10, tod: 'day', biome: 'temperate', rain: 0, wx: 0, wz: 0, wsp: 0, sea: 0, day: true, night: false, dt: 0.016, time: 0, S: null };
   const toS = (x, z) => (x - F.ox) * F.dx + (z - F.oz) * F.dz;
   const toT = (x, z) => (x - F.ox) * F.nx + (z - F.oz) * F.nz;
   const toX = (s, t) => F.ox + s * F.dx + t * F.nx;
   const toZ = (s, t) => F.oz + s * F.dz + t * F.nz;
   const W = () => SS.world;
+  /* P104: the depth (metres behind the plane) an ambient creature / particle spawns at: the 3D range, or, in a 2D match, the back half of the 4 m slab
+   * (nothing lives behind the slab: there is no terrain there). */
+  const zc = z => (F.flat ? Math.max(F.oz - 1.95, Math.min(F.oz + 1.95, z)) : z);          // (2D: whatever drifts (wind, jitter) is held inside the slab)
+  const dep = (a, b) => (F.flat ? RR(0.95, 1.9) : RR(a, b));
 
   /* ---------- flap material: wings flap (aW = distance from the body), tails wiggle (mode 1) ---------- */
   function flapMat(mode, flat) {
@@ -189,7 +193,7 @@
     const birdsOK = (F.day || F.tod === 'dusk') && F.rain < 0.45 && (F.biome === 'temperate' || F.biome === 'canyon' || F.biome === 'alpine');
     const gullsOK = (F.day || F.tod === 'dusk') && F.rain < 0.6 && F.biome !== 'volcanic';
     const batsOK = (F.tod === 'dusk' || F.night) && F.rain < 0.3 && (F.biome === 'temperate' || F.biome === 'canyon');
-    const nb = birdsOK ? Math.max(1, Math.round(2 * Q.life)) : 0, ng = gullsOK ? 1 : 0, nt = batsOK ? 1 : 0;
+    const nb = birdsOK && !F.flat ? Math.max(1, Math.round(2 * Q.life)) : 0, ng = gullsOK && !F.flat ? 1 : 0, nt = batsOK && !F.flat ? 1 : 0;      // (P104: far flocks circle behind the slice: none in a 2D match)
     const have = { bird: 0, gull: 0, bat: 0 };
     for (const f of flocks) have[f.kind]++;
     const lim = { bird: nb, gull: ng, bat: nt };
@@ -310,10 +314,10 @@
     const g = F.S;
     for (const b of bflies) {
       if (!b.placed) {
-        const s = F.cs + RR(-14, 14), t = -RR(1.5, 9); b.x = toX(s, t); b.z = toZ(s, t); b.placed = 1; b.vis = 0; continue;
+        const s = F.cs + RR(-14, 14), t = -dep(1.5, 9); b.x = toX(s, t); b.z = toZ(s, t); b.placed = 1; b.vis = 0; continue;
       }
       b.h += (Math.sin(F.time * 1.3 + b.ph) * 1.6 + Math.sin(F.time * 0.37 + b.ph * 2) * 1.2) * dt;
-      b.x += Math.sin(b.h) * b.sp * dt + F.wx * 0.1 * dt; b.z += Math.cos(b.h) * b.sp * dt + F.wz * 0.1 * dt;
+      b.x += Math.sin(b.h) * b.sp * dt + F.wx * 0.1 * dt; b.z = zc(b.z + Math.cos(b.h) * b.sp * dt + F.wz * 0.1 * dt);
       const s = toS(b.x, b.z) - F.cs, t = toT(b.x, b.z);
       const keep = Math.abs(s) < 22 && t < -0.9 && t > -12;
       if (keep) b.vis = Math.min(1, b.vis + dt * 0.8); else { b.vis -= dt * 0.8; if (b.vis <= 0) b.placed = 0; }
@@ -340,7 +344,7 @@
     for (const z of lizards) {
       if (!z.placed) {
         for (let tr = 0; tr < 8; tr++) {
-          const s = F.cs + RR(-12, 12), t = -RR(1.2, 6), x = toX(s, t), zz = toZ(s, t), g = Wd.topHeight(x, zz);
+          const s = F.cs + RR(-12, 12), t = -dep(1.2, 6), x = toX(s, t), zz = toZ(s, t), g = Wd.topHeight(x, zz);
           if (g < F.sea + 0.5) continue;
           const g2 = Wd.topHeight(x + 0.3, zz), g3 = Wd.topHeight(x, zz + 0.3);
           if (Math.abs(g2 - g) > 0.25 || Math.abs(g3 - g) > 0.25) continue;
@@ -358,7 +362,7 @@
         else { z.mode = 0; z.t = RR(1, 4); }
       }
       const run = z.mode === 1; z.spd += ((run ? (z.flee ? 3.6 : 2.2) : 0) - z.spd) * Math.min(1, dt * 9);
-      z.x += Math.sin(z.yaw) * z.spd * dt; z.z += Math.cos(z.yaw) * z.spd * dt;
+      z.x += Math.sin(z.yaw) * z.spd * dt; z.z = zc(z.z + Math.cos(z.yaw) * z.spd * dt);
       const s = toS(z.x, z.z) - F.cs, t = toT(z.x, z.z);
       if (t > -0.9) { z.x -= F.nx * 0.05; z.z -= F.nz * 0.05; if (z.mode === 1) z.yaw = Math.atan2(-F.nx, -F.nz) + RR(-1, 1); }
       const keep = Math.abs(s) < 20 && t < -0.7 && t > -9;
@@ -390,7 +394,7 @@
       if (nextFish > 0) return;
       nextFish = RR(5, 13);
       for (let tr = 0; tr < 10; tr++) {
-        const s = F.cs + RR(-26, 26), t = -RR(7, 34), x = toX(s, t), z = toZ(s, t);
+        const s = F.cs + RR(-26, 26), t = -dep(7, 34), x = toX(s, t), z = toZ(s, t);
         if (groundAt(x, z) > F.sea - 1.8) continue;
         fish.x = x; fish.z = z; fish.y = SS.sim.surface_at(F.S, x, z); fish.d = RR(0.8, 1.05); fish.t = 0;
         const a = Math.atan2(F.dx, F.dz) + (R() < 0.5 ? 0 : Math.PI) + RR(-0.5, 0.5), v = RR(2.6, 3.4);
@@ -417,10 +421,10 @@
       const s = toS(st[o], st[o + 1]) - F.cs, t = toT(st[o], st[o + 1]);
       if (!st[o + 4] || Math.abs(s) > 22 || t > -0.8 || t < -11) {
         if (st[o + 4] && fadeIn > 0) { fadeIn = Math.max(0, fadeIn - dt * 1.5); st[o + 5] = fadeIn; if (fadeIn > 0) { p.col[c] = p.col[c + 1] = p.col[c + 2] = 0; continue; } }
-        const ss = F.cs + RR(-20, 20), tt = -RR(1.2, 9); st[o] = toX(ss, tt); st[o + 1] = toZ(ss, tt); st[o + 2] = RR(0.4, 2.4); st[o + 3] = R() * 6.28; st[o + 4] = RR(1.2, 2.6); st[o + 5] = 0.001;
+        const ss = F.cs + RR(-20, 20), tt = -dep(1.2, 9); st[o] = toX(ss, tt); st[o + 1] = toZ(ss, tt); st[o + 2] = RR(0.4, 2.4); st[o + 3] = R() * 6.28; st[o + 4] = RR(1.2, 2.6); st[o + 5] = 0.001;
       }
       st[o + 3] += dt * (0.8 + 0.3 * st[o + 4]);
-      st[o] += Math.sin(st[o + 3] * 1.3 + i) * 0.35 * dt; st[o + 1] += Math.cos(st[o + 3] * 0.9 + i * 2) * 0.35 * dt;
+      st[o] += Math.sin(st[o + 3] * 1.3 + i) * 0.35 * dt; st[o + 1] = zc(st[o + 1] + Math.cos(st[o + 3] * 0.9 + i * 2) * 0.35 * dt);
       st[o + 5] = Math.min(1, st[o + 5] + dt * 0.7);
       const x = st[o], z = st[o + 1], y = Math.max(groundAt(x, z), F.sea + 0.1) + st[o + 2] + Math.sin(st[o + 3] * 1.7) * 0.25;
       p.pos[c] = x; p.pos[c + 1] = y; p.pos[c + 2] = z;
@@ -438,11 +442,11 @@
       if (i >= want) { p.col[c] = p.col[c + 1] = p.col[c + 2] = 0; continue; }
       st[o + 3] -= dt;
       if (st[o + 3] <= 0 || toT(st[o], st[o + 2]) > -0.7) {
-        const ss = F.cs + RR(-24, 24), tt = -RR(1.5, 14), x = toX(ss, tt), z = toZ(ss, tt);
+        const ss = F.cs + RR(-24, 24), tt = -dep(1.5, 14), x = toX(ss, tt), z = toZ(ss, tt);
         st[o] = x; st[o + 2] = z; st[o + 1] = Math.max(groundAt(x, z), F.sea) + RR(0.1, 1.2); st[o + 3] = RR(2.5, 6); st[o + 4] = st[o + 3]; st[o + 5] = RR(1.0, 2.6);
       }
       const age = 1 - st[o + 3] / st[o + 4];
-      st[o] += (F.wx * 1.8 + Math.sin(F.time * 1.1 + i) * 0.5) * dt; st[o + 2] += (F.wz * 1.8 + Math.cos(F.time * 0.9 + i * 3) * 0.5) * dt; st[o + 1] += st[o + 5] * (1 - age * 0.5) * dt;
+      st[o] += (F.wx * 1.8 + Math.sin(F.time * 1.1 + i) * 0.5) * dt; st[o + 2] = zc(st[o + 2] + (F.wz * 1.8 + Math.cos(F.time * 0.9 + i * 3) * 0.5) * dt); st[o + 1] += st[o + 5] * (1 - age * 0.5) * dt;
       p.pos[c] = st[o]; p.pos[c + 1] = st[o + 1]; p.pos[c + 2] = st[o + 2];
       const a = Math.sin(Math.PI * Math.min(1, age * 1.05)) * (0.7 + 0.3 * Math.sin(F.time * 17 + i * 5)) * boost, k = 1 - age * 0.6;
       p.col[c] = 1.0 * a; p.col[c + 1] = 0.5 * k * a; p.col[c + 2] = 0.1 * k * k * a;
@@ -457,11 +461,11 @@
       if (i >= want) { p.col[c] = p.col[c + 1] = p.col[c + 2] = 0; continue; }
       const s = toS(st[o], st[o + 2]) - F.cs, t = toT(st[o], st[o + 2]);
       if (!st[o + 4] || st[o + 1] < F.sea - 1 || Math.abs(s) > 26 || t > -0.6 || t < -16) {
-        const ss = F.cs + RR(-24, 24), tt = -RR(1, 13);
+        const ss = F.cs + RR(-24, 24), tt = -dep(1, 13);
         st[o] = toX(ss, tt); st[o + 2] = toZ(ss, tt); st[o + 1] = F.fy + RR(-2, 12); st[o + 3] = R() * 6.28; st[o + 4] = RR(0.35, 0.8); st[o + 5] = 0;
       }
       st[o + 3] += dt * 1.6; st[o + 5] = Math.min(1, st[o + 5] + dt * 0.8);
-      st[o] += (F.wx * 1.2 + Math.sin(st[o + 3]) * 0.4) * dt; st[o + 2] += (F.wz * 1.2 + Math.cos(st[o + 3] * 0.8) * 0.4) * dt; st[o + 1] -= st[o + 4] * dt;
+      st[o] += (F.wx * 1.2 + Math.sin(st[o + 3]) * 0.4) * dt; st[o + 2] = zc(st[o + 2] + (F.wz * 1.2 + Math.cos(st[o + 3] * 0.8) * 0.4) * dt); st[o + 1] -= st[o + 4] * dt;
       p.pos[c] = st[o]; p.pos[c + 1] = st[o + 1]; p.pos[c + 2] = st[o + 2];
       const a = 0.5 * st[o + 5] * (0.7 + 0.3 * Math.sin(st[o + 3] * 2.3));
       p.col[c] = 0.5 * a; p.col[c + 1] = 0.44 * a; p.col[c + 2] = 0.4 * a;
@@ -499,7 +503,7 @@
       const fall = l.snow ? 1.3 : 0.85, flutter = l.snow ? 0.3 : 1.1;
       l.vy += (-fall - l.vy) * Math.min(1, dt * 1.6);
       l.vx += (F.wx * 1.1 + Math.sin(F.time * 2.1 + l.ph) * flutter - l.vx) * Math.min(1, dt * 1.4); l.vz += (F.wz * 1.1 + Math.cos(F.time * 1.7 + l.ph) * flutter - l.vz) * Math.min(1, dt * 1.4);
-      l.x += l.vx * dt; l.y += l.vy * dt; l.z += l.vz * dt; l.rot += l.spin * dt;
+      l.x += l.vx * dt; l.y += l.vy * dt; l.z = zc(l.z + l.vz * dt); l.rot += l.spin * dt;
       if (l.y <= groundAt(l.x, l.z) + 0.03 || l.y < F.sea) { if (l.y < F.sea + 0.02) { leafList.splice(i, 1); continue; } l.rest = 0.001; l.y = W().topHeight(l.x, l.z) + 0.02; }
     }
     let n = 0;
@@ -519,7 +523,7 @@
     if (SS.world.under || SS.world.eow || !S.wind) { wings.count = flies.count = liz.count = leaves.count = 0; fishM.visible = false; for (const p of [ffP, embP, ashP]) p.p.visible = false; return; }
     dt = Math.min(dt, 0.1);
     const d = P.dir(S), n = P.nrm(S), ft = view.camT, a = S.active;
-    F.S = S; F.ox = S.O.x; F.oz = S.O.z; F.dx = d.x; F.dz = d.z; F.nx = n.x; F.nz = n.z; F.dt = dt; F.time = view.time;
+    F.flat = !!SS.world.flat; F.S = S; F.ox = S.O.x; F.oz = S.O.z; F.dx = d.x; F.dz = d.z; F.nx = n.x; F.nz = n.z; F.dt = dt; F.time = view.time;
     const fx = ft ? ft.x : a ? a.pos.x : S.O.x, fz = ft ? ft.z : a ? a.pos.z : S.O.z;
     F.cs = toS(fx, fz); F.fy = ft ? ft.y : a ? a.pos.y : 10; F.tod = view.tod; F.day = view.tod === 'day'; F.night = view.tod === 'night'; F.biome = S.biome || 'temperate';
     F.rain = S.weather ? Math.min(1, (S.weather.rain || 0) + (S.weather.snow || 0) * 0.6) : 0; F.sea = SS.world.SEA;

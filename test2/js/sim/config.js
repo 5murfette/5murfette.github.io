@@ -63,7 +63,8 @@
       // the worm stops and tilts back for JUMP_WIND s, then springs with JUMP_VY and the horizontal speed that covers
       // exactly the distance walking would have covered in the whole time (wind-up + flight): sim.jump_vs(S, w)
       JUMP_WIND: 0.3, JUMP_VS: 12.86, JUMP_VY: 10.67,   // (JUMP_VS = the PoC value, kept for reference / the old readers)
-      HOP_VS: -2.19, HOP_VY: 12.47,            // back hop L3663: vx -34, vy -194 -> 2.3 m high, 1.6 m back, 0.75 s
+      HOP_VS: -2.19, HOP_VY: 12.47, HOP_GAP: 0.85,   // P112: the least time between two back hops (the hop flies 0.75 s): chained back hops are no faster than walking back (0.93x)
+                  // back hop L3663: vx -34, vy -194 -> 2.3 m high, 1.6 m back, 0.75 s
       SALTO_WIN: 0.5, SALTO_VMIN: -3.86, SALTO_BASE: 6.43, SALTO_ADD: 9.64, SALTO_VS: -4.5,   // L3656: 2nd Backspace while rising
       STEP_UP: 0.64, STEP_UP_WORM: 1.16, STEP_DOWN: 0.64, LEDGE_VS: 1.8,   // walkWorm L3635: 10 / 18 px, ledge vx 40 px/s
       FALL_SAFE: 30.2,                          // FALL_HURT L3543: 470 px/s along the contact normal (a 13.6 m drop is safe)
@@ -82,7 +83,7 @@
       // losing SWIM_DPS HP/s (in SWIM_TICK s chunks); land within SWIM_R m whose ground is at most SWIM_CLIMB m above
       // the water: it swims there at SWIM_V (SWIM_MAX_T s at most) and climbs out. Floats FLOAT_D m under the surface
       // (body centre). On the ninja rope it stays in control under water, losing SWIM_DPS too.
-      SWIM_DPS: 10, SWIM_TICK: 0.5, SWIM_FLOAT_T: 2.5, SWIM_R: 2, SWIM_CLIMB: 1.0, SWIM_V: 0.9, SWIM_MAX_T: 4, FLOAT_D: 0.3,
+      SWIM_DPS: 10, SWIM_TICK: 0.5, ROPE_GRACE: 2, ROPE_TICK: 1, ROPE_DMG: 5, SWIM_FLOAT_T: 2.5, SWIM_R: 2, SWIM_CLIMB: 1.0, SWIM_V: 0.9, SWIM_MAX_T: 4, FLOAT_D: 0.3,
       WASH_V: 1.2, WASH_VS: 4.5, WASH_VY: 3.86, WASH_K: 0.8, WASH_KY: 0.4, WASH_COOL: 1.2,   // washWorms L6283
       AIM_RATE: 1.5, CHARGE_T: 1.15, MIN_POWER: 0.08, AIM0: 0.35,   // L5154, L5160, launch L4305, makeWorm aim 0.35
       SETTLE_QUIET: 0.6, SETTLE_CAP: 16,        // settle L5107-5110
@@ -241,18 +242,18 @@
 
     /* Settings the player can change (map menu). 'auto' = picked from the biome/seed. */
     /* P68a: the 2D dimension (settings.dim = '2d', sim/dim2d.js): the slab is SZ m thick (NZ = SZ / H + 1 lattice slices, the middle one is the gameplay plane) */
-    DIM2: { SZ: 4, COUNT_K: 0.5, SEP_K: 0.5 },
+    DIM2: { SZ: 4, COUNT_K: 0.5, SEP_K: 0.5, GEN_ROWS: 12 },     // P104: GEN_ROWS = lattice rows each side of the slice that the generator fills (worldgen band)
     /* Settings (the sim's defaults; the menu starts from the PoC defaults: turnTime 45, sd on, ctl human / cpu).
      * P1: teams 2-4, worms per team 1-4, hp, turnTime (s, 0 = no limit), ctl[] per team 'human' | 'cpu' (null =
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p91-soak-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p112-jumps-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
       blood: false, select: false, keepRope: false, rooms: false, time: 'day', art: 'painted', shape: 'island',
-      rotLock: true, dim: '3d', fort: false, labFlags: 0, jackets: 3, jacketOn: true, mineFuse: 'default', teamBlood: false, toolCrates: 'normal', crateW: 5, crateH: 5, crateT: 5,        // (P84: crate levels 0..10; toolCrates is the legacy name of crateT; contracts: W1 / W3 / W4 read them; the menu sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
+      rotLock: true, dim: '3d', fort: false, labFlags: 0, jackets: 3, jacketOn: true, jetpacks: 3, mineFuse: 'default', teamBlood: false, toolCrates: 'normal', crateW: 5, crateH: 5, crateT: 5,        // (P84: crate levels 0..10; toolCrates is the legacy name of crateT; contracts: W1 / W3 / W4 read them; the menu sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
       dTrees: 'medium', dRocks: 'medium', dBarrels: 'medium', dProps: 'medium', dCrates: 'medium', dMines: 'medium', dBunkers: 'medium', dTown: 'medium', dEggs: 'medium' },
 
     WIND_UNIT: 12, WIND_ACC: 230 * 9.81 / 520,   // PoC WIND_ACC 230 px/s2 per wind unit (12 m/s) on the projectile scale

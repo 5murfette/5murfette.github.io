@@ -71,27 +71,16 @@
     return t;
   }
 
-  /* a small procedural sky / ground gradient (equirectangular canvas) the metal parts reflect: the game scene has no environment map, a
-   * metallic model would render black without one. Lazy, shared, flagged shared. */
-  let ENV = null;
-  function envTex() {
-    if (ENV || typeof document === 'undefined') return ENV;
-    const cv = document.createElement('canvas'); cv.width = 128; cv.height = 64; const c = cv.getContext('2d');
-    const g = c.createLinearGradient(0, 0, 0, 64); g.addColorStop(0, '#6d9bd6'); g.addColorStop(0.42, '#d8dce0'); g.addColorStop(0.5, '#b8b2a4'); g.addColorStop(0.56, '#4a443c'); g.addColorStop(1, '#241f1b');
-    c.fillStyle = g; c.fillRect(0, 0, 128, 64);
-    const sun = c.createRadialGradient(36, 14, 0, 36, 14, 12); sun.addColorStop(0, 'rgba(255,248,225,1)'); sun.addColorStop(1, 'rgba(255,248,225,0)'); c.fillStyle = sun; c.fillRect(0, 0, 128, 64);
-    ENV = new T.CanvasTexture(cv); ENV.mapping = T.EquirectangularReflectionMapping; if (T.SRGBColorSpace) ENV.colorSpace = T.SRGBColorSpace; ENV.userData.shared = true;
-    return ENV;
-  }
-
   function material(tx, color, rough, metal, side, hasUv2) {
     const o = { color: 0xffffff, roughness: rough, metalness: metal, side: side };
     if (tx.basecolor) o.map = texture(tx.basecolor, true); else o.color = color;
     if (tx.normal) o.normalMap = texture(tx.normal, false);
-    if (tx.orm) { o.roughnessMap = o.metalnessMap = texture(tx.orm, false); o.envMap = envTex(); o.envMapIntensity = 0.85; }       // glTF packing: G = roughness, B = metalness (the scalars multiply)
+    if (tx.orm) { o.roughnessMap = o.metalnessMap = texture(tx.orm, false); }       // glTF packing: G = roughness, B = metalness (the scalars multiply)
+    if (tx.emis) { o.emissiveMap = texture(tx.emis, true); o.emissive = 0xffffff; o.emissiveIntensity = 1.6; }     // P101: baked glow (lava cracks); render/heroes.js breathes it
     if (tx.ao) { o.aoMap = texture(tx.ao, false); o.aoMap.channel = hasUv2 ? 1 : 0; }
     const mat = new T.MeshStandardMaterial(o);
     mat.userData.shared = true;
+    if (tx.orm && SS.envView) SS.envView.attach(mat);
     return mat;
   }
 
@@ -112,13 +101,14 @@
    * alpha is pushed towards 1 at grazing angles (a cheap fresnel: panes read as glass on bright and dark backgrounds, the env map shows
    * in the reflection). One compiled program for every glass in the game (customProgramCacheKey). */
   function glassMaterial(gm, boost) {
-    const c = gm.color, o = { color: new T.Color(c[0], c[1], c[2]), roughness: gm.roughness === undefined ? 0.06 : gm.roughness, metalness: 0.0, transparent: true, opacity: c[3], depthWrite: false, side: T.DoubleSide, envMap: envTex(), envMapIntensity: 1.6 };
+    const c = gm.color, o = { color: new T.Color(c[0], c[1], c[2]), roughness: gm.roughness === undefined ? 0.06 : gm.roughness, metalness: 0.0, transparent: true, opacity: c[3], depthWrite: false, side: T.DoubleSide, envMapIntensity: 1.6 };
     if (gm.tex && gm.tex.basecolor) o.map = texture(gm.tex.basecolor, true);
     const mat = new T.MeshStandardMaterial(o);
     mat.onBeforeCompile = sh => {
       sh.fragmentShader = sh.fragmentShader.replace('#include <opaque_fragment>', '#include <opaque_fragment>\n  { float fr = pow(1.0 - clamp(abs(dot(normalize(normal), normalize(vViewPosition))), 0.0, 1.0), 3.0); gl_FragColor.a = clamp(gl_FragColor.a + fr * 0.65 + ' + (boost || 0).toFixed(2) + ', 0.0, 1.0); }');
     };
     mat.customProgramCacheKey = () => 'ssglass1' + (boost || 0);
+    if (SS.envView) SS.envView.attach(mat);
     mat.userData.shared = true;
     return mat;
   }

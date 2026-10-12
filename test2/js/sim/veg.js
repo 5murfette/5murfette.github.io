@@ -59,6 +59,23 @@
     }
   };
 
+  /* P102: nothing green grows on or near lava or a fumarole (it would burn at once): cover and fuel are cleared within HOT_R of any lava
+   * column / vent mouth at the start (the lava edge then shows bare ground, not a turf ready to flash over) */
+  VG.clear_hot = function (S) {
+    const st = S.veg, w = W(), n = st.n, nz = w.NZ, H = w.H, R = K.HOT_R || 4, r = Math.ceil(R / H), lv = S.lava, F = w.features || {};
+    const src = [];
+    if (lv) for (let c = 0; c < n * nz; c++) if (lv.h[c] > 0.02) src.push(c);
+    if (S.biome === 'volcanic') for (const v of F.vents || []) src.push(M.clamp(Math.round(v.z / H), 0, nz - 1) * n + M.clamp(Math.round(v.x / H), 0, n - 1));
+    for (let q = 0; q < src.length; q++) {
+      const ci = src[q] % n, ck = (src[q] - ci) / n;
+      for (let dk = -r; dk <= r; dk++) for (let di = -r; di <= r; di++) {
+        const i = ci + di, k = ck + dk; if (i < 0 || k < 0 || i >= n || k >= nz || M.len2(di * H, dk * H) > R) continue;
+        const c = k * n + i; st.surf[c * 4] = 0; st.fuel[c] = 0;
+      }
+    }
+    st.surfVer++;
+  };
+
   function wet(S, c) { return S.water && S.water.h[c] > 0.004; }
   function igniteCell(S, st, c, I) {
     if (st.burnT[c] > 0 || st.fuel[c] < 0.05 || st.surf[c * 4 + 2] > 128 || wet(S, c)) return false;
@@ -222,12 +239,12 @@
     const lv = S.lava;
     if (lv && st.tick % 5 === 0 && lv.i1 >= lv.i0) {
       let ch = false;
-      for (let k = M.max(1, lv.k0 - 1); k <= M.min(n - 2, lv.k1 + 1); k++) for (let i = M.max(1, lv.i0 - 1); i <= M.min(n - 2, lv.i1 + 1); i++) {
+      for (let k = M.max(2, lv.k0 - 1); k <= M.min(n - 3, lv.k1 + 1); k++) for (let i = M.max(2, lv.i0 - 1); i <= M.min(n - 3, lv.i1 + 1); i++) {
         const c = k * n + i; if (!(lv.h[c] > 0.02 && lv.T[c] > 0.3)) continue;
-        for (let dk = -1; dk <= 1; dk++) for (let di = -1; di <= 1; di++) {
+        for (let dk = -2; dk <= 2; dk++) for (let di = -2; di <= 2; di++) {
           const q = c + dk * n + di; if (st.fuel[q] < 0.05 || st.burnT[q] > 0 || surf[q * 4 + 2] > 128) continue;
-          if (surf[q * 4 + 1] / 255 >= K.IGNITE_DRY) igniteCell(S, st, q, 0.9);
-          else if (q === c) { surf[q * 4 + 2] = 255; st.fuel[q] = 0; ch = true; }
+          if (surf[q * 4 + 1] / 255 >= K.IGNITE_DRY) igniteCell(S, st, q, 0.9);                  // P102: 2 cells (1 m) around hot lava: dry grass ignites, green grass chars at once
+          else { surf[q * 4 + 2] = 255; st.fuel[q] = 0; ch = true; }
         }
       }
       if (ch) st.surfVer++;

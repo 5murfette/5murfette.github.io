@@ -186,6 +186,18 @@
     if (!best) return false;
     return doTeleport(S, pl, a, best.s, best.y, 40);
   };
+  /* P99: teleport onto a crate the worm cannot walk to (a ledge, an island): the crate is picked up when the worm stands within 1.1 m of it, the same step. The spot must be free and open
+   * to the sky (the teleport's own rule), so a few places around the crate are tried. Fires at once (true when it did); the turn ends after it like any teleport. */
+  AC.crate_teleport = function (S, pl, a, c, cp) {
+    if (!hasW(S, 'teleport') || a.air || S.rope) return false;
+    for (let k = 0; k < 5; k++) {
+      const s = cp.s + (k === 0 ? 0 : (k & 1 ? 1 : -1) * ((k + 1) >> 1) * 0.5), y = c.pos.y + 0.35;
+      if (!spotFree(S, s, y)) continue;
+      const q = P.to_world(S, s, y); if (M.len3(q.x - c.pos.x, q.y - c.pos.y, q.z - c.pos.z) > 0.9) continue;
+      return doTeleport(S, pl, a, s, y, 20);
+    }
+    return false;
+  };
   function doTeleport(S, pl, a, s, y, v) {
     S.weapon = 'teleport'; S.tgt = { s, y };
     const ok = SS.weapons.use(S, 0);

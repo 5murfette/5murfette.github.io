@@ -1,4 +1,4 @@
-/* sim/dim2d.js — P68a: the 2D ("classic worms") dimension. Portable, deterministic: only the world arrays, S state and the fixed step.
+/* sim/dim2d.js — P68a (P104: 2D-first): the 2D ("classic worms") dimension. Portable, deterministic: only the world arrays, S state and the fixed step.
  * setting `dim`: '3d' (the default: everything as before, bit-identical) | '2d'.
  * Design (one central rule, not scattered checks): a 2D match is the ordinary generator's map cut down to ONE slice and
  * extruded into a thin slab (C.DIM2.SZ m = NZ lattice slices, the middle slice kz is the gameplay plane). The plane never
@@ -8,6 +8,12 @@
  * which copies the middle slice over all slices (so a blast's sphere becomes a prism, a collapse piece a slab).
  * World flags (sim/world.js): W.flat (bool), W.kz (middle slice index), W.zpick(r, m) / W.zin(z, m) (z margins that
  * vanish in 2D: spawn code asks them instead of reading SZ).
+ * P104 (user: "you made a map in 3d and then made 2d slice? dont make dumb code"): nothing off the slab may exist or run.
+ *   - band(W): the generator (worldgen.js) fills only the lattice rows around the slice (slice +- C.DIM2.GEN_ROWS rows; the slice
+ *     is known right after the heightfield stage on every surface map; underground maps pick it by their cave air and stay full).
+ *   - crop() prunes the feature lists in ONE place (prune_features): a vent, cone, pocket, spire, bridge or canal that does not touch
+ *     the slab is deleted, so no renderer / lava / spawn code ever sees it. finish() then lays the fumaroles of a volcanic map ON the slab.
+ *   - spawn code (trees, props, worms, crates, bodies) already draws z through W.zpick (= the plane), so nothing of it is off the slab.
  * C mapping: bool world.flat; i32 world.kz; void dim_crop(World*, Job*), void dim_flatten(World*, i0, j0, i1, j1),
  *   void dim_constrain(Game*); every loop is over fixed arrays.
  * API: is(settings), on(S), crop(W, job), flatten(W, i0, j0, i1, j1), constrain(S), z0(W). */
@@ -40,6 +46,17 @@
     return Math.round(W.MZ / H);
   }
 
+  /* the lattice rows a 2D match generates: the slice's row +- C.DIM2.GEN_ROWS (full range on underground maps, which pick the slice
+   * by scanning the finished cave volume). The margin covers the 3D neighbourhood the despeckle passes (8), the material layers
+   * and the lava pockets read, so the slab equals the slice of the full generation. */
+  D.band = function (W) {
+    const NZ = W.NZ;
+    if (W.under) return { k0: 0, k1: NZ - 1, ko: -1 };
+    const ko = pick_slice(W), r = C.DIM2.GEN_ROWS;
+    return { k0: M.max(0, ko - r), k1: M.min(NZ - 1, ko + r), ko };
+  };
+  D.pick_slice = pick_slice;
+
   /* shift the generator's features (world z) into the new slab frame; each shared object once */
   function shift_features(F, dz) {
     const seen = [];
@@ -53,6 +70,19 @@
     for (const s of F.spires || []) if (once(s)) s[1] += dz;
     for (const b of F.bridges || []) { for (let e = 0; e < 2; e++) if (once(b[e])) b[e][2] += dz; }
     if (F.caves) for (const c of F.caves.chambers || []) sz(c);
+  }
+
+  /* the one place that decides what of the generator's feature lists belongs to the slab (z already in the slab frame: the plane is W.MZ,
+   * the slab is +- SZ / 2). Anything whose influence does not reach the plane is deleted, not hidden. */
+  function prune_features(F, MZ) {
+    const hz = C.DIM2.SZ * 0.5, dz = z => Math.abs(z - MZ);
+    F.vents = (F.vents || []).filter(v => dz(v.z) <= hz);
+    F.volcanoes = (F.volcanoes || []).filter(v => dz(v.z) <= v.Rc + 4.5);
+    F.volcano = F.volcanoes[0] || null;
+    F.pockets = (F.pockets || []).filter(p => dz(p.z) <= M.max(p.rx, p.rz) + 3);
+    F.spires = (F.spires || []).filter(q => dz(q[1]) <= q[2] + 5);
+    F.bridges = (F.bridges || []).filter(b => MZ >= M.min(b[0][2], b[1][2]) - b[2] - 3 && MZ <= M.max(b[0][2], b[1][2]) + b[2] + 3);
+    F.canals = (F.canals || []).filter(c => (c.pts || []).some(q => dz(q[2]) <= 4 + (q[3] || 0)));
   }
 
   /* crop the finished square lattice to the slab (world.js gen_step calls it before the column tops are built) */
@@ -72,9 +102,28 @@
       F.lavaInit = li;
     }
     shift_features(F, W.MZ - z0);
+    prune_features(F, W.MZ);
     W.flat = true; W.kz = kz; W.sepk = C.DIM2.SEP_K;
     if (SS.collapse) SS.collapse.remove_floating_all(W);               // P72: the slice cuts 3D arches / bridges / lips whose support was sideways: nothing may float in the section
     W.dry = false; W.far = null; W.circ = null; W.frz = null;          // a finite slab: no endless dunes, no frozen ring (the desert's hot-sand rules are 3D)
+  };
+
+  /* after the column tops exist: the 2D-first fumaroles of a volcanic map. The generator's vents sat all over the 3D island; a slab gets
+   * its own 1-3 (deterministic, own rng stream from the map seed): on the cone's flanks and the plain, only where the ground is dry land.
+   * An off-slab vent is never created (crop pruned them), so no plume is ever simulated or drawn behind the slice. */
+  D.finish = function (W, settings) {
+    const F = W.features;
+    if (!F || F.biome !== 'volcanic' || W.under || !F.volcano) return;
+    const r = M.rng_make(((Math.imul(settings.seed | 0, 0x9e3779b1) ^ 0x51ed270b) >>> 0) || 1), R = () => M.rng_next(r);
+    const v = F.volcano, n = 2 + M.rng_int(r, 2);
+    for (let q = 0, t = 0; q < n && t < 40; t++) {
+      const side = R() < 0.5 ? -1 : 1, d = v.Rc + 3 + R() * M.max(1, v.Rb * 0.5 - v.Rc - 3), x = v.x + side * d;
+      if (x < 4 || x > W.SX - 4) continue;
+      const h = W.top_at(x, W.MZ);
+      if (h < W.SEA + 1.2 || h > v.rim - 1.5) continue;
+      if (F.vents.some(o => Math.abs(o.x - x) < 6)) continue;
+      F.vents.push({ x, y: h, z: W.MZ, kind: 'fumarole' }); q++;
+    }
   };
 
   /* copy the middle slice over every slice inside the lattice box [i0..i1] x [j0..j1] (world.js mark) */

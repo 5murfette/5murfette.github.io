@@ -40,8 +40,81 @@
     for (const [t, fn] of buttons) { const x = el('button', t); x.type = 'button'; x.style.cssText = 'margin:8px 8px 0 0;padding:6px 12px;border:0;border-radius:8px;background:#ffb02e;color:#2a1606;font:400 13px var(--f-display);cursor:pointer'; x.onclick = () => { b.remove(); if (fn) fn(); }; b.appendChild(x); }
     document.body.appendChild(b); return b;
   }
-  NU.desync = (k, onStop) => banner('nudesync', `Desync at step ${esc(k)}: the players' games no longer match, so what you see may differ from theirs.`, [['Stop multiplayer', onStop], ['Keep playing', null]]);
+  /* P103: no blocking popup for a desync. net.js resyncs a guest from the host's snapshot by itself; the player sees ONE small toast per incident
+   * ("Resynced with host"). Only when the automatic tries fail there is ONE banner with a Resync button (a new banner replaces the old one, it never stacks,
+   * and net.js raises 'resync_failed' once per failure until the button is pressed again). */
+  let toastT = 0;
+  NU.toast = text => {
+    let t = document.getElementById('nutoast');
+    if (!t) { t = el('div'); t.id = 'nutoast'; t.style.cssText = 'position:fixed;left:50%;top:104px;transform:translateX(-50%);z-index:58;padding:6px 14px;border-radius:10px;background:rgba(14,24,32,.88);color:#dff3ff;border:1px solid rgba(150,210,240,.4);font:600 13px var(--f-ui);pointer-events:none;transition:opacity .4s;max-width:min(520px,90vw);text-align:center'; document.body.appendChild(t); }
+    t.textContent = text; t.style.opacity = '1'; clearTimeout(toastT); toastT = setTimeout(() => { t.style.opacity = '0'; }, 3200);
+  };
+  NU.clearBanner = () => { const b = document.getElementById('nudesync'); if (b) b.remove(); };
+  NU.resyncFailed = (incident, onResync, onStop) => { if (document.getElementById('nudesync')) return; banner('nudesync', 'Your game is out of sync with the host and the automatic resync did not work.', [['Resync', onResync], ['Leave match', onStop]]); };
   NU.refused = msg => { banner('nurefused', esc(msg), [['OK', null]]); status(msg); };
+
+  /* ---------- P103: chat (DOM only; never touches S, the sim log, the lockstep or a replay) ----------
+   * Enter / T open it when the player cannot act right now (not their turn, a CPU turn, the lobby); Shift+Enter / Shift+T open it any time (Enter is
+   * jump and T is the teleport weapon on your own turn); the chat button opens it too (touch). Enter sends and closes, Esc closes. While the input is
+   * focused input.js ignores every key (it skips INPUT targets), so nothing walks, fires or rotates; the keys held when it opens are released. */
+  const CHAT_KEEP = 40, CHAT_FADE = 8000;
+  let chatEl = null, logEl = null, inEl = null, btnEl = null, lines = [], chatOpen = false, fadeT = 0;
+  const hex = rgb => '#' + ('000000' + (rgb >>> 0).toString(16)).slice(-6);
+  NU.canAct = null;                                                    // main.js: () => true while the player controls a worm right now
+  function chatInit() {
+    if (chatEl) return;
+    if (!document.getElementById('nuchat-css')) { const st = el('style', `#nuchat{position:fixed;left:14px;bottom:calc(var(--gh,140px) + 56px);width:min(380px,calc(100vw - 28px));z-index:45;pointer-events:none;font:600 13px/1.3 var(--f-ui)}
+      #nuchat .lg{display:flex;flex-direction:column;gap:2px}#nuchat .ln{align-self:flex-start;max-width:100%;padding:2px 8px;border-radius:7px;background:rgba(8,12,16,.5);color:#eef4f8;text-shadow:0 1px 2px #000;opacity:1;transition:opacity .6s;word-break:break-word}
+      #nuchat .ln.old{opacity:0}#nuchat.open .ln.old{opacity:1}#nuchat .ln.sys{color:#bcd;font-style:italic}#nuchat .ln b{font-weight:800}
+      #nuchat input{display:none;pointer-events:auto;width:100%;box-sizing:border-box;margin-top:4px;padding:6px 9px;border-radius:8px;border:1px solid rgba(236,226,200,.35);background:rgba(8,12,16,.82);color:#fff;font:600 14px var(--f-ui)}
+      #nuchat.open input{display:block}
+      #nuchatbtn{position:fixed;left:14px;bottom:calc(var(--gh,140px) + 14px);z-index:45;width:34px;height:34px;border-radius:50%;border:1px solid rgba(236,226,200,.3);background:rgba(8,12,16,.55);color:#eee;font-size:16px;cursor:pointer;display:none;padding:0}
+      body.touch #nuchatbtn,#nuchatbtn.on{display:block}`); st.id = 'nuchat-css'; document.head.appendChild(st); }
+    chatEl = el('div'); chatEl.id = 'nuchat'; logEl = el('div'); logEl.className = 'lg'; inEl = el('input'); inEl.maxLength = 200; inEl.placeholder = 'Say something (Enter sends, Esc closes)'; inEl.autocomplete = 'off'; inEl.setAttribute('aria-label', 'Chat message');
+    chatEl.appendChild(logEl); chatEl.appendChild(inEl); document.body.appendChild(chatEl);
+    btnEl = el('button', '&#128172;'); btnEl.id = 'nuchatbtn'; btnEl.type = 'button'; btnEl.title = 'Chat (Enter / T when it is not your turn, Shift+Enter any time)'; btnEl.onclick = () => (chatOpen ? chatClose() : chatOpenIn()); document.body.appendChild(btnEl);
+    addEventListener('keydown', chatKey, true);
+    if (SS.net) SS.net.on('chat', d => { if (d.sys) NU.sys(d.text); else NU.chatLine(d.name, d.team, d.text); });
+  }
+  function addLine(name, rgb, text, sys) {
+    chatInit();
+    const d = el('div'); d.className = 'ln' + (sys ? ' sys' : '');
+    if (name) { const b = el('b'); b.textContent = name; b.style.color = rgb != null ? hex(rgb) : '#ddd'; d.appendChild(b); d.appendChild(document.createTextNode(': ')); }
+    d.appendChild(document.createTextNode(text));                       // textContent / text nodes only: no HTML from a peer is ever parsed
+    logEl.appendChild(d); lines.push({ d, t: performance.now() });
+    while (lines.length > CHAT_KEEP) { const o = lines.shift(); o.d.remove(); }
+    btnEl.classList.add('on'); fadeSoon();
+  }
+  function fadeSoon() { clearTimeout(fadeT); fadeT = setTimeout(fade, 700); }
+  function fade() { const now = performance.now(); let more = false; for (const l of lines) { const old = now - l.t > CHAT_FADE; l.d.classList.toggle('old', old); if (!old) more = true; } if (more) fadeT = setTimeout(fade, 700); }
+  const teamRgb = t => (t >= 0 && SS.CFG.TEAMS[t] ? SS.CFG.TEAMS[t].rgb : null);
+  NU.chatLine = (name, team, text) => addLine(String(name).slice(0, 18), teamRgb(team), String(text).slice(0, 200), false);
+  NU.sys = text => addLine('', null, String(text).slice(0, 200), true);
+  function chatOpenIn() { chatInit(); if (chatOpen) return; chatOpen = true; chatEl.classList.add('open'); if (SS.input && SS.input.keys) { SS.input.keys.clear(); SS.input.pressed.clear(); } fade(); inEl.value = ''; inEl.focus(); }
+  function chatClose() { if (!chatOpen) return; chatOpen = false; chatEl.classList.remove('open'); inEl.blur(); inEl.value = ''; fadeSoon(); }
+  NU.chatOpen = () => chatOpen;
+  NU.chatToggle = on => (on ? chatOpenIn() : chatClose());
+  function chatSend() {
+    const text = SS.net && SS.net.chat_clean ? SS.net.chat_clean(inEl.value) : inEl.value.trim().slice(0, 200);
+    chatClose(); if (!text) return;
+    const r = SS.net.chat(text);
+    if (!r) { addLine('', null, 'Slow down: too many messages.', true); return; }
+    NU.chatLine(r.name, r.team, r.text);
+  }
+  function chatKey(e) {
+    if (chatOpen) {
+      if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); chatClose(); return; }
+      if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); e.stopImmediatePropagation(); chatSend(); return; }
+      e.stopPropagation(); return;                                       // typed keys reach the input only
+    }
+    if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.code !== 'Enter' && e.code !== 'KeyT') return;
+    const t = e.target; if (t && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(t.tagName)) return;
+    if (SS.menu && SS.menu.visible && SS.menu.visible() && !box) return;   // the settings menu owns Enter / T; the lobby panel does not
+    if (!e.shiftKey && NU.canAct && NU.canAct()) return;               // on your own turn Enter is jump and T the teleport weapon
+    e.preventDefault(); e.stopImmediatePropagation(); chatOpenIn();
+  }
+  window.addEventListener('DOMContentLoaded', () => chatInit());
   NU.toggle = function (settings) {
     if (box) { box.remove(); box = null; if (!SS.net.started && SS.net.mode) SS.net.close(); return; }     // (R11: closing the panel before the match starts leaves the lobby: the room is released)
     curSettings = settings;

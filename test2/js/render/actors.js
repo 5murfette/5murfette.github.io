@@ -89,6 +89,7 @@
       // the tail tip curls up a little
       k += 2.2 * (1 - smooth01(0, 0.07, u)) * (0.4 + 0.6 * p.air);
       if (p.thr > 0.02) k += p.thr * 5 * Math.sin(2 * Math.PI * (u * 1.5 - p.t * 2.6)) * smooth01(0.04, 0.25, u);     // P57: writhing in the air after a blow
+      if (p.str || p.curl) k = k * (1 - (p.str || 0)) - (p.curl || 0) * 2.9;                                          // P112: str 1 = straight (the spring), < 0 = coiled; curl = the tuck of a flip (a ball: the belly inside)
       return k;
     };
     // integrate from the base's front corner (the anchor) both ways; contracted rings are shorter
@@ -174,7 +175,7 @@
   const GRIPW = new Float32Array(6), v4g = new T.Vector3();
   const ELBOW_GEO = new T.SphereGeometry(0.031, 8, 6), HAND_GEO = new T.SphereGeometry(0.045, 10, 8), ARM_GEO = new T.CylinderGeometry(0.026, 0.03, 1, 8), HAND_MAT = new T.MeshStandardMaterial({ color: 0xf2a092, roughness: 0.55, emissive: 0x1c0c08 });   // a little self-light: a worm in shade stays pink, never black
   const SKIN = new T.MeshPhysicalMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.42, sheen: 0.7, sheenColor: new T.Color(0xffd0c4), sheenRoughness: 0.45, clearcoat: 0.45, clearcoatRoughness: 0.35 });
-  const EYE = new T.MeshStandardMaterial({ color: 0xf3f0ee, roughness: 0.32 });
+  const EYE = new T.MeshStandardMaterial({ color: 0xf3f0ee, roughness: 0.2 });
   const PUPIL = new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 });
   const GLINT = new T.MeshBasicMaterial({ color: 0xffffff });
 
@@ -299,7 +300,7 @@
 
   /* ---------- live scene objects ---------- */
   const P = SS.plane;
-  let scene = null, rope, ropeKnot, reticle, trailT = 0, hookM = null, hookLine = null, glowTx = null;
+  let scene = null, rope, ropeKnot, trailT = 0, hookM = null, hookLine = null, glowTx = null;
   const teles = [];   // PoC teleFx: live beam effects
   const worms = new Map(), projs = new Map(), graves = new Map(), powerDots = [], keptRopes = [];
   /* P38 A5: hands + arms are children of the root, but the body they hang on is rotated / squashed / flipped on its own (salto, lean, bat
@@ -335,14 +336,14 @@
     if (SS.ordnance) { hookM = SS.ordnance.hook(); hookM.scale.setScalar(1.4); hookM.visible = false; scene.add(hookM); }
     hookLine = new T.Mesh(rope.geometry, rope.material); hookLine.visible = false; scene.add(hookLine);
     if (SS.travView) SS.travView.init(scene);                            // P37 W2: rope / parachute / zipline drawing
-    reticle = new T.Sprite(new T.SpriteMaterial({ map: tx.reticle, color: 0xffffff, depthTest: false, transparent: true }));
-    reticle.scale.set(0.55, 0.55, 1); reticle.renderOrder = 12; scene.add(reticle);
+    if (SS.aimView) SS.aimView.init(scene, tx);                          // P104: the reticle + the dotted aim line (render/aimline.js)
     for (let i = 0; i < 14; i++) {
       const s = new T.Sprite(new T.SpriteMaterial({ map: tx.glow, depthTest: false, transparent: true, blending: T.AdditiveBlending }));
       s.renderOrder = 12; s.visible = false; scene.add(s); powerDots.push(s);
     }
   };
   A.clear = function () {
+    if (SS.aimView) SS.aimView.hide();
     // per-worm materials (team colours, held weapon, x-ray, ghost) are disposed; shared geometries / eye materials stay
     const keep = new Set([EYE, PUPIL, GLINT, STONE]);
     for (const v of worms.values()) {
@@ -534,21 +535,25 @@
       ps.wob = (v.ache > 0 ? 0.32 * Math.sin(viewTime * 8.5) * Math.min(1, v.ache) : (rx ? rx.wob : 0)) + (idl ? idl.wob : 0);
       // P39: the MUSCLES (goal pose of the soft body: crouch before a jump, take-off stretch, breathing, the dying tremble) and the posture frame;
       // the solver turns them into motion. Nothing here rotates or scales the drawn body any more.
-      const wind = w === a && w.windUp > 0 ? M.clamp(1 - (w.windUp - S.time) / C.WORM_DYN.JUMP_WIND, 0, 1) : 0, windE = wind * wind * (3 - 2 * wind);
-      const skid = windE > 0 ? -0.62 * windE : !!w.slide && !(w === a ? a.air : !w.rest) ? -0.22 : 0;          // a skid leans back; the wind-up crouches back
+      const jm = SS.jumpView ? SS.jumpView.pose(S, w, v, dt, { air: w === a && !!a.air && !S.rope, f, s: sNow, vs: vsP, vy: vyP, slope: v.slope || 0, lean: v.lean || 0, hang: w === a && !!(S.rope || (S.zip && S.zip.state === 2) || (S.chute && S.chute.open)), swim: !!(w.swim || w.ropeWet), burn: burnNow }) : null, jmA = jm && jm.act;   // P112: the choreography of the worm's own jumps / flips (render/jumpview.js)
+      v.jflip = jm && jm.flip ? jm.loc : 0;
+      const wind = !jmA && w === a && w.windUp > 0 ? M.clamp(1 - (w.windUp - S.time) / C.WORM_DYN.JUMP_WIND, 0, 1) : 0, windE = wind * wind * (3 - 2 * wind);
+      const skid = jmA ? jm.lean : windE > 0 ? -0.62 * windE : !!w.slide && !(w === a ? a.air : !w.rest) ? -0.22 : 0;          // a skid leans back; the wind-up crouches back
       v.lean = (v.lean || 0) + (skid - (v.lean || 0)) * Math.min(1, dt * 8);
       v.hangA = (v.hangA || 0) + ((SS.travView ? SS.travView.hang_pose(S, w, a, sNow, f) : 0) - (v.hangA || 0)) * Math.min(1, dt * 10);   // hanging on the rope / line / canopy
-      const sqT = w.squash != null ? (S.time - w.squash) / 0.28 : 9, sq = sqT >= 0 && sqT < 1 ? 0.08 * Math.sin(Math.PI * sqT) * (1 - sqT * 0.5) : 0;   // (P40: was 0.24: the crumple and the rebound are the soft body's now, the muscles only brace a little)
-      const vyb = w === a ? (a.air ? a.vy : 0) : (!w.rest && w.vel ? w.vel.y : 0), stch = vyb > 2.5 ? Math.min(0.2, vyb * 0.02) : vyb < -6 && airborne ? Math.min(0.14, -vyb * 0.009) : 0, crch = 0.2 * windE;
+      const sqT = w.squash != null && !jmA ? (S.time - w.squash) / 0.28 : 9, sq = sqT >= 0 && sqT < 1 ? 0.08 * Math.sin(Math.PI * sqT) * (1 - sqT * 0.5) : 0;   // (P40: was 0.24: the crumple and the rebound are the soft body's now, the muscles only brace a little)
+      const vyb = w === a ? (a.air ? a.vy : 0) : (!w.rest && w.vel ? w.vel.y : 0), stch = jmA ? 0 : vyb > 2.5 ? Math.min(0.2, vyb * 0.02) : vyb < -6 && airborne ? Math.min(0.14, -vyb * 0.009) : 0, crch = 0.2 * windE;
       if (v.lastF != null && v.lastF !== f && w === a && !airborne) v.turnT = 0.34;                    // P65h: turning round: the body bunches up, rises and the head swings over
       v.lastF = f; v.turnT = Math.max(0, (v.turnT || 0) - dt);
       const tk = v.turnT > 0 ? Math.sin(Math.PI * (1 - v.turnT / 0.34)) : 0;
       let gsx = 1 + sq * 0.55 - stch * 0.3 + crch * 0.4 - 0.2 * tk, gsy = 1 - sq + stch - crch + 0.1 * tk, gox = 0, goy = 0;
+      if (jmA) { gsx *= jm.sx; gsy *= jm.sy; goy += jm.oy; }
       if (rx) { gsx *= rx.sx; gsy *= rx.sy; goy += rx.oy; gox += rx.ox; }
       if (idl) { gsx *= idl.sx; gsy *= idl.sy; goy += idl.oy; gox += idl.ox; }
       { const sh = SS.polishView ? SS.polishView.shudder(S, w) : null; if (sh) { gox += sh.dx; gsx *= sh.sc; gsy *= sh.sc; } }   // P38 A5: the dying beat: it trembles and swells
       const rs = w.flipRope != null && w.flipRope === w.flipAt;
       let spin = w.flip && w.flipAt != null && airborne ? f * (rs ? w.flipW * w.flipK : 13) : 0;          // a salto / rope release = a muscle torque on the body, not a drawn rotation
+      if (jm && jm.flip) spin = jm.om;                                                                          // P112: a back flip: the solver's frame follows the prescribed angle (jm.ang), the rate is the torque
       if (ps.thr > 0.02) spin += f * 2.6 * ps.thr * M.cos(viewTime * 6.5 + v.phase);                          // P57: a thrown worm rocks and thrashes
       if (jkSwim) spin += f * 0.35 * M.cos(viewTime * 1.9);                                                    // P89: a gentle sway on the vest
       else if (w.swim || w.ropeWet) spin += f * 3.4 * M.cos(viewTime * 10.5);                                       // thrashing in the water
@@ -559,11 +564,11 @@
       // P65h: a worm that jumped by itself flies along its velocity (stretched, nose up on the way up, nose down on the way down); a blast / bat victim keeps the soft body's own tumble
       if (grounded) v.selfJump = false; else if (v.wasGr && w === a && !(v.flinchT > 0) && !(v.batT > 0) && vyP > 2 && !w.swim) v.selfJump = true;
       v.wasGr = grounded;
-      const flyW = v.selfJump && !hanging && !spin && !burnNow && Math.hypot(vsP, vyP) > 2.5 ? 0.6 * M.clamp((Math.hypot(vsP, vyP) - 2.5) / 4, 0, 1) : 0;
+      const flyW = !jmA && v.selfJump && !hanging && !spin && !burnNow && Math.hypot(vsP, vyP) > 2.5 ? 0.6 * M.clamp((Math.hypot(vsP, vyP) - 2.5) / 4, 0, 1) : 0;
       const flyA = flyW > 0 ? M.atan2(vyP, vsP) - (f < 0 ? Math.PI : 0) : 0;
       if (inSec || insp > 0.01) {
-        const sp = buildRings(v.geo, alienPre(S, w, v, dt, SS.softView.update(S, w, v, spine(ps), { f, sNow, grounded, slope: v.slope || 0, lean: v.lean + (rx ? rx.lean : 0), spin, hang: hanging ? v.hangA : null, pull: hanging ? (S.rope ? ropePull(S, w, sNow) : PULL_UP) : null, swim: !!(w.swim || w.ropeWet) && !grounded, speed: Math.hypot(vsP, vyP), fly: flyW > 0 ? { a: flyA, w: flyW } : null, surf: surfY, vs: crawlT > 0.1 && !w.slide ? vsP : 0,
-          sx: gsx, sy: gsy, ox: gox, oy: goy, dt: M.clamp(dt, 0, 0.05), dizzy: w.dizzyUntil > S.time }))), hi = NS - 4, ha = sp.a[hi];
+        const sp = buildRings(v.geo, alienPre(S, w, v, dt, SS.softView.update(S, w, v, (ps.curl = jmA ? jm.curl : 0, ps.str = jmA ? jm.str : 0, spine(ps)), { f, sNow, grounded, slope: v.slope || 0, lean: v.lean + (rx ? rx.lean : 0), spin, hang: hanging ? v.hangA : null, pull: hanging ? (S.rope ? ropePull(S, w, sNow) : PULL_UP) : null, swim: !!(w.swim || w.ropeWet) && !grounded, speed: Math.hypot(vsP, vyP), fly: jm && jm.fly ? { a: jm.fa, w: jm.fw } : flyW > 0 ? { a: flyA, w: flyW } : null, flip: jm && jm.flip ? { a: jm.ang, w: jm.wf } : null, surf: surfY, vs: crawlT > 0.1 && !w.slide ? vsP : 0,
+          sx: gsx, sy: gsy, ox: gox, oy: goy, dt: M.clamp(dt, 0, 0.05), dizzy: w.dizzyUntil > S.time, firm: jmA ? jm.firm : 1 }))), hi = NS - 4, ha = sp.a[hi];
         if (SS.alienView && SS.alienView.worm_post) SS.alienView.worm_post(S, w, v, sp, dt, view);                  // P47: the face frame (a hugger sits on it), the infected look
         if (v.zap) updateZap(v, sp, Math.min(1, (viewTime - v.zapT) / ZAP_T));
         // eyes on the front of the head, looking along it; blink now and then
@@ -806,13 +811,10 @@
     }
     for (; k < keptRopes.length; k++) keptRopes[k].visible = false;
     const aiming = S.phase === 'play' && a && !a.dead;
-    reticle.visible = !!aiming;
+    if (SS.aimView) SS.aimView.frame(S, SS.view.camera());               // P104: reticle + dotted line (only while aiming a weapon that aims)
     for (const s of powerDots) s.visible = false;
     if (aiming) {
-      const ad = SS.sim.aim_dir(S), ap = P.to_plane(S, a.pos), qq = P.to_world(S, ap.s + ad.s * 2.4, a.pos.y + ad.y * 2.4);
-      reticle.position.set(qq.x, qq.y, qq.z);
-      if (SS.wornView && SS.wornView.laserHit()) { const lh = SS.wornView.laserHit(); reticle.position.set(lh.x, lh.y, lh.z); }   // P37 W4: the laser sight skill: the crosshair snaps to the first surface on the path
-      reticle.material.color.set(S.weapon === 'rope' ? 0xbfe6ff : 0xffffff);
+      const ad = SS.sim.aim_dir(S), ap = P.to_plane(S, a.pos);
       if (S.charging) {
         const nd = Math.ceil(S.power * powerDots.length);
         for (let i = 0; i < nd; i++) {

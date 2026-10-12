@@ -19,7 +19,7 @@
   const WX = SS.weatherView = {};
   let N1 = 193;                          // lattice columns per side (P38: per map)
   const COVER_MAX = 0.4;
-  const RAIN_N = 34000, FLAKE_N = 30000, SPLASH_N = 1600;
+  const RAIN_N = 14000, FLAKE_N = 9000, SPLASH_N = 400;                 // P102: was 34000 / 30000 / 1600 (a white wall, and the fill cost lagged the game)
   let scene, Q, P = null, rain, flake, splash, coverTex, coverData, coverRef = null, coverVer = -1, coverUploads = 0;
   const base = { sun: 3, hemi: 1.15, fill: 0.45, fog: 0.006, motes: 0.55, storm: false, fillPos: new T.Vector3(-30, 20, -40), fillCol: new T.Color(0x9cc0ff),
     haze: new T.Color(0xf1d9c0), skyH: new T.Color(0x9aa0a8), ov: -1, sunEl: 0.6, hemiC: new T.Color(), hemiG: new T.Color() };
@@ -83,7 +83,7 @@
       vec2 gq = tD > 0.0 && uInsp < 0.5 ? p.xz - uN.xz * tD : p.xz;
       if (p.y < topAt(gq) + 0.03 || a < 0.003) { hide(); vA = 0.0; vUv = vec2(0.0); return; }
       vec3 sd = side(ax, toC / d);
-      float w = uSize * (0.75 + 0.5 * seed.w), wp = uPix * d * 1.2;
+      float w = uSize * (0.75 + 0.5 * seed.w), wp = uPix * d * 1.0;
       a *= min(1.0, w / wp); w = max(w, wp);
       float len = max(w * uRound, spd * uExpo);
       vec3 Pq = p + sd * position.x * w - ax * len * position.y;
@@ -111,9 +111,9 @@
         tHeight: { value: null }, uC: { value: new T.Vector3() }, uB: { value: new T.Vector3(56, 34, 56) },
         uOff: { value: new T.Vector3() }, uVel: { value: new T.Vector3(0, -8, 0) }, uTime: { value: 0 },
         uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uInsp: { value: 0 },
-        uSize: { value: round ? 0.05 : 0.024 }, uExpo: { value: round ? 0.022 : 0.065 }, uSway: { value: round ? 0.35 : 0 },
+        uSize: { value: round ? 0.045 : 0.012 }, uExpo: { value: round ? 0.022 : 0.055 }, uSway: { value: round ? 0.35 : 0 },
         uFallVar: { value: round ? 0.35 : 0.15 }, uPix: { value: 0.001 }, uFogD: { value: 0.006 }, uFlick: { value: 0 },
-        uNear: { value: round ? new T.Vector2(1.0, 3.5) : new T.Vector2(2.2, 7) }, uRound: { value: round ? 1 : 0 }, uCol: { value: new T.Color(0.7, 0.74, 0.8) }, uFlash: { value: 0 }, uAlpha: { value: round ? 0.85 : 0.8 }
+        uNear: { value: round ? new T.Vector2(3.0, 9.0) : new T.Vector2(9.0, 22.0) }, uRound: { value: round ? 1 : 0 }, uCol: { value: new T.Color(0.7, 0.74, 0.8) }, uFlash: { value: 0 }, uAlpha: { value: round ? 0.6 : 0.5 }
       }
     });
   }
@@ -132,7 +132,7 @@
       float g = topAt(xz);
       vec3 p = vec3(xz.x, g + 0.015, xz.y);
       float tD = dot(p - uO, uN);
-      if (h1(seed.w * 13.1 + cyc) > uAmt || f > 0.3 || g < uSea + 0.05 || (tD > 0.15 && uInsp < 0.02)) { hide(); vA = 0.0; vUv = vec2(0.0); return; }
+      if (h1(seed.w * 13.1 + cyc) > uAmt || f > 0.3 || g < uSea + 0.05 || (tD > 0.15 && uInsp < 0.02) || (tD < -3.0 && uInsp < 0.02)) { hide(); vA = 0.0; vUv = vec2(0.0); return; }
       f /= 0.3;
       vec3 toC = cameraPosition - p; float d = length(toC);
       vec3 sd = side(vec3(0.0, 1.0, 0.0), toC / d);
@@ -305,7 +305,7 @@
       uniforms: {
         tHeight: { value: null }, uC: { value: new T.Vector3() }, uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) },
         uR: { value: 20 }, uTime: { value: 0 }, uRate: { value: 3.3 }, uAmt: { value: 0 }, uInsp: { value: 0 }, uSea: { value: 3 },
-        uPix: { value: 0.001 }, uCol: { value: new T.Color(0.8, 0.84, 0.9) }, uAlpha: { value: 0.55 }
+        uPix: { value: 0.001 }, uCol: { value: new T.Color(0.8, 0.84, 0.9) }, uAlpha: { value: 0.2 }
       }
     }), 6);
     if (SS.whirlView) SS.whirlView.init(scene, Q, P);

@@ -10,6 +10,8 @@
  *   3. strokes  — instanced ribbons: column strokes spiralling up (leaves as tumbling cards), a low skirt of strokes whose every
  *                 vertex is conformed to the ground, and radial burst strokes that fly outward over the terrain when it disbands.
  * Colour by place: biome dust, snow white on snow cover, ash grey on ash cover. Budget <= 0.5 ms on high (CPU: 4 x 6 uniforms per frame).
+ * P111 (user 2026-10-12: "they should be barely visible, instead they look like smoke tornadoes"): a dust devil is clear air: the
+ * funnel is a faint dust hint (alpha x ~0.1), the pall a low skirt (no bell), the strokes fewer and half as opaque.
  * Porting: a particle system + two terrain-draped meshes sampling the height field; the fields in uWA.. are the whirl struct. */
 (function (SS) {
   'use strict';
@@ -89,7 +91,7 @@
       float limb = abs(dot(normalize(vN), normalize(vV)));
       float ero = 1.0 - limb;                                                                              // the limb erodes: a ragged outline, not a smooth cone
       float dens = smoothstep(0.3 + 0.35 * ero, 0.72 + 0.2 * ero, n * 0.7 + 0.3 * band);
-      float a = vA * (0.08 + 1.0 * dens) * (0.35 + 0.65 * smoothstep(0.0, 0.5, limb)) * (1.0 + 0.8 * (1.0 - smoothstep(0.0, 0.3, vH)));
+      float a = vA * 0.11 * dens * (0.35 + 0.65 * smoothstep(0.0, 0.5, limb)) * (1.0 - 0.75 * smoothstep(0.0, 0.6, vH));   // P111: clear air; only a faint dust hint, thinning with height
       if (a < 0.003) discard;
       vec3 col = vCol * (0.4 + 0.3 * (1.0 - dens) + 0.3 * band + 0.25 * vH);
       gl_FragColor = vec4(col, a);
@@ -121,7 +123,7 @@
       float R = A.z * 0.45 + (Rmax - A.z * 0.45) * rho;
       vec2 xz = uWA[i].xy + R * vec2(cos(a), sin(a));
       float rp = clamp(R / Rs, 0.0, 1.0);
-      float flare = (1.3 + 0.9 * A.z) * pow(1.0 - rp, 1.7) * A.w;     // bell: tall at the funnel, on the ground at its rim
+      float flare = (0.25 + 0.15 * A.z) * pow(1.0 - rp, 1.7) * A.w;   // P111: a low dust skirt hugging the ground (it was a tall bell)
       float ring = exp(-pow((R - rb) / ww, 2.0)) * bB;
       float y = gClamp(xz, topAt(A.xy)) + 0.2 + flare + ring * (0.35 + 0.12 * ww);
       vec3 p = vec3(xz.x, y, xz.y);
@@ -140,7 +142,7 @@
     varying float vA; varying vec2 vQ; varying vec3 vCol; varying float vRho; varying float vSg;
     void main(){
       float n = fbm(vec3(vQ * 0.8, uTime * 0.35 + vRho * 0.15), 0.0);
-      float a = vA * 0.9 * smoothstep(0.15, 0.62, n);
+      float a = vA * 0.22 * smoothstep(0.15, 0.62, n);
       if (a < 0.004) discard;
       gl_FragColor = vec4(vCol * (0.8 + 0.4 * n), a);
       ${OUT}
@@ -248,7 +250,7 @@
     void main(){
       float a = vLeaf > 0.5 ? (1.0 - smoothstep(0.8, 1.0, length(vec2(vUv.x, vUv.y * 2.2))))
                             : exp(-vUv.x * vUv.x * 2.5) * smoothstep(0.0, 0.15, vUv.y + 0.05) * pow(max(1.0 - vUv.y, 0.0), 1.3);
-      a *= vA;
+      a *= vA * 0.5;
       if (a < 0.003) discard;
       gl_FragColor = vec4(vCol, a);
       ${OUT}
@@ -279,7 +281,7 @@
   WV.init = function (sc, Q, P) {
     scene = sc; parts = P || null;
     const q = Q.particles || 1;
-    wn = Math.round(700 * q);
+    wn = Math.round(300 * q);                                         // P111: fewer strokes (barely visible air)
     strokes = mk(stripGeo(wn * MAXW), mat(ST_V, ST_F), 6);
     funnel = mk(funnelGeo(), mat(FN_V, FN_F), 6);
     pall = mk(pallGeo(), mat(PL_V, PL_F), 5);

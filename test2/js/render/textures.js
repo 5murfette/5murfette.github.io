@@ -154,16 +154,24 @@
     gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.7, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = gr; g.fillRect(0, 0, 128, 128); return c;
   };
-  /* P97: the aim reticle: a fine open crosshair (four ticks round a gap, centre dot) with a dark under-stroke so it reads on sand and snow alike;
-   * not a donut ring (it does not spin either) */
+  /* P97 / P104: the aim reticle. User 2026-10-12: "do you see it? maybe, but barely, it should be clearly visible": a ring with four ticks across it and a
+   * centre dot, every stroke a white core inside a dark outline (the outline carries it over bright sky, snow and lava, the white over dark rock and
+   * night). Drawn at a fixed on-screen size by render/aimline.js, so it is the same size at every zoom. Not a donut that spins. */
   X.reticleCanvas = function () {
     const c = canvas(128, 128), g = c.getContext('2d'); g.lineCap = 'round';
-    const draw = (col, w) => {
+    const draw = (col, w, dot) => {
       g.strokeStyle = col; g.fillStyle = col; g.lineWidth = w;
-      for (let k = 0; k < 4; k++) { const a = k * M.TAU / 4, ca = Math.cos(a), sa = Math.sin(a); g.beginPath(); g.moveTo(64 + ca * 22, 64 + sa * 22); g.lineTo(64 + ca * 46, 64 + sa * 46); g.stroke(); }
-      g.beginPath(); g.arc(64, 64, 3.2, 0, M.TAU); g.fill();
+      g.beginPath(); g.arc(64, 64, 31, 0, M.TAU); g.stroke();
+      for (let k = 0; k < 4; k++) { const a = k * M.TAU / 4, ca = Math.cos(a), sa = Math.sin(a); g.beginPath(); g.moveTo(64 + ca * 21, 64 + sa * 21); g.lineTo(64 + ca * 55, 64 + sa * 55); g.stroke(); }
+      g.beginPath(); g.arc(64, 64, dot, 0, M.TAU); g.fill();
     };
-    draw('rgba(0,0,0,0.5)', 10); draw('rgba(255,255,255,1)', 4.5); return c;
+    draw('rgba(8,10,14,0.95)', 17, 10); draw('rgba(255,255,255,1)', 8, 5.6); return c;
+  };
+  /* P104: one dot of the dotted aim line (white fill, dark outline; the sprite colour multiplies it to the team colour) */
+  X.aimDotCanvas = function () {
+    const c = canvas(32, 32), g = c.getContext('2d');
+    g.fillStyle = 'rgba(8,10,14,0.92)'; g.beginPath(); g.arc(16, 16, 15, 0, M.TAU); g.fill();
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(16, 16, 9.5, 0, M.TAU); g.fill(); return c;
   };
   /* raindrop streak / snowflake sprites */
   X.streakCanvas = function () {
@@ -249,6 +257,7 @@
     out.glow = tex(X.glowCanvas(), false, false, 1);
     out.ring = tex(X.ringCanvas(), false, false, 1);
     out.reticle = tex(X.reticleCanvas(), true, false, 1);
+    out.aimdot = tex(X.aimDotCanvas(), true, false, 1);
     out.streak = tex(X.streakCanvas(), false, false, 1);
     for (const k in out) if (out[k] && out[k].isTexture) out[k].userData.shared = true;      // (P38-R2: disposeTree of a crate / sprite must not free the shared maps: they would be re-uploaded)
     prog(1, 'Textures ready');

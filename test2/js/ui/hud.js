@@ -145,10 +145,13 @@
     const NT = SS.net; if (!NT || !NT.active) { if (netEl) netEl.style.display = 'none'; return; }
     if (!netEl) { netEl = document.createElement('div'); netEl.id = 'netpanel'; document.body.appendChild(netEl); }
     const st = NT.stats(), now = performance.now(), quiet = st.lastRecv ? now - st.lastRecv : 1e9, rtt = st.rtt ? Math.round(st.rtt) : null;
-    const state = st.desync > 0 ? ['DESYNC', 'bad'] : quiet > 4000 ? ['no signal', 'bad'] : st.hashOk > 0 ? ['in sync', 'ok'] : ['checking', 'warn'];
+    const rsS = NT.resyncState ? NT.resyncState() : 'ok', state = rsS === 'failed' ? ['DESYNC', 'bad'] : rsS === 'wait' ? ['resyncing', 'warn'] : rsS === 'verify' ? ['checking', 'warn'] : quiet > 4000 ? ['no signal', 'bad'] : st.hashOk > 0 ? ['in sync', 'ok'] : ['checking', 'warn'];
     const ping = rtt == null ? '—' : rtt + ' ms', cls = state[1] === 'bad' || (rtt != null && rtt > 250) ? 'bad' : (rtt != null && rtt > 120) || state[1] === 'warn' ? 'warn' : 'ok';
     const txt = `🌐 ${st.mode === 'lan' ? 'LAN' : 'room'} · ${st.peers + 1} players · ${ping} · ${state[0]}`;
-    if (txt !== netLast) { netEl.textContent = txt; netEl.className = cls; netLast = txt; }
+    if (txt !== netLast) {
+      netEl.textContent = txt; netEl.className = cls; netLast = txt;
+      if (!NT.isHost) { const bt = document.createElement('button'); bt.textContent = 'Resync'; bt.title = 'Fetch the host\'s game state'; bt.style.cssText = 'margin-left:8px;padding:1px 8px;border-radius:6px;border:0;background:rgba(255,255,255,.18);color:inherit;font:inherit;cursor:pointer'; bt.onclick = () => NT.resync_request(); netEl.appendChild(bt); }      // P103: a guest may pull the host's state by hand
+    }
     netEl.style.display = 'block';
   }
   /* P37-6: "ROTATE NOW" splash with the countdown of the free rotation window (sim/rotlock.js), display font */
@@ -262,6 +265,7 @@
     netPanel(); rotSplash(S); jetChips(S); labBadge(S); perkPanel(S); alienLabels(S);
     if (SS.offscreen) SS.offscreen.draw(S);
     const a = S.active, insp = M.clamp(S.inspect, 0, 1);
+    const placed = [];                                                                                   // P102: labels of stacked worms never overlap: the later one moves up
     for (const w of S.worms) {
       const el = label(w);
       if (w.dead || w.eaten) { el.style.display = 'none'; continue; }
@@ -275,7 +279,10 @@
       el.children[2].firstChild.style.width = Math.max(0, Math.min(100, 100 * w.hp / (w.hp0 || 100))) + '%';
       setText(el.children[3], String(Math.max(0, Math.round(w.hp))));                                   // PoC: the HP number
       el.style.opacity = inSec ? 1 : insp;
-      el.style.transform = `translate(${sp.x}px,${sp.y}px) translate(-50%,-100%)`;
+      let ly = sp.y;
+      for (let g = 0; g < 4; g++) { let hit = false; for (let j = 0; j < placed.length; j++) if (Math.abs(placed[j].x - sp.x) < 84 && Math.abs(placed[j].y - ly) < 40) { ly = placed[j].y - 40; hit = true; } if (!hit) break; }
+      placed.push({ x: sp.x, y: ly });
+      el.style.transform = `translate(${sp.x}px,${ly}px) translate(-50%,-100%)`;
       el.classList.toggle('ghost', !inSec); el.classList.toggle('active', w === a); el.classList.toggle('low', w.hp > 0 && w.hp <= 0.3 * (w.hp0 || 100));
     }
     for (let i = pops.length - 1; i >= 0; i--) {
@@ -405,6 +412,7 @@
     const d = C.ARSENAL[k], pd = C.PROJ[k] || {}, n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, g = gridBtn[k];
     const img = g && g.b.querySelector('img') ? `<img src="${g.b.querySelector('img').getAttribute('src')}" alt="">` : '';
     let m = S.eow && SS.eow.no_air(k) ? '<span class="no">No air in space</span>' : '';
+    { const jw = SS.jacket ? SS.jacket.no_weapon(S, k) : ''; if (jw) m += `<span class="no">${esc(jw)} (on the life jacket)</span>`; }
     m += `<span class="${n > 0 ? 'am' : 'no'}">${n === Infinity ? 'Unlimited' : n > 0 ? 'Ammo ×' + n : 'Out of ammo'}</span>`;
     if (KIND_TXT[d.kind]) m += `<span>${KIND_TXT[d.kind]}</span>`;
     if (pd.W) m += `<span>${pd.W.toFixed(2)} kg TNT-eq</span>`;
@@ -421,7 +429,7 @@
     if (S.weapon !== wLast) { wLast = S.weapon; const c = W_CAT_OF[S.weapon]; if (c && wTab !== 'all' && c !== wTab) showTab(c); }
     const mine = !(SS.game && SS.game.is_cpu(S, a.team)) && !(SS.net && SS.net.active && a.team !== SS.net.team);
     for (const k of C.ARSENAL_ORDER) {
-      const g = gridBtn[k], n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, usable = n > 0 && !(SS.weapons.needs_storm(k) && !(S.weather && S.weather.storm)) && !(S.eow && SS.eow.no_air(k));
+      const g = gridBtn[k], n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, usable = n > 0 && !(SS.weapons.needs_storm(k) && !(S.weather && S.weather.storm)) && !(S.eow && SS.eow.no_air(k)) && !(SS.jacket && SS.jacket.no_weapon(S, k));     // P107: greyed afloat in a life jacket when it needs a footing
       const key = (S.weapon === k ? 's' : '') + (usable ? '' : 'e') + n;
       if (g.s === key) continue;
       g.s = key; g.b.classList.toggle('sel', S.weapon === k); g.b.classList.toggle('empty', !usable); g.a.textContent = n === Infinity ? '' : '×' + n;
@@ -517,7 +525,7 @@
   /* P89: the team's life jacket chip: vest icon + charges; 'on' lit orange, 'off' grey (switched off), 'none' (no charges); the active human team's chip is a button (key ;) */
   const VEST = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3.2 1.8h3L8 3.6l1.8-1.8h3l1.1 4.2-2 1V14H4.1V7l-2-1z"/><path fill="#fff" opacity=".55" d="M5.6 8.6h4.8v1H5.6z"/></svg>';
   function jacketChip(S, t, a) {
-    const G = SS.gear; if (!G) return '-|||';
+    const G = SS.gear; if (!G || S.eow) return '-|||';          // (P98: no water in space: the jetpack chips are the rescue gear there)
     const g = G.get(S, t, G.JACKET); if (!g || (g.n === 0 && g.ch === 0 && !S.settings.jackets)) return '-|||';
     const mine = a && a.team === t && S.teams[t].ctl !== 'cpu', st = g.n <= 0 ? 'none' : g.on ? 'on' : 'off';
     const tip = 'Life jackets: ' + g.n + ' left, ' + (g.on ? 'on' : 'off') + (mine ? ' (click or ; to switch)' : '') + '. A worm that lands in water inflates one and swims back to the shore.';

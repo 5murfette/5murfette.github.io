@@ -16,7 +16,7 @@
   const C = SS.CFG, M = SS.math, P = SS.plane;
   const AI = SS.ai = {};
   const W = () => SS.world;
-  const K = { TURN_MAX: 30, SPECIAL_MIN: 18, THINK: 0.8, TARGETS: 3, EVAL_PER_STEP: 14, OWN_K: 1.6, SELF_RISK: 500, SELF_DV: 7, KILL: 25, WALK_T: 2.5, MAX_T: 7,
+  const K = { TURN_MAX: 30, SPECIAL_MIN: 18, THINK: 0.8, TARGETS: 3, EVAL_PER_STEP: 14, OWN_K: 2.2, TAIL_K: 0.7, TAIL_FREE: 6, NEAR_D: 4.5, NEAR_PEN: 45, BREACH_K: 8, BREACH_MIN: 1.0, BREACH_OWN: 12, BREACH_R: 1.9, SEALED_N: 10, SELF_RISK: 500, SELF_DV: 7, KILL: 25, WALK_T: 2.5, MAX_T: 7,
     // aim / power noise = the PoC's skills exactly (Rookie / Soldier / Sharpshooter, PoC aiStep: [0.1, 0.12], [0.04, 0.045],
     // [0.01, 0.012]); aim / pow = the search grid steps
     DIFF: { easy: { aim: 0.12, pow: 0.12, noiseA: 0.1, noiseP: 0.12 }, normal: { aim: 0.08, pow: 0.08, noiseA: 0.04, noiseP: 0.045 }, hard: { aim: 0.05, pow: 0.05, noiseA: 0.01, noiseP: 0.012 } } };
@@ -48,6 +48,7 @@
   }
   const eg = { s: 0, y: 0 };                                  // (P68c: the chunk field's pull on a predicted shell)
   const NB = [];                                              // the non-worm plane bodies of one predict call (worm discs are skipped anyway)
+  let firstD = 1e9;                                           // P99: distance of the shooter to the first ground / body contact of the last predict (a shell that touches down next to the thrower rolls back on it; static f32)
   function predict(S, weapon, aim, facing, power, tgt) {      // tgt { s, y }: the homing missile's target (plane coordinates)
     // P11: any charged projectile of the arsenal (impact vs bouncy, its speed, restitution, friction, fuse, wind)
     const a = S.active, def = C.WEAPONS[weapon], pd = C.PROJ[weapon] || def, w = W(), d = P.dir(S), co = M.cos(S.theta), si = M.sin(S.theta), ap = P.to_plane(S, a.pos), pw = planeWorms(S, co, si), ox = S.O.x, oz = S.O.z, PB = S.planeBodies;
@@ -55,6 +56,7 @@
     const imp = !!pd.impact, vmax = def.vmax || 28, speed = vmax * M.max(C.WORM_DYN.MIN_POWER, power), ds = facing * M.cos(aim), dy = M.sin(aim);
     const rest = pd.rest != null ? pd.rest : 0.45, fric = pd.fric != null ? pd.fric : 0.9;
     let s = ap.s + ds * 0.7, y = a.pos.y + dy * 0.7, vs = ds * speed, vy = dy * speed, t = 0, wet = false;
+    firstD = 1e9;
     const fuse = SS.weaponsA ? SS.weaponsA.fuse_of(S, weapon) : pd.fuseSet ? S.fuse : (pd.fuse || 99), dt = 1 / 60, wk = pd.windK != null ? pd.windK : 1, k = C.WIND_GAIN * wk;
     // homing (= weapons.js pre): lock phase (low gravity, little wind), then steering toward the target at `turn` rad/s with the speed
     // growing by `accel`, for `fuel` s, then a plain shell again
@@ -111,6 +113,7 @@
         if (solid) {
           if (imp) return { x: wp.x, y: ny, z: wp.z, t, wet };
           const nn = P.normal2(S, ns, ny), vn = vs * nn.s + vy * nn.y;
+          if (firstD > 1e8) firstD = M.len2(ns - ap.s, ny - a.pos.y);
           if (vn < 0) {                                          // (= sim.js stepProjectiles: sand / snow / ash are soft, ice is slick)
             const mat = solid2 ? w.mat_at(wp.x, wp.y, wp.z) : 0, soft = mat === C.MAT.SNOW || mat === C.MAT.SAND || mat === C.MAT.ASH ? 0.55 : mat === C.MAT.ICE ? 1.15 : 1;
             const fr = mat === C.MAT.ICE ? 0.98 : fric * soft + 0.1 * (1 - soft);
@@ -224,7 +227,7 @@
      * movement sub-plan, null), badCrates (crate ids given up on this turn), navs (P95: cave legs walked this turn), appr (1 once the CPU walked up to a foe for a close-range tool this turn), ret (the retreat direction of this turn, 0 = not chosen yet). */
     return { phase: 'think', t: S.time + K.THINK, diff, foes, aliens, fi: 0, cand: null, next: 0, best: null, top: [], walked: false, turn: S.turnNo, wpns, props: nearProps(S), moves: 0,
       worm: a.id, sbest: null, fbest: null, fine: false, prepped: 0, regiven: 0, noted: 0, detour: 0, fixed: false, foes0: null, stage: 0, scands: null, rk: 0, rlist: null, appr: 0, ret: 0,
-      doneT: null, fired: null, grav: null, mv: null, badCrates: [], navs: 0 };
+      doneT: null, fired: null, grav: null, mv: null, badCrates: [], navs: 0, collected: 0, far: 0, digA: 0, digBack: 0 };
   }
   /* a scored shot candidate (C: struct Cand { f32 v; Hit hit; i16 fi; u8 wpn; f32 aim; i8 facing; f32 pw; f32 rv (robust value, NaN = not computed yet); }) */
   const cand_make = (v, hit, fi, c) => ({ v, hit, fi, wpn: c.wpn, aim: c.aim, facing: c.facing, pw: c.pw, rv: null });
@@ -264,10 +267,16 @@
     // P95: in a cave (rock between the worms, no sky weapons) walk one straight leg along the path through it toward the nearest foe, before the rope / zipline / crate fallbacks
     if (SS.world.under && !SS.world.flat && SS.nav && SS.aib && pl.navs < 1 && !a.air && !S.rope) {
       const g = SS.nav.leg(S, a);
-      if (g && g.rem > 3 && (pl.navs++, SS.aib.nav_walk(S, pl, a, g))) return;
+      if (g && navStep(S, pl, a, g)) return;
     }
     if (S.eow ? SS.eow.cpu_move(S, pl, a) : SS.aib && SS.aib.reposition(S, pl, a)) return;      // P68d: in the End of the World the hop planner (sim/eow.js)
     if (SS.aic && SS.aic.approach(S, pl, a, 0)) return;
+    // P99: no shot and nothing else to try on an ordinary 3D map (rooms, bunkers, ruins, a ravine between two ledges): the same path leg as in the caves toward the nearest foe by path,
+    // instead of a blind walk along the section (in the soak two worms 10 m apart in different chambers stood still for 16 turns)
+    if (!SS.world.under && !SS.world.flat && SS.nav && SS.aib && !S.eow && pl.navs < 1 && !a.air && !S.rope && straightBlocked(S, pl, a)) {
+      const g = SS.nav.leg(S, a);
+      if (g && !pl.fbest && navStep(S, pl, a, g)) return;           // (the fallbacks come first: a girder over a gap, the teleport)
+    }
     if (!pl.walked && !pl.navs) { pl.walked = true; pl.best = null; pl.top = []; pl.sbest = null; pl.phase = 'walk'; pl.t = S.time + K.WALK_T; }
     else if (pl.fbest) { pl.sbest = pl.fbest; pl.fbest = null; chooseSpecial(S, pl); }
     else { inp.end_turn = true; pl.phase = 'done'; }
@@ -277,6 +286,51 @@
   // walking away pays only when something of the worm's own is about to go off near it: a fused / buried charge, fire, gas, acid, or a shot at a foe within 14 m
   // (a retreat after every shot sent the CPU downhill into the rising sea: +40 % drowning in the matches)
   const RETWALK = { dynamite: 1, mine: 1, spring: 1, napalm: 1, gas: 1, acid: 1, magnet: 1, flamethrower: 1, blackhole: 1 };
+  // is the blind walk along the section toward the target pointless: the ground on the way is not walkable (a wall, a gap, a different chamber)? It is the plain case where a path leg helps
+  function straightBlocked(S, pl, a) {
+    const tgt = foe(S, pl, pl.fi) || (pl.foes0 && foe_of(S, pl, pl.foes0[0])); if (!tgt || !SS.aib.walk_reach) return false;
+    const ap = P.to_plane(S, a.pos), tp = P.to_plane(S, tgt.pos);
+    return Math.abs(tp.t) > 3 || !SS.aib.walk_reach(S, ap.s, ap.s + (tp.s >= ap.s ? 1 : -1) * M.min(12, Math.abs(tp.s - ap.s)), a.pos.y);
+  }
+  // one step of the path plan (caves, and any 3D map when nothing else is left): a leg toward the nearest foe by path, or, with every foe cut off by rock, a walk to the thinnest spot and a
+  // blast toward them (breach); true when the worm acted
+  function navStep(S, pl, a, g) {
+    if (g.dig) {
+      if (g.rem > 0 && !pl.digBack && (pl.navs++, SS.aib.nav_walk(S, pl, a, g))) return true;
+      return (g.rem === 0 || pl.digBack) && breach(S, pl, a, g);
+    }
+    return g.rem > 3 && (pl.navs++, SS.aib.nav_walk(S, pl, a, g));
+  }
+  /* P99: a bazooka shot that carves toward the far side of the rock (a cave pocket cut off from every foe: P95 left such worms idle for the whole match and the final stand killed both teams).
+   * The section is turned to the far cell while the rotation is free, then bazooka aim x power are scanned with the flight copy: a burst nearer to the far cell is worth BREACH_K per metre,
+   * the own team's damage is charged (shooter and allies, 2 HP-eq each); outside the final stand the own damage must stay below BREACH_OWN. true when it set up a shot / a turn. */
+  function breach(S, pl, a, g) {
+    if (!has_bazooka(S, a)) return false;
+    const ap = P.to_plane(S, a.pos), tb = P.to_plane(S, { x: g.bx, y: g.by, z: g.bz });
+    if (Math.abs(tb.t) > 1.2) {
+      if (pl.digA || (SS.rotlock && !SS.rotlock.allowed(S))) return false;
+      pl.digA = 1; SS.sim.align_to_point(S, g.bx, g.bz); pl.phase = 'regive'; return true;
+    }
+    const facing = tb.s >= ap.s ? 1 : -1, aim0 = M.atan2(g.by + 0.9 - a.pos.y, M.max(0.5, Math.abs(tb.s - ap.s))), D0 = M.len3(g.bx - a.pos.x, g.by + 0.9 - a.pos.y, g.bz - a.pos.z);
+    const W3 = burstW('bazooka'), dm = burstDmg('bazooka'), bold = S.sudden || g.na <= K.SEALED_N, cap = bold ? M.max(K.BREACH_OWN, 0.4 * a.hp) : K.BREACH_OWN; let best = null;
+    for (let da = -0.3; da <= 0.301; da += 0.05) for (let pw = 0.35; pw <= 1.001; pw += 0.13) {
+      const aim = M.clamp(aim0 + da, -1.4, 1.4), h = predict(S, 'bazooka', aim, facing, pw); if (!h || h.wet) continue;
+      const prog = D0 - M.max(0, M.len3(h.x - g.bx, h.y - g.by - 0.9, h.z - g.bz) - K.BREACH_R), own = M.max(ownDamage(S, h, W3, null, dm), M.len3(h.x - a.pos.x, h.y - a.pos.y, h.z - a.pos.z) < 4 ? 14 : 0);   // (a confined burst hurts more than the free-field estimate: 14 HP measured in P95)
+      if (prog < K.BREACH_MIN || own > cap) continue;
+      const v = prog * K.BREACH_K - (bold ? 1 : 2) * own;
+      if (v > 0 && (!best || v > best.v)) best = cand_make(v, h, 0, { wpn: 'bazooka', aim, facing, pw });
+    }
+    if (!best) {                                                       // too close to the wall (a burst within 4 m hurts the shooter): step back along the section and shoot from there
+      if (pl.digBack || a.air || S.rope || !SS.aib || !SS.aib.walk_to) return false;
+      for (let r = 6; r >= 3; r -= 1.5) {
+        const s2 = ap.s - facing * r;
+        if (SS.aib.walk_reach(S, ap.s, s2, a.pos.y) && SS.aib.safe_step(S, a, -facing)) { pl.digBack = 1; pl.navs++; return SS.aib.walk_to(S, pl, a, s2, 'dig', 6); }
+      }
+      return false;
+    }
+    pl.best = best; pl.phase = 'fire'; return true;
+  }
+  const has_bazooka = (S, a) => SS.game.ammo(S, a.team, 'bazooka') > 0;
   function needsRetreat(S, a, pl) {
     if (S.wa && S.wa.stream) return false;                       // (a flamethrower / minigun burst follows the worm's facing: walking away turned it round and sprayed the other way)
     if (RETWALK[S.weapon]) return true;
@@ -392,7 +446,7 @@
         if (sb && sb.v > K.SPECIAL_MIN && sb.v > (pick && pick.rv > 0 ? pick.rv * 1.1 : 0)) { chooseSpecial(S, pl); break; }
         if (pl.fbest && pl.fbest.v > (pick && pick.rv > 0 ? pick.rv : 0)) { pl.sbest = pl.fbest; pl.fbest = null; chooseSpecial(S, pl); break; }
         if (SS.aic && SS.aic.approach(S, pl, a, pick && pick.rv > 0 ? pick.rv : 0)) break;      // P38-R5: walk up to a foe for a close-range tool (bat, dynamite, ...) when that is worth more than the shot
-        if (pick && pick.rv > 0 && SS.aib && SS.aib.detour(S, pl, a, pick.rv < SS.aib.K.SHOT_OK ? SS.aib.K.DETOUR_R : SS.aib.K.DETOUR_NEAR)) break;      // P38-R2: a near weapon / tool crate first (within 10 m when the shot is weak)
+        if (pick && pick.rv > 0 && SS.aib && SS.aib.detour(S, pl, a, pick.rv < SS.aib.K.SHOT_OK ? SS.aib.K.DETOUR_R : SS.aib.K.DETOUR_NEAR, pick.rv < SS.aib.K.SHOT_WEAK, pick.rv)) break;      // P38-R2: a near weapon / tool crate first (within 10 m when the shot is weak)
         if (pick && pick.rv > 0) { pl.best = pick; pl.best.v = pick.rv; pl.phase = 'fire'; }
         else giveUp(S, pl, a, inp);
         break;
@@ -514,13 +568,33 @@
   }
   // 3 x 3 Gauss-Hermite nodes / weights of a normal noise (exact for the mean and variance and up to degree 5)
   const GH = [[-1.7320508, 1 / 6], [0, 2 / 3], [1.7320508, 1 / 6]];
+  /* P99: the damage a burst at c does to the own team (the shooter included), capped by HP; a bomblet shell counts every own worm inside its scatter ring as a 30 HP hit */
+  function ownDamage(S, c, W, split, dmg) {
+    const me = S.active.team; let sum = 0;
+    const SCAT = split ? split.jx * 1.1 : 0;
+    for (const o of S.worms) {
+      if (o.dead || o.team !== me) continue;
+      if (SCAT && M.len2(o.pos.x - c.x, o.pos.z - c.z) < SCAT) sum += 30;
+      sum += M.min(o.hp, Math.round(SS.blast.worm_effect(c, W, o.pos, dmg).dmg));
+    }
+    return sum;
+  }
+  /* P99: the Gauss-Hermite mean says little about the noise tails (the +/- 1.7 sigma nodes weigh 1/36 each) and the own team pays OWN_K x per HP only on average: the worst own-team
+   * damage over the 9 nodes and four far axis points (+/- 2.5 sigma, wind and a late gust are inside that spread) costs TAIL_K per HP above TAIL_FREE. A plan that usually hits
+   * but sometimes drops one on the squad loses to a plain safe one. c.tail keeps the worst own damage for the diagnostics. */
+  const FAR = [[2.5, 0], [-2.5, 0], [0, 2.5], [0, -2.5]];
   function expected(S, c, d) {
-    const pj = C.PROJ[c.wpn] || {}, W3 = burstW(c.wpn); let ev = 0;
+    const pj = C.PROJ[c.wpn] || {}, W3 = burstW(c.wpn), dm = burstDmg(c.wpn), bounce = !(pj.impact || (C.WEAPONS[c.wpn] || {}).impact), tails = !S.eow; let ev = 0, worst = 0;   // (the End of the World keeps the plain expectation: the tail rules pushed the planner toward flat full-power shots that leave every gravity well, 25 lost in 197 turns instead of 10)
     for (const [za, wa] of GH) for (const [zp, wp] of GH) {
       const h = predict(S, c.wpn, c.aim + za * d.noiseA, c.facing, M.clamp(c.pw + zp * d.noiseP, 0.05, 1));
-      if (h) ev += wa * wp * (score(S, h, W3, pj.split, burstDmg(c.wpn)) - selfRisk(S, h, W3, pj.split, burstDmg(c.wpn)));
+      if (h) { ev += wa * wp * (score(S, h, W3, pj.split, dm) - selfRisk(S, h, W3, pj.split, dm) - (tails && bounce && firstD < K.NEAR_D ? K.NEAR_PEN : 0)); if (tails) worst = M.max(worst, ownDamage(S, h, W3, pj.split, dm)); }
     }
-    return ev;
+    if (tails) for (const [za, zp] of FAR) {
+      const h = predict(S, c.wpn, c.aim + za * d.noiseA, c.facing, M.clamp(c.pw + zp * d.noiseP, 0.05, 1));
+      if (h) worst = M.max(worst, ownDamage(S, h, W3, pj.split, dm));
+    }
+    c.tail = worst;
+    return ev - K.TAIL_K * M.max(0, worst - K.TAIL_FREE);
   }
   /* P38 R9: the 3 x 3 rule weighs the +/- 1.7 sigma tails of the noise at 1/36 each, so a plan whose tail bursts on the shooter looked fine
    * (an easy banana planned 22 m out fell 6 m short at -1.85 sigma and its bomblets killed the thrower: 100 HP). A node that hurts the shooter

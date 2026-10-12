@@ -270,6 +270,9 @@
   L4.quake_spot = function (S, bx, bz, ang) {
     const wd = W(), H = wd.H, CR = SS.cracks, crk = !!(CR && S.crk && wd.crack), G0 = C.CRACK.G, cy = wd.topHeight(bx, bz);
     let broke = 0;
+    // P106 (2D): the fault is a vertical sheet; a trace running ALONG the section plane painted a 16 m x 6 m flat brown fill over the cut face (user: "brown coloring
+    // that spreads, with an egg-hatching sound"). In the slab the trace must cross the plane (a thin crack line): the angle is pulled to +-0.3 rad of the plane's normal.
+    if (wd.flat) ang = M.PI * 0.5 + (ang - M.PI * 0.5) * 0.2;
     if (crk) fault(S, bx, bz, ang);
     const box = { i0: M.max(1, Math.floor((bx - K.WIN) / H)), j0: M.max(1, Math.floor((cy - 10) / H)), k0: M.max(1, Math.floor((bz - K.WIN) / H)),
       i1: M.min(wd.NX - 2, Math.ceil((bx + K.WIN) / H)), j1: M.min(wd.NY - 2, Math.ceil((cy + 6) / H)), k1: M.min(wd.NZ - 2, Math.ceil((bz + K.WIN) / H)) };
@@ -282,7 +285,7 @@
       }
       SS.collapse_hook(S, box);
     }
-    if (crk) { wd.mark(box.i0, box.j0, box.k0, box.i1, box.j1, box.k1); CR.bump(wd); }
+    if (crk) { if (wd.flat && SS.dim2d) SS.dim2d.flatten(wd, box.i0, box.j0, box.i1, box.j1); wd.mark(box.i0, box.j0, box.k0, box.i1, box.j1, box.k1); CR.bump(wd); }   // (2D: every slice carries the plane's damage)
     SS.sim.emit(S, 'labquakehit', { x: bx, y: cy, z: bz, dx: M.cos(ang), dz: M.sin(ang), len: K.FAULT_LEN });
     return broke;
   };

@@ -75,7 +75,17 @@
   }
   /* 9b lockstep (platform/net.js): the peer owning the active worm's team drives (steps at once, sends its input);
    * the other replays the inputs in order and waits for the next one. false = waiting. */
-  let netGame = false, pendingAlign = 0, pendingStart = null;
+  let netGame = false, pendingAlign = 0, pendingStart = null, pendingResync = null;
+  const PRES = ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine', 'quality'];      // presentation settings stay the guest's own across a resync
+  function applyResync(d) {
+    const NT = SS.net, mine = {}; for (const k of PRES) if (S.settings && S.settings[k] !== undefined) mine[k] = S.settings[k];
+    if (d.fields && SS.netdiag && (S.netStep | 0) === d.k) { const diff = SS.netdiag.diff(SS.netdiag.fields(S), d.fields).filter(k => k !== 'settings'); console.warn('resync: fields that differed from the host at step ' + d.k + ':', diff.join(', ') || '(none: only derived data)'); NT.lastDiff = diff; }
+    SS.sim.restore(S, d.snap);
+    for (const k of PRES) if (mine[k] !== undefined) S.settings[k] = mine[k];
+    if (SS.view.clearActors) SS.view.clearActors(); if (SS.ui.clear) SS.ui.clear(); SS.view.snapCamera();
+    S.events.length = 0; S.sectionDirty = true;
+    NT.resync_applied(S.netStep | 0, d);
+  }
   const inpR = SS.sim.input_make();
   function stepNet() {
     const NT = SS.net, k = S.netStep | 0;
@@ -87,7 +97,9 @@
       SS.input.sample(inp, S, clickTarget());
       if (inp.reset) { inp.reset = 0; SS.input.end_step(); if (NT.isHost && S.phase === 'over') newGame(S.settings); return false; }   // host: next map (sent to the guest)
     }
-    if (NT.drives(drvTeam)) { if (pendingAlign) { inp.align_id = pendingAlign; pendingAlign = 0; } NT.queueInput(k, NT.pack(inp)); use = inp; }
+    const rpl = NT.drives(drvTeam) ? NT.takeReplay(k) : null;          // P103: after a resync the guest re-plays its OWN inputs it had already sent (never re-sampled, never re-sent)
+    if (rpl) { SS.input.sample(inp, S, null); SS.input.clicks.length = 0; use = NT.unpack(rpl, inpR); }
+    else if (NT.drives(drvTeam)) { if (pendingAlign) { inp.align_id = pendingAlign; pendingAlign = 0; } NT.queueInput(k, NT.pack(inp)); use = inp; }
     else { const a = NT.takeInput(k); if (!a) { if (NT.isHost) { const nm = NT.stalled(drvTeam, k, performance.now()); if (nm) SS.sim.log(S, `${nm} is not responding: the CPU takes over their worms.`, 0xffb080); } return false; } SS.input.sample(inp, S, null); SS.input.clicks.length = 0; use = NT.unpack(a, inpR); }     // P38 D4: a follower's clicks / weapon picks are dropped (a stale click fired a target weapon at the start of the own turn)
     SS.sim.step(S, use, C.STEP); SS.input.end_step();
     use.align_id = 0;
@@ -285,7 +297,9 @@
         const mine = SS.menu.load() || {}, pres = {};
         for (const k of ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine']) if (mine[k] != null) pres[k] = mine[k];     // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
         pres.quality = Q ? Q.name : mine.quality;                          // (P38 R6 R6: the RUNNING quality: a saved one that differs would reload the page and drop the link)
-        netGame = true; newGame(SS.menu.sanitize(Object.assign(urlSettings(), pres, ok, { cpu: 'off' }), C.SETTINGS));
+        const base = urlSettings();                                        // P103: a sim-relevant setting the host did not send is the DEFAULT (what the host's sim.begin_reset fills in), never this page's own ?url parameter
+        for (const k of Object.keys(C.SETTINGS)) if (PRES.indexOf(k) < 0) base[k] = C.SETTINGS[k];
+        netGame = true; newGame(SS.menu.sanitize(Object.assign(base, pres, ok, { cpu: 'off' }), C.SETTINGS));
       });
       SS.net.on('leave', d => {
         if (!netGame) return;
@@ -304,10 +318,20 @@
         if (S.teams) for (let i = 0; i < S.teams.length; i++) if (i !== me && S.teams[i].ctl !== 'cpu') S.teams[i].ctl = 'cpu';
         netGame = false;
       };
+      /* P103: the host is the authority. A guest that sees a hash mismatch asks for the host's snapshot (net.js does it by itself), restores it at
+       * the next frame boundary and goes on from the same step. One toast per incident; one banner (with a Resync button) only when the automatic
+       * tries fail. Nothing here writes the sim log (S) except through the restore: chat / toasts are DOM only. */
       SS.net.on('desync', d => {
-        console.warn('lockstep desync at step', d.k); SS.sim.log(S, `Desync at step ${d.k}: the two games differ.`, 0xff8080);
-        if (SS.netui && SS.netui.desync) SS.netui.desync(d.k, () => { SS.net.close(); toLocal(); });
+        console.warn('lockstep desync at step', d.k, 'local', d.l, 'remote', d.r, d.name ? 'peer ' + d.name : '');
+        if (SS.net.isHost && SS.netui && SS.netui.toast) SS.netui.toast((d.name || 'A guest') + ' went out of sync; the host is sending them the state.');
       });
+      SS.net.provide = () => (S && S.worms ? { k: S.netStep | 0, snap: SS.sim.snapshot(S), fields: SS.netdiag ? SS.netdiag.fields(S) : null } : null);
+      SS.net.on('resync', d => { pendingResync = d; });
+      if (SS.netui) SS.netui.canAct = () => !!(running && !menuOpen && S && S.phase === 'play' && S.active && (netGame && SS.net.active ? SS.net.drives(S.active.team) : !SS.game.is_cpu(S, S.active.team)));
+      SS.net.on('resync_start', d => { if (d.tries === 1 && SS.netui && SS.netui.toast) SS.netui.toast('Out of sync: fetching the host\'s state...'); });
+      SS.net.on('resynced', d => { console.info('resynced with host', d); if (SS.netui) { if (SS.netui.toast) SS.netui.toast('Resynced with host'); if (SS.netui.sys) SS.netui.sys('Resynced with host'); if (SS.netui.clearBanner) SS.netui.clearBanner(); } });
+      SS.net.on('resync_failed', d => { if (SS.netui && SS.netui.resyncFailed) SS.netui.resyncFailed(d.incident, () => SS.net.resync_request(), () => { SS.net.close(); toLocal(); }); });
+      window.POC.resyncDebug = { fields: () => SS.netdiag.fields(S), dump: () => SS.netdiag.dump(S), poke: fn => fn(S) };
       SS.net.on('refused', d => { if (SS.netui && SS.netui.refused) SS.netui.refused(d.msg || `${d.name} runs another game build: not allowed in.`); if (d.msg) SS.net.close(); });
       SS.net.on('close', () => { if (netGame) SS.sim.log(S, 'Multiplayer: the host left; the game goes on here only (the CPU plays the other teams).', 0xffb080); toLocal(); });
       window.POC.net = { get game() { return netGame; }, stepNet: () => stepNet(), flush: () => SS.net.flush(), start: st => SS.ui.netStart(st) };
@@ -337,6 +361,7 @@
       try {
         if (SS.audio && SS.audio.hold) SS.audio.hold(paused || menuOpen);
         if (SS.music) SS.music.tick(running && !busy ? S : null, paused ? 'pause' : menuOpen ? 'menu' : null);
+        if (pendingResync && running && !busy && netGame && SS.net.active) { const d = pendingResync; pendingResync = null; applyResync(d); acc = 0; }
         if (running && !busy) {
           if (netGame && SS.net.active) {
             // lockstep: the driver steps in real time; the follower also catches up on queued inputs (<= 60 per frame)

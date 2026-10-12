@@ -24,7 +24,7 @@
     grav: new Float32Array(MAX), buoy: new Float32Array(MAX), hug: new Float32Array(MAX), y0: new Float32Array(MAX), ang: new Float32Array(MAX), trf: new Float32Array(MAX), trl: new Float32Array(MAX) };   // trf / trl: a chunk that drags a thin dust trail (interval s, timer); hug: > 0 = a ground-hugging dust that follows the terrain at that height; y0: where it was born (wind shear grows with height); ang: how angular a chunk is (0 clod .. 1 broken rock)
   const KEYS = Object.keys(P);
   let n = 0, scene = null, flash = null, flashK = 9, flashT = 9, glowT = 9, glowI = 0, shake = 0, add = null, alp = null;
-  const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9, K_SHELL = 10, K_DROP = 11;   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
+  const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9, K_SHELL = 10, K_DROP = 11, K_DOME = 12, K_GGLOW = 13;   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
   // K_CHUNK: a solid rock / clod / ice shard (alpha pass, bounces on the ground)
   const ADDITIVE = k => k === K_FIRE || k === K_SPARK || k === K_LAVA || (k >= K_FLASH && k !== K_DROP);   // K_DROP (P87): a water droplet streak, alpha-blended
   const own = { tHeight: { value: null }, uSoft: { value: 0 }, uCliff: { value: 1 }, uSeaY: { value: -99 }, uSun: { value: new T.Vector3(-0.4, 0.7, 0.6) }, uSunC: { value: new T.Color(1, 0.95, 0.85) }, uGlow: { value: new T.Vector4(0, 0, 0, 0) }, uGlowC: { value: new T.Color(1, 0.45, 0.12) }, uSky: { value: new T.Color(0.55, 0.6, 0.7) }, uGnd: { value: new T.Color(0.3, 0.27, 0.24) }, uTime: { value: 0 } };
@@ -47,7 +47,7 @@
         vec3 vp = tl + (sg + ext) * (position.x + 0.5) + pr * position.y * iPos.w * 1.3;
         gl_Position = projectionMatrix * vec4(vp, 1.0); return;
       }
-      if (iA.z > 10.5) {                                                               // P87 water droplet: a motion-blurred streak (exposure ~ 40 ms) along its velocity, head forward
+      if (iA.z > 10.5 && iA.z < 11.5) {                                                // P87 water droplet: a motion-blurred streak (exposure ~ 40 ms) along its velocity, head forward
         vec3 hv = (viewMatrix * vec4(iPos.xyz, 1.0)).xyz, vv = (viewMatrix * vec4(iV, 0.0)).xyz;
         float sp = length(iV), lt = clamp(sp * 0.04, iPos.w * 0.9, 1.4);
         vec3 tl = hv - vv * (lt / max(sp, 1e-3)), sg = hv - tl; float sl = length(sg);
@@ -61,7 +61,7 @@
       gl_Position = projectionMatrix * viewMatrix * vec4(iPos.xyz + (R * q.x + U * q.y) * iPos.w, 1.0);
     }`;
   const FS = /* glsl */`
-    uniform vec3 uSun, uSunC, uSky, uGnd, uGlowC; uniform vec4 uGlow; uniform float uTime, uSoft, uSeaY, uCliff; uniform sampler2D tHeight;
+    uniform mat4 projectionMatrix; uniform vec3 uSun, uSunC, uSky, uGnd, uGlowC; uniform vec4 uGlow; uniform float uTime, uSoft, uSeaY, uCliff; uniform sampler2D tHeight;
     varying vec2 vUv; varying vec4 vA; varying vec3 vC; varying float vAl; varying vec3 vP; varying vec4 vW;
     float h3(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
     float vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -76,12 +76,47 @@
       b = t >= 66.0 ? 1.0 : t <= 19.0 ? 0.0 : clamp(0.5432 * log(t - 10.0) - 1.1963, 0.0, 1.0);
       return pow(vec3(r, g, b), vec3(2.2));
     }
+    float ptop(vec2 xz){ return uSoft > 0.5 ? texture2D(tHeight, (xz * 2.0 + 0.5) / float(textureSize(tHeight, 0).x)).r * 40.0 : -1000.0; }
     void main(){
+      gl_FragDepth = gl_FragCoord.z;
       float r = length(vUv); if (r > 1.0) discard;
       float ph = vA.y, kind = vA.z, sd = vA.w;
       vec3 q = vec3(vUv * 1.6, sd * 17.0 + ph * 1.3);
       float nz = fbm(q + vec3(0.0, -ph * 1.5, 0.0));
-      if (kind > 10.5) {                                   // P87 water droplet: a lens-shaped streak, glassy white-blue, a bright rim light on the head
+      if (kind > 11.5) {                                   // P108 flash dome (12): an incandescent ball, a hemisphere where it meets the ground; ground glow (13): the light the flash throws on the terrain around it
+        vec3 ro = cameraPosition, rd = normalize(vW.xyz - ro), cc = vP; float Rs = vW.w * 0.5;
+        vec3 oc = ro - cc; float bb2 = dot(oc, rd), d2 = bb2 * bb2 - (dot(oc, oc) - Rs * Rs);
+        if (d2 <= 0.0) discard;
+        float sq = sqrt(d2), t0 = max(-bb2 - sq, 0.0), t1 = -bb2 + sq, tz = t0, I = 0.0;
+        if (t1 <= t0) discard;
+        if (kind < 12.5) {
+          float mf = -1.0, gh = 0.0, cov = 0.0;                                                          // P108: a crisp lumpy shell (threshold of the noise), hottest where it touches the ground
+          for (int k = 0; k < 10; k++) {
+            float tt = mix(t0, t1, (float(k) + 0.5) / 10.0); vec3 p = ro + rd * tt; vec3 dp = p - cc; float tu = fbm(p * (3.2 / Rs) + vec3(sd * 17.0, ph * 1.5, 0.0));
+            float hh = p.y - ptop(p.xz);
+            float rr = length(vec3(dp.x, max(dp.y, 0.0) * 1.5 + min(dp.y, 0.0), dp.z)) / Rs;           // flattened: it spreads over the ground
+            float f = (1.0 - rr) + 0.55 * (tu - 0.5) * (1.0 - 0.4 * rr);
+            f *= smoothstep(-0.04, 0.05, hh);                                                          // the terrain clips it
+            if (f > mf) { mf = f; gh = exp(-max(hh, 0.0) / (0.22 * Rs)); }
+          }
+          cov = smoothstep(0.0, 0.07, mf); if (cov < 0.02) discard;
+          float Tt = clamp(mf * 1.5 + 0.45 * gh * smoothstep(0.0, 0.3, mf), 0.0, 1.0) * (1.0 - 0.8 * smoothstep(0.3, 1.0, ph));
+          vec3 cE = vec3(0.12, 0.035, 0.015), cR = vec3(0.75, 0.2, 0.04), cO = vec3(1.0, 0.55, 0.12), cY = vec3(1.0, 0.93, 0.65);
+          vec3 col = Tt < 0.3 ? mix(cE, cR, Tt / 0.3) : Tt < 0.62 ? mix(cR, cO, (Tt - 0.3) / 0.32) : mix(cO, cY, min(1.0, (Tt - 0.62) / 0.3));
+          col = pow(col, vec3(1.7)) * 1.35 * cov * smoothstep(1.0, 0.8, ph) / max(1.0 - ph, 0.05);       // (the pipeline multiplies by 1 - ph: cancelled; colours stay saturated, no HDR blow-out)
+          vec4 cp = projectionMatrix * viewMatrix * vec4(ro + rd * mix(t0, t1, 0.25), 1.0); gl_FragDepth = clamp(cp.z / cp.w * 0.5 + 0.5, 0.0, 1.0);
+          gl_FragColor = vec4(col * vAl, 1.0);
+        } else {
+          float hit = -1.0;
+          for (int k = 0; k < 20; k++) { float tt = mix(t0, t1, float(k) / 19.0); vec3 p = ro + rd * tt; if (p.y < ptop(p.xz)) { hit = tt; break; } }
+          if (hit < 0.0) discard;
+          vec3 p = ro + rd * hit; float rr = length(p - cc) / Rs;
+          float tu = fbm(p * (1.6 / Rs) + vec3(sd * 17.0, 0.0, ph));
+          float g = pow(max(1.0 - rr, 0.0), 2.2) * (0.5 + 0.9 * tu) * (0.8 + 1.6 * exp(-rr * rr * 14.0));
+          vec4 cp = projectionMatrix * viewMatrix * vec4(p, 1.0); gl_FragDepth = clamp(cp.z / cp.w * 0.5 + 0.5, 0.0, 1.0);
+          gl_FragColor = vec4(vC * g * vAl, 1.0);
+        }
+      } else if (kind > 10.5) {                            // P87 water droplet: a lens-shaped streak, glassy white-blue, a bright rim light on the head
         float ax = clamp(vUv.x * 0.5 + 0.5, 0.0, 1.0), body = exp(-vUv.y * vUv.y * 3.0) * (0.3 + 0.7 * smoothstep(0.0, 0.9, ax));
         vec3 sunV = normalize((viewMatrix * vec4(uSun, 0.0)).xyz);
         vec3 amb = mix(uGnd, uSky, 0.6);
@@ -320,21 +355,28 @@
     const hit = mf.best > 0, cave = env.under ? 1.35 : 1, wetK = 1 - 0.35 * rain, Rr = Math.min(7, 0.9 + 0.62 * e.R);
     const fr = frame(e, Rr * 2 + 1.5), ventK = hit ? Math.max(0, Math.min(1, (fr.tilt - 0.5) / 0.7)) : 0, nx = fr.nx, ny = fr.ny, nz = fr.nz;      // P65k: which way the ground opens (up on the flat, downhill on a slope, sideways at a wall)
     // P58 the flash: a hard white core with rays (a few frames), then a wider orange bloom, and the shock front: a thin ring (camera-facing) and, over ground, a ring lying on it
+    const hk = he && !env.under ? 0.12 : 1;              // P108: the dome carries the flash now; the old flat sprites are only a hot core and a faint glare
     if (he) {                                           // HE: an extremely short, very bright white-yellow flash (3-4 frames), a pale glare, a fast pressure front
-      spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.04 + 0.012 * W3, s0: Rf * 1.5, s1: Rf * (3.0 + 0.6 * W3), c0: [6.5, 6.0, 4.8], c1: [3.0, 2.5, 1.5], a0: 1 });
-      spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.028, s0: Rf * 0.9, s1: Rf * 1.5, c0: [11, 10.5, 9], c1: [5, 4.5, 3.5], a0: 1 });                    // P71: a tiny blinding core for the first two frames
-      spawn(K_FLASH, e.x, e.y + 0.4, e.z, { life: 0.09 + 0.02 * W3, s0: Rf * 2.0, s1: Rf * 3.6, c0: [1.5, 1.35, 0.95], c1: [0.5, 0.46, 0.34], a0: 0.5 });
+      spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.04 + 0.012 * W3, s0: Math.min(Rf * 1.5, 2.5), s1: Math.min(Rf * (3.0 + 0.6 * W3), 4), c0: [6.5, 6.0, 4.8], c1: [3.0, 2.5, 1.5], a0: hk });
+      spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.028, s0: Rf * 0.9, s1: Rf * 1.5, c0: [11, 10.5, 9], c1: [5, 4.5, 3.5], a0: hk });                    // P71: a tiny blinding core for the first two frames
+      spawn(K_FLASH, e.x, e.y + 0.4, e.z, { life: 0.09 + 0.02 * W3, s0: Rf * 2.0, s1: Rf * 3.6, c0: [1.5, 1.35, 0.95], c1: [0.5, 0.46, 0.34], a0: 0.5 * hk });
+      // P108: the detonation's incandescent flash ball (0.12-0.25 s, white-yellow cooling to orange, procedural): it wraps the ground (a hemisphere clipped by the terrain) and a glow on the crater surface
+      if (!env.under) {
+        spawn(K_DOME, e.x, e.y + 0.1, e.z, { life: 0.15 + 0.03 * Math.min(W3, 2), s0: Math.min(Rf * 2.2, 3.4), s1: Math.min(Rf * (5.6 + 0.9 * W3), 6.6), c0: [1, 1, 1], c1: [1, 1, 1], a0: 1 });
+        spawn(K_GGLOW, e.x, e.y + 0.1, e.z, { life: 0.22 + 0.06 * W3, s0: Math.min(Rf * 4, 5), s1: Math.min(Rf * (7 + 1.6 * W3), 10), c0: [0.9, 0.42, 0.1], c1: [0.3, 0.1, 0.03], a0: 1 });
+      }
     } else {
       spawn(K_FLASH, e.x, e.y + 0.3, e.z, { life: 0.07 + 0.025 * W3, s0: Rf * 1.7, s1: Rf * (3.2 + 0.6 * W3), c0: big ? [5, 4.6, 3.8] : [4.2, 3.2, 1.7], c1: [2.0, 1.0, 0.4], a0: 1 });
       spawn(K_FLASH, e.x, e.y + 0.4, e.z, { life: 0.2 + 0.05 * W3, s0: Rf * 2.2, s1: Rf * 4.2, c0: [1.1, 0.5, 0.16], c1: [0.4, 0.14, 0.04], a0: 0.55 });
+      if (!env.under) spawn(K_GGLOW, e.x, e.y + 0.1, e.z, { life: 0.35 + 0.08 * W3, s0: Rf * 4, s1: Rf * (7 + 1.6 * W3), c0: [1.5, 0.7, 0.2], c1: [0.4, 0.12, 0.03], a0: 1 });
     }
     // the shock wave (lens refraction band / faint ring) and the Wilson shell: see FX.shockWave (P73)
     // P61: the holy grenade (the biggest blast, W3 > 2.2) reads big at the game camera: a wide golden-white wash, two slow shock rings
     // (camera-facing and on the ground), a second pulse and a crown of sparks
     const huge = /holy/.test(kd) || W3 > 2.2;
     if (huge) {
-      spawn(K_FLASH, e.x, e.y + 0.5, e.z, { life: 0.16, s0: Rf * 2.6, s1: Rf * 7, c0: [3.4, 2.9, 1.9], c1: [1.2, 0.8, 0.3], a0: 0.85 });
-      spawn(K_FLASH, e.x, e.y + 0.6, e.z, { life: he ? 0.3 : 0.55, s0: Rf * 3, s1: Rf * 6.5, c0: he ? [1.3, 1.1, 0.7] : [1.0, 0.62, 0.22], c1: he ? [0.4, 0.34, 0.2] : [0.3, 0.15, 0.05], a0: 0.5 });
+      if (hk > 0.5) { spawn(K_FLASH, e.x, e.y + 0.5, e.z, { life: 0.16, s0: Rf * 2.6, s1: Rf * 7, c0: [3.4, 2.9, 1.9], c1: [1.2, 0.8, 0.3], a0: 0.85 * hk });
+      spawn(K_FLASH, e.x, e.y + 0.6, e.z, { life: he ? 0.3 : 0.55, s0: Rf * 3, s1: Rf * 6.5, c0: he ? [1.3, 1.1, 0.7] : [1.0, 0.62, 0.22], c1: he ? [0.4, 0.34, 0.2] : [0.3, 0.15, 0.05], a0: 0.5 * hk }); }
       later.push({ t: 0.14, fn: () => {
         if (hit && !env.under) spawn(K_RINGG, e.x, e.y + 0.25, e.z, { life: 0.9, s0: Rr, s1: Rr * 7.5, c0: [1.0, 0.85, 0.55], c1: [0.55, 0.45, 0.3], a0: 0.55 });
       } });

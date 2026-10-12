@@ -223,7 +223,7 @@
     // sky dome
     const skyMat = new T.ShaderMaterial({ side: T.BackSide, depthWrite: false, fog: false, uniforms: { uTime: { value: 0 }, uSun: { value: new T.Vector3(0.5, 0.4, 0.7).normalize() }, uMoon: { value: new T.Vector3(-0.5, 0.35, -0.6).normalize() }, uBeltN: { value: new T.Vector3(0.1, 1, 0.2).normalize() }, uRot: { value: new T.Matrix3() } }, vertexShader: SKY_V, fragmentShader: SKY_F });
     SS.section.exempt(skyMat, 'eow sky dome');
-    G.dome = new T.Mesh(new T.SphereGeometry(500, 48, 24), skyMat); G.dome.renderOrder = -11; G.dome.frustumCulled = false; scene.add(G.dome); G.objs.push(G.dome);
+    G.dome = new T.Mesh(new T.SphereGeometry(500, 48, 24), skyMat); G.dome.renderOrder = -11; G.dome.frustumCulled = false; scene.add(G.dome); G.objs.push(G.dome); if (SS.envView) SS.envView.dome(G.dome);
     // far debris: an asteroid ring about the core, far silhouettes, near scrap
     const rng = M.rng_make(0x5eed), rr = (a, b) => M.rng_range(rng, a, b);
     const N = 50 + 10, geo = lump(new T.IcosahedronGeometry(1, 3), 3), mat = new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0.05, flatShading: true });
@@ -774,6 +774,6 @@
     const tgt = M.atan2(-us, uy);
     let cur = v.eowA == null ? tgt : v.eowA, dd = M.wrap_angle(tgt - cur);
     cur += dd * (1 - Math.exp(-(dt || 1 / 60) * (flying ? 6 : 10))); v.eowA = cur;
-    v.root.rotation.z = cur * f; v.tilt = cur * f;
+    v.root.rotation.z = cur * f + (v.jflip || 0); v.tilt = cur * f;
   };
 })(window.SS = window.SS || {});

@@ -19,7 +19,7 @@
   /* ---------- Input struct (filled by the platform layer or the network each step) ---------- */
   // the fields of the struct in declaration order (C: struct Input; input_copy is a plain struct assignment there)
   const INPUT_FIELDS = ['move', 'up', 'down', 'jump', 'backflip', 'fire_pressed', 'fire_held', 'weapon', 'rotate', 'rotate_mouse', 'fine', 'align_step', 'align_crate', 'align_refocus', 'align_id',
-    'end_turn', 'reset', 'inspect', 'fuse', 'tgt', 'ts', 'ty', 'sdir', 'gang', 'gturn', 'drop', 'wsel', 'aimset', 'aimv', 'face', 'adj', 'gear', 'dbk', 'dbp0', 'dbp1', 'dbs', 'dby', 'dbsky'];
+    'end_turn', 'reset', 'inspect', 'fuse', 'tgt', 'ts', 'ty', 'sdir', 'gang', 'gturn', 'drop', 'wsel', 'aimset', 'aimv', 'face', 'adj', 'gear', 'jet', 'dbk', 'dbp0', 'dbp1', 'dbs', 'dby', 'dbsky'];
   sim.INPUT_FIELDS = INPUT_FIELDS;
   /* reset an Input struct to its defaults in place (the CPU reuses one struct per step: no allocation) */
   sim.input_clear = inp => { for (let i = 0; i < INPUT_FIELDS.length; i++) inp[INPUT_FIELDS[i]] = 0; inp.weapon = ''; return inp; };
@@ -290,7 +290,7 @@
       windUp: 0, windFace: 0, walking: false, slide: false, hop: false, hopAt: 0, flip: false, flipAt: null, flipK: 0, flipW: 0, flipRope: null, squash: null, springFall: false, landDmg: 0,
       stillT: 0, pinT: 0, dizzyUntil: 0, shoveT: 0, bodyHitT: 0, washT: 0, lsink: 0, pinProbe: null, rope: null, aimMem: null, reserve: false,
       // life cycle / damage (sim.js hurt, kill, drown)
-      dying: false, drowning: 0, gravePending: false, hitDir: null, burnT: -1e9, mgKill: null, batHit: null,
+      dying: false, drowning: 0, swimOuts: 0, gravePending: false, hitDir: null, burnT: -1e9, mgKill: null, batHit: null,
       // weapons A / aliens / shrapnel (weaponsa.js, alien.js, shrapnel.js)
       gas: 0, coughT: null, coughAt: null, stickT: 0, acidT: null, hopT: 0, hopDir: 0, hug: null, embryo: false, embT: 0, embNext: 0, embHit: -1, eaten: false, teleHold: 0, teleX: 0, teleY: 0, teleZ: 0, shrapT: null, shrapSum: 0
     };
@@ -310,7 +310,7 @@
       tick: 0, time: 0, phase: 'play', theta: 0, O: { x: W().MX, z: W().MZ }, thetaGoal: null, sectionDirty: true, lastRotate: -99,
       // turn
       active: null, target: null, tgt: null, teamTurn: 1, firstTeam: 0, nextIdx: [0, 0], turnNo: 0, turnT: 0, turnStart: 0, selStart: 0, acted: false,
-      retreatT: 0, attackStart: 0, resolveT: 0, quietT: 0, shots: 0, over: null,
+      retreatT: 0, attackStart: 0, resolveT: 0, quietT: 0, resolveBack: 0, shots: 0, over: null,
       weapon: 'grenade', aim: 0.45, power: 0, charging: false, rope: null, hook: null, ropeHopT: -9, mouseRot: 0,
       // P37 W2 / P38 R7: the traverse state (SS.traverse; structs in its header), all present from the reset: S.ropeMem, S.chute, S.zip
       crateSel: -1,                                                // (P38 R9: the Shift+TAB crate cursor, rotlock.js: -1 = none)
@@ -337,6 +337,7 @@
     if (SS.water) SS.water.init(S);
     if (SS.veg) SS.veg.init(S);
     if (SS.lava) SS.lava.init(S);
+    if (SS.veg && SS.lava && SS.veg.clear_hot) SS.veg.clear_hot(S);   // P102: no grass on / near lava or vents
     if (SS.ice) SS.ice.init(S);                                   // Step I: sea / pool ice (after the water)
     emit(S, 'reset', {});
     const taken = [], nT = S.teams.length, nW = nT * M.clamp(S.settings.worms | 0 || 3, 1, 4), names = SS.game.names(S, nW);
@@ -487,7 +488,7 @@
   sim.team_name = (S, t) => (S.teams && S.teams[t] ? S.teams[t].name : C.TEAMS[t].name);
   sim.team_rgb = (S, t) => (S.teams && S.teams[t] ? S.teams[t].rgb : C.TEAMS[t].rgb);
   sim.next_turn = function (S, first) {
-    S.rope = null; S.charging = false; S.power = 0; S.proj.length = 0; S.retreatT = 0;
+    S.rope = null; S.charging = false; S.power = 0; S.proj.length = 0; S.retreatT = 0; S.resolveBack = 0; for (const w of S.worms) w.swimOuts = 0;
     // P1: N teams: the match ends when at most one team has a living worm (none = a draw)
     const alive = S.teams.map((t, i) => living(S, i).length), standing = alive.filter(n => n > 0).length;
     if (standing <= 1) {
@@ -705,7 +706,8 @@
     if (impact > 9.6) a.squash = S.time;
   }
   sim.weapon_ready = function (S, a) {                 // PoC weaponReady L4342
-    return !a.walking && !a.air && !(a.windUp > 0) && !S.rope && !(S.zip && S.zip.state === 2) && !a.flip && !(a.dizzyUntil > S.time) && !(S.teleT > 0) && !a.drowning && !a.swim && M.len2(a.vs || 0, a.vy || 0) < WD.READY_V;
+    const jk = !!(a.swim && a.swim.jk);                                                // P107: a worm afloat in a life jacket may use what its weapon rule allows (SS.jacket.no_weapon)
+    return !a.walking && (jk || !a.air) && !(a.windUp > 0) && !S.rope && !(S.zip && S.zip.state === 2) && !a.flip && !(a.dizzyUntil > S.time) && !(S.teleT > 0) && !a.drowning && (jk || !a.swim) && M.len2(a.vs || 0, a.vy || 0) < WD.READY_V;
   };
   /* PoC recoverPinnedWorm (L2009): a worm inside a resting prop (a crate landed on it, a boulder settled into it) moves
    * to the nearest spot where the WHOLE disc is free (up, sideways, the diagonals; up to 2 x the prop + the worm,
@@ -859,7 +861,8 @@
   sim.ROPE_TUNE = SS.CFG.TRAV ? SS.CFG.TRAV.ROPE : null;
   const PX = 0.0643;
 
-  function controlActive(S, a, dt, inp, retreat) {
+  /* P107: the part of the control every active worm shares (weapon choice, fuse, aim, mouse aim): also used by a worm afloat in a life jacket (sim/lifejacket.js) */
+  function controlPre(S, a, dt, inp, retreat) {
     const mv = inp.move || 0, WP = SS.weapons;                 // (partial Input structs from tools / tests: 0)
     if (inp.jet && S.eow) SS.eow.jet_toggle(S, a);                // P86: the team's jetpack switch (J)
     if (mv || inp.jump || inp.backflip || inp.fire_pressed || inp.drop) S.acted = true;     // (worm select: only before acting)
@@ -890,6 +893,11 @@
     }
     if (SS.traverse) SS.traverse.clamp_aim(S);                                   // the zipline aims level or down only
     if (retreat && inp.fire_pressed) WP.detonate_own(S);                     // PoC: fire again sets the sheep off
+  }
+  sim.control_pre = controlPre;
+  function controlActive(S, a, dt, inp, retreat) {
+    const mv = inp.move || 0, WP = SS.weapons;
+    controlPre(S, a, dt, inp, retreat);
     // on the rope: SS.traverse.rope_control (Space / Enter let go, Enter drops a payload, Backspace hops, arrows pump / reel)
     if (S.rope) {
       if (inp.fire_pressed && S.weapon === 'skip' && !retreat) WP.use(S, 0);    // (P37-8: Skip Go selected: fire skips, the rope is kept)
@@ -907,7 +915,7 @@
       else if (a.windUp > 0 && !a.air && S.time >= a.windUp) {
         a.windUp = 0; a.vy = WD.JUMP_VY * (SS.lab ? SS.lab.jump_k(S, a) : 1); a.vs = a.windFace * sim.jump_vs(S, a); a.air = true; a.hop = false; a.slide = false; a.squash = S.time; emit(S, 'jump', M.v3_copy(a.pos));
       }
-      else if (!a.air && inp.backflip && !(a.windUp > 0)) { a.vy = WD.HOP_VY; a.vs = a.facing * WD.HOP_VS; a.air = true; a.hop = true; a.hopAt = S.time; a.slide = false; a.squash = S.time; emit(S, 'jump', M.v3_copy(a.pos)); }
+      else if (!a.air && inp.backflip && !(a.windUp > 0) && (!a.hopAt || S.time - a.hopAt >= WD.HOP_GAP)) { a.vy = WD.HOP_VY; a.vs = a.facing * WD.HOP_VS; a.air = true; a.hop = true; a.hopAt = S.time; a.slide = false; a.squash = S.time; emit(S, 'jump', M.v3_copy(a.pos)); }
       else if (a.air && inp.backflip && a.hop && S.time - a.hopAt < WD.SALTO_WIN && a.vy > WD.SALTO_VMIN) {
         a.vy = M.max(a.vy, WD.SALTO_BASE) + WD.SALTO_ADD; a.vs = a.facing * WD.SALTO_VS; a.flip = true; a.flipAt = S.time; a.hop = false;
         emit(S, 'salto', { wormId: a.id});
@@ -916,21 +924,28 @@
       if (S.eow) SS.eow.jump_fix(S, a);                                   // P68c: a jump leaves along the worm's own up
       step2D(S, a, dt, a.air || S.charging || a.windUp > 0 ? 0 : mv);
       recoverPinned(S, a, dt);
-      const kind = C.WEAPONS[S.weapon].kind, ready = sim.weapon_ready(S, a);
-      if (kind === 'chute' || kind === 'zip') SS.traverse.tool(S, a, dt, inp, retreat || S.teleT > 0);   // parachute / zipline (also in the retreat)
-      else if (retreat || S.teleT > 0) { /* P1 retreat: move, jump, keep swinging; no new attack */ }
-      else if (S.weapon === 'rope') { if (inp.fire_pressed && !S.hook) sim.shoot_rope(S); }
-      else if (kind === 'charge') {
-        if (inp.fire_pressed && !S.charging && ready && WP.can_use(S, S.weapon) && !(C.WEAPONS[S.weapon].target && !S.tgt)) { S.charging = true; S.power = C.WEAPONS[S.weapon].fixed ? 1 : 0; }   // (fixed: the mortar always fires at full power)
-        else if (inp.fire_pressed && C.WEAPONS[S.weapon].target && !S.tgt) log(S, 'Click a target first.', 0xffb27a);
-        if (S.charging) {
-          S.power = M.min(1, S.power + dt / WD.CHARGE_T);
-          // PoC releaseFire: a shot released while the worm is not ready (jumped, knocked, flipping) is cancelled, no ammo
-          if (!inp.fire_held || S.power >= 1) { if (sim.weapon_ready(S, a)) sim.fire(S); else { S.charging = false; S.power = 0; } }
-        }
-      } else if (inp.fire_pressed && (ready || kind === 'drop' || kind === 'skip')) WP.use(S, 0);   // drops work anywhere (PoC)
+      controlFire(S, a, dt, inp, retreat);
     }
   }
+
+  /* the weapon / tool part of the control (the fire key, the charge): shared with the life jacket control (P107) */
+  function controlFire(S, a, dt, inp, retreat) {
+    const WP = SS.weapons;
+    const kind = C.WEAPONS[S.weapon].kind, ready = sim.weapon_ready(S, a);
+    if (kind === 'chute' || kind === 'zip') SS.traverse.tool(S, a, dt, inp, retreat || S.teleT > 0);   // parachute / zipline (also in the retreat)
+    else if (retreat || S.teleT > 0) { /* P1 retreat: move, jump, keep swinging; no new attack */ }
+    else if (S.weapon === 'rope') { if (inp.fire_pressed && !S.hook) sim.shoot_rope(S); }
+    else if (kind === 'charge') {
+      if (inp.fire_pressed && !S.charging && ready && WP.can_use(S, S.weapon) && !(C.WEAPONS[S.weapon].target && !S.tgt)) { S.charging = true; S.power = C.WEAPONS[S.weapon].fixed ? 1 : 0; }   // (fixed: the mortar always fires at full power)
+      else if (inp.fire_pressed && C.WEAPONS[S.weapon].target && !S.tgt) log(S, 'Click a target first.', 0xffb27a);
+      if (S.charging) {
+        S.power = M.min(1, S.power + dt / WD.CHARGE_T);
+        // PoC releaseFire: a shot released while the worm is not ready (jumped, knocked, flipping) is cancelled, no ammo
+        if (!inp.fire_held || S.power >= 1) { if (sim.weapon_ready(S, a)) sim.fire(S); else { S.charging = false; S.power = 0; } }
+      }
+    } else if (inp.fire_pressed && (ready || kind === 'drop' || kind === 'skip')) WP.use(S, 0);   // drops work anywhere (PoC)
+  }
+  sim.control_fire = controlFire;
 
   /* fire the charged weapon (UI, AI, timer); P2: every weapon goes through sim/weapons.js */
   sim.fire = function (S, power) { return SS.weapons.use(S, power); };
@@ -1258,7 +1273,7 @@
     // it while it sinks; a swimmer holds the turn (the resolve gate waits on S.lastBoom too)
     w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0;
     if (sw.jk) { if (SS.jacket.holds(S, w)) S.lastBoom = S.time; SS.jacket.step(S, w, dt); return; }   // P89: a life jacket swim (sim/lifejacket.js): no struggle, no HP drain, the turn does not wait for it for long
-    S.lastBoom = S.time;
+    if (w.swimOuts < 4) S.lastBoom = S.time;                                     // (P99: not for ever: a hp-1 worm that crawls out and slides back into the sea on a slick bank held the turn for 900 s in 2 of 40 lab soak matches; the 4th crawl-out of a turn stops the hold)
     if (!waterDamage(S, w, dt, sw)) return;
     const surf = sim.surface_at(S, w.pos.x, w.pos.z);
     const ty = surf - WD.FLOAT_D + 0.06 * M.sin((S.time - sw.t0) * 7);           // up to the surface, bobbing
@@ -1280,7 +1295,7 @@
           const left = Math.round(sw.acc); if (left > 0 && w.hp > left) hurt(S, w, left, DS.DROWNING, HF.QUIET | HF.DOT);   // the time in the water not billed yet
           w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0;
           if (w === S.active) w.air = true; else w.rest = false;
-          emit(S, 'swimout', { wormId: w.id}); log(S, `${w.name} crawled out of the water.`, 0x7fc3ff);
+          w.swimOuts++; emit(S, 'swimout', { wormId: w.id}); log(S, `${w.name} crawled out of the water.`, 0x7fc3ff);
           return;
         }
       }
@@ -1526,14 +1541,27 @@
     if (!b.rest && !b.dead) pin_step(S, b, y0, b.vel.y, dt);          // P38 R9: wedged in rock (see pin_step)
   }
 
+  function ropeDip(S, w, dt) {
+    const rw = w.ropeWet, WD = C.WORM_DYN; rw.t += dt;
+    const k = rw.t > WD.ROPE_GRACE ? Math.floor((rw.t - WD.ROPE_GRACE) / WD.ROPE_TICK) : 0;
+    while (rw.k < k && !w.dead && w.hp > 0) { rw.k++; hurt(S, w, WD.ROPE_DMG, DS.DROWNING, HF.DOT); }
+  }
   /* environmental hazards for every worm: water (waves, drowning), lava, fire */
   function hazards(S, wm, dt) {
     const w = W();
     if (S.eow) SS.eow.hazard(S, wm, dt);                           // P68c: the core and the void
     const surf = sim.surface_at(S, wm.pos.x, wm.pos.z);
     if (wm.pos.y < surf - 0.1) {
-      // P33c: on the ninja rope the worm stays in control under water (it can climb back out), losing SWIM_DPS
-      if (wm === S.active && S.rope && S.rope.hooked) { if (!wm.ropeWet) wm.ropeWet = { acc: 0, tick: S.time }; waterDamage(S, wm, dt, wm.ropeWet); return; }
+      // P107 (user 2026-10-12): a worm on the ninja rope stays on it in water: no detach, no swim, no drown, no life jacket, no turn end. Submerged (body centre under the
+      // surface) for more than ROPE_GRACE s it loses ROPE_DMG HP every second (whole points, the normal hurt path: a death is death by damage). Surfacing resets the clock.
+      // Lava is not water: a worm roped into lava keeps the old rule (SWIM_DPS at once, P33c).
+      if (wm === S.active && S.rope && S.rope.hooked) {
+        if (!wm.ropeWet) wm.ropeWet = { acc: 0, tick: S.time, t: 0, k: 0 };
+        if (SS.lava && S.lava && SS.lava.depth_at(S, wm.pos.x, wm.pos.z) > 0.01) waterDamage(S, wm, dt, wm.ropeWet);
+        else ropeDip(S, wm, dt);
+        return;
+      }
+      if (wm.ropeWet && wm.hp <= 0) return;                        // P107: it died by damage on the rope: no swim / drown on top of that
       swimStart(S, wm); return;
     }
     wm.ropeWet = null;
@@ -1746,6 +1774,10 @@
     unpinOthers(S);                                               // P88: a prop on a worm that is not under control
     if (S.phase === 'play' && a && !a.dead && !a.swim) controlActive(S, a, dt, inp, false);
     else if (S.phase === 'attack' && S.retreatT > 0 && a && !a.dead && !a.swim && !S.dig) controlActive(S, a, dt, SS.game.is_cpu(S, a.team) ? (SS.ai && SS.ai.retreat ? SS.ai.retreat(S, a, NOINPUT) : NOINPUT) : inp, true);
+    else if (a && !a.dead && a.swim && a.swim.jk && SS.jacket && (S.phase === 'play' || (S.phase === 'attack' && S.retreatT > 0 && !S.dig))) {     // P107: a worm afloat in a life jacket is a playable worm
+      if (S.phase === 'play') SS.jacket.control(S, a, dt, inp, false);
+      else SS.jacket.control(S, a, dt, SS.game.is_cpu(S, a.team) ? (SS.ai && SS.ai.retreat ? SS.ai.retreat(S, a, NOINPUT) : NOINPUT) : inp, true);
+    }
     SS.game.step(S, dt);
     stepProjectiles(S, dt);
     if (SS.weapons) SS.weapons.step(S, dt);                       // P2: holes, planes, lightning, moai, dig, bullets, devices, crates
@@ -1782,7 +1814,7 @@
     } else S.quietT = 0;
     if (S.phase === 'resolve' && S.time - S.resolveT > 0.8) {
       // something moved again during the wait (a trap, a late blast): settle first (PoC startTurn waits for landings)
-      if (!settled(S) && S.time - S.lastBoom < 10) { S.phase = 'attack'; S.lastBoom = S.time; S.retreatT = 0; }
+      if (!settled(S) && S.time - S.lastBoom < 10 && S.resolveBack < 3) { S.resolveBack++; S.phase = 'attack'; S.lastBoom = S.time; S.retreatT = 0; }   // (P99: at most 3 bounces back per turn: a hp-1 worm that crawls out of the sea and slides back in forever (lab SLICK mud, 2 of 40 soak matches) held the turn for 900 s)
       else if (!beginDying(S)) sim.next_turn(S);
     }
     if (S.phase === 'dying') stepDying(S, dt);

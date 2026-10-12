@@ -145,9 +145,9 @@
     if (!created && sw.init && I.f !== f) SW.flip(sw, I.px);               // turned round: the view mirrors the body, so the nodes mirror about the disc
     I.f = f; I.x = s0; I.y = yv;
     I.ground = c.grounded ? 1 : 0; I.thG = slopeS + f * c.lean;
-    I.spin = c.spin; I.tone = c.dizzy ? 0.75 : 1; I.vref = c.grounded && c.vs ? c.vs : 0;
+    I.spin = c.spin; I.tone = c.dizzy ? 0.75 : (c.firm || 1); I.vref = c.grounded && c.vs ? c.vs : 0;
     I.surf = c.surf > -1e8 ? c.surf : -1e9; I.g = 9.81 * (SS.sim && SS.sim.gravity_k ? SS.sim.gravity_k(S, w) : 1);
-    if (c.hang != null) { I.extTh = f * c.hang; I.extW = 0.9; } else if (c.fly) { I.extTh = c.fly.a; I.extW = c.fly.w; } else if (c.swim) { I.extTh = 0; I.extW = 0.5; } else I.extW = 0;
+    if (c.flip) { I.extTh = c.flip.a; I.extW = c.flip.w; } else if (c.hang != null) { I.extTh = f * c.hang; I.extW = 0.9; } else if (c.fly) { I.extTh = c.fly.a; I.extW = c.fly.w; } else if (c.swim) { I.extTh = 0; I.extW = 0.5; } else I.extW = 0;
     if (c.pull) { I.hx = c.pull.x * I.g * SW.K.PULL; I.hy = c.pull.y * I.g * SW.K.PULL; } else I.hx = I.hy = 0;   // rope / riser tension on the head
     I.mu = SW.K.MU;
     let sinkT = 0;

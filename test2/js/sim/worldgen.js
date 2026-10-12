@@ -14,6 +14,7 @@
   const G = SS.worldgen = {};
   const sat = M.sat, sm = M.smooth, clamp = M.clamp;
   let W, NX, NY, NZ, H, SEA, rng, seed, hgt, ginv, lavaZone, canalD, extra, F;
+  let kLo = 0, kHi = 0;                                                // P104: the lattice rows that get filled (all of them in 3D; a 2D match: the slab's band, dim2d.band)
   const R = () => M.rng_next(rng);
   const RR = (a, b) => a + (b - a) * M.rng_next(rng);
   const fbm2 = (x, z, s, o) => M.fbm2(x, z, seed + s, o);
@@ -423,7 +424,7 @@
   function despeckle() {
     const D = W.d, Mt = W.mat, SXY = NX * NY;
     let changed = 0;
-    for (let k = 1; k < NZ - 1; k++) for (let j = 1; j < NY - 1; j++) {
+    for (let k = M.max(1, kLo + 1); k < M.min(NZ - 1, kHi); k++) for (let j = 1; j < NY - 1; j++) {
       let o = (k * NY + j) * NX + 1;
       for (let i = 1; i < NX - 1; i++, o++) {
         const v = D[o], s = v > 0;
@@ -568,6 +569,7 @@
     for (let p = 0, tries = 0; p < n && tries < 400; tries++) {
       const x = RR(W.MX - 34 * W.SC, W.MX + 34 * W.SC), z = RR(W.MZ - 34 * W.SC, W.MZ + 34 * W.SC), col = Math.round(z / H) * NX + Math.round(x / H), h = hgt[col];
       if (h < 9 || lavaZone[col]) continue;
+      if (Math.round(z / H) < kLo + RW + 1 || Math.round(z / H) > kHi - RW - 1) continue;           // P104: a 2D match fills only its band: no pocket centred outside it
       if (F.pockets.some(q => M.len2(q.x - x, q.z - z) < 12)) continue;
       const rx = RR(2.2, 3.6), ry = RR(1.5, 2.3), rz = RR(2.2, 3.6), cy = W.under ? RR(5, W.SY - 8) : M.max(SEA + ry + 1.2, h - RR(4.5, 8));
       if (cy + ry > h - 1.8) continue;
@@ -580,7 +582,7 @@
       for (let s = 1; s <= 6; s++) { vx += RR(-0.7, 0.7); vz += RR(-0.7, 0.7); vy = cy + ry * 0.8 + (top - cy - ry * 0.8) * s / 6; P.vein.push([vx, vy, vz]); }
       const ext = M.max(rx, rz) + 2 + RW * H;
       const i0 = M.max(RW + 1, Math.floor((x - ext) / H)), i1 = M.min(NX - 2 - RW, Math.ceil((x + ext) / H));
-      const k0 = M.max(RW + 1, Math.floor((z - ext) / H)), k1 = M.min(NZ - 2 - RW, Math.ceil((z + ext) / H));
+      const k0 = M.max(M.max(RW + 1, kLo + RW), Math.floor((z - ext) / H)), k1 = M.min(M.min(NZ - 2 - RW, kHi - RW), Math.ceil((z + ext) / H));
       const j0 = M.max(3, Math.floor((cy - ry - 1.5) / H)), j1 = M.min(NY - 2 - RW, Math.ceil((top + 1) / H));
       // 1. candidate lava voxels: inside the pocket / vein shape, rock or cave air, a full roof above
       const cand = [], candMask = new Uint8Array(NX * NY * NZ);                // (membership: a lattice mask, the list keeps the scan order)
@@ -638,7 +640,7 @@
     const D = W.d, Mt = W.mat, SXY = NX * NY, c0 = Math.round(v.z / H) * NX + Math.round(v.x / H);
     const yTop = hgt[c0] - 1.0, R0 = M.max(0.7, v.Rc * 0.18), WALL = 1.2, MARGIN = 0.45, ext = R0 + WALL + 1;
     const i0 = M.max(2, Math.floor((v.x - ext - 1) / H)), i1 = M.min(NX - 3, Math.ceil((v.x + ext + 1) / H));
-    const k0 = M.max(2, Math.floor((v.z - ext - 1) / H)), k1 = M.min(NZ - 3, Math.ceil((v.z + ext + 1) / H));
+    const k0 = M.max(M.max(2, kLo), Math.floor((v.z - ext - 1) / H)), k1 = M.min(M.min(NZ - 3, kHi), Math.ceil((v.z + ext + 1) / H));
     let n = 0;
     const axis = y => [v.x + (M.noise2(y * 0.11, 3.1 + vi, seed + 91) - 0.5) * 1.2, v.z + (M.noise2(y * 0.11, 7.7 + vi, seed + 92) - 0.5) * 1.2];
     for (let j = Math.ceil(3 / H); j * H <= yTop; j++) {
@@ -666,7 +668,7 @@
     }
     for (const br of branches) {
       const bi0 = M.max(2, Math.floor((M.min(br.a[0], br.b[0]) - 4.5) / H)), bi1 = M.min(NX - 3, Math.ceil((M.max(br.a[0], br.b[0]) + 4.5) / H));
-      const bk0 = M.max(2, Math.floor((M.min(br.a[2], br.b[2]) - 4.5) / H)), bk1 = M.min(NZ - 3, Math.ceil((M.max(br.a[2], br.b[2]) + 4.5) / H));
+      const bk0 = M.max(M.max(2, kLo), Math.floor((M.min(br.a[2], br.b[2]) - 4.5) / H)), bk1 = M.min(M.min(NZ - 3, kHi), Math.ceil((M.max(br.a[2], br.b[2]) + 4.5) / H));
       const bj0 = M.max(2, Math.floor((M.min(br.a[1], br.b[1]) - 3.5) / H)), bj1 = M.min(NY - 3, Math.ceil((M.max(br.a[1], br.b[1]) + 3.5) / H));
       const n0 = n;
       for (let k = bk0; k <= bk1; k++) for (let j = bj0; j <= bj1; j++) for (let i = bi0; i <= bi1; i++) {
@@ -724,7 +726,7 @@
     sLay = new Uint8Array(N); sNy = new Int8Array(N);
     let cur = new Int32Array(1 << 16), nc = 0;
     const push = (arr, n, o) => { if (n >= arr.length) { const b = new Int32Array(arr.length * 2); b.set(arr); arr = b; } arr[n] = o; return arr; };
-    for (let k = 1; k < NZ - 1; k++) for (let j = 1; j < NY - 1; j++) {
+    for (let k = M.max(1, kLo); k < M.min(NZ - 1, kHi + 1); k++) for (let j = 1; j < NY - 1; j++) {
       let o = (k * NY + j) * NX + 1;
       for (let i = 1; i < NX - 1; i++, o++) {
         if (D[o] <= 0) continue;
@@ -773,9 +775,9 @@
   function materialEdges() {
     const D = W.d, Mt = W.mat, SXY = NX * NY;
     const set = (o, oi, j) => { if (D[o] > 0) Mt[o] = !W.dry ? MAT.BEDROCK : Mt[oi] || (j * H < 1 ? MAT.BEDROCK : MAT.SAND); };
-    for (let i = 1; i < NX - 1; i++) for (let j = 0; j < NY; j++) for (const k of [0, NZ - 1]) { const o = (k * NY + j) * NX + i; set(o, k ? o - SXY : o + SXY, j); }
-    for (let k = 0; k < NZ; k++) for (let j = 0; j < NY; j++) for (const i of [0, NX - 1]) { const o = (k * NY + j) * NX + i; set(o, i ? o - 1 : o + 1, j); }
-    if (!W.dry) for (let i = 0; i < NX; i++) for (let j = 0; j < NY; j++) for (const k of [0, NZ - 1]) { const o = (k * NY + j) * NX + i; if (D[o] > 0) Mt[o] = MAT.BEDROCK; }
+    for (let i = 1; i < NX - 1; i++) for (let j = 0; j < NY; j++) for (const k of [0, NZ - 1]) { if (k < kLo || k > kHi) continue; const o = (k * NY + j) * NX + i; set(o, k ? o - SXY : o + SXY, j); }
+    for (let k = kLo; k <= kHi; k++) for (let j = 0; j < NY; j++) for (const i of [0, NX - 1]) { const o = (k * NY + j) * NX + i; set(o, i ? o - 1 : o + 1, j); }
+    if (!W.dry) for (let i = 0; i < NX; i++) for (let j = 0; j < NY; j++) for (const k of [0, NZ - 1]) { if (k < kLo || k > kHi) continue; const o = (k * NY + j) * NX + i; if (D[o] > 0) Mt[o] = MAT.BEDROCK; }
   }
   const nz = (x, z, s) => M.noise2(x / 4.3, z / 4.3, seed + s);
   let cliffMax, glacier;
@@ -908,7 +910,7 @@
   G.begin = function (world, settings) {
     world.eow = false;                                                 // P68c: the End of the World biome (sim/eow.js) generates itself
     if (settings.biome === 'eow' && SS.eow) return SS.eow.gen_begin(world, settings);
-    W = world; NX = W.NX; NY = W.NY; NZ = W.NZ; H = W.H; ISL_MAX = W.PR;
+    W = world; NX = W.NX; NY = W.NY; NZ = W.NZ; H = W.H; ISL_MAX = W.PR; kLo = 0; kHi = NZ - 1;
     const biome = SPEC[settings.biome] ? settings.biome : 'temperate';
     G.shape = G.shape_of(settings);                                    // PoC "Terrain shape": islands | hills | caverns | canyon
     W.under = !!(settings.under && settings.under !== '0' && settings.under !== 'off') || G.shape === 'caverns';   // U: underground map (caves)
@@ -959,14 +961,15 @@
         for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) { const g = gradH(i, k); ginv[k * NX + i] = g[0] * g[0] + g[1] * g[1]; }
         { const bl = boxBlur(ginv, 1.5); for (let c = 0; c < NC; c++) ginv[c] = 1 / Math.sqrt(1 + bl[c]); }   // smooth, so neighbours agree
         landmarks(Math.round(spec.sp[0] * W.SC * W.SC), Math.round(spec.sp[1] * W.SC * W.SC), spec);
-        job.stage = 1; job.k = 0; job.label = 'Filling the volume';
+        if (SS.dim2d && SS.dim2d.is(job.settings)) { const b = SS.dim2d.band(W); kLo = b.k0; kHi = b.k1; }     // P104: 2D-first: only the rows around the slice are ever filled
+        job.stage = 1; job.k = kLo; job.label = 'Filling the volume';
         return 0.06;
       }
       case 1: { // volume fill, a slab of rows per call
         if (job.under) { underFill(biome); job.k = NZ; despeckleAll(); job.stage = 2; job.label = 'Lava and veins'; return 0.56; }
-        fill(spec, job.k, M.min(NZ, job.k + ROWS)); job.k += ROWS;
-        if (job.k >= NZ) { despeckleAll(); job.stage = 2; job.label = 'Lava, ice and veins'; }
-        return 0.06 + 0.5 * M.min(1, job.k / NZ);
+        fill(spec, job.k, M.min(kHi + 1, job.k + ROWS)); job.k += ROWS;
+        if (job.k > kHi) { despeckleAll(); job.stage = 2; job.label = 'Lava, ice and veins'; }
+        return 0.06 + 0.5 * M.min(1, (job.k - kLo) / (kHi + 1 - kLo));
       }
       case 2: {
         const bdef = C.BIOMES.find(b => b.id === biome);
@@ -984,19 +987,19 @@
         }
         if (job.under) { underMaterials(biome); job.stage = 4; job.label = 'Checking structural support'; return 0.9; }
         surfaceLayers();
-        job.stage = 3; job.k = 1; job.label = 'Laying down strata';
+        job.stage = 3; job.k = M.max(1, kLo); job.label = 'Laying down strata';
         return 0.6;
       }
       case 3: { // materials, slab by slab
-        materials(RULES[biome], job.k, M.min(NZ - 1, job.k + ROWS)); job.k += ROWS;
-        if (job.k >= NZ - 1) { materialEdges(); job.stage = 4; job.label = 'Checking structural support'; }
-        return 0.6 + 0.3 * M.min(1, job.k / NZ);
+        materials(RULES[biome], job.k, M.min(M.min(NZ - 1, kHi + 1), job.k + ROWS)); job.k += ROWS;
+        if (job.k >= M.min(NZ - 1, kHi + 1)) { materialEdges(); job.stage = 4; job.label = 'Checking structural support'; }
+        return 0.6 + 0.3 * M.min(1, (job.k - kLo) / (kHi + 1 - kLo));
       }
       case 4: { // nothing may start floating (buoyant ice touching the sea counts as supported)
         despeckleAll();
-        if (SS.collapse) SS.collapse.remove_floating_all(W);
+        if (SS.collapse && kLo === 0 && kHi === NZ - 1) SS.collapse.remove_floating_all(W);    // (P104: a 2D band: dim2d.crop runs it on the slab, which removes a superset)
         F.lavaPresent = job.lava || biome === 'volcanic';
-        if (W.dry) W.freeze_beyond(C.DRY.CX, C.DRY.CZ, C.DRY.EDIT_R);   // D6: only the disc is destructible
+        if (W.dry && kLo === 0 && kHi === NZ - 1) W.freeze_beyond(C.DRY.CX, C.DRY.CZ, C.DRY.EDIT_R);   // D6: only the disc is destructible
         hgt = ginv = lavaZone = canalD = extra = cliffMax = glacier = sLay = sNy = null;
         job.stage = 5; job.label = 'Done';
         return 1;

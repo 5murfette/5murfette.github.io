@@ -34,6 +34,7 @@
     renderer.outputColorSpace = T.SRGBColorSpace;
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = Q.softShadow ? T.PCFSoftShadowMap : T.PCFShadowMap;
     scene = new T.Scene();
+    if (SS.envView) SS.envView.init(scene, renderer, Q);     // P100: the shared environment map (render/envmap.js)
     scene.fog = new T.FogExp2(0xf1d9c0, 0.0065);
     camera = new T.PerspectiveCamera(42, 1, 0.1, 900);
     SS.section.attach(renderer, scene);                  // P46: the rule is on for this scene only (far pass / PMREM / post quads are drawn without it)
@@ -241,7 +242,7 @@
   V.snapCamera = () => { view.camT = null; view.dir.cur = null; };
   /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
   const PX = 0.0643;
-  const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView', 'jacketView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
+  const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView', 'jacketView', 'heroView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
   function interest(S, a) {
     const P2 = SS.plane, at = (s, y) => P2.to_world(S, s, y);
     if (S.phase === 'place') return null;
@@ -435,7 +436,16 @@
       renderer.setClearColor(0x050505, 1); renderer.toneMappingExposure = 1.15;
       if (SS.weatherView) SS.weatherView.look(Object.assign({}, L, { fog: 0.032, sunI: 0, hemiI: cI, hemiS: cHemi, hemiG: 0x3a3028 }), sk, scene.fog.color);   // it re-applies these per frame
     } else { renderer.setClearColor(0x000000, 1); sun.castShadow = true; }   // (no shadow pass for a dark sun underground)
+    if (SS.envView) {                    // P100: what the shared environment map shows: the sky cube + lit soil below the horizon; caves a faint grey; space is captured from the EOW dome
+      if (SS.world.eow || S.eow) SS.envView.look({ mode: 'space', k: 1, ground: [0, 0, 0], floor: [0.012, 0.013, 0.018] });
+      else if (SS.world.under) SS.envView.look({ mode: 'cave', k: 0, ground: [0.02, 0.018, 0.016], floor: [0.03, 0.03, 0.033] });
+      else {
+        const g = new T.Color(L.hemiG), sy = Math.max(0, L.sunDir[1]), lit = L.hemiI * 0.8 + L.sunI * sy * 0.35;
+        SS.envView.look({ mode: 'sky', k: ENV_K[tod] || 1, ground: [g.r * lit, g.g * lit, g.b * lit], floor: tod === 'night' ? [0.010, 0.014, 0.024] : [0, 0, 0] });
+      }
+    }
   }
+  const ENV_K = { day: 1, dusk: 1, night: 1 };
   /* Surface state map (cover, dryness, char, burning). Owned by the sim (SS.veg) when present. */
   function surfaceBuffer(S) {
     if (S.veg && S.veg.surf) return { buf: S.veg.surf, n: S.veg.n };
@@ -516,7 +526,7 @@
     V.resizeWorld();
     clearActors();
     applyLook(S);
-    scorchMap = null; scorchY = null; freshMap = null; scorchDirty = false; uploadSurface(S);
+    scorchMap = null; scorchY = null; freshMap = null; scorchDirty = false; if (SS.grass) SS.grass.S = S; if (SS.clutterView) SS.clutterView.S = S; uploadSurface(S);
     buildHeights();
     V.seaChanged(SS.world.SEA);                           // per world (dry worlds: below the floor): terrain, outer ocean, face
     SS.terrain.uniforms.uCtxSolid.value = 1;   // D3 (dry) + CX1 (all worlds): the far context is drawn solid
@@ -685,6 +695,7 @@
     if (S.weather && view.wxKind !== undefined && S.weather.kind !== view.wxKind) applyLook(S);   // 5f: the weather turned
     const W = SS.world;
     if (SS.clutterView) SS.clutterView.S = S;
+    if (SS.grass) SS.grass.S = S;
     SS.terrain.update(renderer, S, dtU, Q.remeshMs);
     if (W.version !== view.heightFor && view.time - view.heightT > 0.4) { buildHeights(); view.heightT = view.time; }
     V.dryFresh(dtU);
@@ -836,6 +847,7 @@
       }
     }
     if (S.eow && SS.eowView) SS.eowView.frame(S, view, camera, { scene, renderer, sun, hemi, fill, lamp, sky, motes, stars, Q, tx });   // P68c: the space look (lights, sky, core, debris)
+    if (SS.envView) SS.envView.frame(camera, view.time);                                    // P100: rebuilds the environment map only when the look changed (or every 30 s)
     {                                    // P65i: ambient bounce inside caves. The eye adapts to a cave's gloom, so the level is nearly constant (about 1.1 / pi irradiance); only its tint follows the light that comes in (sky + sun / moon)
       const cs = hemi.color, cg = hemi.groundColor, sc = sun.color, hi = hemi.intensity, si = sun.intensity * 0.4;
       const lr = (cs.r * 0.65 + cg.r * 0.35) * hi + sc.r * si, lg = (cs.g * 0.65 + cg.g * 0.35) * hi + sc.g * si, lb = (cs.b * 0.65 + cg.b * 0.35) * hi + sc.b * si;

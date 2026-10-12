@@ -82,7 +82,7 @@
   // (P38 R1) the sky weapons (air strike, napalm, moai drop, thunder) need open sky: not in the cave maps (their "sky" is a rock ceiling
   // 40 m up: the planes / the rock spawned inside it and the charge was wasted)
   WP.needs_sky = key => key === 'airstrike' || key === 'napalm' || key === 'moai' || key === 'tesla';
-  WP.can_use = (S, key) => (G().ammo(S, S.active.team, key) > 0 || (S.shots > 0 && key === S.weapon)) && !(WP.needs_storm(key) && !(S.weather && S.weather.storm)) && !(WP.needs_sky(key) && W().under) && !(S.eow && SS.eow.no_air(key));   // P68d: no air in space
+  WP.can_use = (S, key) => (G().ammo(S, S.active.team, key) > 0 || (S.shots > 0 && key === S.weapon)) && !(WP.needs_storm(key) && !(S.weather && S.weather.storm)) && !(WP.needs_sky(key) && W().under) && !(S.eow && SS.eow.no_air(key)) && !(SS.jacket && SS.jacket.no_weapon(S, key));   // P68d: no air in space; P107: nothing that needs a footing from a life jacket
   // fire / use the selected weapon. power: charge 0..1 (charge kinds); target: S.tgt {s, y} (target kinds, homing)
   /* P79 RECOIL: the shot itself is use0; afterwards (flag on) the shooter is pushed back */
   WP.use = function (S, power) {

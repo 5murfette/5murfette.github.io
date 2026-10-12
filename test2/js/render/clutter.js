@@ -159,12 +159,12 @@
   /* P96 decor kinds: [lean to world up 0..1, sink m (x scale), scale lo, scale hi, material key]. Instances follow the surface normal (lean 0) or stand up (1);
    on End of the World (no common up) they always follow the surface normal. */
   const DEC = {
-    mushA: [0.6, 0.01, 1.5, 2.6, 'std'], mushB: [0.6, 0.01, 1.5, 2.6, 'std'], fern: [0.7, 0.02, 1.0, 1.7, 'std'], log: [0.12, 0.05, 1.0, 1.8, 'logm'], stump: [0.9, 0.06, 1.0, 1.7, 'std'],
-    cactus: [0.95, 0.04, 1.0, 1.8, 'std'], barrel: [0.9, 0.03, 1.0, 1.9, 'std'], pear: [0.85, 0.03, 1.2, 2.2, 'std'], skull: [0.15, 0.03, 1.4, 2.2, 'std'], ribs: [0.1, 0.04, 1.4, 2.2, 'std'], bone: [0.1, 0.01, 1.3, 2.2, 'std'],
+    mushA: [0.6, 0.01, 2.0, 3.4, 'std'], mushB: [0.6, 0.01, 2.0, 3.4, 'std'], fern: [0.7, 0.02, 1.0, 1.7, 'std'], log: [0.12, 0.05, 1.0, 1.8, 'logm'], stump: [0.9, 0.06, 1.0, 1.7, 'std'],
+    cactus: [0.95, 0.04, 1.0, 1.8, 'std'], barrel: [0.9, 0.03, 1.0, 1.9, 'std'], pear: [0.85, 0.03, 1.2, 2.2, 'std'], skull: [0.15, 0.03, 1.6, 2.5, 'std'], ribs: [0.1, 0.04, 1.5, 2.4, 'std'], bone: [0.1, 0.01, 1.8, 3.0, 'std'],
     rubble: [0.15, 0.04, 1.2, 2.4, 'std'], pillar: [1.0, 0.1, 0.6, 1.4, 'std'], obsidian: [0.5, 0.03, 1.3, 2.6, 'gloss'], ice: [0.55, 0.03, 1.2, 2.6, 'ice'], crystal: [0.4, 0.03, 1.2, 2.6, 'crys'],
     boulder: [0.1, 0.12, 0.7, 1.5, 'std0'], stalag: [0.35, 0.05, 0.9, 2.1, 'std0'], fungi: [0.3, 0.01, 1.4, 2.6, 'fungi'], plate: [0, 0.0, 1.1, 2.2, 'metal'], wreck: [0, 0.04, 0.8, 1.4, 'metal'], cable: [0, 0.0, 1.2, 2.0, 'metal']
   };
-  const MK = { logm: [false, true, { dbl: true, tex: true, aoK: 1 }], std: [false, true, { dbl: true, tex: true }], std0: [false, false, { dbl: true, tex: true }], gloss: [false, true, { dbl: true, tex: true, rk: 0.75, metal: 0.05 }], ice: [false, false, { dbl: true, tex: true, rk: 0.55, emit: 0.22 }], crys: [false, false, { dbl: true, rough: 0.15, emit: 0.7 }], fungi: [false, false, { dbl: true, emit: 1.5, rough: 0.6 }], metal: [false, false, { dbl: true, tex: true, metal: 0.12, rk: 0.9 }] };
+  const MK = { logm: [false, true, { dbl: true, tex: true, aoK: 1 }], std: [false, true, { dbl: true, tex: true }], std0: [false, false, { dbl: true, tex: true }], gloss: [false, true, { dbl: true, tex: true, rk: 0.75, metal: 0.05 }], ice: [false, false, { dbl: true, tex: true, rk: 0.55, emit: 0.22 }], crys: [false, false, { dbl: true, rough: 0.15, emit: 0.7 }], fungi: [false, false, { dbl: true, emit: 1.5, rough: 0.6 }], metal: [false, false, { dbl: true, tex: true, metal: 0.7, rk: 0.8 }] };
   const geoCache = {}, matCache = {};
   const geoOf = k => geos[k] || geoCache[k] || (geoCache[k] = GF[k]());
   const matOf = k => { if (mats[k]) return mats[k]; const d = DEC[k][4]; return matCache[d] || (matCache[d] = mat(false, MK[d][0] || false, MK[d][1], MK[d][2])); };
@@ -213,6 +213,8 @@
     const dens = Q.clutter, sea = W.SEA, lists = { stone: [], snow: [], twig: [], tuft: [], flower: [], scrub: [] };
     const under = !!W.under, eow = !!W.eow, vents = (W.features && W.features.vents) || [], dd = (window.P96_DECOR != null ? window.P96_DECOR : 1) * 1.7;   // (window.P96_DECOR: a tuning / shot hook, a multiplier of every decor density; 0 = none)
     let total = 0;
+    if (SS.grass && SS.grass.hotMap && S) SS.grass.hotMap(S);                                       // P102: heat distance field (lava, vents, burning ground)
+    const hotR = SS.grass ? SS.grass.HOT_R : 4, PLANT = { tuft: 1, flower: 1, scrub: 1, twig: 1, mushA: 1, mushB: 1, fern: 1, log: 1, stump: 1, fungi: 1, cactus: 1, barrel: 1, pear: 1 };
     const snowy = S && S.weather ? S.weather.snowCover || 0 : 0;
     for (let i = 0; i < I.length && total < MAXC; i += 3) {
       const a = I[i], b = I[i + 1], c2 = I[i + 2];
@@ -261,6 +263,8 @@
           if (r1 + r2 > 1) { r1 = 1 - r1; r2 = 1 - r2; }
           const h3_ = M.hash3(qx + q + k * 5, qy - q, qz + 5), h4 = M.hash3(qx - q, qy + k, qz + 9 + q), h5 = M.hash3(qx + 7 * q, qy + 5, qz - q);
           const x = ax + ux * r1 + vx * r2, y = ay + uy * r1 + vy * r2, z = az + uz * r1 + vz * r2;
+          if (SS.heroView && SS.heroView.blocked(x, z)) continue;                // P101: nothing grows inside a hero set piece
+          if (PLANT[kind] && SS.grass.hotDist(x, z) < hotR) continue;                                 // P102: no plants on or near lava / vents / fire
           let sc, r, g, bl, sink = 0.3;
           const dc = DEC[kind];
           if (dc) {

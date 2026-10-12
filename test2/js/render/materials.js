@@ -165,12 +165,15 @@
           vGust = gwv * wk;
           w += wdir * gwv * wk * 0.11 + vec2(-wdir.y, wdir.x) * sin(uTime * 3.1 + ip.x * 1.3 + ip.z * 0.9) * 0.025 * gwv * wk;
           vPatch = texture2D(tNoise, ip.xz * 0.045 + 0.31).b;
+          float hg = max(instanceMatrix[1][1], 0.05), wl = length(w), capW = 0.6 * hg;      // P102: a blade bends, it is never sheared into a spike: the tip leans at most 0.6 of its own length (strong wind / gust / blast summed up to 2-3 m before)
+          if (wl > capW) w *= capW / wl;
+          float lean = clamp(wl / capW, 0.0, 1.0);
           vec2 sway = w * vH * vH;
           float ac = 0.0;                                      // P44: acid pools (xz, r, strength): the grass inside is burnt and flattened
           for (int i = 0; i < 8; i++) { vec4 a = uAcid[i]; if (a.w <= 0.0) continue; float d = length(ip.xz - a.xy) / max(a.z, 0.05); ac = max(ac, a.w * (1.0 - smoothstep(0.75, 1.45, d))); }
           vAcid = ac;
           transformed *= keep;
-          transformed.y *= (1.0 - uSnow * 0.6) * (1.0 - 0.75 * ac) * (1.0 - 0.55 * clamp(bflat, 0.0, 1.0));
+          transformed.y *= (1.0 - 0.28 * lean * lean) * (1.0 - uSnow * 0.6) * (1.0 - 0.75 * ac) * (1.0 - 0.55 * clamp(bflat, 0.0, 1.0));
           transformed.z += ac * vH * 0.25;
           vTint = vec3(1.0);
           #ifdef USE_INSTANCING_COLOR
@@ -202,7 +205,7 @@
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           totalEmissiveRadiance += vSurf.a * vec3(3.0, 1.0, 0.2) * smoothstep(0.3, 1.0, vH) * (0.7 + 0.3 * sin(uTime * 13.0 + vH * 9.0));`);
     };
-    m.customProgramCacheKey = () => 'grass6';
+    m.customProgramCacheKey = () => 'grass7';
     return m;
   };
 

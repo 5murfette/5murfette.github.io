@@ -429,17 +429,17 @@
   /* Grass blades on up-facing, sky-exposed triangles of a chunk mesh (stable world-anchored hashing).
    * grassAt(x,z) -> 0..1 coverage; dens = quality density factor (scales the count only, not the coverage threshold,
    * so sparse cover does not vanish on lower quality). Output per blade: x, y, z, yaw, height, kind. */
-  G.grass = function (mesh, grassAt, sea, max, dens) {
+  G.grass = function (mesh, grassAt, sea, max, dens, hotAt, hotR) {
     if (dens === undefined) dens = 1;
     const W = SS.world, P = mesh.pos, N = mesh.nrm, I = mesh.idx, D = mesh.depth, out = [];
     for (let i = 0; i < I.length && out.length < max * 6; i += 3) {
       const a = I[i], b = I[i + 1], cc = I[i + 2];
-      if (N[a * 3 + 1] < 0.7 || N[b * 3 + 1] < 0.7 || N[cc * 3 + 1] < 0.7) continue;
+      if (N[a * 3 + 1] < 0.75 || N[b * 3 + 1] < 0.75 || N[cc * 3 + 1] < 0.75) continue;
       if (D[a] > 0.3 || D[b] > 0.3 || D[cc] > 0.3) continue;
       const ax = P[a * 3], ay = P[a * 3 + 1], az = P[a * 3 + 2];
       if (ay < sea + 0.6) continue;
       if (Math.abs(W.top_at(ax, az) - ay) > 0.7) continue;          // only sky-exposed surfaces grow grass
-      const g = grassAt(ax, az); if (g < 0.04) continue;
+      let g = grassAt(ax, az); if (g < 0.04) continue;
       const ux = P[b * 3] - ax, uy = P[b * 3 + 1] - ay, uz = P[b * 3 + 2] - az;
       const vx = P[cc * 3] - ax, vy = P[cc * 3 + 1] - ay, vz = P[cc * 3 + 2] - az;
       const area = 0.5 * M.len3(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
@@ -451,6 +451,7 @@
         let r1 = M.hash3(qx + q * 7, qy, qz + 1), r2 = M.hash3(qx, qy + q * 13, qz + 2);
         if (r1 + r2 > 1) { r1 = 1 - r1; r2 = 1 - r2; }
         const h3 = M.hash3(qx + q, qy - q, qz + 5);
+        if (hotAt && hotAt(ax + ux * r1 + vx * r2, az + uz * r1 + vz * r2) < hotR) continue;     // P102: no grass on or near lava, vents or burning ground
         out.push(ax + ux * r1 + vx * r2, ay + uy * r1 + vy * r2 - 0.02, az + uz * r1 + vz * r2, M.hash3(qx - q, qy, qz + 9) * 6.283,
           0.2 + 0.34 * M.hash3(qx, qy, qz + q + 3) * (0.6 + patch * 0.8), h3 > 0.965 ? (h3 > 0.985 ? 2 : 1) : 0);
       }

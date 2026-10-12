@@ -28,17 +28,61 @@
   GR.setSurface = function (buf, n) { surf = buf; surfN = n; };
   function grassAt(x, z) {
     if (!surf) return 0;
+    if (SS.heroView && SS.heroView.blocked(x, z)) return 0;                  // P101: no grass inside a hero set piece
     const i = M.clamp(Math.round(x / SS.world.SX * (surfN - 1)), 0, surfN - 1), k = M.clamp(Math.round(z / SS.world.SZ * (surfN - 1)), 0, surfN - 1);
     return surf[(k * surfN + i) * 4] / 255;
   }
 
   GR.cover = grassAt;
+
+  /* P102: heat proximity. Nothing green grows on or near lava, vents (fumaroles) or burning ground: a distance field (m) over the
+   * lattice, built from S.lava (any column with lava) + the fumarole list + burning veg cells, cached by lava version. */
+  const HOT_R = 4.0;                                                  // m: no grass / plants closer than this to heat (blades fade in over the last metre)
+  let hotD = null, hotKey = '', hotN = 0;
+  GR.hotMap = function (S) {
+    const W = SS.world, n = W.NX, nz = W.NZ, H = W.H, lv = S && S.lava, vg = S && S.veg;
+    if (!W.features && !lv) return null;
+    const key = (lv ? lv.ver : 0) + ':' + (vg ? vg.nAct : 0) + ':' + W.version + ':' + n;
+    if (hotD && hotKey === key && hotN === n * nz) return hotD;
+    const N = n * nz, INF = 1e4; if (!hotD || hotN !== N) hotD = new Float32Array(N);
+    hotN = N; hotKey = key; hotD.fill(INF);
+    let any = false;
+    if (lv) for (let c = 0; c < N; c++) if (lv.h[c] > 0.02) { hotD[c] = 0; any = true; }
+    if (vg) for (let c = 0; c < N; c++) if (vg.burnT[c] > 0) { hotD[c] = 0; any = true; }
+    const vents = (W.features && W.features.vents) || [];
+    for (let v = 0; v < vents.length; v++) {                          // a fumarole is a hot mouth about 1.5 m wide
+      const ci = Math.round(vents[v].x / H), ck = Math.round(vents[v].z / H), r = Math.ceil(1.5 / H);
+      for (let dk = -r; dk <= r; dk++) for (let di = -r; di <= r; di++) { const i = ci + di, k = ck + dk; if (i >= 0 && k >= 0 && i < n && k < nz && Math.hypot(di, dk) * H <= 1.5) { hotD[k * n + i] = 0; any = true; } }
+    }
+    if (!any) return hotD;
+    const a = H, b = H * 1.4142;                                      // chamfer distance transform (two passes), metres
+    for (let k = 0; k < nz; k++) for (let i = 0; i < n; i++) {
+      const c = k * n + i; let d = hotD[c];
+      if (i > 0 && hotD[c - 1] + a < d) d = hotD[c - 1] + a;
+      if (k > 0) { if (hotD[c - n] + a < d) d = hotD[c - n] + a; if (i > 0 && hotD[c - n - 1] + b < d) d = hotD[c - n - 1] + b; if (i < n - 1 && hotD[c - n + 1] + b < d) d = hotD[c - n + 1] + b; }
+      hotD[c] = d;
+    }
+    for (let k = nz - 1; k >= 0; k--) for (let i = n - 1; i >= 0; i--) {
+      const c = k * n + i; let d = hotD[c];
+      if (i < n - 1 && hotD[c + 1] + a < d) d = hotD[c + 1] + a;
+      if (k < nz - 1) { if (hotD[c + n] + a < d) d = hotD[c + n] + a; if (i < n - 1 && hotD[c + n + 1] + b < d) d = hotD[c + n + 1] + b; if (i > 0 && hotD[c + n - 1] + b < d) d = hotD[c + n - 1] + b; }
+      hotD[c] = d;
+    }
+    return hotD;
+  };
+  /* distance (m) to the nearest heat source at (x, z): 1e4 = none known */
+  GR.hotDist = function (x, z) {
+    if (!hotD) return 1e4; const W = SS.world, n = W.NX;
+    return hotD[M.clamp(Math.round(z / W.H), 0, W.NZ - 1) * n + M.clamp(Math.round(x / W.H), 0, n - 1)];
+  };
+  GR.HOT_R = HOT_R;
   const m4 = new T.Matrix4(), q4 = new T.Quaternion(), v4 = new T.Vector3(), s4 = new T.Vector3(), yAxis = new T.Vector3(0, 1, 0), col = new T.Color();
   GR.onChunk = function (ci, c) {
     let im = per.get(ci);
     if (im) { scene.remove(im); im.dispose(); per.delete(ci); }
     if (!c || !c.data || !surf) return;
-    const G = SS.meshgen.grass(c.data, grassAt, SS.world.SEA, MAXC, Q.grass), n = G.length / 6;
+    if (GR.S) GR.hotMap(GR.S);
+    const G = SS.meshgen.grass(c.data, grassAt, SS.world.SEA, MAXC, Q.grass, hotD ? GR.hotDist : null, HOT_R), n = G.length / 6;
     if (!n) return;
     im = new T.InstancedMesh(geo, mat, n);
     for (let i = 0; i < n; i++) {

@@ -255,6 +255,7 @@
       job.finalized = true;
       if (job.settings && job.settings.dim === '2d' && SS.dim2d) SS.dim2d.crop(W);          // P68a: the finished map becomes a one-slice slab
       W.update_tops(0, 0, W.NX - 1, W.NZ - 1);
+      if (W.flat) SS.dim2d.finish(W, job.settings);                                              // P104: the slab's own vents (nothing off-slab survives the crop)
       W.mark_all();
     }
     return p;

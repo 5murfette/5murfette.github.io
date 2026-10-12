@@ -23,7 +23,13 @@
  * Not rescued: lava (it burns), EOW (no water), a puddle shallower than K.MIN_DEPTH (the old shallow swim), a worm already
  * swimming (no second charge: a hit while floating is a normal hit, a blast's push is ignored as for every swimmer).
  * C layout: struct SwimJk { u8 jk; f32 ys, rt, stuck, gx, gz; i16 pi, npath; f32 path[2 * PATH_MAX]; } inside struct Swim; scratch i32 par[], seen[], queue[] (NX * NZ).
- * API: enter(S, w, surf), step(S, w, dt), holds(S, w), K (constants).
+ * P107 (user 2026-10-12: "my blue worm was on a life jacket but no land to get to, it was my turn and I couldn't use anything, no rope, no teleport"): a jacket worm on
+ * its own turn is a PLAYABLE worm. sim.js used to skip controlActive for every swimmer, so the turn timer ran out on a floating worm. Now control() runs the shared
+ * control (weapon choice, aim, the fire key) with the jacket rules: left / right paddles (K.PADDLE m/s, along the section, the auto-swim to the shore pauses while a
+ * key is held), the ninja rope / teleport are allowed and the jacket comes off cleanly (release: no swim state, the charge stays spent) when the rope bites or the
+ * teleport lands, shells and bolts may be fired from the surface; what needs a footing (drops, melee, torch / drill, parachute, zipline) is greyed out with a hint
+ * (no_weapon, also sim.weapons.can_use, so the CPU never picks it). The EOW jetpack: there is no water in space, nothing to do.
+ * API: enter(S, w, surf), step(S, w, dt), holds(S, w), control(S, a, dt, inp, retreat), release(S, w, why), no_weapon(S, key), K (constants).
  */
 (function (SS) {
   'use strict';
@@ -31,7 +37,7 @@
   const JK = SS.jacket = {};
   const K = JK.K = {
     HP_LOSS: 6, MIN_DEPTH: 0.6, HOLD_T: 5, SWIM_V: 1.0, DRIFT_K: 0.5, DRIFT_MAX: 0.3, RETARGET_T: 1.2, RETARGET_T_LONG: 3, CLIMB: 1.4,
-    FLOAT_Y: 0.1, BOB_A: 0.025, BOB_W: 2.1, LOOK: 6, LINE_R: 150, UP_RATE: 2.5, DOWN_RATE: 3
+    PADDLE: 1.6, FLOAT_Y: 0.1, BOB_A: 0.025, BOB_W: 2.1, LOOK: 6, LINE_R: 150, UP_RATE: 2.5, DOWN_RATE: 3
   };
   const W = () => SS.world, sim = () => SS.sim;
   const WETD = 0.004;                                  // = sim.js landAt: a column deeper than this is water
@@ -148,6 +154,46 @@
     sim().emit(S, 'swimout', { wormId: w.id }); sim().emit(S, 'jacketend', { wormId: w.id, why: why });
     sim().log(S, `${w.name} climbs out and the life jacket deflates.`, 0xffa24a);
   }
+  /* P107: the jacket comes off at once (the rope bit, the teleport landed): the worm is an ordinary airborne worm, no swim flag is left behind */
+  JK.release = function (S, w, why) {
+    if (!w.swim || !w.swim.jk) return false;
+    w.swim = null; w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0; w.air = true; w.rest = false; w.ropeWet = null;
+    sim().emit(S, 'jacketend', { wormId: w.id, why: why });
+    sim().log(S, `${w.name} slips the life jacket off (${why}).`, 0xffa24a);
+    return true;
+  };
+  /* P107: which weapons a worm afloat can use. Shells, bolts, strikes from the sky, the rope and the teleport work from the surface; what needs a footing
+   * (dropped / planted things sink, a swing or a torch needs ground, a parachute needs a fall, a zipline needs a higher anchor than the water) does not.
+   * Returns the reason (for the HUD hint and the log) or '' when the weapon is allowed. */
+  JK.REFUSE = { drop: 'No footing: it would only sink', melee: 'Needs a firm footing to swing', dig: 'Needs solid ground under you', chute: 'Only opens in a fall', zip: 'No higher anchor from the water' };
+  JK.no_weapon = function (S, key) {
+    const a = S.active; if (!a || !a.swim || !a.swim.jk) return '';
+    const d = C.ARSENAL[key]; if (!d || key === 'ffield') return '';
+    return JK.REFUSE[d.kind] || '';
+  };
+  /* P107: the active jacket worm's turn (or retreat). The shared control of sim.js does the weapon choice / aim / fire key; the swim step (JK.step) keeps floating it. */
+  JK.control = function (S, a, dt, inp, retreat) {
+    const sw = a.swim; if (!sw || !sw.jk || a.dead || a.drowning) return;
+    a.flip = false; a.hop = false; a.windUp = 0; a.walking = false; a.slide = false; a.air = false;                  // (the flags of a worm on its feet mean nothing afloat)
+    sim().control_pre(S, a, dt, inp, retreat);
+    const mv = inp.move || 0;
+    if (mv && !S.charging && !S.rope && !S.hook) {                                                    // paddle along the section (never out of it)
+      a.facing = mv > 0 ? 1 : -1;
+      const d = P.dir(S), st = K.PADDLE * dt * (inp.fine ? 0.5 : 1), nx = a.pos.x + d.x * a.facing * st, nz = a.pos.z + d.z * a.facing * st;
+      let bank = sim().blocked3(nx, a.pos.y, nz);
+      for (let up = 0.1; up <= 0.41 && bank; up += 0.1) if (!sim().blocked3(nx, a.pos.y + up, nz)) { a.pos.y += up; bank = false; }
+      if (!bank && sim().in_play(S, nx, nz)) { a.pos.x = nx; a.pos.z = nz; sw.manual = S.tick; }
+    }
+    if (retreat) return;
+    if (S.hook) SS.traverse.hook_step(S, a, dt);
+    if (S.rope) { JK.release(S, a, 'rope'); return; }
+    const key = S.weapon, why = JK.no_weapon(S, key), tele = S.teleT > 0;
+    if (why) { if (inp.fire_pressed && S.phase === 'play') sim().log(S, `${C.ARSENAL[key].name}: ${why}.`, 0xffb27a); return; }
+    sim().control_fire(S, a, dt, inp, false);
+    if (S.rope) { JK.release(S, a, 'rope'); return; }
+    if (S.teleT > 0 && !tele) JK.release(S, a, 'teleport');
+  };
+
   /* P91: haul a jacket swimmer out NOW (the turn was handed to it: a worm in the water cannot act). Returns true when it is on land. */
   JK.haul = function (S, w) {
     const sw = w.swim; if (!sw || !sw.jk) return false;
@@ -187,7 +233,7 @@
     }
     sw.cx = cx; sw.cz = cz;                                // presentation (the wake leans with it)
     let nx = w.pos.x + cx * dt, nz = w.pos.z + cz * dt;
-    if (sw.land && sw.path.length >= 2) {
+    if (sw.land && sw.path.length >= 2 && sw.manual !== S.tick) {                       // (P107: not while the player paddles)
       const np = sw.path.length / 2;
       while (sw.pi < np - 1 && M.len2(sw.path[sw.pi * 2] - w.pos.x, sw.path[sw.pi * 2 + 1] - w.pos.z) < 0.6) sw.pi++;
       let j = M.min(np - 1, sw.pi + K.LOOK);

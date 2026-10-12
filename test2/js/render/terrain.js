@@ -208,7 +208,16 @@
       if (uCrackOn < 0.5) return 0.0;
       float c = texture(tCrack, (p * 2.0 + 0.5) / uCrackSize).r;
       float thr = 0.42 + 0.3 * (n1 - 0.5) + 0.12 * (n2 - 0.5);
-      return smoothstep(thr, thr + 0.07, c);
+      float m = smoothstep(thr, thr + 0.07, c);
+      if (m <= 0.0) return 0.0;
+      // P106: a CRACK is thin: along some axis the damage falls away within half a metre. A saturated blob (load-check breaks, stacked blasts: damage 255
+      // over a whole region) used to paint a flat dark fill over the cut face (the user's brown patches); there the minimum over the three axes of the
+      // two-sided mean stays high, so only its outline (the fracture surface) is drawn and the material shows through inside.
+      vec3 q0 = (p * 2.0 + 0.5) / uCrackSize, st = 1.0 / uCrackSize;
+      float ax = 0.5 * (texture(tCrack, q0 + vec3(st.x, 0.0, 0.0)).r + texture(tCrack, q0 - vec3(st.x, 0.0, 0.0)).r);
+      float ay = 0.5 * (texture(tCrack, q0 + vec3(0.0, st.y, 0.0)).r + texture(tCrack, q0 - vec3(0.0, st.y, 0.0)).r);
+      float az = 0.5 * (texture(tCrack, q0 + vec3(0.0, 0.0, st.z)).r + texture(tCrack, q0 - vec3(0.0, 0.0, st.z)).r);
+      return m * (1.0 - smoothstep(0.55, 0.8, min(ax, min(ay, az))));
     }`;
   const COMMON = /* glsl */`
     uniform float uNL, uSL;
@@ -573,15 +582,24 @@
   }
   /* mode 0 slab, 1 context far colour, 2 context far depth pre-pass, 3 context near */
   /* body = true: material for a detached rock piece (render/bodies.js): textured in the piece's own frame (tpos) */
+  /* P101: the terrain program carries the env sampler (+0.1..0.3 ms on high) only where the ground can reflect the sky: wet ground (rain / storm),
+   * the volcanic island (obsidian), the End of the World (steel hull). Elsewhere a program variant without USE_ENVMAP is compiled. */
+  const ENVMATS = []; let envOn = false, envOff = 0;
+  function setEnv(on) {
+    if (on === envOn) return; envOn = on;
+    for (const m of ENVMATS) m.needsUpdate = true;
+  }
   function terrainMaterial(mode, body) {
     const opts = { roughness: 0.92, metalness: 0, side: mode === 0 ? T.DoubleSide : T.FrontSide };
     if (mode === 1 || mode === 3) Object.assign(opts, { transparent: true, depthWrite: false });
     if (mode === 2) Object.assign(opts, { colorWrite: false });
     const m = new T.MeshStandardMaterial(opts);
+    if (mode !== 2) ENVMATS.push(m);
     m.userData.sectionMargin = 0;                         // P46: the terrain's front limit is slice zero itself (render/section.js)
     if (mode === 0) m.shadowSide = T.DoubleSide;
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U, EOWU);
+      if (!envOn && mode !== 2) sh.fragmentShader = '#undef USE_ENVMAP\n' + sh.fragmentShader;      // P101: dry ground has nothing to reflect: the env sampler is compiled out of this variant
       if (mode === 0 && !body) Object.assign(sh.uniforms, { tVol: { value: volTex }, uVolSize: { value: VOLSIZE } });
       patchVertex(sh, body);
       // slice zero (t = 0) is the collision section: the slab is everything from -uBack up to it, nothing in front
@@ -641,7 +659,7 @@
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           totalEmissiveRadiance += tEmis + gCaveEm;`);
     };
-    m.customProgramCacheKey = () => 'terrain' + mode + (body ? 'b' : '') + (U.uDetail.value > 0.5 ? 'd' : '');
+    m.customProgramCacheKey = () => 'terrain' + mode + (body ? 'b' : '') + (U.uDetail.value > 0.5 ? 'd' : '') + (envOn || mode === 2 ? '' : 'n');
     return m;
   }
   /* shadow pass for the slab: same clip */
@@ -1290,6 +1308,8 @@
   TR.frame = function (S, view, ctxA, inspect) {
     U.uTime.value = view.time;
     U.uAlpha.value = ctxA;
+    { const wet = U.uWet.value, want = S.biome === 'volcanic' || S.eow || wet > 0.01;
+      if (want) { envOff = 0; setEnv(true); } else if (envOn && ++envOff > 120) setEnv(false); }
     U.uVolc.value = S.biome === 'volcanic' ? 1 : 0;          // volcanic island: the deep bedrock is black basalt too
     { const mt = U.uMatTint.value, vo = U.uVolc.value > 0.5;   // P65i: boulders of generic rock / sandstone on the volcanic island are dark tuff, not beach sand
       mt[1].set(vo ? 0.4 : TINT[1][0], vo ? 0.38 : TINT[1][1], vo ? 0.37 : TINT[1][2]); mt[4].set(vo ? 0.42 : TINT[4][0], vo ? 0.38 : TINT[4][1], vo ? 0.36 : TINT[4][2]); }

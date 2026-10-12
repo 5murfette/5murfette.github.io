@@ -58,6 +58,7 @@
     { k: 'mineFuse', t: 'Mine fuse', o: OPTS.mineFuse, w: 'seg', fn: v => (v === 'random' ? 'random' : parseInt(v, 10)) },
     { k: 'jackets', t: 'Life jackets per team', o: OPTS.jackets, n: 1, w: 'sel', h: 'a worm that lands in water inflates one (-6 HP) and swims back to the shore by itself; 0 = none' },
     { k: 'jacketOn', t: 'Life jackets on at the start', b: true, d: true, h: 'each team switches its own in the match (the ; key or the vest chip)' },
+    { k: 'jetpacks', t: 'Jetpacks per team', o: OPTS.jackets, n: 1, w: 'sel', h: 'End of the World only: a falling worm fires one to land safely (key J or the chip switches it); 0 = none' },
     { k: 'sd', t: 'Sudden death', b: true, d: true, h: 'the sea rises from round 8' },
     { k: 'collapse', t: 'Land collapse', b: true, d: true, h: 'unsupported land breaks' },
     { k: 'blood', t: 'Blood and gibs', b: true, d: false }, { k: 'teamBlood', t: 'Team-coloured blood', b: true, d: false },
@@ -122,6 +123,7 @@
     o.turnTime = intIn(o.turnTime, 0, 600, intIn(def.turnTime, 0, 600, 0));
     o.ghost = intIn(o.ghost, 0, 100, intIn(def.ghost, 0, 100, 0));       // P46: front ghost opacity, percent (0 = off)
     o.jackets = intIn(o.jackets, 0, 9, intIn(def.jackets, 0, 9, 3));       // P89: life jackets per team (sim/gear.js)
+    o.jetpacks = intIn(o.jetpacks, 0, 9, intIn(def.jetpacks, 0, 9, 3));    // P86: EOW jetpack charges per team (sim/eow.js)
     o.labFlags = intIn(o.labFlags, 0, C.LAB.ALL, 0);                  // P42: the Lab's mechanics (bit mask, 0 = off)
     o.seed = intIn(o.seed, 0, 99999999, intIn(def.seed, 0, 99999999, 7));
     const dctl = Array.isArray(def.ctl) ? def.ctl : ['human', 'cpu', 'cpu', 'cpu'];

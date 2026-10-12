@@ -95,7 +95,10 @@
       let kind = null;
       if (u < ch.any) { let acc = 0; const tot = ch.weapon + ch.health + ch.tool; for (const k of CR.KINDS) { acc += ch[k]; if (v * tot < acc) { kind = k; break; } } }
       let alive = 0; for (let t = 0; t < (S.teams ? S.teams.length : 2); t++) if (S.worms.some(o => !o.dead && o.hp > 0 && o.team === t)) alive++;
-      S.crPlan = { round: r, kind, at: M.min(alive - 1, Math.floor(at * M.max(1, alive))), n: 0 };
+      // (P98 x P84: the match's first turn draws nothing, so round 1's plan is drawn one turn late: skip that turn so the slot
+      // always lies ahead and round 1 keeps the full chance; every later round starts at n 0)
+      const n0 = !S.crPlan && r === 1 ? 1 : 0, span = M.max(1, alive - n0);
+      S.crPlan = { round: r, kind, at: M.min(M.max(alive - 1, n0), n0 + Math.floor(at * span)), n: n0 };
     }
     const p = S.crPlan, hit = p.kind && p.n === p.at && !first && S.turnNo >= 2 && S.active && !W().under;
     p.n++;
