@@ -922,6 +922,7 @@
       if (pre === 'gone') { removeProj(S, p); continue; }
       if (pre === true) continue;
       const wp0 = P.to_world(S, p.s, p.y);
+      if (S.eow && SS.eow.proj_escape(S, p, dt)) { removeProj(S, p); continue; }     // P68d: left every gravity well
       // wind (PoC stepProj L3396: a push of wind x 230 px/s2 x the shell's wind factor; PoC wind 1 = a storm's max ~
       // a 12 m/s gale here): in-plane component of the local air velocity only (the shot never leaves its plane); the
       // bouncing shells take no wind (windK 0), as in the PoC; whirlwind updrafts still lift a little
@@ -1585,6 +1586,7 @@
     if (SS.water) SS.water.step(S, dt);
     if (SS.ice) SS.ice.step(S, dt);
     if (SS.veg) SS.veg.step(S, dt);
+    if (S.eow) SS.eow.step(S, dt);                                  // P68d: shots lost to space keep drifting for the view
     if (SS.lava && !S.eow) SS.lava.step(S, dt);                    // (P68c: the magma pockets stay put in space)
     if (SS.alien) SS.alien.step(S, dt);                           // P37: eggs, face huggers, the alien, acid
     for (const w of S.worms) {

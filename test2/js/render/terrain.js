@@ -115,6 +115,8 @@
    *     stand in for an environment map (shiny, flat: no relief);
    *   - the other faces: plain frame steel;
    *   - the cut through it (cap): the profile of a bridge girder: flanges top and bottom, a web with ribs, bolts. */
+  const EOW_GLSL = SS.eowView ? SS.eowView.GLSL : '';                       // P68d: the wrecked hull's look (render/eowview.js)
+  const EOWU = SS.eowView ? Object.assign({ uEow: CAPU.uEow }, SS.eowView.U) : {};
   const TUFF_GLSL = /* glsl */`
     /* P65i: the ruined town of the volcanic island is dressed stone, not pale concrete: courses of dark basalt and brown tuff ashlar (rows 0.28 m on walls, 0.6 m
      * flagstones on roads / floors), recessed joints, pitted faces, lava-orange stains running down from the wall tops, soot, thermal-crack lines.
@@ -222,6 +224,8 @@
 
     ${TUFF_GLSL}
     uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze;
+    uniform float uEow;
+    ${EOW_GLSL}
     // the landscape behind the slab (mode 1, ad = m beyond its back face): the old ghost haze while it fades
     // (uCtxSolid 0); drawn solid (CX1) it still recedes into the haze with the slice-view setting (P29j, uCtxHaze)
     #define CTX_HAZE(ad) ((0.12 + 0.4 * smoothstep(0.0, 50.0, ad)) * (1.0 - uCtxSolid) + (0.16 + 0.36 * smoothstep(0.0, 55.0, ad)) * uCtxSolid * uCtxHaze)
@@ -408,7 +412,7 @@
         float lf = lavaFlow(vT, dPx, dPy);
         float pulse = 0.88 + 0.12 * sin(uTime * 0.6 + vT.x * 0.5 + vT.z * 0.4);
         // crust: only a faint dull-red residual heat in the deepest cracks (it is cold rock; open lava is render/lava.js)
-        emis = wl * pow(lf, 1.9) * 3.8 * pulse * vec3(1.0, 0.34, 0.06) + wc * pow(lf, 5.0) * 0.45 * vec3(1.0, 0.2, 0.03);
+        emis = wl * pow(lf, 1.9) * 3.8 * pulse * vec3(1.0, 0.34, 0.06) + wc * pow(lf, 5.0) * (uEow > 0.5 ? 2.2 : 0.45) * vec3(1.0, 0.2, 0.03);
         col = mix(col, vec3(0.12, 0.06, 0.04), wl * 0.6);
       }
       // P65d: the ground within ~0.6 m of open lava is heated: a dull orange glow that dies off with the distance to the nearest lava column (no hard line where the lava meets the ground)
@@ -476,6 +480,7 @@
           emis += kp * pc.a * (env * fres * pc.rgb * 0.75 + vec3(sun * 1.6));
         }
       }
+      if (uEow > 0.5 && xs + xc > 0.02) eoHull(vT, nW, xs, xc, col, rough, emis, RA, GD);   // P68d: the wrecked hull (render/eowview.js)
       float sv; relief = reliefH(vT, RA, fw, sv); glintD = GD;
       rough = min(1.0, sqrt(rough * rough + sv));
       return col;
@@ -528,7 +533,7 @@
     m.userData.sectionMargin = 0;                         // P46: the terrain's front limit is slice zero itself (render/section.js)
     if (mode === 0) m.shadowSide = T.DoubleSide;
     m.onBeforeCompile = sh => {
-      Object.assign(sh.uniforms, U);
+      Object.assign(sh.uniforms, U, EOWU);
       if (mode === 0 && !body) Object.assign(sh.uniforms, { tVol: { value: volTex }, uVolSize: { value: VOLSIZE } });
       patchVertex(sh, body);
       // slice zero (t = 0) is the collision section: the slab is everything from -uBack up to it, nothing in front
@@ -614,7 +619,7 @@
     const bspline = Q.name !== 'low';
     m.onBeforeCompile = sh => {
       if (bspline) sh.fragmentShader = '#define CAP_BSPLINE 1\n' + sh.fragmentShader;
-      Object.assign(sh.uniforms, U, FAR, CAPU, { tVol: { value: volTex }, uVolSize: { value: VOLSIZE }, uCapN: capN });
+      Object.assign(sh.uniforms, U, FAR, CAPU, EOWU, { tVol: { value: volTex }, uVolSize: { value: VOLSIZE }, uCapN: capN });
       // the plane mesh sits 2 mm behind slice zero; everything is sampled ON slice zero (t = 0: the collision plane, O1)
       sh.vertexShader = 'uniform vec3 uO, uN; varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vW -= uN * dot(vW - uO, uN);');
       sh.fragmentShader = /* glsl */`
@@ -627,6 +632,7 @@
         ${FOAM_GLSL}
         ${PLATE_GLSL}
         ${TUFF_GLSL}
+        ${EOW_GLSL}
         // C1 (user: the face must not SCROLL while the section turns; each spot morphs into another random part of the
         // texture, faster the further from the worm): textures are pinned to the face, pu = (τ, y), τ = s + uS0 (s =
         // distance from the pivot along the face; uS0 absorbs pivot moves on the same plane); the variety comes from a
@@ -689,6 +695,7 @@
         }
         vec3 capCol(int mat, vec2 pu, vec3 strata, float dd, vec4 sf, float heat, out vec3 em){
           em = vec3(0.0);
+          if (uEow > 0.5 && (mat == 13 || mat == 15)) return eoCap(pu, vW, em);   // P68d: the wrecked hull's cut (render/eowview.js)
           // P7: girder steel (13): the beam's cut, a painted plate with a dark web line; foam (14): bubbly pale cells
           if (mat == 13) { int pi = uNPl > 0 ? plateIdx(vW) : -1; if (pi >= 0) return plateCut(pi, vW); float web = 1.0 - smoothstep(0.03, 0.06, abs(fract(pu.y * 1.6) - 0.5)); return vec3(0.47, 0.24, 0.12) * (1.0 - 0.45 * web) * (0.9 + 0.2 * texture(tNoise, pu * 0.5).r); }
           if (mat == 14) { em = vec3(0.2, 0.21, 0.225); return foamLook(pu, 0.2, 1.0); }        // P37 W4: white honeycomb cut (a field of hexagonal cells looking into the block)

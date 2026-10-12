@@ -147,6 +147,7 @@
     for (const w of S.worms) {
       if (w.dead) continue;
       const e = BL.worm_effect(c, Wkg, w.pos, o.dmg);
+      if (S.eow) SS.eow.blast_k(S, c, Wkg, w, e);                       // P68d: no air shock wave in vacuum
       if (e.r > 14) continue;
       if (e.dv > 0.01) {                // any blast that reaches a worm throws it, cuts its rope and makes it skid (PoC)
         if (SS.sim.ctl(S, w)) {         // in-plane controlled: project the shove onto the plane

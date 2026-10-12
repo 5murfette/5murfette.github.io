@@ -222,6 +222,7 @@
     return dirv;
   }
   FX.explosion = function (e, camDist) {
+    if (FX.env.vac && SS.eowView && SS.eowView.explosion(e)) return;       // P68d: vacuum: flash, sparks, ejecta, no smoke / shock ring (render/eowview.js)
     const W3 = Math.cbrt(e.W || Math.pow((e.R || 3) / 3, 3)), Rf = R_FB * W3 * (W3 > 1.8 ? 1 + 0.2 * Math.min(2, W3 - 1.8) : 1) * (W3 > 2.2 ? 1.3 : 1);   // (a big one reads bigger; P61: the holy grenade bigger still)
     // P30g: a charge under the water makes no fireball or soot (the water quenches it): a dim green-white glow under
     // the surface and a burst of bubbles; the surface show (dome, crown, jet, base surge, foam) is FX.waterBlast
@@ -472,7 +473,9 @@
         spawn(K_STEAM, e.x + Math.cos(a) * R * 0.4, e.y + 0.3, e.z + Math.sin(a) * R * 0.4, { vx: Math.cos(a) * v, vy: rnd(0.1, 0.5), vz: Math.sin(a) * v, drag: 1.1, life: rnd(2.2, 3.6), s0: 0.6 * sz, s1: rnd(2.2, 3.2) * sz, a0: 0.5, c0: [0.93, 0.95, 0.98], c1: [0.9, 0.92, 0.95] }); }
     } });
   };
-  FX.trail = function (x, y, z) {                                  // a rocket's exhaust: a white-grey smoke ribbon that swells, thins and drifts with the wind; a hot lick at the nozzle; now and then a spark
+  FX.trail = function (x, y, z) {
+    if (FX.env.vac) return;                                                  // P68d: no smoke in vacuum
+                                  // a rocket's exhaust: a white-grey smoke ribbon that swells, thins and drifts with the wind; a hot lick at the nozzle; now and then a spark
     spawn(K_SMOKE, x, y, z, { vx: rnd(-0.25, 0.25), vy: rnd(0.15, 0.55), vz: rnd(-0.25, 0.25), life: rnd(1.2, 2.1), s0: 0.14, s1: rnd(0.9, 1.3), a0: 0.5, c0: [0.78, 0.76, 0.72], c1: [0.88, 0.88, 0.9], drag: 1.0, buoy: 0.12 });
     spawn(K_FIRE, x, y, z, { life: 0.1, s0: 0.34, s1: 0.12, c0: [2800, 1500, 0] });
     if (Math.random() < 0.3 * QN) spawn(K_SPARK, x, y, z, { vx: rnd(-1.5, 1.5), vy: rnd(-1, 1.5), vz: rnd(-1.5, 1.5), life: rnd(0.2, 0.45), s0: 0.07, s1: 0.03, c0: [2500, 1300, 0], grav: 6, drag: 0.5 });

@@ -82,7 +82,7 @@
   // (P38 R1) the sky weapons (air strike, napalm, moai drop, thunder) need open sky: not in the cave maps (their "sky" is a rock ceiling
   // 40 m up: the planes / the rock spawned inside it and the charge was wasted)
   WP.needs_sky = key => key === 'airstrike' || key === 'napalm' || key === 'moai' || key === 'tesla';
-  WP.can_use = (S, key) => (G().ammo(S, S.active.team, key) > 0 || (S.shots > 0 && key === S.weapon)) && !(WP.needs_storm(key) && !(S.weather && S.weather.storm)) && !(WP.needs_sky(key) && W().under);
+  WP.can_use = (S, key) => (G().ammo(S, S.active.team, key) > 0 || (S.shots > 0 && key === S.weapon)) && !(WP.needs_storm(key) && !(S.weather && S.weather.storm)) && !(WP.needs_sky(key) && W().under) && !(S.eow && SS.eow.no_air(key));   // P68d: no air in space
   // fire / use the selected weapon. power: charge 0..1 (charge kinds); target: S.tgt {s, y} (target kinds, homing)
   WP.use = function (S, power) {
     const a = S.active, key = S.weapon, d = def(key);
@@ -157,7 +157,7 @@
     }
     if (pd.wa && SS.weaponsA) { const r = SS.weaponsA.pre(S, p, dt, pd); if (r) return r; }
     if (pd.napalm && p.burstY != null && p.vy < 0 && p.y <= p.burstY) { napalmBurst(S, p); return 'gone'; }
-    if (pd.sheep) return sheepStep(S, p, dt, pd);
+    if (pd.sheep) return S.eow ? SS.eow.sheep(S, p, dt, pd) : sheepStep(S, p, dt, pd);       // P68d: walks on any side of a chunk
     return false;
   };
   // the burst: blast + specials. pos = world point. Returns nothing; the caller removes p.
@@ -740,8 +740,8 @@
       const d = S.devices[i];
       if (d.hp <= 0) { S.devices.splice(i, 1); sim().emit(S, 'devbreak', { x: d.pos.x, y: d.pos.y, z: d.pos.z, kind: d.kind }); continue; }
       // falls to the ground below (in its own plane: devices keep the plane they were dropped in)
-      const below = w.sample(d.pos.x, d.pos.y - 0.18, d.pos.z) > 0 || (SS.struct && SS.struct.floor_at(S, d.pos.x, d.pos.y, d.pos.z) > d.pos.y - 0.2);
-      if (!below) { d.vy -= C.G * dt; d.pos.y += d.vy * dt; if (d.pos.y < 0.3 || d.pos.y < sim().surface_at(S, d.pos.x, d.pos.z) - 0.5) { S.devices.splice(i, 1); continue; } }
+      const below = S.eow ? !(d.gv > 0) : w.sample(d.pos.x, d.pos.y - 0.18, d.pos.z) > 0 || (SS.struct && SS.struct.floor_at(S, d.pos.x, d.pos.y, d.pos.z) > d.pos.y - 0.2);
+      if (S.eow) { if (!SS.eow.dev_fall(S, d, dt)) { S.devices.splice(i, 1); continue; } } else if (!below) { d.vy -= C.G * dt; d.pos.y += d.vy * dt; if (d.pos.y < 0.3 || d.pos.y < sim().surface_at(S, d.pos.x, d.pos.z) - 0.5) { S.devices.splice(i, 1); continue; } }
       else { d.vy = 0; while (w.sample(d.pos.x, d.pos.y - 0.1, d.pos.z) > 0 && d.pos.y < w.SY) d.pos.y += 0.05; }
       d.t += dt; d.cool = M.max(0, d.cool - dt);
       if (d.kind === 'magnet' && d.t > A.MAGNET.ARM && below) {
@@ -801,7 +801,7 @@
     for (let tries = 0; tries < 12; tries++) {
       const s = rr(S, -25, 25), gy = groundBelow(S, s, W().SY - 0.5), at = P.to_world(S, s, gy);
       if (gy < -1e8 || gy < sim().surface_at(S, at.x, at.z) + 0.3 || (W().dry && !sim().in_play(S, at.x, at.z))) continue;
-      const kind = rng(S) < CR.HEALTH ? 'health' : 'weapon', weapon = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(rng(S)) : C.CRATE_POOL[Math.floor(rng(S) * C.CRATE_POOL.length)]) : null;   // P38 A2: weighted by rarity band (sim/balance.js)
+      const kind = rng(S) < CR.HEALTH ? 'health' : 'weapon', w0 = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(rng(S)) : C.CRATE_POOL[Math.floor(rng(S) * C.CRATE_POOL.length)]) : null, weapon = S.eow && w0 && SS.eow.no_air(w0) ? 'bazooka' : w0;   // (P68d: no crate of a weapon that needs air)   // P38 A2: weighted by rarity band (sim/balance.js)
       S.crates.push(WP.crate_make(S, kind, weapon, null, P.to_world(S, s, M.min(W().SY - 1, gy + 14))));
       sim().emit(S, 'banner', { title: 'Supply drop', sub: 'It drifts with the wind' });
       return;
@@ -847,10 +847,10 @@
       if (c.thrown && !c.landed) { if (!flyCrate(S, c, dt)) S.crates.splice(i, 1); continue; }
       if (!c.landed) {
         if (SS.weather) SS.weather.wind_at(S, c.pos.x, c.pos.y, c.pos.z, wv); else { wv.x = wv.z = 0; }
-        c.pos.x += wv.x * CR.DRIFT * dt; c.pos.z += wv.z * CR.DRIFT * dt; c.pos.y -= CR.FALL * dt;
+        c.pos.x += wv.x * CR.DRIFT * dt; c.pos.z += wv.z * CR.DRIFT * dt; if (S.eow) { if (!SS.eow.crate_fall(S, c, dt, CR.FALL)) { S.crates.splice(i, 1); continue; } } else c.pos.y -= CR.FALL * dt;   // P68d: along the gravity field
         if (w.sample(c.pos.x, c.pos.y - 0.35, c.pos.z) > 0) { c.landed = true; while (w.sample(c.pos.x, c.pos.y - 0.3, c.pos.z) > 0) c.pos.y += 0.05; }
         if (c.pos.y < sim().surface_at(S, c.pos.x, c.pos.z) || c.pos.y < 0.3) { S.crates.splice(i, 1); sim().emit(S, 'splash', { x: c.pos.x, y: c.pos.y, z: c.pos.z, size: 0.8 }); continue; }
-      } else if (w.sample(c.pos.x, c.pos.y - 0.4, c.pos.z) <= 0) c.landed = false;                 // ground blasted away
+      } else if (S.eow ? SS.eow.crate_loose(S, c) : w.sample(c.pos.x, c.pos.y - 0.4, c.pos.z) <= 0) c.landed = false;                 // ground blasted away (P68d: along the field)
       if (c.landed && a && !a.dead && sim().ctl(S, a) && hypot3(a.pos, c.pos) < CR.PICK * (SS.lab ? SS.lab.pick_k(S, a) : 1) && !(c.by === a.id && S.time < (c.pickT || 0))) {   // (PoC: not while it still hangs on its chute)
         S.crates.splice(i, 1);
         if (c.kind === 'tool' && SS.skills) SS.skills.pickup(S, a, c);

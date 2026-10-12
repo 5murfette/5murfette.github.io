@@ -315,7 +315,7 @@
     const w = S.wind, d = P.dir(S); let along = 0, sp = 0;
     if (w && !SS.world.under) { along = w.mean.x * d.x + w.mean.z * d.z; sp = Math.hypot(w.mean.x, w.mean.z); }
     const f = Math.min(1, Math.abs(along) / 12) * 50;
-    setHTML('tbWind', `<div class="lbl">Wind</div><div class="wbar"><i class="${along < 0 ? 'l' : 'r'}" style="left:${along < 0 ? 50 - f : 50}%;width:${f.toFixed(1)}%"></i></div><div class="wt">${Math.abs(along) < 0.3 ? 'calm' : (along < 0 ? '◀ ' : '') + Math.abs(along).toFixed(1) + ' m/s' + (along > 0 ? ' ▶' : '')}</div>`);
+    setHTML('tbWind', `<div class="lbl">Wind</div><div class="wbar"><i class="${along < 0 ? 'l' : 'r'}" style="left:${along < 0 ? 50 - f : 50}%;width:${f.toFixed(1)}%"></i></div><div class="wt">${Math.abs(along) < 0.3 ? (SS.world.eow ? 'no air' : 'calm') : (along < 0 ? '◀ ' : '') + Math.abs(along).toFixed(1) + ' m/s' + (along > 0 ? ' ▶' : '')}</div>`);
     const we = S.weather, name = we ? ((C.WEATHER_NAME && C.WEATHER_NAME[we.kind]) || we.kind) : 'Caves';
     setHTML('tbWx', `<div class="lbl">Weather</div><div class="wxn">${SS.world.eow ? 'Open space' : SS.world.under ? 'Underground' : (WX_ICON[we && we.kind] || '') + ' ' + name}</div><div class="wxs">${SS.world.eow ? 'vacuum, no wind' : SS.world.under ? 'no wind' : (SS.ice && SS.ice.air_temp ? Math.round(SS.ice.air_temp(S)) + ' °C · ' : '') + sp.toFixed(1) + ' m/s full wind'}${SS.view.timeOfDay && !SS.world.under && !SS.world.eow && SS.view.timeOfDay(S) !== 'day' ? ' · ' + SS.view.timeOfDay(S) : ''}</div>`);
   }
@@ -350,7 +350,8 @@
     if (!tipEl) tipEl = $('wtip');
     const d = C.ARSENAL[k], pd = C.PROJ[k] || {}, n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, g = gridBtn[k];
     const img = g && g.b.querySelector('img') ? `<img src="${g.b.querySelector('img').getAttribute('src')}" alt="">` : '';
-    let m = `<span class="${n > 0 ? 'am' : 'no'}">${n === Infinity ? 'Unlimited' : n > 0 ? 'Ammo ×' + n : 'Out of ammo'}</span>`;
+    let m = S.eow && SS.eow.no_air(k) ? '<span class="no">No air in space</span>' : '';
+    m += `<span class="${n > 0 ? 'am' : 'no'}">${n === Infinity ? 'Unlimited' : n > 0 ? 'Ammo ×' + n : 'Out of ammo'}</span>`;
     if (KIND_TXT[d.kind]) m += `<span>${KIND_TXT[d.kind]}</span>`;
     if (pd.W) m += `<span>${pd.W.toFixed(2)} kg TNT-eq</span>`;
     if (pd.fuse || pd.fuseSet) m += `<span>Fuse ${SS.weaponsA && SS.weaponsA.fuse_of ? SS.weaponsA.fuse_of(S, k) : pd.fuseSet ? S.fuse : pd.fuse} s</span>`;
@@ -365,7 +366,7 @@
     lastS = S; lastA = a;
     const mine = !(SS.game && SS.game.is_cpu(S, a.team)) && !(SS.net && SS.net.active && a.team !== SS.net.team);
     for (const k of C.ARSENAL_ORDER) {
-      const g = gridBtn[k], n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, usable = n > 0 && !(SS.weapons.needs_storm(k) && !(S.weather && S.weather.storm));
+      const g = gridBtn[k], n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, usable = n > 0 && !(SS.weapons.needs_storm(k) && !(S.weather && S.weather.storm)) && !(S.eow && SS.eow.no_air(k));
       const key = (S.weapon === k ? 's' : '') + (usable ? '' : 'e') + n;
       if (g.s === key) continue;
       g.s = key; g.b.classList.toggle('sel', S.weapon === k); g.b.classList.toggle('empty', !usable); g.a.textContent = n === Infinity ? '' : '×' + n;

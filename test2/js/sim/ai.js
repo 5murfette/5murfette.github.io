@@ -260,7 +260,7 @@
   function giveUp(S, pl, a, inp) {
     // the plane is turned to the last target tried: go back to the nearest one first (while turning is still allowed)
     if (pl.fi !== 0 && !pl.regiven && (!SS.rotlock || SS.rotlock.allowed(S))) { pl.regiven = 1; pl.fi = 0; pl.best = null; pl.top = []; alignAi(S, pl, 0, 'regive'); return; }
-    if (SS.aib && SS.aib.reposition(S, pl, a)) return;
+    if (S.eow ? SS.eow.cpu_move(S, pl, a) : SS.aib && SS.aib.reposition(S, pl, a)) return;      // P68d: in the End of the World the hop planner (sim/eow.js)
     if (SS.aic && SS.aic.approach(S, pl, a, 0)) return;
     if (!pl.walked) { pl.walked = true; pl.best = null; pl.top = []; pl.sbest = null; pl.phase = 'walk'; pl.t = S.time + K.WALK_T; }
     else if (pl.fbest) { pl.sbest = pl.fbest; pl.fbest = null; chooseSpecial(S, pl); }
@@ -346,7 +346,7 @@
       case 'endt': inp.end_turn = true; pl.phase = 'done'; break;
       case 'regive': if (S.thetaGoal == null) giveUp(S, pl, a, inp); break;
       case 'move':                                       // P38: a walk / crate fetch / rope swing / zipline ride (sim/aib.js); then search again from the new spot
-        if (SS.aib.move(S, pl, a, inp)) {
+        if (S.eow && pl.mv && pl.mv.kind === 9 ? SS.eow.cpu_step(S, pl, a, inp) : SS.aib.move(S, pl, a, inp)) {   // P68d
           pl.best = null; pl.sbest = null; pl.fbest = null; pl.top = []; pl.fi = 0; pl.cand = null; pl.walked = false; pl.fine = false;
           if (a.air || S.rope) { pl.phase = 'settle'; pl.t = S.time + 3; } else alignAi(S, pl, 0, 'align');
         }

@@ -460,7 +460,7 @@
   };
 
   WE.step = function (S, dt) {
-    if (!S.weather || !S.wind) return;
+    if (!S.weather || !S.wind || SS.world.eow) return;                   // (P68d: no air in space)
     updateMean(S);
     if (needField(S)) buildField(S);
     stepWhirls(S, dt);
@@ -536,6 +536,7 @@
     return out;
   }
   WE.wind_at = function (S, x, y, z, out) {
+    if (SS.world.eow) { out.x = out.y = out.z = 0; return out; }       // P68d: vacuum
     const w = S.wind;
     windBase(S, x, y, z, out);
     if (w && w.whirls.length) {

@@ -168,6 +168,7 @@
 
   /* ---- top view ---- */
   PV.drawTop = function (cv, d, settings) {
+    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.top(cv, d);                  // P68d
     if (d.under && d.caves) { drawCavePlan(cv, d.caves, d); return; }                       // P38-A4: the cave plan
     const ctx = cv.getContext('2d'), n = d.n, S = cv.width / n, sx = d.sx || 96, pr = sx / 2 - 3.5;
     const im = ctx.createImageData(cv.width, cv.height), px = im.data;
@@ -199,6 +200,7 @@
 
   /* ---- side view: cross-section through z = 48 + the far silhouette ---- */
   PV.drawSide = function (cv, d) {
+    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.side(cv, d);                 // P68d
     const ctx = cv.getContext('2d'), w = cv.width, h = cv.height, n = d.n;
     skyFill(ctx, w, h, timeOf(d), d.biome);
     const y0 = -3, y1 = 38, Y = v => h - 3 - (M.clamp(v, y0, y1) - y0) / (y1 - y0) * (h - 6);
@@ -225,6 +227,7 @@
 
   /* ---- hero: oblique painter view ---- */
   PV.drawHero = function (cv, d) {
+    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.hero(cv, d);                 // P68d
     const ctx = cv.getContext('2d'), w = cv.width, h = cv.height, n = d.n;
     skyFill(ctx, w, h, timeOf(d), d.biome);
     if (d.under && d.caves) {                                                                 // P38-A4: a cutaway block: the section, a thin rock roof, a lit frame

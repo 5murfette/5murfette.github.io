@@ -70,6 +70,7 @@
     o = o || {};
     const c = CLS[o.cls] || CLS.norm, dx = p.x - L.fx, dy = p.y - L.fy, dz = p.z - L.fz, d = Math.hypot(dx, dy, dz);
     out.d = d;
+    if (SS.world.eow && SS.eowAudio) { out.gain = Math.max(c.min, 1 / (1 + c.roll * Math.max(0, d - c.ref) / c.ref)); return SS.eowAudio.eval(out, p, d, o, L); }   // P68d: vacuum
     out.gain = Math.max(c.min, 1 / (1 + c.roll * Math.max(0, d - c.ref) / c.ref));
     out.fc = clamp(20000 * Math.exp(-d / c.air), 1800, 20000);
     out.pan = clamp((dx * L.rx + dy * L.ry + dz * L.rz) / (3 + 0.6 * d), -0.85, 0.85);

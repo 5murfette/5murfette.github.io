@@ -257,6 +257,7 @@
     const dw = S.phase !== 'play' && deathId >= 0 && view.time - deathT < 1.8 ? S.worms[deathId] : null;
     if (dw && dw.dead) { const g = dw.grave || dw.pos; return { key: 'death' + dw.id, x: g.x, y: g.y, z: g.z, d: 520, p: 7.6 }; }
     if (hw && !hw.dead) return { key: 'hurt' + hw.id, x: hw.pos.x, y: hw.pos.y, z: hw.pos.z, d: 520, p: 7.5 };
+    if (S.eow && SS.eowView) { const lf = SS.eowView.lostFocus(S); if (lf) return lf; }   // P68d: a shell lost to space: the camera holds
     if (S.proj.length) {
       if (S.proj.length > 1) {
         let s0 = 1e9, y0 = 1e9, s1 = -1e9, y1 = -1e9;
@@ -594,7 +595,7 @@
         case 'kill': if (e.worm) { deathId = e.worm.id; deathT = view.time; } break;
         case 'hurt': if (e.worm && !e.dot) { hurtId = e.worm.id; hurtT = view.time; } break;   // the camera follows the damage (interest)
         case 'explode': if (SS.bodyView && SS.bodyView.noteBlast) SS.bodyView.noteBlast(e);
-          SS.fx.env.tod = view.tod; SS.fx.env.under = !!(SS.world.under || SS.world.eow); SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
+          SS.fx.env.tod = view.tod; SS.fx.env.under = !!(SS.world.under || SS.world.eow); SS.fx.env.vac = !!SS.world.eow; SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
         case 'splash': SS.fx.splash(e.x, e.y, e.z, e.size); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'waterblast': SS.fx.waterBlast(e); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'lavaplop': SS.fx.lava(e.x, e.y, e.z, Math.min(1.4, 0.35 + (e.speed || 0) * 0.06)); break;
