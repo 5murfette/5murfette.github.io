@@ -317,7 +317,7 @@
     OWN.uVis.value = LW.vis;
     // lake light: flickers with the convection, off without a lake
     const on = light.userData.on && S.lava.vent;
-    light.intensity = on ? LW.lightI * (0.9 + 0.06 * Math.sin(view.time * 1.7) + 0.04 * Math.sin(view.time * 4.3 + 1.1)) : 0;
+    light.intensity = on ? LW.lightI * (view.lavaK || 1) * (0.9 + 0.06 * Math.sin(view.time * 1.7) + 0.04 * Math.sin(view.time * 4.3 + 1.1)) : 0;
   };
   LW.stats = () => ({ verts: nV, tris: nI / 3, ms: +ms.toFixed(2), ver });
 })(window.SS = window.SS || {});

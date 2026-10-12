@@ -27,7 +27,7 @@
   const own = {
     tW: { value: null }, tSky: { value: null }, tEnv: { value: null }, uEnv: { value: 0 }, uSun: { value: new T.Vector3(0.5, 0.6, 0.3).normalize() },
     uHorizon: { value: new T.Color(0xf6c89a) }, uDeep: { value: new T.Color(0x0d3a5c) }, uShallow: { value: new T.Color(0x2fa7a8) },
-    uFog: { value: new T.Color(0xf3d2b0) }, uFogD: { value: 0.0026 }, uInsp: { value: 0 }, uWTime: { value: 0 }, uRain: { value: 0 }, uCloud: { value: 0 }, uSunCol: { value: new T.Vector3(1, 0.86, 0.66) }, uWDir: { value: new T.Vector2(1, 0) }, uWindD: { value: new T.Vector4(0, 0, 0, 0) },   // P65c: wind-driven chop: xy = distance the wind has carried the ripples (m), z = wind speed (m/s)
+    uFog: { value: new T.Color(0xf3d2b0) }, uFogD: { value: 0.0026 }, uInsp: { value: 0 }, uWTime: { value: 0 }, uRain: { value: 0 }, uCloud: { value: 0 }, uFaceT: { value: 0 }, uSunCol: { value: new T.Vector3(1, 0.86, 0.66) }, uWDir: { value: new T.Vector2(1, 0) }, uWindD: { value: new T.Vector4(0, 0, 0, 0) },   // P65c: wind-driven chop: xy = distance the wind has carried the ripples (m), z = wind speed (m/s)
     tShelf: { value: null }, uNW: { value: 193 }, uSW: { value: 96 }, uMC: { value: new T.Vector2(48, 48) },   // lattice texels / map side (m) / map centre
     uRing: { value: [0, 1, 2, 3, 4, 5].map(() => new T.Vector4(0, 0, -99, 0)) }   // P29l: open-sea ring waves (x, z, start time, strength)
   };
@@ -43,7 +43,7 @@
 
   /* shared surface shading (inner grid and outer ocean) */
   const SURF = /* glsl */`
-    uniform sampler2D tNoise, tSky; uniform samplerCube tEnv; uniform float uEnv, uWTime, uSea, uFogD, uInsp, uRain, uCloud; uniform vec2 uWDir; uniform vec3 uSunCol, uSun, uHorizon, uDeep, uShallow, uFog, uO, uN;
+    uniform sampler2D tNoise, tSky; uniform samplerCube tEnv; uniform float uEnv, uWTime, uSea, uFogD, uInsp, uRain, uCloud, uFaceT; uniform vec2 uWDir; uniform vec3 uSunCol, uSun, uHorizon, uDeep, uShallow, uFog, uO, uN;
     uniform vec4 uRing[6], uWindD;
     // P29l (user 2026-10-08: "hitting water just outside the island makes no splash, no wave"): the open sea beyond the
     // simulated lattice has no wave field, so a splash / water blast there starts an expanding ring wave: a wave train
@@ -105,7 +105,9 @@
       if (uRain > 0.01) { vec2 rr = rainRings(p, uWTime) * 0.45 * smoothstep(0.01, 0.15, depth); n = normalize(n + vec3(rr.x, 0.0, rr.y)); }
       vec3 rg = seaRings(p); n = normalize(n + vec3(rg.x, 0.0, rg.y) * 0.9);
       vec3 V = normalize(cameraPosition - vW);
-      vec3 col = mix(mix(uShallow, uDeep, smoothstep(0.3, 4.5, dA)), mix(vec3(0.05, 0.048, 0.04), vec3(0.018, 0.026, 0.028), smoothstep(0.1, 1.5, depth)), inl);
+      float turbS = clamp(uFaceT + uRain * 0.7 + uCloud * 0.45, 0.0, 1.0);          // P76: storm / ash murk: the shelf is no tropical turquoise under a black sky
+      vec3 shW = mix(uShallow, vec3(dot(uShallow, vec3(0.333))) * vec3(0.55, 0.6, 0.58), 0.62 * turbS) * (1.0 - 0.45 * turbS);
+      vec3 col = mix(mix(shW, uDeep, smoothstep(0.3, 4.5, dA)), mix(vec3(0.05, 0.048, 0.04), vec3(0.018, 0.026, 0.028), smoothstep(0.1, 1.5, depth)), inl);
       float fres = pow(1.0 - max(dot(n, V), 0.0), 5.0);                          // Schlick, F0 0.02 (n 1.33): the weight below keeps the sky tint of a deep sea
       vec3 R = reflect(-V, n);
       // K2: the procedural sky-view LUT (render/sky.js: azimuth x elevation, rows packed toward the horizon; no mips)
@@ -241,23 +243,30 @@
     outer.rotation.x = -Math.PI / 2; outer.position.set(SS.world.MX, SS.world.SEA, SS.world.MZ); outer.renderOrder = 5.9; outer.frustumCulled = false; scene.add(outer);
 
     // the aquarium face at slice zero
+    // P76: the face is a section THROUGH the water body: Beer-Lambert absorption by depth (red goes first), suspended ash / silt in drifting
+    // plumes and settling streaks (more under a storm sky and on the volcanic coast), a murky bed layer, aerated rain bubbles under the surface,
+    // and a churned top edge (chop height + foam rim) instead of the flat meniscus line
     faceMat = new T.ShaderMaterial({
       transparent: true, depthWrite: false, fog: false, side: T.DoubleSide,
       uniforms: Object.assign(shared(), { tVol: { value: null }, uVolSize: { value: new T.Vector3(SS.world.NX, SS.world.NY, SS.world.NZ) }, uFaceK: { value: new T.Vector4(1, 1, 1, 1) }, uFaceH: { value: 0 } }),
       vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */`
         uniform highp sampler2D tW; uniform highp sampler3D tVol; uniform sampler2D tNoise;
-        uniform vec3 uVolSize, uSun, uDeep, uShallow, uFog, uN; uniform vec4 uFaceK; uniform float uWTime, uFogD, uSea, uNW, uSW, uFaceH;
+        uniform vec3 uVolSize, uSun, uDeep, uShallow, uFog, uN; uniform vec4 uFaceK; uniform float uWTime, uFogD, uSea, uNW, uSW, uFaceH, uFaceT, uRain, uCloud;
         varying vec3 vW;
         void main(){
           vec2 g = vW.xz * 2.0;
           if (vW.y < 0.02) discard;
-          float surf, inl = 0.0;
+          vec2 dW = vec2(uN.z, -uN.x); float u = dot(vW.xz, dW);
+          float turb = clamp(uFaceT + uRain * 0.7 + uCloud * 0.45, 0.0, 1.0);          // storm / ash murk 0..1
+          // chop on the top edge: along-face waves, finer ripples riding on them, wilder under rain and wind
+          float rip = (0.015 + 0.075 * turb) * ((texture2D(tNoise, vec2(u * 0.8 + uWTime * 0.33, 0.13)).r - 0.5) * 1.3 + (texture2D(tNoise, vec2(u * 3.3 - uWTime * 0.8, 0.57)).g - 0.5) * 0.55);
+          float surf, inl = 0.0, bedY = -1.0;
           if (g.x < 0.0 || g.y < 0.0 || g.x > uNW - 1.0 || g.y > uNW - 1.0) {
             // beyond the map: the open sea at rest over a seabed falling away to the diorama base
             vec2 o = max(max(-vW.xz, vW.xz - uSW), 0.0);
-            surf = uSea;
-            if (vW.y > surf || vW.y < 1.08 - length(o) * 0.06) discard;
+            surf = uSea; bedY = 1.08 - length(o) * 0.06;
+            if (vW.y > surf + rip || vW.y < bedY) discard;
           } else {
             // simulated surface over the wet corners only (dry corners hold the bed)
             ivec2 i0 = ivec2(floor(g)); vec2 f = g - vec2(i0);
@@ -272,32 +281,53 @@
             }
             if (sw < 1e-3 || dep < ${WETH}) discard;
             surf = sh / sw; inl /= sw;
-            if (vW.y > surf) discard;
+            if (vW.y > surf + rip) discard;
             if (texture(tVol, (vW / 0.5 + 0.5) / uVolSize).r > 0.0) discard;   // rock: the terrain cap
           }
-          float dd = surf - vW.y;
-          vec3 col = mix(uShallow * 0.95, uDeep * 0.62, smoothstep(0.0, 4.2, dd));
+          float dd = surf + rip - vW.y;
+          // bed proximity: rock a few decimetres below (inside the lattice), the sloping seabed beyond it
+          float nearBed = bedY > -0.5 ? exp(-(vW.y - bedY) * 2.2) : max(step(0.0, texture(tVol, (vW - vec3(0.0, 0.3, 0.0)) / 0.5 / uVolSize + 0.5 / uVolSize).r) * 0.9, step(0.0, texture(tVol, (vW - vec3(0.0, 0.7, 0.0)) / 0.5 / uVolSize + 0.5 / uVolSize).r) * 0.45);
+          // Beer-Lambert: the body keeps the blue-green, the red is absorbed first; murk shortens the visibility
+          vec3 kAbs = vec3(0.78, 0.3, 0.17) * (1.0 + 1.1 * turb);
+          vec3 col = uShallow * 0.95 * exp(-dd * kAbs) + uDeep * 0.62 * (1.0 - exp(-dd * (0.42 + 0.5 * turb)));
           col = mix(col, mix(vec3(0.16, 0.15, 0.11), vec3(0.05, 0.06, 0.055), smoothstep(0.0, 1.2, dd)), inl);   // groundwater pool: murky
-          // sun shafts along the refracted sun direction, drifting, fading with depth
-          vec2 dW = vec2(uN.z, -uN.x); float u = dot(vW.xz, dW);
+          // sun shafts along the refracted sun direction, drifting, fading with depth; a cloud deck leaves none
           float sl = clamp(dot(uSun.xz, dW) / max(uSun.y, 0.2), -2.0, 2.0) * 0.75;
           float s = u + dd * sl;
           float r1 = texture2D(tNoise, vec2(s * 0.43 + uWTime * 0.02, 0.37)).r, r2 = texture2D(tNoise, vec2(s * 0.11 - uWTime * 0.008, 0.71)).g;
           float rays = smoothstep(0.55, 0.85, r1) * smoothstep(0.3, 0.7, r2);
-          col += vec3(0.3, 0.48, 0.44) * rays * exp(-dd * 0.6) * 0.5;
+          col += vec3(0.3, 0.48, 0.44) * rays * exp(-dd * 0.6) * 0.5 * (1.0 - clamp(uCloud * 1.3 + uFaceT * 0.6, 0.0, 1.0) * 0.92);
+          // suspended ash / silt: slow plumes (two scales) + falling streaks (flocs settling), thicker with the murk and toward the bed
+          float pl = texture2D(tNoise, vec2(u * 0.62 + uWTime * 0.012, vW.y * 0.8 - uWTime * 0.02)).r * 0.55 + texture2D(tNoise, vec2(u * 1.7 - uWTime * 0.02, vW.y * 2.1 + 0.31)).g * 0.45;
+          float stk = smoothstep(0.62, 0.9, texture2D(tNoise, vec2(u * 2.1, vW.y * 0.11 + uWTime * 0.012)).b);
+          float ash = clamp(0.1 + 0.55 * turb, 0.0, 1.0) * (smoothstep(0.42, 0.66, pl) * 0.85 + stk * 0.5) * (1.0 - exp(-dd * 1.1));
+          vec3 ashC = mix(vec3(0.075, 0.07, 0.065), vec3(0.2, 0.17, 0.12), 0.3 * (1.0 - turb));   // volcanic ash is dark; plain silt is tan
+          col = mix(col, ashC * (0.55 + 1.0 * pl), clamp(ash, 0.0, 0.88));
+          col *= mix(1.0, 0.62, smoothstep(0.0, 2.2, dd));                                              // daylight dies with depth
+          col = mix(col, ashC * 0.8, nearBed * (0.25 + 0.4 * turb));                                   // the bed's resuspended mud
           // suspended specks
           float sp = texture2D(tNoise, vec2(u * 0.9, vW.y * 0.9 + uWTime * 0.02)).b;
-          col += vec3(0.1, 0.14, 0.13) * smoothstep(0.82, 0.95, sp) * exp(-dd * 0.4);
-          // meniscus: a thin bright line at the surface
+          col += vec3(0.1, 0.14, 0.13) * smoothstep(0.82, 0.95, sp) * exp(-dd * 0.4) * (1.0 - 0.6 * turb);
+          // rain bubbles: aerated water just under the surface (tiny bright specks rising)
+          float bub = smoothstep(0.88, 0.98, texture2D(tNoise, vec2(u * 5.3 + 0.2, vW.y * 5.7 - uWTime * 0.35)).b);
+          col += vec3(0.5, 0.56, 0.58) * bub * exp(-dd * 3.5) * (0.2 + 0.8 * clamp(uRain * 1.4 + turb * 0.5, 0.0, 1.0));
+          // the top edge: a churned rim of foam / scum instead of a ruler line (width follows the chop)
+          float fb = texture2D(tNoise, vec2(u * 2.1 + uWTime * 0.18, 0.2)).g;
+          float fw = (0.03 + 0.11 * turb) * (0.35 + 1.3 * fb);
+          float fm = 1.0 - smoothstep(0.0, fw, dd);
+          col = mix(col, mix(vec3(0.74, 0.8, 0.82), vec3(0.45, 0.46, 0.45), 0.55 * turb), fm * (0.5 + 0.4 * turb));
           float px = max(fwidth(vW.y), 1e-3);
-          col = mix(col, vec3(0.82, 0.95, 1.0), (1.0 - smoothstep(0.0, px * 2.5, dd)) * 0.85);
+          col = mix(col, vec3(0.82, 0.95, 1.0), (1.0 - smoothstep(0.0, px * 1.8, dd)) * (0.8 - 0.35 * turb));
+          // storm murk overall: darker, greyer
+          col *= 1.0 - 0.38 * turb;
+          col = mix(col, vec3(dot(col, vec3(0.299, 0.587, 0.114))) * vec3(0.9, 1.0, 0.98), 0.3 * turb);
           // P65c: the face is the sea seen from the side: lit like the rest of the scene (dusk warm and dim, moonlight cool and dark), overcast seas greyer
           col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uFaceK.w) * uFaceK.rgb;
           col = mix(col, uFog * 0.55, uFaceH * (1.0 - 0.5 * smoothstep(0.0, 4.0, dd)));
-          float a = mix(0.74, 0.95, smoothstep(0.0, 2.0, dd));
+          float a = mix(0.8, 0.97, smoothstep(0.0, 1.6, dd)) + 0.03 * turb;
           float fd = length(cameraPosition - vW);
           col = mix(col, uFog, 1.0 - exp(-fd * fd * uFogD * uFogD));
-          gl_FragColor = vec4(col, a);
+          gl_FragColor = vec4(col, min(a, 1.0));
           ${TAIL}
         }`
     });
@@ -328,7 +358,7 @@
   // P1 sudden death: the sea level rose (uSea is the terrain's shared uniform, set by view.seaChanged)
   WV.seaChanged = function (sea) { if (outer) outer.position.y = sea; if (face) face.scale.y = sea + 4; };
   /* P65c: the aquarium face's grade by time of day (view.js applyLook): tint x brightness and saturation, haze share (overcast / ash seas) */
-  WV.faceLook = function (r, g, b, sat, haze) { if (!faceMat) return; faceMat.uniforms.uFaceK.value.set(r, g, b, sat); faceMat.uniforms.uFaceH.value = haze; };
+  WV.faceLook = function (r, g, b, sat, haze, turb) { if (!faceMat) return; faceMat.uniforms.uFaceK.value.set(r, g, b, sat); faceMat.uniforms.uFaceH.value = haze; own.uFaceT.value = turb || 0; };   // P76: turb = base murk of the water body (volcanic ash / silt)
   WV.look = function (L, sk, haze) {
     const set = m => {
       const u = m.uniforms;

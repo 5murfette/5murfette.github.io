@@ -22,7 +22,8 @@
   const RAIN_N = 34000, FLAKE_N = 30000, SPLASH_N = 1600;
   let scene, Q, P = null, rain, flake, splash, coverTex, coverData, coverRef = null, coverVer = -1, coverUploads = 0;
   const base = { sun: 3, hemi: 1.15, fill: 0.45, fog: 0.006, motes: 0.55, storm: false, fillPos: new T.Vector3(-30, 20, -40), fillCol: new T.Color(0x9cc0ff),
-    haze: new T.Color(0xf1d9c0), skyH: new T.Color(0x9aa0a8), ov: -1, sunEl: 0.6 };
+    haze: new T.Color(0xf1d9c0), skyH: new T.Color(0x9aa0a8), ov: -1, sunEl: 0.6, hemiC: new T.Color(), hemiG: new T.Color() };
+  const NIGHT_C = new T.Color(0.2, 0.3, 0.52), LAVA_G = new T.Color(0.62, 0.2, 0.06), DUSK_C = new T.Color(1.0, 0.6, 0.36), DUSK_G = new T.Color(0.5, 0.2, 0.1), cA = new T.Color();
   const fogC = new T.Color(), FLASH_C = new T.Color(0.75, 0.8, 1.0);
   const offR = new T.Vector3(), offF = new T.Vector3(), tmp = new T.Vector3();
   const bolts = [];
@@ -326,7 +327,7 @@
     coverRef = null; coverVer = -1;
   };
   WX.look = function (L, sk, haze) {
-    base.sun = L.sunI; base.hemi = L.hemiI; base.fog = L.fog;
+    base.sun = L.sunI; base.hemi = L.hemiI; base.fog = L.fog; base.hemiC.set(L.hemiS); base.hemiG.set(L.hemiG);
     if (haze) base.haze.copy(haze);
     if (sk && sk.horizon) base.skyH.setRGB(sk.horizon[0], sk.horizon[1], sk.horizon[2], T.SRGBColorSpace);
     base.storm = sk && sk.phys ? !!sk.storm : !!(txRef && txRef.skies && sk === txRef.skies.sky_storm);
@@ -437,7 +438,16 @@
       const fs = ovK >= 0.7 ? Math.pow(1 - ovK, 1.5) : 1 - 0.5 * ovK;
       P.sun.intensity = base.sun * fs;
       P.hemi.intensity = base.hemi * (1 + 0.15 * oc) + base.sun * base.sunEl * (1 - fs) * 0.25 + flash * 2.5;
-      if (view.tod === 'night' && ovK > 0.5) P.hemi.intensity = Math.max(P.hemi.intensity, base.hemi * 1.5 + base.sun * base.sunEl * 0.5);     // P74: a rainy night kept almost no light: the ground and the worms were unreadable
+      // P74: a rainy night kept almost no light (floor); P76: the floor is lower and the colours follow the time of day under the deck: night cool and dark with the
+      // lava glow bouncing warm from below (hemisphere ground colour), dusk warm; a lightning flash lights the night harder (the eye is dark-adapted)
+      const tod = view.tod, deck = ovK > 0.5 ? Math.min(1, (ovK - 0.5) / 0.3) : 0, lavaOn = !!(S.lava && S.lava.vent);
+      P.hemi.color.copy(base.hemiC); P.hemi.groundColor.copy(base.hemiG);
+      if (tod === 'night' && ovK > 0.5) P.hemi.intensity = Math.max(P.hemi.intensity * 0.55, base.hemi * 0.9 + base.sun * base.sunEl * 0.35);
+      if (deck > 0 && !SS.world.under) {
+        if (tod === 'night') { P.hemi.color.lerp(NIGHT_C, 0.55 * deck); if (lavaOn) P.hemi.groundColor.lerp(LAVA_G, 0.75 * deck); else P.hemi.groundColor.lerp(NIGHT_C, 0.3 * deck); }
+        else if (tod === 'dusk') { P.hemi.color.lerp(DUSK_C, 0.6 * deck); P.hemi.groundColor.lerp(DUSK_G, 0.6 * deck); }
+        if (tod === 'night') P.hemi.intensity += flash * 1.2;
+      }
       if (flash > 0.01) { P.fill.intensity = base.fill + flash * 4; P.fill.color.setRGB(0.8, 0.85, 1); P.fill.position.copy(flashDir); }
       else { P.fill.intensity = base.fill; P.fill.color.copy(base.fillCol); P.fill.position.copy(base.fillPos); }
       const sm = P.skyMat.uniforms; sm.uDark.value = base.phys ? 0 : oc * (base.storm ? 0.3 : 0.6); sm.uFlash.value = flash * 0.8;
@@ -445,11 +455,16 @@
     }
     // fog colour: toward the sky's horizon under cloud, graded like the sky shader's uDark (a warm haze under a dark
     // storm sky left a hard horizon line once the thicker fog swallowed the sea), lit by the flash
-    const dk = base.phys ? 0 : oc * (base.storm ? 0.3 : 0.6);
+    const dk = base.phys ? 0 : oc * (base.storm ? 0.3 : 0.6), ovK2 = base.ov >= 0 ? base.ov : oc * 0.9;
     fogC.copy(base.haze).lerp(base.skyH, oc * 0.7);
     const fl = 0.2126 * fogC.r + 0.7152 * fogC.g + 0.0722 * fogC.b;
     fogC.setRGB((fogC.r + (fl * 0.55 - fogC.r) * dk * 0.75) * (1 - dk * 0.45), (fogC.g + (fl * 0.58 - fogC.g) * dk * 0.75) * (1 - dk * 0.45),
       (fogC.b + (fl * 0.64 - fogC.b) * dk * 0.75) * (1 - dk * 0.45));
+    if (ovK2 > 0.5 && !SS.world.under) {      // P76: the fog / haze under the storm deck carries the time of day (night: cold and dark; dusk: the underside of the deck glows warm)
+      const dk2 = Math.min(1, (ovK2 - 0.5) / 0.3);
+      if (view.tod === 'night') fogC.multiply(cA.setRGB(1 - 0.5 * dk2, 1 - 0.42 * dk2, 1 - 0.18 * dk2));
+      else if (view.tod === 'dusk') fogC.multiply(cA.setRGB(1 + 0.22 * dk2, 1 - 0.04 * dk2, 1 - 0.32 * dk2));
+    }
     if (flash > 0.01) fogC.lerp(FLASH_C, Math.min(0.5, flash * 0.3));
     if (scene.fog) { scene.fog.density = fogD; scene.fog.color.copy(fogC); }
     if (U.uHaze) U.uHaze.value.copy(fogC);

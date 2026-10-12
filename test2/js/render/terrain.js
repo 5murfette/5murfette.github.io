@@ -30,7 +30,7 @@
   // C1: the cut face's 3D noise and pinned-coordinate offset (τ = s + uS0, see the cap shader); MORPH_CELL = the world
   // cell size (m) of the texture-offset grid: a face point that moves ~one cell while the section turns has fully
   // changed its texture (at s = 20 m a 7° turn; under the worm never)
-  const CAPU = { tN3: { value: null }, uS0: { value: 0 }, uCapK: { value: new T.Vector4(1, 1, 1, 1) }, uEow: { value: 0 } };   // uCapK: night / dusk grade of the cut face: rgb tint x brightness, w = saturation
+  const CAPU = { uUnder: { value: 0 }, uCapDet: { value: 1 }, tN3: { value: null }, uS0: { value: 0 }, uCapK: { value: new T.Vector4(1, 1, 1, 1) }, uEow: { value: 0 } };   // uCapK: night / dusk grade of the cut face: rgb tint x brightness, w = saturation
   const MORPH_CELL = 2.5;
   let capPivot = null;
   let farData = null, farKey = '', farRange = null;
@@ -227,8 +227,8 @@
     uniform float uEow;
     ${EOW_GLSL}
     // the landscape behind the slab (mode 1, ad = m beyond its back face): the old ghost haze while it fades
-    // (uCtxSolid 0); drawn solid (CX1) it still recedes into the haze with the slice-view setting (P29j, uCtxHaze)
-    #define CTX_HAZE(ad) ((0.12 + 0.4 * smoothstep(0.0, 50.0, ad)) * (1.0 - uCtxSolid) + (0.16 + 0.36 * smoothstep(0.0, 55.0, ad)) * uCtxSolid * uCtxHaze)
+    // (uCtxSolid 0); drawn solid (CX1) it still recedes into the haze with the slice-view setting (P29j, uCtxHaze). P76: the haze starts at 0 right behind the slab's back face (a flat 16 % step there showed as a milky seam across spires and dunes standing over the 1.5 m slab depth)
+    #define CTX_HAZE(ad) ((0.12 + 0.4 * smoothstep(0.0, 50.0, ad)) * (1.0 - uCtxSolid) + (0.16 * smoothstep(0.0, 9.0, ad) + 0.36 * smoothstep(0.0, 55.0, ad)) * uCtxSolid * uCtxHaze)
     uniform vec4 uMatP[12]; uniform vec3 uMatTint[12]; uniform vec3 uLatR; uniform vec4 uRelief[12]; uniform highp sampler3D tRel; uniform float uGlint[12];
     varying vec3 vW; varying vec3 vWN; varying float vDepth; varying vec4 vMA; varying vec4 vMB; varying vec4 vMC; varying vec4 vMD;
     varying vec3 vT; varying vec3 vTN;      // texture space: = world for terrain; where the rock came from for bodies
@@ -627,7 +627,7 @@
         uniform highp sampler3D tVol; uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tCover; uniform highp sampler2D tLavaS;
         uniform vec3 uVolSize, uO, uN, uGrassTint; uniform float uTime, uSea, uHalf, uVolc; uniform vec3 uMatTint[12];
         uniform highp sampler2D tFar; uniform vec4 uFar; uniform vec2 uLat; uniform vec3 uLatR;   // D5 far strip: u0, du, n, on; lattice size; D6 disc
-        uniform highp sampler3D tN3; uniform float uS0; uniform float uNL, uSL; uniform float uEow;
+        uniform highp sampler3D tN3; uniform float uS0; uniform float uNL, uSL; uniform float uEow; uniform float uUnder, uCapDet;
         varying vec3 vW;
         ${CRACK_GLSL}
         ${FOAM_GLSL}
@@ -693,6 +693,93 @@
           float crack = smoothstep(0.82, 0.95, texture(tNoise, vec2(pu.x * 0.7 + uTime * 0.002, 0.71)).g);
           skinF = (1.0 - smoothstep(sk * 0.5, sk, dTop)) * (1.0 - crack);
           return hot * (1.0 - skinF);
+        }
+        // P76: cut-face detail (sedimentary laminae, calcite / quartz veins with rust halos, wet seepage streaks, geode crystals, roots under the soil
+        // line); everything is a function of the pinned face coordinates pu = (tau, y) and the depth below the ground / roof above, so it does not
+        // scroll when the section turns. uUnder (caves) turns the seepage and the crystals up; wet = the share that shines (roughness)
+        float gCapWet = 0.0;
+        float h11(float n){ return fract(sin(n * 91.3458) * 47453.5453); }
+        vec3 capDetail(vec3 col, int mat, vec2 pu, float dd, float nb, float cover, float heat, out vec3 em){
+          em = vec3(0.0);
+          bool rockM = mat == 2 || mat == 5 || mat == 1 || mat == 12 || mat == 8 || mat == 10;
+          bool soilM = mat == 3;
+          if (!rockM && !soilM) return col;
+          float un = uUnder;
+          // thin sedimentary laminae that follow the (warped) bedding: brightness only, a few millimetres to centimetres
+          if (rockM && mat != 8 && mat != 10) {
+            float ly = pu.y + (texture(tNoise, vec2(pu.x * 0.021, 0.43)).g - 0.5) * 1.6 + 0.25 * sin(pu.x * 0.7 + nb * 5.0);
+            float lam = texture(tNoise, vec2(pu.x * 0.011, ly * 2.3)).b, lam2 = texture(tNoise, vec2(pu.x * 0.017 + 0.3, ly * 7.1)).g;
+            col *= 0.9 + 0.2 * lam + 0.1 * (lam2 - 0.5);
+          }
+          // mineral veins: short lens-shaped calcite / quartz fills along joints, low contrast, clustered in fractured zones (none in loose soil / sand);
+          // cream-milky and only slightly lighter than the host, with a faint rusty (iron oxide) halo
+          if (rockM) {
+            float zone = smoothstep(0.58, 0.8, texture(tNoise, pu * 0.011 + vec2(0.7, 0.2)).a);
+            float vein = 0.0, halo = 0.0;
+            if (zone > 0.0) {
+              float vc = 2.6; vec2 vq = pu / vc, vid = floor(vq), vf = fract(vq);
+              float h = h11(vid.x * 13.0 + vid.y * 71.0 + 4.0), h2 = h11(vid.x * 5.0 - vid.y * 29.0 + 1.0), h3 = h11(vid.x * 23.0 + vid.y * 3.0 + 8.0);
+              if (h < 0.55 * zone) {
+                float ang = (h2 - 0.5) * 0.9 + 0.12;                                   // joints dip gently off the bedding
+                vec2 d = (vf - vec2(0.3 + 0.4 * h3, 0.3 + 0.4 * h2)) * vc, e = vec2(cos(ang), sin(ang));
+                float xa = dot(d, e), ya = dot(d, vec2(-e.y, e.x)), L = 0.35 + 0.45 * h3, t = xa / L;
+                float wd = (0.008 + 0.016 * h2) * max(1.0 - t * t, 0.0), wid = max(wd, 0.0);
+                float dpu = max(length(dFdx(pu)), length(dFdy(pu)));
+                float wx = max(wid, 0.7 * dpu) * step(abs(t), 1.0);
+                vein = (1.0 - smoothstep(wx * 0.6, wx * 1.4, abs(ya))) * step(abs(t), 1.0);
+                halo = (1.0 - smoothstep(wx * 1.5, wx * 5.0 + 0.01, abs(ya))) * step(abs(t), 1.15) * 0.4;
+              }
+            }
+            vec3 vc3 = (mat == 8 || mat == 10) ? vec3(0.3, 0.3, 0.29) : vec3(0.74, 0.7, 0.6);
+            col = mix(col, col * vec3(1.06, 0.88, 0.72), halo * (1.0 - vein));
+            col = mix(col, mix(col, vc3, 0.5) * 1.05, vein * 0.55 * (mat == 8 || mat == 10 ? 0.5 : 1.0));
+          }
+          // wet seepage: dark vertical streaks running down from the ground / roof line and from joints; the wet rock shines (gCapWet)
+          {
+            float sx = pu.x * 1.7 + 0.37 * sin(pu.y * 0.9 + pu.x * 0.3);
+            float sk = texture(tNoise, vec2(sx, 0.13)).g, ln = texture(tNoise, vec2(sx * 0.7 + 0.2, pu.y * 0.11)).b, sp = smoothstep(0.42, 0.7, texture(tNoise, vec2(pu.x * 0.07, 0.77)).r);
+            float depthK = smoothstep(3.5 + 3.5 * un, 0.3, dd) * (0.2 + 0.95 * un);
+            float st = smoothstep(0.8 - 0.07 * un, 0.93, sk) * smoothstep(0.3, 0.8, ln + 0.35 * depthK - 0.18) * depthK * sp;
+            float wob = 0.85 + 0.3 * texture(tNoise, vec2(sx * 3.1, pu.y * 0.6)).r;
+            float wet = clamp(st * wob, 0.0, 1.0);
+            col *= 1.0 - 0.42 * wet; col = mix(col, col * vec3(0.78, 0.88, 1.05), wet * 0.5);
+            gCapWet = max(gCapWet, wet);
+          }
+          // geodes / vugs: rare small dark cavities in rock lined with dull crystal faces (quartz grey-white; amethyst, sulphur very rarely); none in soil
+          if (rockM) {
+            float cs = 7.0; vec2 q = pu / cs, cid = floor(q), f = fract(q);
+            float h1 = h11(cid.x * 17.0 + cid.y * 131.0 + 0.5), h2 = h11(cid.x * 31.0 + cid.y * 7.0 + 3.0), h3 = h11(cid.x * 5.0 - cid.y * 53.0 + 9.0);
+            if (h1 < 0.07 + 0.13 * un) {
+              vec2 c = vec2(0.25 + 0.5 * h2, 0.25 + 0.5 * h3), d = (f - c) * cs * vec2(1.0, 1.3);
+              float r = length(d), ang = atan(d.y, d.x), rad = 0.14 + 0.12 * h2;
+              float cav = 1.0 - smoothstep(rad * 0.9, rad * 1.12, r);
+              float facet = 0.55 + 0.45 * sin(floor(ang * 5.0 + h3 * 6.0) * 2.7 + r * 14.0);
+              float rim = smoothstep(rad * 0.25, rad * 0.5, r);
+              float kind = fract(h1 * 100.0);
+              vec3 cc = uVolc > 0.5 ? (kind < 0.25 ? vec3(0.5, 0.45, 0.2) : vec3(0.5, 0.5, 0.48)) : kind < 0.08 ? vec3(0.36, 0.26, 0.46) : vec3(0.52, 0.52, 0.49);
+              vec3 inner = mix(col * 0.22, cc * (0.45 + 0.4 * facet), rim);
+              col = mix(col, inner, cav);
+              gCapWet = max(gCapWet, cav * rim * 0.5);
+              em += cc * cav * rim * 0.012;
+            }
+          }
+          // roots: pale-brown threads hanging from the ground line through the soil (and into the rock under grass), tapering with depth, with rootlets
+          if ((soilM || cover > 0.25) && dd < 2.6 && un < 0.5) {
+            float rt = 0.0;
+            for (int l = 0; l < 3; l++) {
+              float fl = float(l), cw = 0.62 + 0.23 * fl, x = pu.x / cw + 13.7 * fl, id = floor(x), h = h11(id * 7.3 + fl * 19.0), h2 = h11(id * 3.1 + fl * 5.0 + 1.0);
+              if (h < 0.5) continue;
+              float len = (0.35 + 1.5 * h2) * (1.0 - 0.2 * fl);
+              float cx = 0.5 + 0.28 * sin(dd * (3.5 + 2.0 * h2) + h * 30.0) * (0.4 + dd * 0.6) + (h - 0.75) * 0.3;
+              float w = (0.018 + 0.014 * h2) * (1.0 - dd / len) * (1.0 + 0.5 * fl) / cw * 0.7;
+              float ln = 1.0 - smoothstep(w * 0.5, w, abs(fract(x) - cx)) ;
+              rt = max(rt, ln * (1.0 - smoothstep(len * 0.6, len, dd)) * smoothstep(-0.02, 0.05, dd));
+            }
+            col = mix(col, vec3(0.3, 0.2, 0.11) * (0.8 + 0.5 * nb), clamp(rt, 0.0, 1.0) * 0.85);
+          }
+          // humus: the topmost decimetres of soil are darker and moister
+          if (soilM) col *= mix(0.62, 1.0, smoothstep(0.0, 0.4, dd));
+          return col;
         }
         vec3 capCol(int mat, vec2 pu, vec3 strata, float dd, vec4 sf, float heat, out vec3 em){
           em = vec3(0.0);
@@ -811,7 +898,20 @@
               for (int k = 1; k <= 8; k++) { if (dens(vW + vec3(0.0, float(k) * 0.5, 0.0)) > 0.0) { capCv = 0.0; break; } }
             }
           }
-          if (!deepR && ((d0 <= 0.0 && !capLava && capCv < 0.5) || vW.y < 0.02)) discard;
+          // P76 dripstone (caves only): air under a roof / over a floor within a few decimetres holds stalactites / stalagmites, drawn as part of the cut
+          float capDrip = 0.0;
+          if (uUnder > 0.5 && d0 <= 0.0 && !capLava && !outL && !deepR && capCv < 0.5) {
+            float cw = 0.5, cid = floor(tau / cw), fx = fract(tau / cw);
+            float hA = h11(cid * 3.7 + 1.0), hB = h11(cid * 7.9 + 2.0), hC = h11(cid * 1.3 + 5.0);
+            float up = 9.0, dn = 9.0;
+            for (int k = 1; k <= 6; k++) { if (up > 8.0 && dens(vW + vec3(0.0, float(k) * 0.1, 0.0)) > 0.0) up = float(k) * 0.1; }
+            if (up > 8.0) { for (int k = 1; k <= 6; k++) { if (dn > 8.0 && dens(vW - vec3(0.0, float(k) * 0.1, 0.0)) > 0.0) dn = float(k) * 0.1; } }
+            float wdt = 0.06 + 0.1 * hB, dx = abs(fx - (0.2 + 0.6 * hC)) * cw;
+            float prof = max(0.0, 1.0 - dx / wdt);
+            if (up < 8.0 && hA < 0.62) capDrip = step(up, (0.14 + 0.62 * hB * hB) * pow(prof, 1.25) + 0.02 * prof);
+            if (dn < 8.0 && hA > 0.82) capDrip = max(capDrip, step(dn, (0.08 + 0.26 * hB) * pow(prof, 1.4)));
+          }
+          if (!deepR && ((d0 <= 0.0 && !capLava && capCv < 0.5 && capDrip < 0.5) || vW.y < 0.02)) discard;
           // .r has 4 cells per tile: at 0.11-0.13 /m that is ~2 m features; .g (16 cells) adds a little ~1 m wobble
           // (C1: 3D noise at the world point, so the boundary wobble stays under the worm and morphs further out)
           vec2 jn = vec2(n3(vW * vec3(0.11, 0.13, 0.11)).r, n3(vW * vec3(0.13, 0.11, 0.13) + vec3(0.5, 0.3, 0.7)).r) - 0.5;
@@ -882,6 +982,7 @@
           float tb = w2 > 0.0 ? smoothstep(-0.24, 0.24, (w2 - w1) / (w1 + w2) + (n3(vW * vec3(0.09, 0.1, 0.09) + float(m2) * 0.37).r - n3(vW * vec3(0.09, 0.1, 0.09) + float(m1) * 0.37).r) * 0.25) : 0.0;
           if (tb > 0.002) col = mix(col, capCol(m2, pu, strata, dd, sf, heat, e2), tb); else e2 = vec3(0.0);
           vec3 cEmis = mix(e1, e2, tb);
+          if (!outL && !deepR && uCapDet > 0.5 && !capLava && capCv < 0.5 && uEow < 0.5) { vec3 dEm; col = capDetail(col, m1, pu, dd, nb, sf.r, heat, dEm); cEmis += dEm; }
           col *= mix(1.0, 0.68, smoothstep(1.0, 8.0, dd));                                // deeper = darker
           if (!outL && !deepR) {                                                          // P56: contact shading along the cut's border (a baked AO: air within 0.5 / 1.2 m in the plane and below)
             vec3 dw3 = vec3(dW.x, 0.0, dW.y);
@@ -894,11 +995,16 @@
           col = mix(col, vec3(0.05, 0.045, 0.04), sf.b * (1.0 - smoothstep(0.0, 0.35, dd)) * 0.8); // charred surface
           if (capLava) { float skinF; cEmis = lavaSection(pu, cLv.r - vW.y, vW.y - cLv.a, cLv.b, skinF); col = vec3(0.034, 0.03, 0.028) * skinF; }
           if (capCv > 0.5) { col = mix(vec3(0.84, 0.87, 0.93) * (0.92 + 0.12 * nb), vec3(0.085, 0.08, 0.078) * (0.8 + 0.4 * nb), smoothstep(0.4, 0.6, capAsh)); cEmis = vec3(0.0); }
+          if (capDrip > 0.5) {                                                              // P76: dripstone: pale banded limestone, wet at the tip
+            float bd = 0.85 + 0.25 * sin(pu.y * 38.0 + nb * 9.0);
+            col = vec3(0.64, 0.58, 0.48) * bd * (0.9 + 0.2 * nb); cEmis = vec3(0.0); gCapWet = 0.75;
+          }
           col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uCapK.w) * uCapK.rgb;
           col *= conAO(vW);                                                                  // P65b: contact shade of worms / props reads on the cut line too
           if (uCrackOn > 0.5) { vec4 ckn = n3(vW * 2.3); float ckm = crackMask(vW, ckn.r, ckn.g); col = mix(col, vec3(0.03, 0.026, 0.022), ckm * 0.92); }   // P66b: cracks cut by the section
           diffuseColor.rgb = col;
         `)
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = mix(roughnessFactor, 0.28, gCapWet);')   // P76: wet seepage / crystals shine
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += cEmis;')
         // the cut face is an open section (nothing is drawn in front of it): light it from the sun's side of the
         // plane with a slight upward tilt (uCapN), so it reads the same whether the sun is in front or behind
@@ -1090,6 +1196,7 @@
     // uS0 += (O' − O)·d keeps τ = s + uS0 of every face point; turning about a fixed O leaves τ alone
     if (capPivot && (capPivot.x !== S.O.x || capPivot.z !== S.O.z)) CAPU.uS0.value += (S.O.x - capPivot.x) * d.x + (S.O.z - capPivot.z) * d.z;
     capPivot = { x: S.O.x, z: S.O.z };
+    CAPU.uUnder.value = SS.world.under ? 1 : 0;
     if (!W.dry) FAR.uFar.value.w = 0;
     // P29a: down to CAP_DEEP below the lattice floor; wet worlds also CAP_EXT beyond the lattice exits (rock under the sea)
     const ext = W.dry ? 0 : CAP_EXT, mid = (r[0] + r[1]) / 2, L = r[1] - r[0] + 2 * ext;

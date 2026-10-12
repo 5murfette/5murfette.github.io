@@ -396,7 +396,11 @@
     }
     if (tod === 'night') { sun.color.set(L.sun); sun.intensity = L.sunI; }     // moonlight (not the reddened sun beam)
     if (stars) stars.material.opacity = tod === 'night' ? 0.95 : tod === 'dusk' ? 0.18 : 0;
-    renderer.toneMappingExposure = L.exp;
+    /* P76: under a storm deck the night is dark (the P74 light floor + the night exposure boost made it read like the day), and the lava is the dominant light there:
+     * exposure x 0.7, lava light x 2.4 (dusk 1.4); view.stormK = 1 under a cloud deck (K2 ov >= 0.7) */
+    view.stormK = sk && sk.ov !== undefined && sk.ov >= 0.7 ? 1 : 0;
+    view.lavaK = tod === 'night' ? 1 + 1.4 * (0.5 + 0.5 * view.stormK) : tod === 'dusk' ? 1.4 : 1;
+    renderer.toneMappingExposure = L.exp * (tod === 'night' ? 1 - 0.3 * view.stormK : 1);
     if (SS.lens && SS.lens.grade) {
       /* (R11: only where the quality grades the frame; on low the lens pass runs only for a black hole / heat haze and used to apply the grade and the sun glare then: the picture jumped) */
       SS.lens.grade(Q.grade ? gradeFor(L, tod) : null);
@@ -415,20 +419,22 @@
     }
     if (SS.waterView) SS.waterView.look(L, sk, haze);
     {                                    // P65c: the cut faces (rock cap, sea face) take the time of day's light: dusk warm and dimmer, moonlight cool, dark and desaturated
-      const hz = S.biome === 'volcanic' ? 0.3 : 0, wv = SS.waterView || {};
-      if (tod === 'night') { if (SS.terrain.capLook) SS.terrain.capLook(0.7, 0.8, 0.98, 0.72); if (wv.faceLook) wv.faceLook(0.2, 0.3, 0.44, 0.8, hz + 0.1); }
-      else if (tod === 'dusk') { if (SS.terrain.capLook) SS.terrain.capLook(1, 0.97, 0.93, 1); if (wv.faceLook) wv.faceLook(0.78, 0.64, 0.52, 0.9, hz); }
-      else { if (SS.terrain.capLook) SS.terrain.capLook(1, 1, 1, 1); if (wv.faceLook) wv.faceLook(1, 1, 1, 1, hz); }
+      const hz = S.biome === 'volcanic' ? 0.3 : 0, ft = S.biome === 'volcanic' ? 0.45 : 0, wv = SS.waterView || {};
+      if (tod === 'night') { if (SS.terrain.capLook) SS.terrain.capLook(0.7, 0.8, 0.98, 0.72); if (wv.faceLook) wv.faceLook(0.2, 0.3, 0.44, 0.8, hz + 0.1, ft); }
+      else if (tod === 'dusk') { if (SS.terrain.capLook) SS.terrain.capLook(1, 0.97, 0.93, 1); if (wv.faceLook) wv.faceLook(0.78, 0.64, 0.52, 0.9, hz, ft); }
+      else { if (SS.terrain.capLook) SS.terrain.capLook(1, 1, 1, 1); if (wv.faceLook) wv.faceLook(1, 1, 1, 1, hz, ft); }
     }
     if (SS.weatherView) SS.weatherView.look(L, sk, haze);
     if (SS.fx.look) SS.fx.look(L, sk);
     if (SS.flameView) SS.flameView.look(L, sk);
     // U: underground: no sun, a dim cave ambient (rock-tinted bounce), dark fog; the sky world is hidden in V.render
     if (SS.world.under) {
-      sun.intensity = 0; sun.castShadow = false; fill.intensity = 0; hemi.color.set(0x8a8f99); hemi.groundColor.set(0x3a3028); hemi.intensity = 0.32;
+      // P76: deep underground the time of day barely matters: only the faint skylight that works its way down (dusk warmer, night bluer and a little dimmer)
+      const ct = V.timeOfDay(S), cHemi = ct === 'night' ? 0x7d8aa6 : ct === 'dusk' ? 0x948a84 : 0x8a8f99, cI = ct === 'night' ? 0.28 : ct === 'dusk' ? 0.31 : 0.32;
+      sun.intensity = 0; sun.castShadow = false; fill.intensity = 0; hemi.color.set(cHemi); hemi.groundColor.set(0x3a3028); hemi.intensity = cI;
       scene.fog.color.set(0x0b0a09); scene.fog.density = 0.032; view.haze = scene.fog.color.clone(); U.uHaze.value.copy(scene.fog.color);
       renderer.setClearColor(0x050505, 1); renderer.toneMappingExposure = 1.15;
-      if (SS.weatherView) SS.weatherView.look(Object.assign({}, L, { fog: 0.032, sunI: 0, hemiI: 0.32 }), sk, scene.fog.color);   // it re-applies these per frame
+      if (SS.weatherView) SS.weatherView.look(Object.assign({}, L, { fog: 0.032, sunI: 0, hemiI: cI, hemiS: cHemi, hemiG: 0x3a3028 }), sk, scene.fog.color);   // it re-applies these per frame
     } else { renderer.setClearColor(0x000000, 1); sun.castShadow = true; }   // (no shadow pass for a dark sun underground)
   }
   /* Surface state map (cover, dryness, char, burning). Owned by the sim (SS.veg) when present. */
