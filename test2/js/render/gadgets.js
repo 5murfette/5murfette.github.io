@@ -340,4 +340,10 @@
     return g;
   };
   GV.stats = () => ({ dogs: live.dogs.size, sentries: live.sentries.size, claymores: live.claymores.size, fx: fxs.length });
+  /* P78: gadget meshes are built on first use: pre-warm exemplars (render/prewarm.js) */
+  if (SS.prewarm) SS.prewarm.exemplars(() => {
+    const out = [];
+    for (const f of [dogMesh, sentryMesh, claymoreMesh]) { try { out.push(f()); } catch (e) { /* lazy */ } }
+    return out;
+  });
 })(window.SS = window.SS || {});

@@ -436,4 +436,13 @@
     }
   };
   AV.stats = () => ({ devices: live.devices.size, holes: live.holes.size, strikes: live.strikes.size, crates: live.crates.size, fx: fx.length });
+  /* P78: crates (canopy, lines), the strike plane + propeller blur, devices and holes are built on first use: pre-warm exemplars (render/prewarm.js) */
+  if (SS.prewarm) SS.prewarm.exemplars(() => {
+    const out = [];
+    const tryAdd = f => { try { const g = f(); if (g) out.push(g); } catch (e) { /* lazy */ } };
+    for (const k of ['weapon', 'health', 'tool']) tryAdd(() => crateMesh({ kind: k }));
+    tryAdd(planeMesh); tryAdd(propBlur); tryAdd(holeMesh);
+    for (const k of ['magnet', 'spring', 'tesla']) tryAdd(() => deviceMesh(k));
+    return out;
+  });
 })(window.SS = window.SS || {});

@@ -195,4 +195,6 @@
     }
   };
   GV.stats = () => ({ blobs: nUsed, fits: nFit });
+  /* P78: the skirt-post material is created on the first overhang: build it before the match (render/prewarm.js) */
+  if (SS.prewarm) SS.prewarm.exemplars(() => new T.Mesh(SS.prewarm.tri(), skMaterial()));
 })(window.SS = window.SS || {});

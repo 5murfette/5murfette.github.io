@@ -219,4 +219,6 @@
   };
   const SHARED = () => [STONE, DARK, SOIL, MOSS, STEM].concat(GRASS);
   GV.dispose = function (grp) { const sh = SHARED(); grp.traverse(o => { if (o.isMesh && o.geometry && o.geometry.userData.own) o.geometry.dispose(); if (!o.isMesh || !o.material) return; for (const m of [].concat(o.material)) if (!sh.includes(m) && !(m.userData && m.userData.shared)) { if (m.map && !m.map.userData.shared) m.map.dispose(); m.dispose(); } }); };   // (the stone has a material ARRAY: face + sides)
+  /* P78: a grave is built on the first death (decal + baked headstone materials): compile them at load (render/prewarm.js) */
+  if (SS.prewarm) SS.prewarm.exemplars(() => { const g = GV.make({ x: 0, y: 0, z: 0 }, [0.6, 0.6, 0.6], "W"); butterflies(g); return g; });
 })(window.SS = window.SS || {});

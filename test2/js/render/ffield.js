@@ -259,4 +259,6 @@
   };
   FV._items = items;
   FV.stats = () => ({ fields: items.size, shells: shells.size, fx: fxs.length });
+  /* P78: the dome material is built on the first force field: pre-warm exemplar (render/prewarm.js) */
+  if (SS.prewarm) SS.prewarm.exemplars(() => domeMesh(1));
 })(window.SS = window.SS || {});

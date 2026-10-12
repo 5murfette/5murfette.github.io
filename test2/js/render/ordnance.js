@@ -346,4 +346,11 @@
     const g = new T.ExtrudeGeometry(sh, { depth: 0.012, bevelEnabled: false }); g.translate(0, 0, -0.006);
     return new T.Mesh(g, MAT.star);
   };
+  /* P78: every projectile / held model is built on first use: build one of each for the pre-warm (render/prewarm.js) */
+  if (SS.prewarm) SS.prewarm.exemplars(() => {
+    const out = [];
+    for (const k of Object.keys(BUILD)) { try { const g = OR.proj(k); if (g) out.push(g); } catch (e) { /* a model that needs a state stays lazy */ } }
+    try { out.push(plume(1, 0.1, 1), spark(0.1)); } catch (e) { /* lazy */ }
+    return out;
+  });
 })(window.SS = window.SS || {});

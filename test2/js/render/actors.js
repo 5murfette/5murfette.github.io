@@ -820,4 +820,6 @@
       }
     }
   }
+  /* P78: a worm skin that fades (death, teleport, burial) switches to transparent: another program, compiled at load (render/prewarm.js) */
+  if (SS.prewarm) SS.prewarm.exemplars(() => { const m = SKIN.clone(); m.transparent = true; m.opacity = 0.5; return [new T.Mesh(SS.prewarm.tri(), m), new T.Mesh(SS.prewarm.tri(), SKIN.clone())]; });
 })(window.SS = window.SS || {});

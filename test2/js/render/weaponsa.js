@@ -506,4 +506,12 @@
   };
   const M_clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   WV.stats = () => ({ casings: cas.length, boom: live.boom.size, ravens: live.raven.size, letters: live.letter.size });
+  /* P78: held models, jets, the muzzle cone are built on first use: pre-warm exemplars (render/prewarm.js) */
+  if (SS.prewarm) SS.prewarm.exemplars(() => {
+    const out = [];
+    const tryAdd = f => { try { const g = f(); if (g) out.push(g); } catch (e) { /* lazy */ } };
+    for (const k of Object.keys(HELD)) tryAdd(() => HELD[k]());
+    for (const f of [flashCone, boomMesh, ravenMesh, letterMesh]) tryAdd(f);
+    return out;
+  });
 })(window.SS = window.SS || {});

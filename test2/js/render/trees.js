@@ -228,6 +228,7 @@
       return m;
     };
     woodDepth = depth(null, 'treeWoodD1'); leafDepth = depth(tx.foliage, 'treeLeafD1'); coreDepth = depth(null, 'treeCoreD1');
+    for (const b of [woodMat, leafMat, coreMat, leafDepth]) logMat(b);      // P78: broken-part variants exist before the pre-warm scans the registry (render/prewarm.js compiles them with the clipping state they are drawn with)
   }
 
   /* ---------- geometry builders (world or body space) ---------- */
@@ -461,7 +462,7 @@
     const sp = SPN[trees[0].sp] || 'oak', L = LOOK[sp] || LOOK.oak;          // (an unknown species falls back to oak)
     own.uBarkTint.value.setRGB(L.bark[0], L.bark[1], L.bark[2]); own.uLeafTint.value.setRGB(L.leaf[0], L.leaf[1], L.leaf[2]); own.uCore.value.setRGB(L.core[0], L.core[1], L.core[2]);
     const map = sp === 'spruce' ? tx.pine : tx.foliage;
-    if (leafMat.map !== map) for (const m of [...leafMats, leafDepth]) { m.map = map || null; m.needsUpdate = true; }
+    if (leafMat.map !== map) for (const m of [...leafMats, leafDepth, ...[...logMats.values()].filter(c => c.userData.logOf === leafMat || c.userData.logOf === leafDepth)]) { m.map = map || null; m.needsUpdate = true; }
     own.tLeaf.value = map || null;
     const mk = (B, mats, dm) => {
       if (!B.idx.length) return;
@@ -552,6 +553,7 @@
       const ob = base.onBeforeCompile;
       m.onBeforeCompile = sh => { ob(sh); };
       m.customProgramCacheKey = () => base.customProgramCacheKey() + 'L';
+      m.userData = Object.assign({}, m.userData, { logOf: base });
       logMats.set(key, m);
     }
     return m;
