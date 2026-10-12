@@ -1259,6 +1259,7 @@
   TR.cloudShadow = function (dx, dz, cover, k) { U.uCloudSh.value.set(dx, dz, cover, k); };
   TR.capLook = function (r, g, b, sat) { CAPU.uCapK.value.set(r, g, b, sat); };
   TR.capEow = function (v) { CAPU.uEow.value = v ? 1 : 0; };               // P68c: End of the World (render/eowview.js)
+  TR.capU = CAPU;                                // (tools: the cut face uniforms, e.g. uCapDet 0 = no cut-face detail: tools/dev/ablate.cjs)
   TR.capN = capN;                                // debug/tests
   TR.ctxMaterial = () => ctxFar;
   TR.slabDepthMaterial = () => slabDepth;

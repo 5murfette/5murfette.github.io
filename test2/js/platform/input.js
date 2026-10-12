@@ -93,7 +93,7 @@
       btn.addEventListener('pointerdown', down); btn.addEventListener('pointerup', up); btn.addEventListener('pointercancel', up); btn.addEventListener('pointerleave', up);
     }
     // the weapon grid closes again after a pick on a touch device
-    const wg = document.getElementById('weapons'); if (wg) wg.addEventListener('click', () => { if (document.body.classList.contains('touch')) setTimeout(() => wg.classList.add('closed'), 120); });
+    const wg = document.getElementById('weapons'); if (wg) wg.addEventListener('click', e => { if (document.body.classList.contains('touch') && e.target.closest && e.target.closest('.wpn')) setTimeout(() => wg.classList.add('closed'), 120); });
     const pts = new Map(); let pinch = null, tap = null;
     canvas.addEventListener('pointerdown', e => {
       if (e.pointerType !== 'touch') return;

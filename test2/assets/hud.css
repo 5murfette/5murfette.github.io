@@ -306,4 +306,5 @@ body.touch #winfo{bottom:118px} body.touch #teams{display:none} body.touch #wtip
 /* P75: short windows (1024x640 and below): the bar gives height back */
 @media (max-height:700px){#weapons{padding:4px 6px 6px;gap:4px}#weapons .wgrid[data-m=big]{--w:54px;--h:54px}#weapons .wgrid[data-m=mid]{--w:44px;--h:44px}#weapons .wgrid[data-m=all]{--w:38px;--h:38px}.wtab{padding:4px 9px}}
 @media (max-width:1100px){#winfo .di{display:none}}
+body.touch #weapons:not(.closed){z-index:7}      /* P77: the open bag is above the pad (z 6): the pad's buttons sat over 3-4 of the 7 Core tiles on phone-size windows */
 body.touch #weapons .wgrid[data-m=mid]{--w:52px;--h:52px}body.touch #weapons .wgrid[data-m=big]{--w:60px;--h:60px}body.touch .wtab{padding:8px 12px}
