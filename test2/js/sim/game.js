@@ -3,7 +3,8 @@
  * the RETREAT window after an attack (the worm may still move, the section stays locked), sudden death after
  * sdRound rounds, per-team ammo. Portable and deterministic: sim time only, names from their own RNG stream (so the
  * layout RNG S.rng, and with it every pinned map hash, is untouched).
- * C layout: struct Team { char name[20]; u32 rgb; u8 ctl; i8 wi; i16 ammo[NWEAPONS]; u8 lastWeapon; };
+ * C layout: struct Team { char name[20]; u32 rgb; u8 ctl; i8 wi; i16 ammo[NWEAPONS]; u8 lastWeapon; WeaponSet ws; };   // P84: ws = { f32 fz[NFUSE], mortarH, mineF } per team
+ *           GameState += { u16 sdStart; f32 sdAcc, sdRise; CratePlan crPlan {u16 round; i8 kind; u8 at, n;} }   // P84
  *           GameState += { Team teams[4]; u8 nTeams; u16 round, sdRound, sdFinal; bool sudden; f32 turnT, retreatT; }.
  * API: setup(S), team_count(S), is_cpu(S, team), skill(S), next_team(S) -> team, names(S, n), step(S, dt),
  *      retreat_for(weaponKey), ammo(S, team, weaponKey), use_ammo(S, team, weaponKey). */
@@ -29,10 +30,11 @@
       const d = C.TEAMS[i], nm = Array.isArray(st.names) && typeof st.names[i] === 'string' && st.names[i].trim() ? st.names[i].trim().slice(0, 18) : d.name;
       const ammo = {};
       if (C.ARSENAL) for (const k of C.ARSENAL_ORDER) ammo[k] = C.ARSENAL[k].ammo;
-      S.teams.push({ id: i, name: nm, rgb: d.rgb, ctl: ctlOf(st, i), wi: 0, ammo, lastWeapon: null });
+      S.teams.push({ id: i, name: nm, rgb: d.rgb, ctl: ctlOf(st, i), wi: 0, ammo, lastWeapon: null, ws: SS.weaponsA && SS.weaponsA.ws_make ? SS.weaponsA.ws_make() : null });
+      if (SS.gear) S.teams[i].gear = SS.gear.setup(S);                  // P89: rescue gear (life jackets): charges + toggle per team
     }
     const wpt = M.clamp(st.worms | 0 || 3, 1, 4);
-    S.round = 1; S.sudden = false; S.sdFinal = 0; S.turnT = 0; S.retreatT = 0;
+    S.round = 1; S.sudden = false; S.sdFinal = 0; S.sdStart = 0; S.sdAcc = 0; S.sdRise = 0; S.crPlan = null; S.turnT = 0; S.retreatT = 0;
     S.sdRound = 6 + M.max(0, 4 - wpt) + (n > 3 ? -1 : n > 2 ? 0 : 1);       // PoC beginMatch: ~7-9 rounds (P38-R5: a round earlier with 4 teams: a round is 4 turns, the matches ran 60 turns)
     // PoC beginMatch: a random team starts (settings.first: 'random' (default) or a team index; own seeded stream)
     const fr = st.first == null || st.first === 'random' ? Math.floor(M.rng_next(M.rng_make((Math.imul(st.seed | 0, 2654435761) + 977) >>> 0)) * n) : M.clamp(st.first | 0, 0, n - 1);
@@ -64,22 +66,23 @@
   G.ammo = (S, team, key) => { const t = S.teams && S.teams[team]; if (!t || t.ammo[key] == null) return Infinity; return t.ammo[key]; };
   G.use_ammo = (S, team, key) => { const t = S.teams && S.teams[team]; if (t && t.ammo[key] != null && t.ammo[key] !== Infinity) t.ammo[key] = M.max(0, t.ammo[key] - 1); };
 
-  /* sudden death begins at the turn change after round sdRound (if enabled): from then on the sea rises SD_RISE m
-   * after every turn (sim.js next_turn calls G.turn_change) */
+  /* sudden death begins at the turn change after round sdRound (if enabled). P84: from then on the sea rises CONTINUOUSLY (G.sd_step, every sim
+   * step, a constant small rate: nothing jumps at a turn or round change, the turn timer is untouched; a player may end a turn early to buy the next
+   * worm time). The turn change only starts it and checks for the final stand (sim.js next_turn calls G.turn_change). */
   G.turn_change = function (S) {
     if (!S.settings.sd) return;
     const nt = G.peek_team(S);
     if (!S.sudden && (S.round > S.sdRound || (S.round === S.sdRound && nt >= 0 && G.wraps(S, nt)))) {      // (P38 R3: right where round sdRound ends)
-      S.sudden = true;
-      SS.sim.emit(S, 'banner', { title: 'Sudden death', sub: SS.world.dry ? 'The hot sand closes in' : 'The water rises after every turn' });
-      SS.sim.log(S, 'Sudden death: the battlefield shrinks after every turn.', 0xff9a6a);
+      S.sudden = true; S.sdStart = S.round; S.sdAcc = 0; S.sdRise = 0;
+      SS.sim.emit(S, 'banner', { title: 'Sudden death', sub: SS.world.dry ? 'The hot sand closes in' : SS.world.under || SS.world.eow ? 'The air turns foul' : 'The water keeps rising' });
+      SS.sim.log(S, SS.world.dry ? 'Sudden death: the hot sand closes in, slowly.' : SS.world.under || SS.world.eow ? 'Sudden death: the air turns foul.' : 'Sudden death: the water rises, slowly and without pause.', 0xff9a6a);
     }
     if (S.sudden) {
       const d = SS.world;
-      if (d.dry) S.playR = M.max(K.SD_DRY_MIN, S.playR - K.SD_DRY_STEP);
-      else if (!d.under && !d.eow && SS.water && SS.water.raise) SS.water.raise(S, M.min(K.SD_RISE, M.max(0, d.SY - K.SD_SEA_GAP - d.SEA)));   // (P38 R9: the sea stops at the cap)
-      // the final stage: nothing is left to take (caves have no sea to rise, the sea is at its cap, the dry play circle is at its minimum)
-      const spent = d.under || d.eow || (d.dry ? S.playR <= K.SD_DRY_MIN : d.SEA >= d.SY - K.SD_SEA_GAP - 1e-6);
+      // the final stage: nothing is left to take (caves / the End of the World have no sea to rise, the sea is at its cap, the dry play circle is at its
+      // minimum) or sudden death has run SD_MAX_ROUNDS rounds (so slow a rise may not get there within a match)
+      const late = S.round >= (S.sdStart | 0) + K.SD_MAX_ROUNDS;
+      const spent = d.under || d.eow || late || (d.dry ? S.playR <= K.SD_DRY_MIN + 1e-6 : d.SEA >= d.SY - K.SD_SEA_GAP - 1e-6);
       if (spent) {
         if (S.sdFinal === 0) {
           SS.sim.emit(S, 'banner', { title: 'Final stand', sub: d.eow ? 'The planet\'s radiation floods the wreck' : d.under ? 'The cave air turns foul' : d.dry ? 'The heat is unbearable' : 'The cold sea has risen as far as it will' });
@@ -87,6 +90,26 @@
         }
         S.sdFinal++;
       }
+    }
+  };
+  /* P84: the constant rate of sudden death, m/s of sea level: SD_RISE_K per metre of map height, a little more with fewer worms per team (the PoC's
+   * 26 px per turn became ~0.5 m per turn of 45 s on a 40 m map, with no jumps). Deterministic: map height + settings only. */
+  G.sd_rate = function (S) {
+    const d = SS.world, wpt = M.clamp(S.settings.worms | 0 || 3, 1, 4);
+    return K.SD_RISE_K * d.SY * (1 + K.SD_RISE_WORMS * (4 - wpt));
+  };
+  /* one sim step of sudden death: the sea (or, in dry worlds, the play circle) moves a hair; the sea level is handed to water.raise in SD_QUANT quanta */
+  G.sd_step = function (S, dt) {
+    if (!S.sudden || S.phase === 'over' || S.phase === 'place' || S.phase === 'perk') return;
+    const d = SS.world;
+    if (d.dry) { S.playR = M.max(K.SD_DRY_MIN, S.playR - K.SD_DRY_RATE * dt); return; }
+    if (d.under || d.eow || !SS.water || !SS.water.raise) return;
+    const room = d.SY - K.SD_SEA_GAP - d.SEA;                       // (P38 R9: the sea stops at the cap)
+    if (room <= 1e-6) { S.sdAcc = 0; return; }
+    S.sdAcc = (S.sdAcc || 0) + G.sd_rate(S) * dt;
+    for (let n = 0; S.sdAcc >= K.SD_QUANT && n < 4; n++) {
+      const dh = M.min(K.SD_QUANT, d.SY - K.SD_SEA_GAP - d.SEA); if (!(dh > 0)) break;
+      S.sdAcc -= K.SD_QUANT; SS.water.raise(S, dh); S.sdRise = (S.sdRise || 0) + dh;
     }
   };
   /* P38 R9: the drain of the final stage, HP per second for every living worm (0 = not yet): GAME.SD_DRAIN in the first turn, +SD_DRAIN_RAMP per
@@ -214,6 +237,7 @@
 
   /* per step: the turn clock (play phase only; 0 = no limit) and the retreat window */
   G.step = function (S, dt) {
+    G.sd_step(S, dt);                                                 // P84: sudden death, every step
     if (S.phase === 'play' && S.settings.turnTime > 0 && S.active && !S.active.dead) {
       S.turnT -= dt;
       if (S.turnT <= 0) {

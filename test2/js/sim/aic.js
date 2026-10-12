@@ -92,7 +92,7 @@
     if (hasW(S, 'bat') && ds < K.BAT_REACH && Math.abs(dy) < 1.4 && ctx.clear) {
       let v = M.min(tgt.hp, C.ARMS.BAT.DMG) + 20;
       const land = tp.s + f * K.BAT_KNOCK;                            // the knock (measured ~14 m on flat ground): into the water = the foe is lost
-      if (AB().wet_at(S, land, tgt.pos.y)) v += M.min(tgt.hp, 100);
+      if (AB().wet_at(S, land, tgt.pos.y)) v += M.min(tgt.hp, 100) * (SS.gear && SS.gear.ready(S, tgt.team, SS.gear.JACKET) ? 0.25 : 1);   // (P89: a foe with a life jacket swims out: a dunk is worth little)
       cands.push({ special: 'bat', v, aim: M.max(0.2, ctx.aim), facing: f });
     }
     if (!grounded) return;

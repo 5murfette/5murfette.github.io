@@ -236,7 +236,8 @@
     // --- in the water: a drowning worm fights (writhing, rocking) until it is too weak, a swimming one paddles
     if (c.wet > 0.12 || w.drowning) {
       const weak = w.drowning ? M.min(1, M.max(0.25, (w.hp || 0) / 40)) : 1;
-      o.struggle = (w.drowning ? 0.9 : 0.4) * weak; o.flail = true;
+      if (w.swim && w.swim.jk && !w.drowning) o.struggle = 0.06;                      // P89: afloat in a life jacket: no struggle, no flailing
+      else { o.struggle = (w.drowning ? 0.9 : 0.4) * weak; o.flail = true; }
     }
     // --- the dying beat (the last 1.1 s before the worm is gone): by cause. Fire, gas, acid, current, a hard fall: it sags and folds, the head sinks, the eyes shut;
     // a blast or a bullet: it freezes, the eyes bulge, it shivers (and swells: polish.js shudder)

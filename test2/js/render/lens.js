@@ -47,11 +47,13 @@
           }
           for (int i = 0; i < ${MAXR}; i++) {                                      // shock rings: x,y = centre uv, z = front radius, w = amplitude; uRk = (band width, core radius)
             if (i >= uNR) break;
-            vec2 dv = (vUv - uR[i].xy) * asp; float rr = length(dv), band = (rr - uR[i].z) / uRk[i].x;
-            float d = uR[i].w * (exp(-band * band) * (band > 0.0 ? 1.0 : 0.6) - 0.5 * exp(-pow((band + 1.8) * 0.6, 2.0)));
+            vec2 dv = (vUv - uR[i].xy) * asp; float rr = length(dv), an = atan(dv.y, dv.x), sd = uR[i].x * 17.0 + uR[i].y * 11.0;
+            float wob = 0.07 * sin(an * 3.0 + sd) + 0.045 * sin(an * 7.0 + sd * 2.3) + 0.025 * sin(an * 13.0 + sd * 4.1), pat = 0.35 + 0.65 * smoothstep(-0.6, 0.7, sin(an * 4.0 + sd * 1.7) * 0.6 + sin(an * 9.0 + sd * 0.7) * 0.4);   // P87: an irregular front (wobbling radius, patchy strength), never a clean circle
+            rr *= 1.0 - wob; float band = (rr - uR[i].z) / uRk[i].x;
+            float d = uR[i].w * pat * (exp(-band * band) * (band > 0.0 ? 1.0 : 0.6) - 0.5 * exp(-pow((band + 1.8) * 0.6, 2.0)));
             d += uR[i].w * 0.35 * exp(-pow(rr / uRk[i].y, 2.0)) * sin(rr * 260.0 - uR[i].z * 90.0);          // the hot core shimmers
             uv += dv / max(rr, 1e-4) / asp * d;
-            lit += uR[i].w * 4.0 * (exp(-band * band * 1.5) - 0.7 * exp(-pow((band + 1.8) * 0.6, 2.0)));      // P73: the compressed band is a touch brighter, the rarefaction behind it a touch darker (schlieren)
+            lit += uR[i].w * 1.6 * pat * (exp(-band * band * 1.5) - 0.7 * exp(-pow((band + 1.8) * 0.6, 2.0)));      // P73: the compressed band is a touch brighter, the rarefaction behind it a touch darker (schlieren)
           }
           for (int i = 0; i < 4; i++) {                                              // heat haze over fires: x,y = the flame top (uv), z = half width (uv-height units), w = strength
             if (i >= uNZ) break;

@@ -17,13 +17,15 @@
  *            round obstacles, never enters water / lava / an up force field) to the nearest free living worm (no hugger on it yet, not
  *            infected, not swimming) -> within LEAP_R it leaps (a GUIDED ballistic arc, LEAP_T s) -> reaches the face (< HIT_R): 3 attached.
  *            It holds on for ONE ROUND: until every team still in the game has had a turn since the attachment (S.turnNo - turn0 >=
- *            teams) or HUG_MAX_T s, whichever comes first, then LETS GO and dies (4) and the host is INFECTED (w.embryo = true). Nothing is
- *            taken from the host while it is on. A blast within 1.5 x W^1/3 x 3 m kills it (x 1 while it is clamped on a face: the host's body shields it), so do flames (S.flames) and acid pools. If the host dies first (any cause) it falls off
+ *            teams) or HUG_MAX_T s, whichever comes first, then LETS GO and dies (4). P84: the host is INFECTED (w.embryo = true) the moment the hugger
+ *            LATCHES ON (the pulse clock runs from then, also while it is on). A shotgun pellet or any single hit over HUG_HIT 30 HP kills and removes the
+ *            hugger (AL.on_hit, from sim.hurt; the worm keeps the damage and the infection); a health crate cures the infection only once the hugger is off
+ *            (AL.cure; with it on the crate only gives HP). A blast within 1.5 x W^1/3 x 3 m kills it (x 1 while it is clamped on a face: the host's body shields it), so do flames (S.flames) and acid pools. If the host dies first (any cause) it falls off
  *            dead and nothing is implanted (it implants when it lets go).
- *   Parasite from the moment of the detachment the host loses PARA_HP = 20 HP every PARA_T = 60 s of sim time ("match time": every
+ *   Parasite from the moment of the latch (P84; was: the detachment) the host loses PARA_HP = 20 HP every PARA_T = 60 s of sim time ("match time": every
  *            step of the simulation counts, whoever's turn it is, retreat and settle time included; a replay or a lockstep peer steps the
  *            same, a pause does not). The pulse is a discrete quiet hit (w.embNext = the sim time of the next one; the HUD counts down to
- *            it); it never ends the host's turn. The infection is not cured by anything. The host's death, from ANY cause (the pulse that
+ *            it); it never ends the host's turn. The infection is cured only by a health crate with the hugger off (P84). The host's death, from ANY cause (the pulse that
  *            kills it, a blast, a bite, a fall) bursts a XENO out at its place: AL.burst (hook in sim.js kill()). If there is no dry
  *            ground for it (the host died in water / lava / the void), or the alien cap is reached, the embryo dies with the host
  *            (event embryo_lost). A worm the alien eats takes its embryo with it (no second alien).
@@ -38,7 +40,7 @@
  *            range; it still takes damage (blast / lava / fire / water): a hit wakes it after HIT_WAKE_T 1.2 s, ANGRY (no growth: the sleep was cut short, the meal is
  *            not digested, coolT 0 so it strikes at once), the floor going away wakes it too), 8 WAKE (WAKE_T 1.8 s: stretches out and rears, shakes, hisses; the growth is
  *            applied HERE and only after a full sleep: hp / hpMax += GROW_HP 50, range += GROW_RANGE 1, size x GROW_SIZE 1.12, eased over the animation), then idle with
- *            POST_COOL 3 s of grace (no chain kill). A newborn gets BORN_GRACE 1.5 s of grace after BORN_T. Water drowns it (WATER_DPS), lava (LAVA_DPS) and flames (FLAME_DPS) burn it, a missing floor drops it, a blast hurts it (AL.blast); it is no
+ *            POST_COOL 3 s of grace (no chain kill). A newborn gets BORN_GRACE 1.5 s of grace after BORN_T. P84: it never drowns: water makes it swim (state 9, nearest land in 3D, see swimStep); lava (LAVA_DPS) and flames (FLAME_DPS) burn it, a missing floor drops it, a blast hurts it (AL.blast); it is no
  *            team and no worm: a match ends when one TEAM is left whatever lives on. hp <= 0: it bursts into N_ACID drops of acid blood
  *            (ballistic); the drops hurt worms they hit (ACID_HIT HP + a burn of ACID_DPS for ACID_BURN s) and where they land they become
  *            POOLS that eat the terrain (carve a growing sphere downward ACID_EAT m/s, up to ACID_DEPTH deep, for ACID_LIFE s), burn worms
@@ -71,15 +73,18 @@
   const K = AL.K = {
     TRIG_R: 3.0, LAND_R: 7.0, OPEN_T: 120, EGG_BLAST_R: 3.2, EGG_RELEASE_P: 0.6, EGG_FALL_BREAK: 9, MAX_EGG: 12, MAX_HUG: 12, MAX_XENO: 8, MAX_ACID: 96,
     EMERGE_T: 0.9, RUN_V: 3.4, LEAP_R: 2.6, LEAP_T: 0.35, HIT_R: 0.6, HIT_MISS: 1.1, DEAD_T: 25, HUG_MAX_T: 300, FACE_Y: 0.25,
-    PARA_T: 60, PARA_HP: 20,
+    PARA_T: 60, PARA_HP: 20, HUG_HIT: 30,
     XENO_HP: 200, XENO_RANGE: 2.5, NN: 12, SEG: 0.3, CIRC: 1.3, PATROL: 1.9, PAT_R: 0.4, PAT_T: -0.55, IDLE_V: 0.9, HOVER: 0.09, TRN: 300, CRUMB: 0.04, TURN: 2.6, TURN_S: 6, WAVE_IDLE: 0.85, WAVE_RUN: 0.5, LAM_IDLE: 1.5, LAM_RUN: 2.0, WIND_T: 0.5, HISS_T: 1.3, DROP_MAX: 3, HISS0: 3.5, HISS1: 7, STRIKE_V: 10, LOSE_T: 2.5, WRAP_T: 0.9, EAT_T: 2.6,
-    GROW_HP: 50, GROW_RANGE: 1, GROW_SIZE: 1.12, BORN_T: 2.0, BORN_GRACE: 1.5, SLEEP_T: 60, WAKE_T: 1.8, HIT_WAKE_T: 1.2, POST_COOL: 3, CURL_R: 0.36, CURL_B: 0.012, CURL_MIN: 0.2, CURL_LIFT: 0.3, WATER_DPS: 45, LAVA_DPS: 140, FLAME_DPS: 30, FALL_T: 1.5, HURT_GATE: 0.5,
+    GROW_HP: 50, GROW_RANGE: 1, GROW_SIZE: 1.12, BORN_T: 2.0, BORN_GRACE: 1.5, SLEEP_T: 60, WAKE_T: 1.8, HIT_WAKE_T: 1.2, POST_COOL: 3, CURL_R: 0.36, CURL_B: 0.012, CURL_MIN: 0.2, CURL_LIFT: 0.3, LAVA_DPS: 140, FLAME_DPS: 30, FALL_T: 1.5, HURT_GATE: 0.5,
     N_ACID: 40, ACID_HIT: 12, ACID_DPS: 2, ACID_BURN: 4, ACID_POOL_R: 0.9, ACID_POOL_DPS: 5,
     ACID_EAT: 0.05, ACID_DEPTH: 1.6, ACID_LIFE: 32, ACID_TICK: 0.5, ACID_R0: 0.32,
     PROG: 0.3, HUG_STUCK_T: 8, XENO_STUCK_T: 6, XENO_COOL: 20,       // P38 R1: no closer than PROG m in HUG_STUCK_T s: the hugger dies; XENO_STUCK_T s: the alien gives up and ignores prey for XENO_COOL s
+    // P84: it never drowns: flooded (water over the ground it stands on by more than SWIM_DEPTH m) it SWIMS at SWIM_V m/s along the surface (state 9) to the
+    // nearest land in 3D (SWIM_R m: a bank within SWIM_LOW m above the water first, any higher ground if there is none) and climbs out; the search is redone every SWIM_T s
+    SWIM_V: 3.2, SWIM_R: 28, SWIM_LOW: 2.0, SWIM_DEPTH: 0.15, SWIM_FLOAT: 0.1, SWIM_T: 0.8, SWIM_RING: 1.5,
     SPOT_LEAP: 1.4, SPOT_ATTACH: 3.0, SPOT_DETACH: 2.6, SPOT_PULSE: 1.8, SPOT_BORN: 4.2, SPOT_BURST: 3.0, SLOW_T: 0.8
   };
-  const WHY = AL.WHY = { DETACH: 0, BLAST: 1, HOST_DIED: 2, STUCK: 3, ACID: 4, FIRE: 5 };    // why a hugger died (hugger_die.why)
+  const WHY = AL.WHY = { DETACH: 0, BLAST: 1, HOST_DIED: 2, STUCK: 3, ACID: 4, FIRE: 5, SHOT: 6, HIT: 7 };    // why a hugger died (hugger_die.why)
   const smin = (a, b) => (a < b ? a : b);
   const grav = S => C.G * SS.sim.gravity_k(S, null);               // (the Lab's moon makes the hugger's leap, the falling egg and the acid drops floaty too)
   const rnd = S => M.rng_next(S.alien.rng);
@@ -262,10 +267,10 @@
           settleDead(S, h, o); huggerDie(S, h, WHY.HOST_DIED, h.host); continue;
         }
         h.x = o.pos.x; h.y = o.pos.y + K.FACE_Y; h.z = o.pos.z;
-        if ((S.turnNo | 0) - h.turn0 >= teamsLeft(S) || S.time - h.t > K.HUG_MAX_T) {      // a round has passed: it lets go and dies; the host is infected
-          o.hug = -1; o.embryo = true; o.embT = S.time; o.embNext = S.time + K.PARA_T;
+        if ((S.turnNo | 0) - h.turn0 >= teamsLeft(S) || S.time - h.t > K.HUG_MAX_T) {      // a round has passed: it lets go and dies (P84: the host has been infected since the latch)
+          o.hug = -1;
           SS.sim.emit(S, 'hugger_detach', { id: h.id, wormId: o.id, x: h.x, y: h.y, z: h.z });
-          SS.sim.log(S, `${o.name} is infected! The parasite takes ${K.PARA_HP} HP every ${K.PARA_T} s.`, 0xa6ff3a);
+          SS.sim.log(S, `The face hugger lets go of ${o.name}, who is still infected: only a health crate cures it.`, 0xa6ff3a);
           spot(S, 1, o.id, h.x, h.y, h.z, K.SPOT_DETACH, 400, 0.5, 8);
           h.y = o.pos.y - 0.2; settleDead(S, h, o); huggerDie(S, h, WHY.DETACH, o.id);
         }
@@ -286,8 +291,9 @@
           const d = M.len3(FT.x - h.x, FT.y - h.y, FT.z - h.z);
           if (d < K.HIT_R || (tl <= 0.02 && d < K.HIT_MISS)) {
             h.st = 3; o.hug = h.id; h.round0 = S.round; h.turn0 = S.turnNo | 0; h.t = S.time; h.x = FT.x; h.y = FT.y; h.z = FT.z;
+            o.embryo = true; o.embT = S.time; o.embNext = S.time + K.PARA_T;                  // P84: infected the moment it latches on
             SS.sim.emit(S, 'hugger_attach', { id: h.id, wormId: o.id, x: h.x, y: h.y, z: h.z });
-            SS.sim.log(S, `${o.name} was face-hugged!`, 0xa6ff3a);
+            SS.sim.log(S, `${o.name} was face-hugged and is infected! The parasite takes ${K.PARA_HP} HP every ${K.PARA_T} s.`, 0xa6ff3a);
             spot(S, 1, o.id, h.x, h.y, h.z, K.SPOT_ATTACH, 360, 0.42, 9.2);
             S.slowUntil = S.time + K.SLOW_T;
             continue;
@@ -335,14 +341,35 @@
       SS.sim.hurt(S, o, K.PARA_HP, C.DS.PARASITE, C.HF.QUIET);
     }
   }
+  /* P84: damage to a worm with a face hugger on (called from sim.hurt after the damage is applied): a shotgun pellet, or any single hit of more than
+   * HUG_HIT HP, kills and removes the hugger (it falls off dead beside the worm). The worm keeps the damage AND the infection. */
+  AL.on_hit = function (S, w, dmg, src) {
+    if (!S.alien || !w || !(w.hug != null && w.hug >= 0) || !(w.hp > 0)) return false;
+    const shot = src === C.DS.SHOTGUN;
+    if (!shot && !(dmg > K.HUG_HIT)) return false;
+    const h = S.alien.huggers.find(q => q.id === w.hug); w.hug = -1;
+    if (!h) return false;
+    h.x = w.pos.x; h.y = w.pos.y + K.FACE_Y; h.z = w.pos.z; settleDead(S, h, w);
+    huggerDie(S, h, shot ? WHY.SHOT : WHY.HIT, w.id);
+    SS.sim.log(S, `${w.name}'s face hugger is torn off${shot ? ' by the shot' : ''}. The infection stays: a health crate cures it.`, 0xa6ff3a);
+    return true;
+  };
+  /* P84: a health crate cures the infection once the hugger is OFF (with it still on, the crate only gives HP: time) */
+  AL.cure = function (S, w) {
+    if (!w || !w.embryo || (w.hug != null && w.hug >= 0)) return false;
+    w.embryo = false; w.embNext = 0;
+    SS.sim.emit(S, 'cure', { wormId: w.id });
+    SS.sim.log(S, `${w.name} is cured of the parasite.`, 0x79d98b);
+    return true;
+  };
   /* what the HUD / the render show of a worm's infection: out = { stage (0 clean, 1 hugged, 2 infected), left (s to the next pulse), pulses (hits
    * left until it dies), ttd (s to the death if nothing else happens), sev (0..1, grows towards the death) } */
   AL.infection = function (S, w, out) {
     out.stage = 0; out.left = 0; out.ttd = 0; out.sev = 0; out.pulses = 0;
     if (!w || w.dead) return out;
-    if (w.hug != null && w.hug >= 0) { out.stage = 1; return out; }
-    if (!w.embryo) return out;
-    out.stage = 2; out.left = M.max(0, w.embNext - S.time);
+    const hug = w.hug != null && w.hug >= 0;
+    if (!w.embryo) { if (hug) out.stage = 1; return out; }
+    out.stage = hug ? 1 : 2; out.left = M.max(0, w.embNext - S.time);
     out.pulses = M.max(1, Math.ceil(M.max(1, w.hp) / K.PARA_HP));
     out.ttd = (out.pulses - 1) * K.PARA_T + out.left;
     out.sev = M.sat(1 - (out.ttd - K.PARA_T * 0.5) / (K.PARA_T * 3));
@@ -353,7 +380,7 @@
   AL.spawn_xeno = function (S, x, y, z, hp) {
     const A = S.alien;
     if (A.xenos.length >= K.MAX_XENO) return null;
-    const X = { id: A.nextId++, hp: hp || K.XENO_HP, hpMax: hp || K.XENO_HP, size: 0.6, range: K.XENO_RANGE, kills: 0, st: 6, t0: S.time, yaw: (S.theta || 0) + (rnd(S) < 0.5 ? 0 : Math.PI), home: { x, z }, phi: rnd(S) * M.TAU, target: -1, hiss: S.time + 1.5 + rnd(S) * 2, lastSee: S.time, bd: 0, bt: null, coolT: 0, hurtT: -9, fall: 0, born: S.time, gp: 0, wkT: 0, szT: 0, hpL: 0, vy: 0, ph: 0, wa: 0, pauseT: 0, pa: S.theta || 0, tr: [], th: 0, tn: 1, n: [] };
+    const X = { id: A.nextId++, hp: hp || K.XENO_HP, hpMax: hp || K.XENO_HP, size: 0.6, range: K.XENO_RANGE, kills: 0, st: 6, t0: S.time, yaw: (S.theta || 0) + (rnd(S) < 0.5 ? 0 : Math.PI), home: { x, z }, phi: rnd(S) * M.TAU, target: -1, hiss: S.time + 1.5 + rnd(S) * 2, lastSee: S.time, bd: 0, bt: null, coolT: 0, hurtT: -9, fall: 0, born: S.time, gp: 0, wkT: 0, szT: 0, hpL: 0, swT: 0, sx: 0, sz: 0, sf: 0, vy: 0, ph: 0, wa: 0, pauseT: 0, pa: S.theta || 0, tr: [], th: 0, tn: 1, n: [] };
     for (let i = 0; i < K.NN; i++) X.n.push({ x, y, z });
     for (let i = 0; i < K.TRN * 2; i++) X.tr.push(i & 1 ? z : x);
     A.xenos.push(X);
@@ -484,17 +511,85 @@
     return best;
   }
   const idle = (S, X, h) => { if (X.st >= 2 && X.st <= 4) { trailFromNodes(X); const gy = ground_y(h.x, h.y, h.z, 100); if (gy > -1e8) { h.y = gy + K.HOVER * X.size; X.vy = 0; } } X.phi = 1; X.pa = S.theta; X.st = 0; X.home.x = h.x; X.home.z = h.z; X.target = -1; X.bt = null; };
-  /* water drowns it, lava and flames burn it, no floor drops it: the hp loss (the cry of pain is gated) */
+  /* P84: water no longer hurts it (it swims, see swim_*); lava and flames burn it, no floor drops it: the hp loss (the cry of pain is gated) */
   function xenoHazard(S, X, dt) {
     const h = xhead(X); let dmg = 0;
-    if (wet(S, h.x, h.y, h.z)) dmg += K.WATER_DPS * dt;
     if (inLava(S, h.x, h.y, h.z)) dmg += K.LAVA_DPS * dt;
     if (fireAt(S, h.x, h.y, h.z)) dmg += K.FLAME_DPS * dt;
-    if (ground_y(h.x, h.y, h.z) < -1e8) { X.fall += dt; if (X.fall > K.FALL_T) dmg += X.hp; } else X.fall = 0;
+    if (X.st !== 9 && ground_y(h.x, h.y, h.z) < -1e8) { X.fall += dt; if (X.fall > K.FALL_T) dmg += X.hp; } else X.fall = 0;
     if (dmg > 0) {
       X.hp -= dmg;
       if (S.time - X.hurtT > K.HURT_GATE) { X.hurtT = S.time; SS.sim.emit(S, 'alien_hurt', { id: X.id, x: h.x, y: h.y, z: h.z, amount: dmg }); }
     }
+  }
+  /* ---------- P84: swimming (state 9) ---------- */
+  const surfOf = (S, x, z) => SS.sim.surface_at(S, x, z);
+  // flooded: the water over the ground under the head is deeper than SWIM_DEPTH (or there is no ground at all under it)
+  function flooded(S, X, h) {
+    const sf = surfOf(S, h.x, h.z); if (!(sf > -50) || h.y >= sf + 0.05) return false;
+    const gy = ground_y(h.x, h.y, h.z, 100);
+    return gy < -1e8 || sf - gy > K.SWIM_DEPTH;
+  }
+  /* the closest land in 3D from the head: rings of 1.5 m round it, the first ring that holds dry ground within reach (3D distance: horizontal + the height above
+   * the water) ends the search one ring later. Pass 0: a bank at most SWIM_LOW m above the water (a beach it can slither up); pass 1: any ground above the water
+   * (a cliff: it swims to its foot). out = { x, z, y }; false when there is none within SWIM_R. */
+  function findLand(S, h, sf, out) {
+    const w = W(), st = K.SWIM_RING; let best = 1e9, found = false;
+    for (let pass = 0; pass < 2 && !found; pass++) {
+      for (let r = st; r <= K.SWIM_R && r <= best + st; r += st) {
+        const n = M.max(8, Math.floor(M.TAU * r / st));
+        for (let k = 0; k < n; k++) {
+          const a = M.TAU * k / n, x = h.x + M.cos(a) * r, z = h.z + M.sin(a) * r;
+          if (x < 1 || z < 1 || x > w.SX - 1 || z > w.SZ - 1) continue;
+          let g;
+          if (pass === 0) { g = ground_y(x, sf - 0.4, z, 40); if (g < -1e8 || g < sf + 0.05 || g > sf + K.SWIM_LOW) continue; }
+          else { g = w.top_at(x, z); if (g < sf + 0.05) continue; }
+          if (inLava(S, x, g, z)) continue;
+          const d = M.len3(x - h.x, g - sf, z - h.z);
+          if (d < best) { best = d; out.x = x; out.z = z; out.y = g; found = true; }
+        }
+      }
+    }
+    return found;
+  }
+  function swimStart(S, X, h) {
+    if (X.st === 7 || X.st === 8) { X.gp = 0; trailFromNodes(X); }
+    X.st = 9; X.t0 = S.time; X.swT = 0; X.target = -1; X.bt = null; X.vy = 0; X.sf = 0;
+  }
+  const SL = { x: 0, z: 0, y: 0 };
+  function swimStep(S, X, dt) {
+    const h = xhead(X), w = W();
+    const sf = surfOf(S, h.x, h.z);
+    if (!(sf > -50)) { idle(S, X, h); const gy = ground_y(h.x, h.y, h.z, 100); if (gy > -1e8) h.y = gy + K.HOVER * X.size; return; }     // no water here any more: dry ground
+    if (S.time >= X.swT) {
+      const ok = findLand(S, h, sf, SL);
+      if (ok) { X.sx = SL.x; X.sz = SL.z; X.sf = SL.y; X.swT = S.time + K.SWIM_T; } else { X.sf = 0; X.swT = S.time + 2; }
+    }
+    const fy = sf - K.SWIM_FLOAT * X.size;
+    const want = X.sf ? M.atan2(X.sz - h.z, X.sx - h.x) : X.yaw, da = M.wrap_angle(want - X.yaw), tmax = K.TURN_S * dt;
+    X.yaw += da > tmax ? tmax : da < -tmax ? -tmax : da;
+    X.wa += (K.WAVE_RUN - X.wa) * smin(1, 5 * dt);
+    const step = K.SWIM_V * dt, w0 = X.wa * M.sin(X.ph);
+    for (let q = 0; q < ANG.length; q++) {
+      const a = X.yaw + w0 + ANG[q], nx = h.x + M.cos(a) * step, nz = h.z + M.sin(a) * step;
+      if (nx < 0.5 || nz < 0.5 || nx > w.SX - 0.5 || nz > w.SZ - 0.5) continue;
+      if (w.sample(nx, fy, nz) > 0) {                                  // a bank at the surface: climb out if it is a slope it can take
+        const g = ground_y(nx, sf, nz, 30);
+        if (g > -1e8 && g - sf <= K.SWIM_LOW && !inLava(S, nx, g, nz)) {
+          h.x = nx; h.z = nz; h.y = g + K.HOVER * X.size; X.yaw = a - w0; X.vy = 0;
+          const ci = X.th * 2; if (M.len2(h.x - X.tr[ci], h.z - X.tr[ci + 1]) >= K.CRUMB) trailPush(X, h.x, h.z);
+          trailFromNodes(X); idle(S, X, h); return;
+        }
+        continue;
+      }
+      h.x = nx; h.z = nz; if (q) X.yaw = a - w0; X.ph += step * M.TAU / (K.LAM_RUN * X.size);
+      const ci = X.th * 2; if (M.len2(h.x - X.tr[ci], h.z - X.tr[ci + 1]) >= K.CRUMB) trailPush(X, h.x, h.z);
+      break;
+    }
+    const sf2 = surfOf(S, h.x, h.z), fy2 = (sf2 > -50 ? sf2 : sf) - K.SWIM_FLOAT * X.size;
+    h.y += (fy2 - h.y) * smin(1, 12 * dt);
+    bodyFollow(S, X);
+    for (let i = 1; i < X.n.length; i++) X.n[i].y = X.n[i].y > fy2 + 0.5 || X.n[i].y < fy2 - 3 ? fy2 : X.n[i].y + (fy2 - X.n[i].y) * smin(1, 12 * dt);
   }
   /* ---------- sleep (P51) ---------- */
   const sm01 = (u, a, b) => { const t = u <= a ? 0 : u >= b ? 1 : (u - a) / (b - a); return t * t * (3 - 2 * t); };
@@ -543,7 +638,9 @@
       if (X.st !== 3 && X.st !== 4) xenoHazard(S, X, dt);
       if (X.hp <= 0) { acidBurst(S, X); A.xenos.splice(i, 1); continue; }
       const target = X.target >= 0 ? S.worms[X.target] : null;
+      if (X.st !== 9 && X.st !== 2 && X.st !== 3 && X.st !== 4 && flooded(S, X, h)) swimStart(S, X, h);
       switch (X.st) {
+        case 9: swimStep(S, X, dt); break;                       // P84: swimming to the nearest land
         case 6:                                                  // hatched: rests, growing out of the corpse
           X.size = 0.6 + 0.4 * M.sat((S.time - X.t0) / K.BORN_T);
           if (S.time - X.t0 >= K.BORN_T) { X.st = 0; X.size = 1; X.hiss = S.time + 0.4; X.coolT = S.time + K.BORN_GRACE; }

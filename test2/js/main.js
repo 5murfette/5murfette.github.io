@@ -187,7 +187,9 @@
     const s = Object.assign({}, C.SETTINGS);
     for (const k of ['biome', 'weather', 'lava', 'wind', 'quality', 'slice', 'ghost', 'under', 'cpu', 'skill', 'placement', 'time', 'art', 'shape', 'first', 'volcanoes', 'mapSize', 'dim']) if (params.has(k)) s[k] = params.get(k);
     for (const k of SS.CFG.DENSITY.KEYS.concat(['mineFuse', 'toolCrates', 'jetpacks'])) if (params.has(k)) s[k] = params.get(k);
-    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto', 'cine', 'fort']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
+    if (params.has('jackets')) s.jackets = parseInt(params.get('jackets'), 10);
+    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto', 'cine', 'fort', 'jacketOn']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
+    for (const k of SS.CFG.CRATES.SLIDERS) if (params.has(k)) s[k] = Math.max(0, Math.min(10, parseInt(params.get(k), 10) || 0));      // P84: crate levels 0..10
     for (const k of ['teams', 'worms', 'hp', 'turnTime']) if (params.has(k)) s[k] = parseInt(params.get(k), 10) || 0;
     if (params.has('ctl')) s.ctl = params.get('ctl').split(',');
     if (params.has('lab')) s.labFlags = parseInt(params.get('lab'), 10) || 0;     // P42: Lab mechanics bit mask (tests)
@@ -221,6 +223,7 @@
     if (SS.audio) { $('mutebtn').textContent = SS.audio.muted ? '🔇' : '🔊'; $('mutebtn').addEventListener('click', () => { SS.audio.setMuted(!SS.audio.muted); $('mutebtn').textContent = SS.audio.muted ? '🔇' : '🔊'; }); }
     // P9: weapon grid clicks, the game-over buttons
     SS.ui.onPick = k => { SS.input.pickWeapon = k; };
+    SS.ui.onGear = k => { SS.input.gearReq = k + 1; };            // P89: the HUD's life jacket button
     if (SS.input.attachTouch) SS.input.attachTouch(canvas);           // P24.4 touch pad + gestures
     // PoC mouse: a left press aims + fires on a local human turn with a weapon that is aimed (target weapons and a
     // homing without its target, or shift + click, take the click as a target instead)

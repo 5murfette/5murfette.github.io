@@ -19,7 +19,7 @@
   /* ---------- Input struct (filled by the platform layer or the network each step) ---------- */
   // the fields of the struct in declaration order (C: struct Input; input_copy is a plain struct assignment there)
   const INPUT_FIELDS = ['move', 'up', 'down', 'jump', 'backflip', 'fire_pressed', 'fire_held', 'weapon', 'rotate', 'rotate_mouse', 'fine', 'align_step', 'align_crate', 'align_refocus', 'align_id',
-    'end_turn', 'reset', 'inspect', 'fuse', 'tgt', 'ts', 'ty', 'sdir', 'gang', 'gturn', 'drop', 'wsel', 'aimset', 'aimv', 'face', 'adj', 'dbk', 'dbp0', 'dbp1', 'dbs', 'dby', 'dbsky'];
+    'end_turn', 'reset', 'inspect', 'fuse', 'tgt', 'ts', 'ty', 'sdir', 'gang', 'gturn', 'drop', 'wsel', 'aimset', 'aimv', 'face', 'adj', 'gear', 'dbk', 'dbp0', 'dbp1', 'dbs', 'dby', 'dbsky'];
   sim.INPUT_FIELDS = INPUT_FIELDS;
   /* reset an Input struct to its defaults in place (the CPU reuses one struct per step: no allocation) */
   sim.input_clear = inp => { for (let i = 0; i < INPUT_FIELDS.length; i++) inp[INPUT_FIELDS[i]] = 0; inp.weapon = ''; return inp; };
@@ -37,6 +37,7 @@
     fuse: 0, tgt: 0, ts: 0, ty: 0, sdir: 0, gang: 0, gturn: 0, drop: 0,
     wsel: 0,                          // PoC worm select: switch to the team's next worm (option, first 10 s)
     aimset: 0, aimv: 0, face: 0,      // PoC mouse aim: set the aim angle (rad) and facing (-1 / 1) from the cursor
+    gear: 0,                          // P89: toggle the active team's rescue gear kind + 1 (sim/gear.js: 1 = life jacket)
     adj: 0,                           // P37: + / - step (+1 / -1) of the selected weapon's parameter: fuse 0.5-5 s, mortar burst height 1-5 m, planted mine fuse 0-3 s
     // P49 debug toolbox (sim/debug.js; obeyed only while S.debugOn, never online): dbk = drop kind (DB.KIND, 0 none), dbp0 / dbp1 = its parameters, (dbs, dby) = the clicked point on the section, dbsky = 1 drop from the sky
     dbk: 0, dbp0: 0, dbp1: 0, dbs: 0, dby: 0, dbsky: 0
@@ -93,7 +94,7 @@
     if (S.crates) for (const q of S.crates) { mix(q.pos.x); mix(q.pos.y); mix(q.pos.z); mix(q.landed ? 1 : 0); }
     if (S.frags) { mix(S.frags.length); for (const q of S.frags) { mix(q.x); mix(q.y); mix(q.z); } }
     if (S.wa) {                                                       // P37-W3: weapons A
-      const wa = S.wa; mix(wa.rng.s % 100003); mix(wa.stream ? wa.stream.t : -1); mix(wa.spots.length); mix(wa.acid.length); mix(wa.mortarH); mix(wa.mineF);
+      const wa = S.wa; mix(wa.rng.s % 100003); mix(wa.stream ? wa.stream.t : -1); mix(wa.spots.length); mix(wa.acid.length); SS.weaponsA.hash_ws(S, mix);
       for (const c of wa.clouds) { mix(c.x); mix(c.y); mix(c.z); mix(c.r); if (c.pf) mix(c.pf[c.pf.length - 6]); }
       for (const b of wa.boom) { mix(b.s); mix(b.y); }
       for (const r of wa.ravens) { mix(r.s); mix(r.y); }
@@ -119,11 +120,13 @@
      * only the version counter, so a different crater with the same number of edits passed). */
     const str = v => { v = String(v); let t = 7; for (let i = 0; i < v.length; i++) t = Math.imul(t ^ v.charCodeAt(i), 16777619); return t >>> 0; };
     HH = Math.imul(HH ^ str(S.phase), 16777619) >>> 0; HH = Math.imul(HH ^ str(S.weapon), 16777619) >>> 0;
-    mix(S.round || 0); mix(S.sdRound || 0); mix(S.sudden ? 1 : 0); mix(S.sdFinal || 0); mix(S.aim || 0); mix(S.power || 0); mix(S.charging ? 1 : 0); mix(S.shots || 0); mix(S.fuse || 0);
+    mix(S.round || 0); mix(S.sdRound || 0); mix(S.sudden ? 1 : 0); mix(S.sdFinal || 0); if (S.sudden) mix(S.sdAcc || 0); mix(S.aim || 0); mix(S.power || 0); mix(S.charging ? 1 : 0); mix(S.shots || 0); mix(S.fuse || 0);
     mix(S.active ? S.active.id : -1);
+    if (SS.gear) SS.gear.hash(S, mix);                                         // P89: rescue gear (only once a charge was used / a toggle changed: baseline hashes unchanged)
     if (S.teams) for (const t of S.teams) if (t.ammo) for (const k of C.ARSENAL_ORDER) { const v = t.ammo[k]; mix(v === Infinity ? -7 : v || 0); }
     for (const w of S.worms) { mix(w.vel.x); mix(w.vel.y); mix(w.vel.z); mix(w.vs || 0); mix(w.vy || 0); mix(w.facing || 0); mix(w.hp0 || 0); mix(w.air ? 1 : 0); mix(w.dead ? 1 : 0); }
     if (S.settings) for (const k of HASH_SETTINGS) { const v = S.settings[k]; mix(typeof v === 'number' ? v : typeof v === 'boolean' ? (v ? 1 : 0) : typeof v === 'string' ? str(v) % 1000003 : -1); }
+    if (S.settings) for (const k of C.CRATES.SLIDERS) { const v = S.settings[k]; if (v != null && v !== C.CRATES.DEF) { mix(2100); mix(v); } }   // P84: crate levels (at the default: the hashes stay what they were)
     if (S.settings && S.settings.fort) mix(2003);                          // P68b: fort mode (off: the hashes stay what they were)
     if (S.settings && S.settings.dim === '2d') mix(2002);                  // P68a: the dimension, only while it is 2D (3D hashes stay what they were)
     { const wd = W(), d = wd.d, mt = wd.mat; let t = 0, u = 0; for (let i = 0; i < d.length; i += 97) t += d[i]; for (let i = 3; i < mt.length; i += 101) u += mt[i]; mix(t); mix(u); mix(wd.SEA); mix(wd.SX); }
@@ -465,7 +468,7 @@
     do { const nx = S.nextIdx[S.teamTurn] | 0; w = team.find(q => q.id >= nx) || team[0]; S.nextIdx[S.teamTurn] = w.id + 1; } while ((w.swim || w.drowning) && --left > 0);
     if (S.active) { S.active.aimMem = S.aim; S.active.windUp = 0; }       // (P38 R1: a jump wind-up begun in the last moments of the turn does not outlive it)
     if (S.active && SS.skills) SS.skills.turn_end(S, S.active);           // P37 W4: skills count their turns down
-    S.active = w; w.rest = false; S.turnNo++; S.hook = null; w.windUp = 0; if (SS.traverse) SS.traverse.reset(S);
+    S.active = w; if (SS.weaponsA && SS.weaponsA.turn_sync) SS.weaponsA.turn_sync(S); w.rest = false; S.turnNo++; S.hook = null; w.windUp = 0; if (SS.traverse) SS.traverse.reset(S);
     S.turnT = S.settings.turnTime > 0 ? S.settings.turnTime : 0; S.turnStart = S.time; S.selStart = S.time; S.acted = false;
     const tm = S.teams[w.team];
     if (tm && tm.lastWeapon && C.WEAPONS[tm.lastWeapon] && SS.game.ammo(S, w.team, tm.lastWeapon) > 0) S.weapon = tm.lastWeapon;   // the team's last weapon (PoC)
@@ -1079,6 +1082,7 @@
     w.hp -= dmg; w.cause = C.DS_CAUSE[src];
     emit(S, 'hurt', { wormId: w.id, amount: dmg, src, arg, dir: S.hitDir || null, dot });   // dir: where the hit pushed (blood sprays that way)
     w.hitDir = S.hitDir || null; S.hitDir = null;
+    if (w.hug != null && w.hug >= 0 && SS.alien) SS.alien.on_hit(S, w, dmg, src);   // P84: a shotgun pellet / a hit over 30 HP tears a face hugger off
     // P1 (PoC activeHurt): a hit on the active worm ends its turn / its retreat; so does FIRE (user 2026-10-08, PoC: napalm,
     // burning oil / grass / props); the poc5-only steady hazards (lava, hot sand, the black hole's core) do not
     if (w === S.active && !quiet && (!dot || (sf & DSF.FIRE) !== 0) && !w.dead && !(S.phase === 'play' && (sf & DSF.NOEND_PLAY) !== 0)) sim.hit_ends_turn(S, w);   // (P38 R3: a sentry gun hit does not end the turn in play: turn denial)
@@ -1097,6 +1101,7 @@
     }
   }
   sim.hurt = hurt;
+  sim.blocked3 = blocked3; sim.drown = drown;                      // P89: the life jacket swim (sim/lifejacket.js) moves a floating worm and ends it
   /* continuous damage (fire, lava): accumulate, apply in whole points at most twice per second */
   sim.burn = function (S, w, dps, dt, src, flags) {
     if (w.dead) return;
@@ -1153,9 +1158,10 @@
     w.vel.x = w.vel.y = w.vel.z = 0; w.rope = null; w.springFall = false; w.dying = false;
     w.flip = false; w.hop = false; w.slide = false;                                  // P37-4: a back salto ends on water entry (it spun on forever in the water)
     if (act) { if (S.phase === 'play') { S.charging = false; S.phase = 'attack'; S.attackStart = S.time; S.lastBoom = S.time; } if (sim.ctl(S, w)) sim.end_retreat(S); S.rope = null; S.hook = null; w.vs = w.vy = 0; w.air = false; w.vel.x = w.vel.y = w.vel.z = 0; }   // (end_retreat rebuilds vel from vs / vy)
+    const jk = SS.jacket ? SS.jacket.enter(S, w, surf) : false;                      // P89: a life jacket inflates (sim/lifejacket.js)
     emit(S, 'splash', { x: w.pos.x, y: surf, z: w.pos.z, size: M.min(2.2, 0.8 + 0.07 * vin) });
-    emit(S, 'swim', { wormId: w.id, land: w.swim.land });
-    log(S, w.swim.land ? `${w.name} fell in the water and swims for the shore!` : `${w.name} fell in the water, far from land...`, 0x7fc3ff);
+    emit(S, 'swim', { wormId: w.id, land: w.swim.land, jk: jk ? 1 : 0 });
+    if (!jk) log(S, w.swim.land ? `${w.name} fell in the water and swims for the shore!` : `${w.name} fell in the water, far from land...`, 0x7fc3ff);
   }
   // SWIM_DPS in SWIM_TICK chunks; returns false once it drowned. (No turn end: that happened as it fell in / a roping
   // worm keeps its turn.)
@@ -1172,7 +1178,9 @@
     const WD = C.WORM_DYN, sw = w.swim;
     // the swim is scripted: no velocity survives it (a blast's push, the fall) to fling the worm on climb-out or drift
     // it while it sinks; a swimmer holds the turn (the resolve gate waits on S.lastBoom too)
-    w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0; S.lastBoom = S.time;
+    w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0;
+    if (sw.jk) { if (SS.jacket.holds(S, w)) S.lastBoom = S.time; SS.jacket.step(S, w, dt); return; }   // P89: a life jacket swim (sim/lifejacket.js): no struggle, no HP drain, the turn does not wait for it for long
+    S.lastBoom = S.time;
     if (!waterDamage(S, w, dt, sw)) return;
     const surf = sim.surface_at(S, w.pos.x, w.pos.z);
     const ty = surf - WD.FLOAT_D + 0.06 * M.sin((S.time - sw.t0) * 7);           // up to the surface, bobbing
@@ -1426,7 +1434,7 @@
 
   function settled(S) {
     if (S.pending.length) return false;
-    if (!S.worms.every(w => w.dead || (!w.drowning && !w.swim && (w.rest || (w === S.active && !w.air) || (w.rope && M.len3(w.vel.x, w.vel.y, w.vel.z) < 0.4))))) return false;
+    if (!S.worms.every(w => w.dead || (w.swim && w.swim.jk && !SS.jacket.holds(S, w)) || (!w.drowning && !w.swim && (w.rest || (w === S.active && !w.air) || (w.rope && M.len3(w.vel.x, w.vel.y, w.vel.z) < 0.4))))) return false;
     if (S.hook) return false;
     if (SS.bodies && !SS.bodies.settled(S)) return false;
     if (SS.scatter && !SS.scatter.settled(S)) return false;
@@ -1517,7 +1525,7 @@
   const IN_LIM = [['move', -1, 1], ['up', -1, 1], ['down', -1, 1], ['jump', -1, 1], ['backflip', -1, 1], ['jet', -1, 1], ['fire_pressed', -1, 1], ['fire_held', -1, 1],
     ['rotate', -1, 1], ['rotate_mouse', -200, 200], ['fine', -1, 1], ['align_step', -1, 1], ['align_crate', -1, 1], ['align_refocus', -1, 1], ['align_id', 0, 64],
     ['end_turn', -1, 1], ['inspect', -1, 1], ['fuse', 0, 5], ['tgt', -1, 1], ['ts', -4000, 4000], ['ty', -4000, 4000], ['sdir', -1, 1], ['gang', -1, 1], ['gturn', -1, 1],
-    ['drop', -1, 1], ['wsel', -1, 1], ['aimset', -1, 1], ['aimv', -4, 4], ['face', -1, 1], ['adj', -1, 1],
+    ['drop', -1, 1], ['wsel', -1, 1], ['aimset', -1, 1], ['aimv', -4, 4], ['face', -1, 1], ['adj', -1, 1], ['gear', 0, 8],
     ['dbk', 0, 99], ['dbp0', 0, 1000], ['dbp1', 0, 1000], ['dbs', -4000, 4000], ['dby', -4000, 4000], ['dbsky', 0, 1]];
   sim.sanitize_input = function (inp) {
     for (let i = 0; i < IN_LIM.length; i++) {
@@ -1538,6 +1546,7 @@
     if (S.phase === 'play' && a && !a.dead && SS.ai && SS.game.is_cpu(S, a.team)) inp = SS.ai.control(S, a, dt);                                // (a cleared Input struct, filled by the plan)
     sim.sanitize_input(inp);
     if (inp.reset) { sim.reset(S, S.settings); return; }
+    if (inp.gear && SS.gear) SS.gear.input(S, inp);               // P89: the rescue gear toggle (HUD button / key)
     if (dbgInp.dbk && SS.debug) { if (dbgInp !== inp) sim.sanitize_input(dbgInp); SS.debug.apply(S, dbgInp); }     // P49: the debug toolbox's drop (only while S.debugOn)
     if (S.phase === 'perk' && SS.lab) {                           // P50: the perk draft (a pick may start the first turn)
       SS.lab.perk_step(S, inp, dt); a = S.active;

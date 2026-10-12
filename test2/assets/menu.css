@@ -134,3 +134,4 @@
 .labstatus{font-size:var(--fs-2xs);letter-spacing:.12em;padding:2px 6px;border-radius:6px;border:1px solid #6a8a9a;color:#9fd0e8;background:rgba(80,140,170,.15)}
 .labdesc{font-size:14px;color:var(--ink);opacity:.88;line-height:1.4;margin-top:6px}
 .labbar{display:flex;align-items:center;gap:8px;margin-top:10px}.labcount{flex:1;font-size:13px;color:var(--dim)}
+.cratebox{display:flex;align-items:center;gap:10px}.cratebox .vslider{width:200px}.cratev{min-width:110px;font-size:12px;opacity:.85;font-variant-numeric:tabular-nums}

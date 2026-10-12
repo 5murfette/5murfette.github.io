@@ -97,12 +97,23 @@
     TEAMS: [{ name: 'Red Rebels', rgb: 0xff5b4f }, { name: 'Blue Moles', rgb: 0x4ea8ff }, { name: 'Gold Diggers', rgb: 0xffd23f }, { name: 'Green Grubs', rgb: 0x6fd884 }],
     NAMES: ['Spud', 'Noodle', 'Clod', 'Gristle', 'Boris', 'Squirm', 'Pip', 'Mulch', 'Slick', 'Fang', 'Doris', 'Kevin', 'Biscuit', 'Turnip', 'Nugget', 'Wiggles', 'Gus', 'Mabel', 'Pickles', 'Rusty', 'Sprout', 'Taffy', 'Dobbs', 'Mort'],
     /* P1 match rules (PoC): retreat after an attack (s; per weapon `retreat`), CPU skills, sudden death steps */
-    GAME: { RETREAT: 5, SKILLS: ['easy', 'normal', 'hard'], SD_RISE: 1.05,   // PoC: 26 px per sudden-death turn = 2.6 % of its map height (~40 m here)
-            SD_DRY_STEP: 2, SD_DRY_MIN: 14,
+    GAME: { RETREAT: 5, SKILLS: ['easy', 'normal', 'hard'],
+            // P84: sudden death is CONTINUOUS (the turn timer is untouched): from the end of round sdRound the sea rises every sim step at a constant
+            // rate, SD_RISE_K m/s per metre of map height (SY 40 m: 0.01 m/s = ~0.5 m in a 45 s turn, ~1 m in a round of two teams), x (1 + SD_RISE_WORMS per
+            // missing worm below 4 per team: a 1-worm match is quick anyway and its land is scarcer). The rise is handed to water.raise in quanta of
+            // SD_QUANT m (1 cm: invisible, keeps the lattice work to ~1 call per 1.3 s). Dry worlds: the play circle shrinks continuously by SD_DRY_RATE m/s.
+            // The nominal rise of one turn (SD_RISE) is only what the CPU's "climb away from the sea" margin is based on.
+            SD_RISE_K: 0.00025, SD_RISE_WORMS: 0.12, SD_QUANT: 0.01, SD_RISE: 0.5, SD_AI_MARGIN: 2, SD_DRY_RATE: 0.04, SD_DRY_MIN: 14,
+            // P84: a sea that rises this slowly may never reach its cap in a match: after SD_MAX_ROUNDS rounds of sudden death the final stand starts anyway
+            SD_MAX_ROUNDS: 10,
             // P38 R9: the final stage of sudden death, once the shrink has nothing left to take (dry: the play circle at SD_DRY_MIN, wet: the sea at its
             // cap SY - SD_SEA_GAP, caves: from the start of sudden death). Every living worm then loses HP continuously (DS.SUDDEN_DEATH), SD_DRAIN
             // HP/s in the first turn, +SD_DRAIN_RAMP per further turn, at most SD_DRAIN_MAX: the weakest team falls first, the match always ends
             SD_SEA_GAP: 10, SD_DRAIN: 0.25, SD_DRAIN_RAMP: 0.1, SD_DRAIN_MAX: 2 },
+    /* P84: supply crates. Per type a level 0..10 (settings crateW weapon, crateH health, crateT tool; 5 = default). The chance of ONE crate in a round
+     * = P_LEVEL x the highest level (5 -> 20 %, 10 -> 40 %, all 0 -> never); the type of that crate is drawn in proportion to the levels (all 5: a third
+     * each; a single type at 10 with the others 0: that type, 40 % of the rounds). At most one crate per round; it falls at a random turn of the round. */
+    CRATES: { SLIDERS: ['crateW', 'crateH', 'crateT'], KINDS: ['weapon', 'health', 'tool'], DEF: 5, MAX: 10, P_LEVEL: 0.04, LEGACY_TOOL: { off: 0, low: 3, normal: 5, high: 9 } },
 
     /* Weapons (C: enum WeaponId + const WeaponDef[]). W = TNT-equivalent charge (kg, game-scale). */
     WEAPONS: {
@@ -232,12 +243,12 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p85-voicecam-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p89-lifejacket-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
       blood: false, select: false, keepRope: false, rooms: false, time: 'day', art: 'painted', shape: 'island',
-      rotLock: true, dim: '3d', fort: false, labFlags: 0, mineFuse: 'default', teamBlood: false, toolCrates: 'normal',        // (contracts: W1 / W3 / W4 read them; the menu sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
+      rotLock: true, dim: '3d', fort: false, labFlags: 0, jackets: 3, jacketOn: true, mineFuse: 'default', teamBlood: false, toolCrates: 'normal', crateW: 5, crateH: 5, crateT: 5,        // (P84: crate levels 0..10; toolCrates is the legacy name of crateT; contracts: W1 / W3 / W4 read them; the menu sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
       dTrees: 'medium', dRocks: 'medium', dBarrels: 'medium', dProps: 'medium', dCrates: 'medium', dMines: 'medium', dBunkers: 'medium', dTown: 'medium', dEggs: 'medium' },
 
     WIND_UNIT: 12, WIND_ACC: 230 * 9.81 / 520,   // PoC WIND_ACC 230 px/s2 per wind unit (12 m/s) on the projectile scale

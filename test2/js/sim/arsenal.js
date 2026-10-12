@@ -110,7 +110,7 @@
     spring: { name: 'Spring Mine', kind: 'drop', ammo: 2, key: 'J', retreat: 3, payload: 1, crate: 1, info: 'Buried trap only your team sees: throws an enemy worm high (20 HP + a hard fall)' },
     scrambler: { name: 'Fuse Scrambler', kind: 'utility', ammo: 2, key: 'U', retreat: 3, crate: 1, info: 'Adds 2 s to the fuses around you' },
     // P37 W4 (weapons B; sim/gadgets.js, sim/ffield.js): vec = no painted icon, the vector one is used
-    dog: { name: 'Robo Dog', kind: 'drop', ammo: 2, key: '`', retreat: 4, crate: 1, vec: 1, info: 'Runs at the nearest foe, hops small obstacles, blows up on reaching it or when its 8 s timer ends' },
+    dog: { name: 'Robo Dog', kind: 'drop', ammo: 2, key: '`', retreat: 4, crate: 1, vec: 1, info: 'Thrown a few metres along the aim; arms after 2.5 m and 0.8 s, then runs at the nearest foe, hops small obstacles, blows up on reaching it or when its 8 s timer ends' },
     punch: { name: 'Knockout Punch', kind: 'melee', ammo: 3, key: 'N0', retreat: 3, crate: 1, vec: 1, info: 'Jump on the spot and uppercut the worm beside you: it flies off, flipping' },
     sentry: { name: 'Sentry Gun', kind: 'drop', ammo: 1, key: ';', retreat: 3, crate: 1, vec: 1, info: 'Plant it: a spinning laser scanner shoots any foe crossing the beam (100 rounds); a blast can knock it over' },
     claymore: { name: 'Claymore', kind: 'drop', ammo: 2, key: "'", retreat: 3, crate: 1, vec: 1, info: 'Sticks to a tree, wall or the ground; arms in 10 s; a 3 m laser: walk into it and it fires a cone of pellets' },

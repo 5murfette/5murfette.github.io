@@ -32,21 +32,41 @@
 
   WA.init = function (S) {
     S.wa = { rng: M.rng_make(((Math.imul(S.settings.seed | 0, 40503) + 0x37a1) >>> 0) || 1), stream: null, spots: [], acid: [], clouds: [], boom: [], ravens: [], letters: [],
-      fz: Object.assign({}, C.FUSE_DEFAULT || {}), mortarH: (C.PARAM && C.PARAM.BURST_DEF) || 3, mineF: (C.PARAM && C.PARAM.MINE_DEF) || 1.5, lastRound: null, ebox: null, n: 0 };
+      lastRound: null, ebox: null, n: 0 };
     for (const m of WA.mods) if (m.init) m.init(S);
   };
   const ens = S => { if (!S.wa) WA.init(S); return S.wa; };
 
-  /* ---------- per-weapon parameters (+ / -): fuse of the timed throwables, mortar burst height, planted mine fuse ---------- */
-  WA.fuse_of = function (S, key) {
-    const pd = C.PROJ[key] || {};
-    if (S.wa && S.wa.fz && S.wa.fz[key] != null && pd.fuseSet) return S.wa.fz[key];
+  /* ---------- per-weapon parameters (+ / -): fuse of the timed throwables, mortar burst height, planted mine fuse ----------
+   * P84: PER TEAM (they were one set for the whole match: team 1's F key changed team 2's grenade too). Stored in the team struct, t.ws = { fz{key: s},
+   * mortarH, mineF }, read for the team whose worm is active (or the team passed in); it switches with the turn by itself, is in the snapshot and the hash. */
+  WA.ws_make = () => ({ fz: Object.assign({}, C.FUSE_DEFAULT || {}), mortarH: (C.PARAM && C.PARAM.BURST_DEF) || 3, mineF: (C.PARAM && C.PARAM.MINE_DEF) || 1.5 });
+  WA.ws = function (S, team) {
+    const t = S.teams && S.teams[team != null ? team : (S.active ? S.active.team : 0)];
+    if (!t) { if (!S.wsLone) S.wsLone = WA.ws_make(); return S.wsLone; }
+    return t.ws || (t.ws = WA.ws_make());
+  };
+  WA.fuse_of = function (S, key, team) {
+    const pd = C.PROJ[key] || {}, ws = WA.ws(S, team);
+    if (ws.fz[key] != null && pd.fuseSet) return ws.fz[key];
     return pd.fuseSet ? S.fuse : (pd.fuse || 99);
   };
-  WA.set_fuse = function (S, key, v) { const pd = C.PROJ[key] || {}; if (!pd.fuseSet) return; ens(S).fz[key] = M.clamp(v, C.PARAM.FUSE_MIN, C.PARAM.FUSE_MAX); if (key === 'grenade') S.fuse = S.wa.fz[key]; };
+  WA.set_fuse = function (S, key, v, team) { const pd = C.PROJ[key] || {}; if (!pd.fuseSet) return; const ws = WA.ws(S, team); ws.fz[key] = M.clamp(v, C.PARAM.FUSE_MIN, C.PARAM.FUSE_MAX); if (key === 'grenade') S.fuse = ws.fz[key]; };
+  // the turn changed hands: S.fuse (the legacy mirror of the grenade's fuse) follows the new team's setting
+  WA.turn_sync = function (S) { if (!S.active) return; const f = WA.fuse_of(S, 'grenade'); if (S.fuse || f !== (C.FUSE_DEFAULT || {}).grenade) S.fuse = f; };
+  // hash of every team's settings (the active team's mortar / mine values first: the same numbers the old global fields mixed)
+  WA.hash_ws = function (S, mix) {
+    const a = WA.ws(S); mix(a.mortarH); mix(a.mineF);
+    const n = S.teams ? S.teams.length : 0, D = WA.ws_make();
+    for (let t = 0; t < n; t++) {
+      const ws = WA.ws(S, t);
+      if (t !== (S.active ? S.active.team : 0)) { if (ws.mortarH !== D.mortarH) mix(ws.mortarH + 100 * t); if (ws.mineF !== D.mineF) mix(ws.mineF + 100 * t); }
+      for (let q = 0; q < C.FUSE_KEYS.length; q++) { const k = C.FUSE_KEYS[q]; if (ws.fz[k] !== D.fz[k]) mix(ws.fz[k] + 7 * t + 0.1); }
+    }
+  };
   // step the parameter of the selected weapon by dir (-1 / +1); returns true when the selected weapon has one
   WA.adjust = function (S, dir) {
-    const key = S.weapon, K = C.PARAM, wa = ens(S), pd = C.PROJ[key] || {};
+    const key = S.weapon, K = C.PARAM, wa = WA.ws(S), pd = C.PROJ[key] || {};
     if (!dir) return false;
     const d = dir > 0 ? 1 : -1;
     if (key === 'mortar') { wa.mortarH = M.clamp(wa.mortarH + d * K.BURST_STEP, K.BURST_MIN, K.BURST_MAX); return true; }
@@ -56,7 +76,7 @@
   };
   // { name, value, unit } for the HUD, or null
   WA.param = function (S, key) {
-    const wa = ens(S), pd = C.PROJ[key] || {};
+    const wa = WA.ws(S), pd = C.PROJ[key] || {};
     if (key === 'mortar') return { name: 'burst height', value: wa.mortarH, unit: 'm' };
     if (key === 'mine') return { name: 'fuse', value: wa.mineF, unit: 's' };
     if (pd.fuseSet) return { name: 'fuse', value: WA.fuse_of(S, key), unit: 's' };
@@ -115,7 +135,7 @@
   WA.charge = function (S, key, a, ap, aim, speed) { return WA.mod_charge ? WA.mod_charge(S, key, a, ap, aim, speed) : false; };
   // a generic projectile of a wa kind has just been launched (mortar: remember the burst height)
   WA.launched = function (S, key, p) {
-    if (key === 'mortar') { p.burstH = ens(S).mortarH; p.armB = 0.3; }
+    if (key === 'mortar') { p.burstH = WA.ws(S).mortarH; p.armB = 0.3; }
     if (key === 'gas') p.fuse = WA.fuse_of(S, 'gas');
   };
 

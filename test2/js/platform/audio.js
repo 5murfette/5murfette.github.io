@@ -400,6 +400,8 @@
       case 'dying': if (!AU.voice('worm_dying', e.worm, 1, 0) && !AU.has('worm_dying')) SFX.ouch(); break;
       case 'lavaplop': S2('lava_plop', 0.8, 1, null); break;
       case 'steam': S2('steam_hiss', Math.min(1, e.power || 0.5), 1, null); break;
+      case 'jacket': S2('steam_hiss', 0.5, 1.3, null); S2('splash_small', 0.5, 1, null); break;                    // P89: the life jacket's CO2 cartridge hisses as the vest inflates (existing samples)
+      case 'gear': if (!e.used) S2('ui_click', 0.5, e.on ? 1.15 : 0.85, null); break;                                // P89: the HUD toggle
       case 'icebreak': S2('ice_crack', 0.9, 1, () => SFX.crunch(0.4)); break;
       case 'bridgefall': S2('bridge_fall', 1, 1, () => SFX.crack(1)); break;
       case 'treebreak': case 'treeshatter': S2('tree_crack', 0.9, 1, () => SFX.wood(0.9)); break;

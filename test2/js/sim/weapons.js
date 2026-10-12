@@ -234,7 +234,7 @@
     const s0 = ap.s + f * 0.6, y0 = a.pos.y + 0.2;
     if (key === 'mine') {
       const b = SS.scatter.add(S, 'mine', P.to_world(S, s0, y0), 0);
-      const v = pw(S, vs, vy); b.vel.x = v.x; b.vel.y = v.y; b.vel.z = v.z; b.armAt = S.time + A.MINE.ARM; b.dropped = true; b.team = a.team; b.planted = S.time; if (SS.weaponsA && S.wa) b.fuseSet = S.wa.mineF;
+      const v = pw(S, vs, vy); b.vel.x = v.x; b.vel.y = v.y; b.vel.z = v.z; b.armAt = S.time + A.MINE.ARM; b.dropped = true; b.team = a.team; b.planted = S.time; if (SS.weaponsA && S.wa) b.fuseSet = SS.weaponsA.ws(S, a.team).mineF;
     } else if (key === 'magnet' || key === 'spring') {
       if (S.devices.filter(o => o.kind === key).length >= A.MAGNET.MAX) { sim().log(S, `Device limit: ${A.MAGNET.MAX} ${key === 'magnet' ? 'magnets' : 'spring traps'}.`, 0xffb27a); return false; }   // PoC: 4 per kind
       const aim = sim().aim_dir(S); let ds = aim.s, dy = M.max(0.25, aim.y); const l = M.len2(ds, dy); ds /= l; dy /= l;
@@ -778,7 +778,7 @@
   }
 
   /* ---------- supply crates (PoC dropCrate / collectCrate): parachute, wind drift, health or a weapon ---------- */
-  const CR = { CHANCE: 0.3, HEALTH: 0.45, HP: 30, FALL: 55 * C.SCALE.kT, DRIFT: 0.35, PICK: 1.1, HOLD: 4, W: M.pow(34 / 44, 3), MAX: 24, MAX_TOOL: 10 };     // MAX: P38 R1 cap on S.crates (landed crates were never removed: 80 after a long chaos match)
+  const CR = { HEALTH: 0.45, HP: 30, FALL: 55 * C.SCALE.kT, DRIFT: 0.35, PICK: 1.1, HOLD: 4, W: M.pow(34 / 44, 3), MAX: 24, MAX_TOOL: 10 };     // MAX: P38 R1 cap on S.crates (landed crates were never removed: 80 after a long chaos match)
   WP.CRATE = CR;
   /* P38 R3: room for one more crate of a class: weapon + health crates share CR.MAX, tool crates have their own CR.MAX_TOOL (they
    * used to crowd the weapon crates out). When the class is full the OLDEST landed crate of it is removed (propbreak) instead of
@@ -800,17 +800,18 @@
     if (SS.weaponsA) SS.weaponsA.turn_start(S);
     if (SS.gadgets) SS.gadgets.turn_start(S);
     if (SS.ffield) SS.ffield.turn_start(S);
-    if (SS.skills) SS.skills.turn_start(S, first);                  // P37 W4: tool deliveries
+    const drop = SS.skills ? SS.skills.crate_plan(S, first) : null;   // P84: one plan per round: which kind of crate falls this turn, if any
+    if (drop === 'tool') SS.skills.drop_tool(S);                    // P37 W4: tool deliveries
     // PoC applyTurnStart: the strike side resets to downwind every turn (the in-plane wind at the worm)
     if (S.active && SS.weather && SS.weather.wind_at) { const wv = { x: 0, y: 0, z: 0 }, a = S.active, d = P.dir(S); SS.weather.wind_at(S, a.pos.x, a.pos.y + 6, a.pos.z, wv); S.strikeDir = wv.x * d.x + wv.z * d.z >= 0 ? 1 : -1; }
-    if (S.eow) return SS.eow.crate_turn(S, first);                    // P86: crates appear at random in space, drift, get caught by a gravity well (no parachute)
-    if (first || S.turnNo < 2 || rng(S) >= CR.CHANCE || !S.active || W().under) return;
+    if ((drop !== 'weapon' && drop !== 'health') || !S.active || W().under) return;
+    if (S.eow) { SS.eow.crate_drop(S, drop); return; }                // P86 x P84: the planned crate appears at random in space and drifts (no parachute)
     if (!WP.crate_room(S, false)) return;                            // (P38 R3: full -> the oldest landed crate goes; only crates still in the air refuse)
     // a crate falls onto the new turn's section, somewhere it can be reached (± 25 m along it)
     for (let tries = 0; tries < 12; tries++) {
       const s = rr(S, -25, 25), gy = groundBelow(S, s, W().SY - 0.5), at = P.to_world(S, s, gy);
       if (gy < -1e8 || gy < sim().surface_at(S, at.x, at.z) + 0.3 || (W().dry && !sim().in_play(S, at.x, at.z)) || (S.eow && SS.eow.hot_near(S, at.x, gy, at.z))) continue;   // (P68g: not over a hot vein)
-      const kind = rng(S) < CR.HEALTH ? 'health' : 'weapon', w0 = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(rng(S)) : C.CRATE_POOL[Math.floor(rng(S) * C.CRATE_POOL.length)]) : null, weapon = S.eow && w0 && SS.eow.no_air(w0) ? 'bazooka' : w0;   // (P68d: no crate of a weapon that needs air)   // P38 A2: weighted by rarity band (sim/balance.js)
+      const kind = drop, w0 = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(rng(S)) : C.CRATE_POOL[Math.floor(rng(S) * C.CRATE_POOL.length)]) : null, weapon = S.eow && w0 && SS.eow.no_air(w0) ? 'bazooka' : w0;   // (P68d: no crate of a weapon that needs air)   // P38 A2: weighted by rarity band (sim/balance.js)
       S.crates.push(WP.crate_make(S, kind, weapon, null, P.to_world(S, s, M.min(W().SY - 1, gy + 14))));
       sim().emit(S, 'banner', { title: 'Supply drop', sub: 'It drifts with the wind' });
       return;
@@ -864,7 +865,7 @@
       if (c.landed && a && !a.dead && sim().ctl(S, a) && hypot3(a.pos, c.pos) < CR.PICK * (SS.lab ? SS.lab.pick_k(S, a) : 1) && !(c.by === a.id && S.time < (c.pickT || 0))) {   // (PoC: not while it still hangs on its chute)
         S.crates.splice(i, 1);
         if (c.kind === 'tool' && SS.skills) SS.skills.pickup(S, a, c);
-        else if (c.kind === 'health') { a.hp += CR.HP; if (SS.weaponsA && a.gas) SS.weaponsA.cure(S, a); sim().emit(S, 'pickup', { wormId: a.id, kind: 'health', amount: CR.HP }); sim().log(S, `${a.name} picks up +${CR.HP} HP.`, 0x79d98b); }
+        else if (c.kind === 'health') { a.hp += CR.HP; if (SS.weaponsA && a.gas) SS.weaponsA.cure(S, a); if (SS.alien && a.embryo) SS.alien.cure(S, a); sim().emit(S, 'pickup', { wormId: a.id, kind: 'health', amount: CR.HP }); sim().log(S, `${a.name} picks up +${CR.HP} HP.`, 0x79d98b); }
         else { const t = S.teams[a.team]; if (t.ammo[c.weapon] !== Infinity) t.ammo[c.weapon] = (t.ammo[c.weapon] || 0) + 1; sim().emit(S, 'pickup', { wormId: a.id, kind: 'weapon', weapon: c.weapon }); sim().log(S, `${a.name} finds a ${C.ARSENAL[c.weapon].name}.`, 0xffb02e); }
       }
     }

@@ -31,7 +31,7 @@
     tShelf: { value: null }, uNW: { value: 193 }, uSW: { value: 96 }, uMC: { value: new T.Vector2(48, 48) },   // lattice texels / map side (m) / map centre
     uRing: { value: [0, 1, 2, 3, 4, 5].map(() => new T.Vector4(0, 0, -99, 0)) }   // P29l: open-sea ring waves (x, z, start time, strength)
   };
-  let ringN = 0, windT = 0, wsx = 0, wsz = 0;
+  let ringN = 0, windT = 0, wsx = 0, wsz = 0, wAng = 0, wInit = false;
   /* LS1 island shelf: the lattice sea is at most SEA (3 m) deep over a flat floor, the outer plane is the open ocean;
    * shading both by their real depth drew the lattice square on the sea (a light 3 m-deep floor inside, deep water
    * outside). Real islands: a turquoise shelf a few metres off the beach, then the slope drops to deep blue. Colour and
@@ -87,10 +87,10 @@
       return vec2(dot(u, uWDir), dot(u, vec2(-uWDir.y, uWDir.x)) * ky);
     }
     float hgt(vec2 p){
-      vec2 D = uWindD.xy;
-      return texture2D(tNoise, chopUV(p*0.045 - D*0.0040)).a * 0.6
-           + texture2D(tNoise, chopUV(p*0.11 - D*0.0067)).a * 0.3
-           + texture2D(tNoise, chopUV(p*0.33 - D*0.0130)).g * 0.1;
+      float D = uWindD.x; vec2 pc = p - vec2(48.0, 48.0);     // P87: rotate about the lattice centre, drift = a scalar along the heading (no sweep when the wind turns)
+      return texture2D(tNoise, chopUV(pc*0.045) - vec2(D*0.0040, 0.0)).a * 0.6
+           + texture2D(tNoise, chopUV(pc*0.11) - vec2(D*0.0067, 0.0)).a * 0.3
+           + texture2D(tNoise, chopUV(pc*0.33) - vec2(D*0.0130, 0.0)).g * 0.1;
     }
     vec4 shade(float depth, float foamS, float dA){          // dA: apparent depth (colour / opacity; LS1 shelf)
       float tD = dot(vW - uO, uN);
@@ -377,7 +377,8 @@
     const k0 = Math.max(0, Math.floor((z - r) * 2)), k1 = Math.min(N1 - 1, Math.ceil((z + r) * 2));
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const d = Math.hypot(i * 0.5 - x, k * 0.5 - z) / r; if (d >= 1) continue;
-      const w = ring ? Math.max(1 - d, 0.8 * Math.exp(-Math.pow((d - 0.75) / 0.18, 2))) : 1 - d * d;
+      const an = Math.atan2(k * 0.5 - z, i * 0.5 - x), pat = 0.3 + 0.7 * Math.max(0, 0.5 + 0.5 * Math.sin(an * 4 + x * 3.1) * 0.6 + 0.5 * Math.sin(an * 9 + z * 2.3) * 0.4), dd = d * (1 - 0.08 * Math.sin(an * 3 + x) - 0.05 * Math.sin(an * 7 + z));   // P87: a broken, wobbling front, not a clean hoop
+      const w = ring ? Math.max(1 - d, 0.8 * pat * Math.exp(-Math.pow((dd - 0.75) / 0.18, 2))) : 1 - d * d;
       const c = k * N1 + i; foam[c] = Math.min(3, foam[c] + amt * w);   // up to 3: a blast's churn lasts ~5 s
     }
   }
@@ -459,11 +460,14 @@
     {                                                    // the wind (smoothed: a new turn's wind must not make the ripples jump) carries the chop along
       const wm = S.wind && S.wind.mean ? S.wind.mean : { x: 0, z: 0 }, w = own.uWindD.value, dt = Math.max(0, Math.min(0.1, view.time - windT));
       windT = view.time;
-      const k = 1 - Math.exp(-dt * 0.5), tx = wm.x, tz = wm.z;
-      wsx += (tx - wsx) * k; wsz += (tz - wsz) * k;
-      const sp = Math.hypot(wsx, wsz), f = sp < 0.05 ? 0 : Math.max(sp, 0.8) / sp;
-      if (sp > 0.05) own.uWDir.value.set(wsx / sp, wsz / sp);
-      w.x += (sp < 0.05 ? 0.7 : wsx * f) * dt; w.y += (sp < 0.05 ? 0.4 : wsz * f) * dt; w.z = sp;
+      // P87: speed low-passed with a long time constant (10 s); the heading is an ANGLE slewed at <= 0.04 rad/s (a wind that
+      // flips between turns swings the chop over ~1 min, never in a snap) and the drift is a scalar distance along that heading
+      wsx += (wm.x - wsx) * (1 - Math.exp(-dt / 10)); wsz += (wm.z - wsz) * (1 - Math.exp(-dt / 10));
+      const sp = Math.hypot(wsx, wsz), tgt = Math.atan2(wsz, wsx);
+      if (!wInit) { wAng = sp > 0.05 ? tgt : 0; wInit = true; }
+      if (sp > 0.05) { let d = tgt - wAng; d -= Math.round(d / 6.2831853) * 6.2831853; const m = 0.04 * dt; wAng += Math.max(-m, Math.min(m, d)); }
+      own.uWDir.value.set(Math.cos(wAng), Math.sin(wAng));
+      w.x += Math.min(6, Math.max(sp, 0.8)) * dt; w.z = sp;
     }
     own.uInsp.value = view.insp || 0;
     const L = (view.look && view.look.sunDir) || [-0.42, 0.62, 0.66];

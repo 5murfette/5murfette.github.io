@@ -20,16 +20,26 @@
   const BLOOD0 = [0.28, 0.005, 0.01], STAIN0 = new T.Color(0x5a0408);
   const rnd = (a, b) => a + Math.random() * (b - a);
   const tv2 = new T.Vector3(), bv2 = new T.Vector3(), tmpC = new T.Color(), m4 = new T.Matrix4(), q = new T.Quaternion(), zAxis = new T.Vector3(0, 0, 1), nv = new T.Vector3(), sv = new T.Vector3(), pv = new T.Vector3();
+  /* P87 (user 2026-10-12: "not some circles, looks like shit"): the stain is a SPATTER, not a disc: alpha of a teardrop whose travel
+   * axis is local +x: a ragged body with thin spikes at the back, a tapering tail forward (the drop's momentum), and satellite
+   * droplets strung ahead of / around it. The instance is rotated so +x follows the impact direction projected on the surface and
+   * stretched by the impact angle (grazing -> long), so a hit from above leaves a near-round crown, a glancing one a long tailed streak. */
   function stainAlpha() {
-    // a ragged splat: a radial falloff with a noisy rim and a few satellite droplets
-    const N = 64, d = new Uint8Array(N * N * 4);
-    const sat = []; for (let i = 0; i < 7; i++) { const a = Math.random() * 6.283, r = rnd(0.62, 0.9); sat.push([0.5 + Math.cos(a) * r * 0.5, 0.5 + Math.sin(a) * r * 0.5, rnd(0.03, 0.07)]); }
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      const u = x / (N - 1), v = y / (N - 1), dx = u - 0.5, dy = v - 0.5, r = Math.hypot(dx, dy) * 2, a = Math.atan2(dy, dx);
-      const rim = 0.72 + 0.12 * Math.sin(a * 5 + 1.3) + 0.08 * Math.sin(a * 11 + 0.4);
-      let k = r < rim ? 1 - Math.pow(r / rim, 6) * 0.35 : 0;
-      for (const [sx, sy, sr] of sat) if (Math.hypot(u - sx, v - sy) < sr) k = Math.max(k, 0.9);
-      const o = (y * N + x) * 4; d[o] = d[o + 1] = d[o + 2] = 255; d[o + 3] = Math.round(k * 255);
+    const N = 128, d = new Uint8Array(N * N * 4), sat = [];
+    for (let i = 0; i < 11; i++) { const x = rnd(0.35, 0.98), sp = 0.1 + 0.3 * x; sat.push([x, rnd(-sp, sp), rnd(0.022, 0.06) * (1.2 - 0.5 * x)]); }
+    for (let i = 0; i < 4; i++) { const a = rnd(0, 6.283), r = rnd(0.5, 0.75); sat.push([-0.35 + Math.cos(a) * r * 0.6, Math.sin(a) * r * 0.5, rnd(0.02, 0.04)]); }
+    const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const ph = rnd(0, 6), ph2 = rnd(0, 6);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const x = (i + 0.5) / N * 2 - 1, y = (j + 0.5) / N * 2 - 1;
+      const bx = (x + 0.35) / 0.4, by = y / 0.33, th = Math.atan2(by, bx), rn = Math.hypot(bx, by);
+      const spike = Math.pow(Math.max(0, Math.sin(th * 9 + ph)), 10) * (bx < 0.3 ? 0.55 : 0.2);
+      const rim = 1 + 0.1 * Math.sin(th * 5 + ph2) + 0.07 * Math.sin(th * 11 + ph) + spike;
+      let k = sm(1.0, 0.88, rn / rim);
+      const tx = (x + 0.1) / 0.9;                                                      // the tail: from the body's front along +x
+      if (tx > 0 && tx < 1) { const w = 0.17 * Math.pow(1 - tx, 1.4) * (1 + 0.25 * Math.sin(tx * 12 + ph)) + 0.01; k = Math.max(k, sm(1.0, 0.7, Math.abs(y) / w) * (1 - tx * tx * 0.5)); }
+      for (const [sx, sy, sr] of sat) { const dd = Math.hypot(x - sx, y - sy); if (dd < sr * 1.4) k = Math.max(k, sm(sr * 1.4, sr * 0.8, dd) * 0.95); }
+      const o = (j * N + i) * 4; d[o] = d[o + 1] = d[o + 2] = Math.round(k * 255); d[o + 3] = 255;     // (three's alphaMap reads the GREEN channel: the old alpha-only texture made every stain a solid disc)
     }
     const t = new T.DataTexture(d, N, N, T.RGBAFormat); t.needsUpdate = true; t.magFilter = T.LinearFilter; t.minFilter = T.LinearMipmapLinearFilter; t.generateMipmaps = true;
     return t;
@@ -50,7 +60,7 @@
     g.setAttribute('color', new T.BufferAttribute(lc, 3).setUsage(T.DynamicDrawUsage));
     lines = new T.LineSegments(g, new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95 }));
     lines.frustumCulled = false; lines.renderOrder = 7; scene.add(lines);
-    stains = new T.InstancedMesh(new T.CircleGeometry(1, 12), slab(new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.22, metalness: 0, alphaMap: stainAlpha(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 })), STAINS);
+    stains = new T.InstancedMesh(new T.PlaneGeometry(2, 2), slab(new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.22, metalness: 0, alphaMap: stainAlpha(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 })), STAINS);
     stains.instanceMatrix.setUsage(T.DynamicDrawUsage); stains.setColorAt(0, STAIN0); stains.count = 0; stains.frustumCulled = false; stains.renderOrder = 2; scene.add(stains);
     gibs = new T.InstancedMesh(new T.IcosahedronGeometry(1, 0), slab(new T.MeshStandardMaterial({ roughness: 0.45, metalness: 0 })), GIBS);
     gibs.instanceMatrix.setUsage(T.DynamicDrawUsage); gibs.count = 0; gibs.frustumCulled = false; gibs.castShadow = true; scene.add(gibs);
@@ -59,7 +69,7 @@
     pSeg = mkI(new T.CapsuleGeometry(0.5, 1, 4, 8), 0xffffff, PARTS, true); pTail = mkI(new T.ConeGeometry(0.5, 1, 8), 0xffffff, 8, true); pHead = mkI(new T.SphereGeometry(0.5, 10, 8), 0xffffff, 8, true);
     pEye = mkI(new T.SphereGeometry(0.5, 8, 6), 0xf8f8f8, 8, false); pCut = mkI(new T.SphereGeometry(0.5, 8, 6), 0x8a0c16, PARTS * 3, false);
   };
-  BV.clear = function () { drops.length = 0; meat.length = 0; parts.length = 0; if (pSeg) { pSeg.count = pTail.count = pHead.count = pEye.count = pCut.count = 0; } stainPos.length = 0; nStain = 0; if (stains) stains.count = 0; if (gibs) gibs.count = 0; };
+  BV.clear = function () { drops.length = 0; meat.length = 0; parts.length = 0; if (pSeg) { pSeg.count = pTail.count = pHead.count = pEye.count = pCut.count = 0; } stainPos.length = 0; runs.length = 0; nStain = 0; if (stains) stains.count = 0; if (gibs) gibs.count = 0; };
   // dir (user 2026-10-08): the hit's direction (blast -> worm, the bat / shot along its aim): the droplets fly in a cone
   // around it (hit from above: down onto the ground around the worm; from the front: out behind it, onto the ground
   // there); a few still scatter at random. No dir: the old all-round spray.
@@ -79,7 +89,10 @@
       drops.push({ x: x + rnd(-0.1, 0.1), y: y + rnd(-0.1, 0.15), z: z + rnd(-0.1, 0.1), vx, vy, vz, life: life || 3, big: Math.random() < 0.3, col: col || null });
     }
   }
-  function stain(x, y, z, size, col) {
+  const runs = [], stT0 = [], stCol = [], bx2 = new T.Matrix4(), tg = new T.Vector3(), bt = new T.Vector3();
+  let clock = 0, recT = 0;
+  /* (dx, dy, dz): the travel direction of whatever made it (drop velocity, ray); no direction: a random one. Steep faces get a slowly running rivulet. */
+  function stain(x, y, z, size, col, dx, dy, dz) {
     const W = SS.world, n = W.normal ? W.normal(x, y, z, {}) : { x: 0, y: 1, z: 0 };
     nv.set(-(n.x || 0), -(n.y || -1), -(n.z || 0)); if (nv.lengthSq() < 1e-6) nv.set(0, 1, 0); nv.normalize();
     // the density gradient points into the rock: the stain faces out of it
@@ -98,10 +111,21 @@
       }
       if (!ok) return;
       size *= sc; }
-    q.setFromUnitVectors(zAxis, nv); q.multiply(new T.Quaternion().setFromAxisAngle(zAxis, Math.random() * 6.283));
-    pv.set(x + nv.x * 0.015, y + nv.y * 0.015, z + nv.z * 0.015); sv.set(size, size * rnd(0.75, 1), 1);
-    const i = nStain % STAINS; m4.compose(pv, q, sv); stains.setMatrixAt(i, m4); stainPos[i] = { x, y, z, nx: nv.x, ny: nv.y, nz: nv.z, s: size };
-    if (col) { tmpC.setRGB(col[0] * 0.6, col[1] * 0.6, col[2] * 0.6); stains.setColorAt(i, tmpC); } else stains.setColorAt(i, STAIN0);
+    let st = 1, ln = Math.hypot(dx || 0, dy || 0, dz || 0);
+    if (ln > 1e-4) {                                                  // the in-surface travel axis; the incidence sets the stretch (grazing -> long)
+      const dn = (dx * nv.x + dy * nv.y + dz * nv.z) / ln; tg.set(dx / ln - nv.x * dn, dy / ln - nv.y * dn, dz / ln - nv.z * dn);
+      st = 0.85 + 1.5 * (1 - Math.abs(dn)) * Math.min(1, ln / 4);
+      if (tg.lengthSq() < 1e-6) { tg.set(Math.random() - 0.5, 0, Math.random() - 0.5); tg.addScaledVector(nv, -tg.dot(nv)); }
+    } else { tg.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5); tg.addScaledVector(nv, -tg.dot(nv)); }
+    if (tg.lengthSq() < 1e-8) tg.set(1, 0, 0).addScaledVector(nv, -nv.x); tg.normalize(); bt.crossVectors(nv, tg);
+    bx2.makeBasis(tg, bt, nv); q.setFromRotationMatrix(bx2);
+    const ox = size * 2.3 * st * 0.35; pv.set(x + nv.x * 0.015 + tg.x * ox, y + nv.y * 0.015 + tg.y * ox, z + nv.z * 0.015 + tg.z * ox); sv.set(size * 2.3 * st, size * 2.3 * rnd(0.75, 1) / Math.sqrt(st), 1);
+    const i = nStain % STAINS; m4.compose(pv, q, sv); stains.setMatrixAt(i, m4);
+    const sp = stainPos[i] = { x, y, z, nx: nv.x, ny: nv.y, nz: nv.z, s: size, c: col || null, t0: clock };
+    stT0[i] = clock; tmpC.setRGB(col ? col[0] * 0.6 : 0.35, col ? col[1] * 0.6 : 0.02, col ? col[2] * 0.6 : 0.03); stains.setColorAt(i, tmpC);
+    if (nv.y < 0.78 && size > 0.075 && runs.length < 40 && Math.random() < 0.6) {      // a rivulet runs down the steep face, very slowly
+      tg.set(0, -1, 0).addScaledVector(nv, nv.y); if (tg.lengthSq() > 1e-4) { tg.normalize(); runs.push({ i, sp, x: x, y: y, z: z, dx: tg.x, dy: tg.y, dz: tg.z, nx: nv.x, ny: nv.y, nz: nv.z, size, t: 0, L: 0.25 + 3 * size, col: col || null }); }
+    }
     nStain++; stains.count = Math.min(STAINS, nStain); stains.instanceMatrix.needsUpdate = true; stains.instanceColor.needsUpdate = true;
   }
   // a burst worm: rays out in every direction stain what they meet (bigger close in)
@@ -113,7 +137,7 @@
       if (dir) { dx += dir.x * 1.4; dy += dir.y * 1.4; dz += dir.z * 1.4; const l = Math.hypot(dx, dy, dz) || 1; dx /= l; dy /= l; dz /= l; reach *= 1.3; }   // blown along the hit
       for (let d = 0.45; d < reach; d += 0.1) {
         const px = x + dx * d, py = y + dy * d, pz = z + dz * d;
-        if (W.sample(px, py, pz) > 0) { stain(px, py, pz, (0.12 + 0.35 * (1 - d / reach)) * rnd(0.7, 1.2) * (strong ? 1.3 : 1), col); break; }
+        if (W.sample(px, py, pz) > 0) { stain(px, py, pz, (0.1 + 0.28 * (1 - d / reach)) * rnd(0.7, 1.2) * (strong ? 1.3 : 1), col, dx, dy, dz); break; }
       }
     }
   }
@@ -155,7 +179,7 @@
       if (!k.rest) {
         k.vy -= G * dt; const nx = k.x + k.vx * dt, ny = k.y + k.vy * dt, nz = k.z + k.vz * dt, rr = Math.max(0.05, k.r);
         if (W.sample(nx, ny - rr, nz) > 0) {
-          if (Math.abs(k.vy) > 1.5 && Math.random() < 0.6) stain(k.x, k.y - rr, k.z, rnd(0.08, 0.18), k.col);
+          if (Math.abs(k.vy) > 1.5 && Math.random() < 0.6) stain(k.x, k.y - rr, k.z, rnd(0.07, 0.15), k.col, k.vx, k.vy, k.vz);
           k.vy = -k.vy * 0.22; k.vx *= 0.5; k.vz *= 0.5; k.sx *= 0.4; k.sy *= 0.4; k.sz *= 0.4;
           if (Math.hypot(k.vx, k.vy, k.vz) < 0.5) k.rest = true;
         } else { k.x = nx; k.y = ny; k.z = nz; k.rx += k.sx * dt; k.ry += k.sy * dt; k.rz += k.sz * dt; }
@@ -190,15 +214,43 @@
       else { splatRadial(e.x, e.y, e.z, e.dir, col); gibBurst(e.x, e.y, e.z, col); burst(e.x, e.y, e.z, 90, 9, true, e.dir, col); }
     }
   };
+  /* a rivulet: the stain's blob creeps down a steep face (decelerating, ~25 s), its tail stretching up behind it */
+  function updateRuns(dt) {
+    for (let r = runs.length - 1; r >= 0; r--) {
+      const u = runs[r]; u.t += dt;
+      if (stainPos[u.i] !== u.sp || u.sp.s === 0 || u.t > 26) { runs.splice(r, 1); continue; }
+      const tr = u.L * (1 - Math.exp(-u.t / 7)), sx = Math.max(u.size * 1.6, (tr + 0.8 * u.size) / 0.9), sy = u.size * 1.1 / (1 + 0.5 * tr);
+      tg.set(-u.dx, -u.dy, -u.dz); nv.set(u.nx, u.ny, u.nz); bt.crossVectors(nv, tg); bx2.makeBasis(tg, bt, nv); q.setFromRotationMatrix(bx2);
+      const c = tr - 0.35 * sx;                                                  // centre = head - 0.35 sx downhill (blob sits at local -0.35)
+      pv.set(u.x + u.dx * c + nv.x * 0.015, u.y + u.dy * c + nv.y * 0.015, u.z + u.dz * c + nv.z * 0.015); sv.set(sx, sy * 1.6, 1); m4.compose(pv, q, sv); stains.setMatrixAt(u.i, m4); stains.instanceMatrix.needsUpdate = true;
+    }
+    recT -= dt;
+    if (recT <= 0) {                                                             // fresh blood is bright, then browns and darkens (60 s)
+      recT = 0.5; let any = false;
+      for (let i = 0; i < stainPos.length; i++) {
+        const sp = stainPos[i]; if (!sp || sp.s === 0) continue; const a = clock - sp.t0; if (a > 62) continue;
+        const k = Math.min(1, a / 60), f = 1 - 0.55 * k, b = sp.c || BLOOD_S;
+        tmpC.setRGB(b[0] * 0.6 * f * (1 + 0.5 * (1 - k)), b[1] * 0.6 * f * (1 + 0.5 * (1 - k)) + 0.01 * k, b[2] * 0.6 * f); stains.setColorAt(i, tmpC); any = true;
+      }
+      if (any) stains.instanceColor.needsUpdate = true;
+    }
+  }
+  const BLOOD_S = [0.58, 0.035, 0.05];
   BV.frame = function (S, dt) {
     if (!scene) return;
     const W = SS.world, G = 9.81;
-    let n = 0;
+    let n = 0; clock += dt;
+    updateRuns(dt);
     for (let i = drops.length - 1; i >= 0; i--) {
       const b = drops[i]; b.life -= dt; b.vy -= G * dt; const k = 1 - 0.6 * dt; b.vx *= k; b.vz *= k;
       const nx = b.x + b.vx * dt, ny = b.y + b.vy * dt, nz = b.z + b.vz * dt;
       if (b.life <= 0 || ny < SS.sim.surface_at(S, nx, nz)) { drops.splice(i, 1); continue; }
-      if (W.sample(nx, ny, nz) > 0) { stain(b.x, b.y, b.z, b.big ? rnd(0.09, 0.16) : rnd(0.04, 0.08), b.col); drops.splice(i, 1); continue; }
+      if (W.sample(nx, ny, nz) > 0) {
+        const sz = b.big ? rnd(0.07, 0.12) : rnd(0.035, 0.065);
+        stain(b.x, b.y, b.z, sz, b.col, b.vx, b.vy, b.vz);
+        if (b.big && Math.random() < 0.5) { const sp = Math.hypot(b.vx, b.vz) || 1, o = sz * rnd(2.2, 3.4); stain(b.x + b.vx / sp * o, b.y, b.z + b.vz / sp * o, sz * 0.3, b.col, b.vx, b.vy, b.vz); }   // a satellite droplet ahead
+        drops.splice(i, 1); continue;
+      }
       b.x = nx; b.y = ny; b.z = nz;
     }
     for (const b of drops) {
@@ -215,7 +267,7 @@
       if (!m.rest) {
         m.vy -= G * dt; const nx = m.x + m.vx * dt, ny = m.y + m.vy * dt, nz = m.z + m.vz * dt;
         if (W.sample(nx, ny - m.r, nz) > 0) {
-          if (Math.abs(m.vy) > 1.5 && Math.random() < 0.5) stain(m.x, m.y - m.r, m.z, rnd(0.06, 0.12), m.col);
+          if (Math.abs(m.vy) > 1.5 && Math.random() < 0.5) stain(m.x, m.y - m.r, m.z, rnd(0.05, 0.1), m.col, m.vx, m.vy, m.vz);
           m.vy = -m.vy * 0.25; m.vx *= 0.55; m.vz *= 0.55;
           if (Math.hypot(m.vx, m.vy, m.vz) < 0.4) m.rest = true;
         } else { m.x = nx; m.y = ny; m.z = nz; m.rx += dt * 6; m.ry += dt * 4; }

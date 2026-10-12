@@ -77,8 +77,9 @@
   function swell(S) {
     const st = S.water, w = S.wind;
     if (!st || !w) return;
-    st.swellDir = w.dir;
-    st.swellA = W().dry ? 0 : C.WATER.SWELL_A * M.clamp(0.6 + 0.06 * w.speed, 0.6, 1.8);   // dry worlds: no sea
+    const aT = W().dry ? 0 : C.WATER.SWELL_A * M.clamp(0.6 + 0.06 * w.speed, 0.6, 1.8);   // dry worlds: no sea
+    st.swellDirT = w.dir; st.swellAT = aT;                                // P87: targets; sim/water.js step ramps toward them
+    if (!st.swellSnap || aT === 0) { st.swellDir = w.dir; st.swellA = aT; st.swellSnap = 1; }
   }
 
   function updateMean(S) {

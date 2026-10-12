@@ -26,7 +26,8 @@
   /* shared prelude: uniforms of the four whirl slots, the height map, noise, the axis */
   const PRE = /* glsl */`
     uniform sampler2D tHeight;
-    uniform vec4 uWA[4], uWB[4], uWC[4], uWD[4], uWE[4], uWF[4];   // A: x, z, rc, env; B: h, sign, vmax, rise m/s; C: dust rgb, leaf share; D: lean x, lean z, snake, age; E: perp x, perp z, ph2, grow; F: burst t, burst frac, state, rc0
+    uniform vec4 uWA[4], uWB[4], uWC[4], uWD[4], uWE[4], uWF[4], uWG[4];   // G: x = swirl phase (integral of vmax / rc dt), y = rise phase (integral of up / h dt)  [P87: every time * rate product is an integral, so a changing rate never jumps the pattern]
+       // A: x, z, rc, env; B: h, sign, vmax, rise m/s; C: dust rgb, leaf share; D: lean x, lean z, snake, age; E: perp x, perp z, ph2, grow; F: burst t, burst frac, state, rc0
     uniform float uTime, uPix, uFogD, uLit, uQ;
     float h1(float n){ return fract(sin(n) * 43758.5453); }
     float topAt(vec2 xz){ return texture2D(tHeight, (xz * 2.0 + 0.5) / float(textureSize(tHeight, 0).x)).r * 40.0; }   // view.js heightTex: top / 40
@@ -55,7 +56,7 @@
   const FN_V = /* glsl */`
     attribute float wi;
     ${PRE}
-    varying float vA; varying float vH; varying vec3 vN; varying vec3 vV; varying vec3 vCol; varying float vAng; varying float vSg; varying float vRise; varying float vOm;
+    varying float vA; varying float vH; varying vec3 vN; varying vec3 vV; varying vec3 vCol; varying float vAng; varying float vSg; varying float vRise; varying float vOm; varying vec2 vPh;
     void main(){
       int i = int(wi + 0.5);
       vec4 A = uWA[i], B = uWB[i], Cc = uWC[i], E = uWE[i];
@@ -70,7 +71,7 @@
       vec3 p = vec3(xz.x, y, xz.y);
       vec3 toC = cameraPosition - p; float d = length(toC);
       vN = vec3(cos(a), 0.0, sin(a)); vV = toC / max(d, 1e-3);
-      vH = v; vAng = a; vSg = B.y; vOm = B.z / max(A.z * 1.1, 0.3) * 0.8; vRise = B.w / max(B.x, 2.0);
+      vH = v; vAng = a; vSg = B.y; vOm = B.z / max(A.z * 1.1, 0.3) * 0.8; vRise = B.w / max(B.x, 2.0); vPh = uWG[i].xy;
       vCol = Cc.rgb * uLit;
       float fade = smoothstep(0.0, 0.1, v) * (1.0 - smoothstep(0.7, 1.0, v));
       vA = A.w * fade * exp(-uFogD * uFogD * d * d) * smoothstep(0.4, 2.5, d);
@@ -79,12 +80,12 @@
   const FN_F = /* glsl */`
     ${NOISE}
     uniform float uTime; uniform float uQ;
-    varying float vA; varying float vH; varying vec3 vN; varying vec3 vV; varying vec3 vCol; varying float vAng; varying float vSg; varying float vRise; varying float vOm;
+    varying float vA; varying float vH; varying vec3 vN; varying vec3 vV; varying vec3 vCol; varying float vAng; varying float vSg; varying float vRise; varying float vOm; varying vec2 vPh;
     void main(){
-      float ang = vAng + vSg * (vOm * uTime * 0.6 - vH * 2.2);
-      vec3 p = vec3(cos(ang) * 1.7, sin(ang) * 1.7, vH * 4.5 - uTime * vRise * 9.0);
+      float ang = vAng + vSg * (vPh.x * 0.727 * 0.6 - vH * 2.2);
+      vec3 p = vec3(cos(ang) * 1.7, sin(ang) * 1.7, vH * 4.5 - vPh.y * 9.0);
       float n = fbm(p, step(0.85, uQ));
-      float band = 0.5 + 0.5 * sin(vAng * 2.0 + vSg * (vH * 8.0 - uTime * vOm * 0.35) + 6.0 * n);          // spiral streaks that rotate with the funnel
+      float band = 0.5 + 0.5 * sin(vAng * 2.0 + vSg * (vH * 8.0 - vPh.x * 0.727 * 0.35) + 6.0 * n);          // spiral streaks that rotate with the funnel
       float limb = abs(dot(normalize(vN), normalize(vV)));
       float ero = 1.0 - limb;                                                                              // the limb erodes: a ragged outline, not a smooth cone
       float dens = smoothstep(0.3 + 0.35 * ero, 0.72 + 0.2 * ero, n * 0.7 + 0.3 * band);
@@ -129,7 +130,7 @@
       vA = min(dens, 1.0) * exp(-uFogD * uFogD * d * d) * smoothstep(0.4, 2.5, d);
       vCol = Cc.rgb * uLit;
       vSg = B.y; vRho = R;
-      float th = B.y * B.z / max(A.z, 0.3) * 0.9 * uTime / (1.0 + 0.5 * R);
+      float th = B.y * 0.9 * uWG[i].x / (1.0 + 0.5 * R);
       vQ = mat2(cos(th), sin(th), -sin(th), cos(th)) * (R * vec2(cos(a), sin(a)));
       gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
     }`;
@@ -168,7 +169,8 @@
       if ((isBurst && bB < 0.03) || (!isBurst && A.w < 0.01)) { hide(); vA = 0.0; vUv = vec2(0.0); vCol = vec3(0.0); return; }
       float u = position.y, hgt = max(B.x, 2.0);
       float sg = B.y;
-      float om = B.z / max(A.z * (0.8 + 0.6 * h1(seed.x * 13.0)), 0.3) * sg * 0.8;
+      float kS = 0.8 + 0.6 * h1(seed.x * 13.0);
+      float om = B.z / max(A.z * kS, 0.3) * sg * 0.8, omP = uWG[i].x * sg * 0.8 / kS;   // om: the rate (direction, lead); omP: the same rate as an integrated phase (angle = omP, never om * uTime)
       vec3 p, q, tg;
       float s, a;
       if (isBurst) {
@@ -188,7 +190,7 @@
       } else if (isSkirt) {
         float rr = A.z * (0.7 + 2.9 * pow(seed.y, 1.2)) * (0.55 + 0.45 * A.w);
         float rot = om / (1.0 + 0.8 * rr / max(A.z, 0.3));
-        float ang = seed.x * 6.2832 + rot * uTime;
+        float ang = seed.x * 6.2832 + omP / (1.0 + 0.8 * (0.7 + 2.9 * pow(seed.y, 1.2)));
         float Ls = 1.6 * (1.0 + 0.8 * rr / max(A.z, 0.3));
         float dth = min(Ls / max(rr, 0.15), 2.4);
         float au = ang - (rot < 0.0 ? -1.0 : 1.0) * dth * u;
@@ -201,10 +203,10 @@
         p = vec3(A.x + rr * cos(ang), q.y, A.y + rr * sin(ang));
       } else {
         float rise = B.w / hgt * (0.6 + 0.8 * seed.y);
-        float f = fract(seed.x + uTime * rise);
+        float f = fract(seed.x + uWG[i].y * (0.6 + 0.8 * seed.y));
         float hh = f * hgt;
         float rr = A.z * (0.4 + 1.25 * pow(f, 1.4)) * (0.7 + 0.6 * h1(seed.w * 71.0));
-        float ang = seed.y * 6.2832 + om * uTime;
+        float ang = seed.y * 6.2832 + omP;
         float dth = 0.0;
         float sd = sg;
         s = mix(0.35, 0.9, f);
@@ -265,7 +267,7 @@
 
   function uniforms() {
     const v4 = () => [0, 1, 2, 3].map(() => new T.Vector4());
-    return { tHeight: { value: null }, uWA: { value: v4() }, uWB: { value: v4() }, uWC: { value: v4() }, uWD: { value: v4() }, uWE: { value: v4() }, uWF: { value: v4() },
+    return { tHeight: { value: null }, uWA: { value: v4() }, uWB: { value: v4() }, uWC: { value: v4() }, uWD: { value: v4() }, uWE: { value: v4() }, uWF: { value: v4() }, uWG: { value: v4() },
       uTime: { value: 0 }, uPix: { value: 0.001 }, uFogD: { value: 0.006 }, uLit: { value: 1 }, uQ: { value: 1 } };
   }
   const shared = uniforms();
@@ -284,21 +286,31 @@
     shared.uQ.value = q;
     funnel.userData.minQ = 0.5;
   };
-  const held = [null, null, null, null];                    // P70: the whirl object in each uniform slot (MAXW)
+  const held = [null, null, null, null], pW = [0, 0, 0, 0], pR = [0, 0, 0, 0], sW = [0, 0, 0, 0], sR = [0, 0, 0, 0], sL = [0, 1, 2, 3].map(() => [0, 0, 1, 0]), fresh = [1, 1, 1, 1];
+  let lastT = -1;                    // P70: the whirl object in each uniform slot (MAXW)
   const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   /* per frame: pack the sim whirls into the uniform slots */
   WV.frame = function (S, wind, we, biome, ctx) {
     const t0 = performance.now(), wl = (wind && wind.whirls) || [], K = SS.CFG.WIND.WHIRL, N1 = SS.world.NX;
     nW = 0;
-    for (let i = 0; i < MAXW; i++) if (held[i] && wl.indexOf(held[i]) < 0) held[i] = null;                // P70: a whirl keeps its slot (its stroke seeds) while it lives, whichever whirls died before it
-    for (let q = 0; q < wl.length; q++) if (held.indexOf(wl[q]) < 0) { const f = held.indexOf(null); if (f >= 0) held[f] = wl[q]; }
+    let fdt = lastT < 0 ? 0 : Math.min(0.1, Math.max(0, ctx.time - lastT)); lastT = ctx.time;    // P87: dt of the render clock (slow-mo aware) for the phase integrals
+    for (let i = 0; i < MAXW; i++) if (held[i] && wl.indexOf(held[i]) < 0) { held[i] = null; fresh[i] = 1; }                // P70: a whirl keeps its slot (its stroke seeds) while it lives, whichever whirls died before it
+    for (let q = 0; q < wl.length; q++) if (held.indexOf(wl[q]) < 0) { const f = held.indexOf(null); if (f >= 0) { held[f] = wl[q]; fresh[f] = 1; } }
     for (let i = 0; i < MAXW; i++) {
       const w = held[i], A = shared.uWA.value[i], B = shared.uWB.value[i], Cc = shared.uWC.value[i], D = shared.uWD.value[i], E = shared.uWE.value[i], F = shared.uWF.value[i];
       const bf = w ? Math.min(1.1, w.bst / (K.BURST_K * w.vmax)) : 0;
       if (!w || !(w.env > 0.01 || bf > 0.03)) { A.w = 0; F.y = 0; continue; }
       nW = i + 1;
       A.set(w.x, w.z, w.rc, w.env); B.set(w.h, w.sign, w.vmax, w.up);
-      D.set(w.lx, w.lz, w.sa, w.age); E.set(w.px, w.pz, w.ph2, w.grow); F.set(w.st === 2 ? w.bt : 0, bf, w.st, w.rc0);
+      // P87: phases = integrals of the (low-passed) rates; the lean / snake direction eases (a new turn's wind flips it at once in the sim)
+      const kk = fresh[i] ? 1 : 1 - Math.exp(-fdt / 0.35), kl = fresh[i] ? 1 : 1 - Math.exp(-fdt / 1.5);
+      if (fresh[i]) { pW[i] = 0; pR[i] = 0; fresh[i] = 0; }
+      sW[i] += (w.vmax / Math.max(w.rc, 0.3) - sW[i]) * kk; sR[i] += (w.up / Math.max(w.h, 2) - sR[i]) * kk;
+      pW[i] += sW[i] * fdt; pR[i] += sR[i] * fdt;
+      const L = sL[i]; L[0] += (w.lx - L[0]) * kl; L[1] += (w.lz - L[1]) * kl; L[2] += (w.px - L[2]) * kl; L[3] += (w.pz - L[3]) * kl;
+      const pl = Math.hypot(L[2], L[3]) || 1;
+      shared.uWG.value[i].set(pW[i], pR[i], 0, 0);
+      D.set(L[0], L[1], w.sa, w.age); E.set(L[2] / pl, L[3] / pl, w.ph2, w.grow); F.set(w.st === 2 ? w.bt : 0, bf, w.st, w.rc0);
       const ci = Math.min(N1 - 1, Math.max(0, Math.round(w.x * 2))), ck = Math.min(N1 - 1, Math.max(0, Math.round(w.z * 2)));
       const snowy = we && we.snowD && we.snowD[ck * N1 + ci] > 0.02, ashy = we && we.ashD && we.ashD[ck * N1 + ci] > 0.02;
       const dk = DUST[biome] || DUST.temperate;

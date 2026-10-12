@@ -518,9 +518,10 @@
       ps.eff += (M.clamp((v.slope || 0) * f / 0.6, 0, 1) * ps.crawl - ps.eff) * Math.min(1, dt * 4);      // P65h: effort: climbing a slope (bigger contractions, a slower cadence)
       ps.wave += dt * (0.12 + 2.6 * ps.crawl * (1 - 0.15 * ps.eff));      // contraction waves run head -> tail (u + wave); P65h: the cadence follows the measured ground speed (the hump pattern moves back at ~0.75 of the walk speed)
       // P33: swimming / struggling in the water: fast contraction waves, the head thrown up and about
-      if (w.swim || w.ropeWet) ps.wave += dt * 3.2;
+      const jkSwim = !!(w.swim && w.swim.jk);                                                       // P89: in a life jacket: a calm stroke, no thrashing
+      if (w.swim || w.ropeWet) ps.wave += dt * (jkSwim ? 0.9 : 3.2);
       const aimV = S.eow && SS.eowView ? SS.eowView.aim(S, w, v, fs, f) - (v.tilt || 0) : S.aim;                   // P86: the screen aim in the worm's own frame
-      let look = aiming && !w.ropeWet ? aimV : w.swim || w.ropeWet ? 1.1 + 0.5 * Math.sin(ps.t * 9.0) : 0.25 * Math.sin(ps.t * 0.37);
+      let look = aiming && !w.ropeWet ? aimV : jkSwim ? 0.9 + 0.1 * Math.sin(ps.t * 1.7) : w.swim || w.ropeWet ? 1.1 + 0.5 * Math.sin(ps.t * 9.0) : 0.25 * Math.sin(ps.t * 0.37);
       // the head takes most of the turn (its tip may rotate a lot), the arc a little: the body stays ~1 m tall
       if (idl && idl.lookW > 0.001) look += (idl.look - look) * idl.lookW;
       if (rx && rx.lookW > 0.001) look += (rx.look - look) * rx.lookW;                            // P57: watching a projectile, sad, relieved
@@ -549,7 +550,8 @@
       const rs = w.flipRope != null && w.flipRope === w.flipAt;
       let spin = w.flip && w.flipAt != null && airborne ? f * (rs ? w.flipW * w.flipK : 13) : 0;          // a salto / rope release = a muscle torque on the body, not a drawn rotation
       if (ps.thr > 0.02) spin += f * 2.6 * ps.thr * M.cos(viewTime * 6.5 + v.phase);                          // P57: a thrown worm rocks and thrashes
-      if (w.swim || w.ropeWet) spin += f * 3.4 * M.cos(viewTime * 10.5);                                       // thrashing in the water
+      if (jkSwim) spin += f * 0.35 * M.cos(viewTime * 1.9);                                                    // P89: a gentle sway on the vest
+      else if (w.swim || w.ropeWet) spin += f * 3.4 * M.cos(viewTime * 10.5);                                       // thrashing in the water
       if (burnNow) spin += f * 2.8 * M.cos(viewTime * 23 + v.phase);                                           // a burning worm writhes
       const hanging = w === a && !!(S.rope || (S.zip && S.zip.state === 2) || (S.chute && S.chute.open));
       { const nn = P.normal2(S, sNow, w.pos.y - 0.55); v.slope = M.clamp(M.atan2(-nn.s, nn.y), -1.2, 1.2); }       // the ground frame: the slope under it
@@ -565,6 +567,7 @@
         if (SS.alienView && SS.alienView.worm_post) SS.alienView.worm_post(S, w, v, sp, dt, view);                  // P47: the face frame (a hugger sits on it), the infected look
         if (v.zap) updateZap(v, sp, Math.min(1, (viewTime - v.zapT) / ZAP_T));
         // eyes on the front of the head, looking along it; blink now and then
+        if (SS.jacketView) SS.jacketView.vest(S, w, v, sp, dt);                                                 // P89: the life jacket collar
         v.eyes.position.set(sp.x[hi] + Math.cos(ha) * 0.05 - Math.sin(ha) * 0.06, sp.y[hi] + Math.sin(ha) * 0.05 + Math.cos(ha) * 0.06, 0);
         v.eyes.rotation.z = ha;
         v.eyes.scale.y = (Math.sin(ps.t * 0.9) > 0.995) ? 0.15 : 1;

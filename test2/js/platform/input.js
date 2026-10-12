@@ -11,6 +11,7 @@
   I.panReset = false;
   I.clicks = [];           // P9: left clicks without a drag (client x, y): targets on the section
   I.jetReq = 0;            // P86: the HUD's jetpack chip was clicked (consumed by the next sample)
+  I.gearReq = 0;           // P89: the HUD's rescue-gear button (kind + 1), consumed by the next sample
   I.pickWeapon = '';       // P9: a weapon chosen on the weapon grid (consumed by the next sample)
   I.perkPick = 0;          // P50: a perk card clicked in the draft overlay (1..3, consumed by the next sample)
   /* PoC mouse aim (aimAt / pointerdown / pointermove): the cursor aims the active worm (the shot line runs through it,
@@ -184,6 +185,7 @@
     // P37-6: Tab = the next OPPONENT worm (strongest team / worm first), Shift+Tab = the next crate (nearest first); both
     // only while the view may still be rotated (sim/rotlock.js). PoC worm select (option) moved to the \\ key (every letter is a weapon / move key).
     inp.wsel = p.has('Backslash') && S && SS.sim.can_switch && SS.sim.can_switch(S) ? 1 : 0;
+    inp.gear = I.gearReq || (p.has('Semicolon') ? 1 : 0); I.gearReq = 0;                                       // P89: ; = the team's life jacket on / off (sim/gear.js)
     inp.align_step = p.has('Tab') && !shift ? 1 : 0;
     inp.align_crate = p.has('Tab') && shift ? 1 : 0;
     inp.align_refocus = 0;

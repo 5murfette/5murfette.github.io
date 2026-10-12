@@ -42,8 +42,9 @@
     super:    { lo: 85, hi: 1e9, ammoMax: 1, w: 3 }
   };
   B.ORDER = ['common', 'uncommon', 'rare', 'super'];
-  /* crate economy (weapons.js WP.CRATE and skills.js KS.CHANCE read these) */
-  B.ECON = { crateChance: 0.3, healthShare: 0.45, healthHP: 30, toolChance: { off: 0, low: 0.12, normal: 0.22, high: 0.4 } };
+  /* crate economy (weapons.js WP.CRATE reads these). P84: crateRound = the default chance of ONE crate in a round (all crate levels at 5, C.CRATES: P_LEVEL x level);
+   * healthShare = the health share of a Crate Overload's mix; the per-turn chances (0.3, tool 0.12 / 0.22 / 0.4) are gone */
+  B.ECON = { crateRound: 0.2, healthShare: 0.45, healthHP: 30 };
 
   const R = (k, ammo, dmg, dmgN, dot, knock, terr, range, hits, aim, tim, exp, util, cond, prem, counter) => ({ k, ammo, dmg, dmgN, dot, knock, terr, range, hits, aim, tim, exp, util, cond, prem, counter });
   B.ROWS = [
@@ -165,5 +166,5 @@
   };
   B.crate_weights = function () { const o = {}; let p = 0; for (let i = 0; i < cumK.length; i++) { o[cumK[i]] = (cumW[i] - p) / tot; p = cumW[i]; } return o; };
   build();                                              // (the cumulative table is built once, at load: C.CRATE_POOL and the rows are static)
-  /* (P38 R7: no apply(): skills.js KS.POOL / KS.CHANCE and weapons.js CR hold these numbers themselves; tools/dev/gen/r7test.cjs checks that they equal B.TOOLS / B.ECON) */
+  /* (P38 R7: no apply(): skills.js KS.POOL and weapons.js CR hold these numbers themselves; tools/dev/gen/r7test.cjs checks that they equal B.TOOLS / B.ECON) */
 })(window.SS = window.SS || {});

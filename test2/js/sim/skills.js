@@ -11,9 +11,9 @@
  *             (S.lightning is set around those strikes, sim.hurt applies the factor)                  for the game
  *   overload  not a skill: a rare delivery that drops 10 different crates around the whole map, in 3D
  * Tool crates: S.crates[] entries { kind: 'tool', tool }, dropped like weapon crates (WP.turn_start -> turn_start here)
- * with a chance per turn set by settings.toolCrates ('off' | 'low' | 'normal' | 'high').
+ * P84: no longer a roll per turn: one plan per ROUND (SK.crate_plan, levels crateW / crateH / crateT 0..10, C.CRATES), at most one crate per round.
  * C layout: struct Skills { u8 freerot, laser, fastwalk, lowgrav, tinfoil; };  Crate += { u8 tool; }.
- * API: init(S), turn_start(S, first), turn_end(S, w), pickup(S, a, crate), grant(S, w, tool), has(w, k), walk_k(S, w),
+ * API: init(S), crate_plan(S, first), crate_level(S, kind), crate_chances(S), drop_tool(S), turn_end(S, w), pickup(S, a, crate), grant(S, w, tool), has(w, k), walk_k(S, w),
  *   gravity_k(S, w), is_bullet(key), laser_path(S, a, key, out), overload(S, a), hash(S, mix). */
 (function (SS) {
   'use strict';
@@ -23,8 +23,7 @@
   const sim = () => SS.sim;
   const KS = C.SKILL = Object.assign({ FASTWALK_K: 1.6, LOWGRAV_K: 0.45, TINFOIL_K: 0.1 }, C.SKILL || {});
   KS.TURNS = { freerot: 2, laser: 4, fastwalk: 3, lowgrav: 3, tinfoil: 1 };
-  KS.CHANCE = { off: 0, low: 0.12, normal: 0.22, high: 0.4 };
-  // delivery table: [tool, weight]; the overload is rare (= SS.balance.TOOLS, the balance table; r7test checks they agree: no load-time overwrite)
+    // delivery table: [tool, weight]; the overload is rare (= SS.balance.TOOLS, the balance table; r7test checks they agree: no load-time overwrite)
   KS.POOL = [['freerot', 14], ['laser', 20], ['fastwalk', 18], ['lowgrav', 18], ['tinfoil', 15], ['overload', 7]];
   KS.NAMES = { freerot: 'Free Rotation', laser: 'Laser Sight', fastwalk: 'Fast Walk', lowgrav: 'Low Gravity', tinfoil: 'Tinfoil Hat', overload: 'Crate Overload' };
   KS.INFO = { freerot: 'Turn the view freely, ignoring the rotation lock', laser: 'A dotted line shows the exact path of bullet weapons', fastwalk: 'Walk much faster', lowgrav: 'Low gravity: jump higher and further', tinfoil: 'Lightning does only 10 % damage, for the rest of the game', overload: 'Ten crates rain down all over the map' };
@@ -67,13 +66,46 @@
     let u = rng(S) * tot; for (const e of KS.POOL) { u -= e[1]; if (u < 0) return e[0]; }
     return KS.POOL[0][0];
   };
-  SK.turn_start = function (S, first) {
-    const chance = KS.CHANCE[S.settings.toolCrates == null ? 'normal' : S.settings.toolCrates] || 0;
-    if (first || S.turnNo < 2 || !S.active || W().under || chance <= 0) return;
-    // the draws are fixed per turn (chance, then the tool, then the place) so the stream stays in step
-    const hit = rng(S) < chance, tool = pick(S);
-    const WP = SS.weapons;
-    if (!hit || !WP.crate_room(S, true)) return;     // (P38 R3: the tool crates' own cap, the oldest landed one makes room)
+  /* ---------- P84: when does a crate fall? One plan per ROUND, not a roll per turn ---------- */
+  /* level 0..10 of a crate kind ('weapon' | 'health' | 'tool'): settings crateW / crateH / crateT. The legacy toolCrates ('off' | 'low' | 'normal' | 'high')
+   * still works while crateT is at its default (the old tests, URL parameters and saved settings): it maps through C.CRATES.LEGACY_TOOL. */
+  SK.crate_level = function (S, kind) {
+    const CR = C.CRATES, st = S.settings, i = CR.KINDS.indexOf(kind); if (i < 0) return 0;
+    let v = st[CR.SLIDERS[i]];
+    if (kind === 'tool' && (v == null || v === CR.DEF) && st.toolCrates != null && CR.LEGACY_TOOL[st.toolCrates] != null) v = CR.LEGACY_TOOL[st.toolCrates];
+    v = v == null ? CR.DEF : +v;
+    return Number.isFinite(v) ? M.clamp(Math.round(v), 0, CR.MAX) : CR.DEF;
+  };
+  /* the chances of a round: { any, weapon, health, tool }: any = P_LEVEL x the highest level (5 -> 0.2, 10 -> 0.4), split over the kinds in proportion to their levels */
+  SK.crate_chances = function (S) {
+    const CR = C.CRATES, lv = CR.KINDS.map(k => SK.crate_level(S, k)); let mx = 0, sum = 0;
+    for (const v of lv) { mx = M.max(mx, v); sum += v; }
+    const any = sum > 0 ? M.min(1, CR.P_LEVEL * mx) : 0, out = { any };
+    for (let i = 0; i < CR.KINDS.length; i++) out[CR.KINDS[i]] = sum > 0 ? any * lv[i] / sum : 0;
+    return out;
+  };
+  /* called at every turn start (after the round counter moved): the first turn of a round draws the plan - whether this round has a crate, of which kind and
+   * at which of the round's turns (3 draws of the own stream, always, so it stays in step) - and a plan's turn returns the kind to drop, else null.
+   * At most one crate per round. Nothing falls in the match's first turn, in caves (no sky) or while the plan says no. */
+  SK.crate_plan = function (S, first) {
+    const CR = C.CRATES, r = S.round | 0;
+    if (first) return null;                                       // (the match's first turn: no draw, the stream stays where reset left it)
+    if (!S.crPlan || S.crPlan.round !== r) {
+      const ch = SK.crate_chances(S), u = rng(S), v = rng(S), at = rng(S);
+      let kind = null;
+      if (u < ch.any) { let acc = 0; const tot = ch.weapon + ch.health + ch.tool; for (const k of CR.KINDS) { acc += ch[k]; if (v * tot < acc) { kind = k; break; } } }
+      let alive = 0; for (let t = 0; t < (S.teams ? S.teams.length : 2); t++) if (S.worms.some(o => !o.dead && o.hp > 0 && o.team === t)) alive++;
+      S.crPlan = { round: r, kind, at: M.min(alive - 1, Math.floor(at * M.max(1, alive))), n: 0 };
+    }
+    const p = S.crPlan, hit = p.kind && p.n === p.at && !first && S.turnNo >= 2 && S.active && !W().under;
+    p.n++;
+    if (hit) { const k = p.kind; p.kind = null; return k; }
+    return null;
+  };
+  /* a tool delivery (the plan said 'tool') */
+  SK.drop_tool = function (S) {
+    const tool = pick(S), WP = SS.weapons;
+    if (!WP.crate_room(S, true)) return;     // (P38 R3: the tool crates' own cap, the oldest landed one makes room)
     if (S.eow) { if (SS.eow.crate_add(S, 'tool', null, tool)) sim().emit(S, 'banner', { title: 'Tool delivery', sub: 'A crate drifts in from the dark' }); return; }   // P86: random spot in space, no parachute
     for (let tries = 0; tries < 12; tries++) {
       const s = rr(S, -25, 25), gy = WP.ground_below(S, s, W().SY - 0.5), at = P.to_world(S, s, gy);

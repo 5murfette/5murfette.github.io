@@ -78,6 +78,11 @@
     el.innerHTML = '<span class="pn">' + esc(e.kind === 'health' ? '+' + e.amount : e.kind === 'tool' ? ((C.SKILL && C.SKILL.NAMES && C.SKILL.NAMES[e.tool]) || 'Tool') : C.ARSENAL[e.weapon].name) + '</span>';
     el.style.color = e.kind === 'health' ? '#79d98b' : e.kind === 'tool' ? '#9fe8ff' : '#ffb02e'; el._dx = 0; addPop(el, e.worm, S.time);
   }
+  /* P89: the life jacket inflated: a small orange label over the worm (no speech bubble: the voice rules of P85) */
+  function jacketPop(S, e) {
+    const el = document.createElement('div'); el.className = 'pop gain';
+    el.innerHTML = '<span class="pn">LIFE JACKET</span>'; el.style.color = '#ffa24a'; el._dx = 0; addPop(el, e.worm, S.time);
+  }
   /* kill feed (top right under the maps): who went down and how; entries fade by themselves (CSS) and are removed when the animation ends */
   const KILL_VERB = ['was eliminated', 'was blown up', 'was shot', 'was crushed', 'burned to death', 'fell into the lava', 'succumbed to poison', 'drowned', 'was electrocuted', 'fell to their death', 'was eaten by the alien', 'was dissolved by acid', 'was shredded'];
   let feedEl = null;
@@ -100,8 +105,8 @@
     if (e.type === 'fire' && S.active && Math.random() < 0.3) say(S.active, 'fire');
     if (e.type === 'use' && e.weapon === 'skip' && S.active) say(S.active, 'pass');
     if (e.type === 'pickup' && e.worm && S.active && e.worm.id === S.active.id) say(e.worm, e.kind === 'health' ? 'health' : 'crate', e.weapon && C.ARSENAL[e.weapon] ? C.ARSENAL[e.weapon].name : '');
-    if (e.type === 'hugger_attach' && e.worm && !e.worm.dead) { say(e.worm, 'hugged'); banner(`${e.worm.name} was face-hugged!`, 'A face hugger latched on', '#b6ff4a'); }       // P47
-    if (e.type === 'hugger_detach' && e.worm && !e.worm.dead) { say(e.worm, 'sick'); banner('INFECTED', `${e.worm.name} loses ${SS.alien.K.PARA_HP} HP every ${SS.alien.K.PARA_T} s`, '#b6ff4a'); }
+    if (e.type === 'hugger_attach' && e.worm && !e.worm.dead) { say(e.worm, 'hugged'); banner(`${e.worm.name} was face-hugged!`, `Infected: −${SS.alien.K.PARA_HP} HP every ${SS.alien.K.PARA_T} s. Shoot the hugger off, then find a health crate`, '#b6ff4a'); }       // P47
+    if (e.type === 'hugger_detach' && e.worm && !e.worm.dead) say(e.worm, 'sick');
     if (e.type === 'chest_burst' && e.wormId != null) banner('Something bursts out!', e.worm ? e.worm.name : '', '#b6ff4a');
     if (e.type === 'reset') U.clear();
     if (e.type === 'hurt' && e.worm) damagePop(S, e);
@@ -113,6 +118,7 @@
     if (e.type === 'banner') banner(e.title, e.sub, 'var(--accent)');
     if (e.type === 'labbank') banner('Bank shot x' + e.k.toFixed(1), e.bounces + (e.bounces > 1 ? ' ricochets' : ' ricochet'), 'var(--accent)');
     if (e.type === 'pickup' && e.worm) gainPop(S, e);
+    if (e.type === 'jacket' && e.worm) jacketPop(S, e);                                           // P89
     if (e.type === 'reset') { overShown = null; teamN = -1; if (feedEl) feedEl.innerHTML = ''; for (const k in gridBtn) gridBtn[k].s = ''; }
   };
 
@@ -180,7 +186,7 @@
   function infoLabel(S, w, el) {
     SS.alien.infection(S, w, INF);
     let txt = '', cls = 'inf';
-    if (INF.stage === 1) { txt = '☣ FACE HUGGER'; cls += ' hug'; }
+    if (INF.stage === 1) { const s1 = Math.ceil(INF.left); txt = '☣ FACE HUGGER · −' + SS.alien.K.PARA_HP + ' HP in ' + Math.floor(s1 / 60) + ':' + String(s1 % 60).padStart(2, '0'); cls += ' hug'; }
     else if (INF.stage === 2) {
       const s = Math.ceil(INF.left), lethal = w.hp <= SS.alien.K.PARA_HP;
       txt = `☣ ${lethal ? 'BURSTING' : '−' + SS.alien.K.PARA_HP + ' HP'} in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -318,12 +324,18 @@
     const Hs = r <= 1 ? 0 : K.STOP_D * (r * r - 1) / 2;
     return `<div class="wind"><span class="wx">❄ ice ${hcm.toFixed(0)} cm</span><span class="wn">${Hs <= 0.05 ? 'too thin to stand on' : 'safe falls < ' + (Hs < 10 ? Hs.toFixed(1) : '10+') + ' m'}</span></div>`;
   }
+  // P84: the slow, continuous sudden death shown quietly next to the label: how far the sea has come up (dry worlds: the play circle's radius left)
+  function sdTrend(S) {
+    const w = SS.world; if (!w || w.under || w.eow) return '';
+    if (w.dry) return ` <span class="sdt">◌ ${Math.round(S.playR)} m</span>`;
+    return (S.sdRise || 0) >= 0.05 ? ` <span class="sdt">▲ ${(S.sdRise).toFixed(1)} m</span>` : '';
+  }
   /* P9 top bar (PoC): turn · time · wind · weather */
   function drawTop(S, a, team, tc) {
     setHTML('tbTurn', `<div class="lbl">Turn</div><div class="tn" style="--team:${tc}">${esc(team.name)}</div><div class="wn">${esc(a.name)}${SS.game && SS.game.is_cpu(S, a.team) ? ' · CPU' : SS.net && SS.net.active ? (a.team === SS.net.team ? ' · you' : ' · friend') : ''}</div>`);
     const retreat = S.retreatT > 0, place = S.phase === 'place', t = place ? S.placeT : retreat ? S.retreatT : S.turnT, lim = S.settings.turnTime > 0;
     const tlow = retreat || ((lim || place) && t < 10), tfrac = lim && S.phase === 'play' && !retreat && !place ? Math.max(0, Math.min(1, Math.ceil(t) / S.settings.turnTime)) : 0;
-    setHTML('tbTime', `<div class="lbl">${place ? 'Deploy' : retreat ? 'Retreat' : S.sudden ? 'Sudden death' : 'Time'}</div><b class="${tlow ? 'low' : ''}">${place || retreat || (lim && S.phase === 'play') ? Math.max(0, Math.ceil(t)) : S.phase === 'play' ? '∞' : '–'}</b>${tfrac > 0 ? `<i class="tbar${tlow ? ' low' : ''}" style="width:${(tfrac * 100).toFixed(1)}%"></i>` : ''}`);
+    setHTML('tbTime', `<div class="lbl">${place ? 'Deploy' : retreat ? 'Retreat' : S.sudden ? 'Sudden death' + sdTrend(S) : 'Time'}</div><b class="${tlow ? 'low' : ''}">${place || retreat || (lim && S.phase === 'play') ? Math.max(0, Math.ceil(t)) : S.phase === 'play' ? '∞' : '–'}</b>${tfrac > 0 ? `<i class="tbar${tlow ? ' low' : ''}" style="width:${(tfrac * 100).toFixed(1)}%"></i>` : ''}`);
     const w = S.wind, d = P.dir(S); let along = 0, sp = 0;
     if (w && !SS.world.under) { along = w.mean.x * d.x + w.mean.z * d.z; sp = Math.hypot(w.mean.x, w.mean.z); }
     const f = Math.min(1, Math.abs(along) / 12) * 50;
@@ -486,8 +498,9 @@
       root.innerHTML = ''; teamEls = []; teamN = T.length;
       for (let i = 0; i < T.length; i++) {
         const row = document.createElement('div'); row.className = 'tm'; row.style.setProperty('--team', css(T[i].rgb));
-        row.innerHTML = '<span></span><div class="bar"><i></i></div><b></b>'; root.appendChild(row);
-        teamEls.push({ row, nm: row.children[0], bar: row.children[1].firstChild, hp: row.children[2], n: '', w: '', v: -1, c: '' });
+        row.innerHTML = '<span></span><button type="button" class="jk"></button><div class="bar"><i></i></div><b></b>'; root.appendChild(row);
+        const jk = row.children[1]; jk.onclick = () => { const q = lastS; if (q && q.active && q.active.team === i && U.onGear) U.onGear(0); jk.blur(); };       // P89: the active team's own life jacket switch
+        teamEls.push({ row, nm: row.children[0], jk, bar: row.children[2].firstChild, hp: row.children[3], n: '', w: '', v: -1, c: '', j: '' });
       }
     }
     for (let i = 0; i < T.length; i++) {
@@ -497,7 +510,18 @@
       if (g.w !== w) { g.w = w; g.bar.style.width = w; }
       if (g.v !== tot[i]) { g.v = tot[i]; g.hp.textContent = tot[i]; }
       if (g.c !== c) { g.c = c; g.row.className = c; }
+      const jh = jacketChip(S, i, a);
+      if (g.j !== jh) { g.j = jh; g.jk.className = 'jk ' + jh.split('|')[0]; g.jk.title = jh.split('|')[1]; g.jk.innerHTML = jh.split('|')[2]; g.jk.style.display = jh.charAt(0) === '-' ? 'none' : ''; }
     }
+  }
+  /* P89: the team's life jacket chip: vest icon + charges; 'on' lit orange, 'off' grey (switched off), 'none' (no charges); the active human team's chip is a button (key ;) */
+  const VEST = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3.2 1.8h3L8 3.6l1.8-1.8h3l1.1 4.2-2 1V14H4.1V7l-2-1z"/><path fill="#fff" opacity=".55" d="M5.6 8.6h4.8v1H5.6z"/></svg>';
+  function jacketChip(S, t, a) {
+    const G = SS.gear; if (!G) return '-|||';
+    const g = G.get(S, t, G.JACKET); if (!g || (g.n === 0 && g.ch === 0 && !S.settings.jackets)) return '-|||';
+    const mine = a && a.team === t && S.teams[t].ctl !== 'cpu', st = g.n <= 0 ? 'none' : g.on ? 'on' : 'off';
+    const tip = 'Life jackets: ' + g.n + ' left, ' + (g.on ? 'on' : 'off') + (mine ? ' (click or ; to switch)' : '') + '. A worm that lands in water inflates one and swims back to the shore.';
+    return st + (mine ? ' mine' : '') + '|' + tip + '|' + VEST + '<em>' + g.n + '</em>';
   }
   function drawHUD(S) {
     const a = S.active;

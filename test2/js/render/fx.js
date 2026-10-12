@@ -24,19 +24,19 @@
     grav: new Float32Array(MAX), buoy: new Float32Array(MAX), hug: new Float32Array(MAX), y0: new Float32Array(MAX), ang: new Float32Array(MAX), trf: new Float32Array(MAX), trl: new Float32Array(MAX) };   // trf / trl: a chunk that drags a thin dust trail (interval s, timer); hug: > 0 = a ground-hugging dust that follows the terrain at that height; y0: where it was born (wind shear grows with height); ang: how angular a chunk is (0 clod .. 1 broken rock)
   const KEYS = Object.keys(P);
   let n = 0, scene = null, flash = null, flashK = 9, flashT = 9, glowT = 9, glowI = 0, shake = 0, add = null, alp = null;
-  const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9, K_SHELL = 10;   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
+  const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9, K_SHELL = 10, K_DROP = 11;   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
   // K_CHUNK: a solid rock / clod / ice shard (alpha pass, bounces on the ground)
-  const ADDITIVE = k => k === K_FIRE || k === K_SPARK || k === K_LAVA || k >= K_FLASH;
-  const own = { uSun: { value: new T.Vector3(-0.4, 0.7, 0.6) }, uSunC: { value: new T.Color(1, 0.95, 0.85) }, uGlow: { value: new T.Vector4(0, 0, 0, 0) }, uGlowC: { value: new T.Color(1, 0.45, 0.12) }, uSky: { value: new T.Color(0.55, 0.6, 0.7) }, uGnd: { value: new T.Color(0.3, 0.27, 0.24) }, uTime: { value: 0 } };
+  const ADDITIVE = k => k === K_FIRE || k === K_SPARK || k === K_LAVA || (k >= K_FLASH && k !== K_DROP);   // K_DROP (P87): a water droplet streak, alpha-blended
+  const own = { tHeight: { value: null }, uSoft: { value: 0 }, uSeaY: { value: -99 }, uSun: { value: new T.Vector3(-0.4, 0.7, 0.6) }, uSunC: { value: new T.Color(1, 0.95, 0.85) }, uGlow: { value: new T.Vector4(0, 0, 0, 0) }, uGlowC: { value: new T.Color(1, 0.45, 0.12) }, uSky: { value: new T.Color(0.55, 0.6, 0.7) }, uGnd: { value: new T.Color(0.3, 0.27, 0.24) }, uTime: { value: 0 } };
 
   const VS = /* glsl */`
     attribute vec4 iPos;      // xyz, size
     attribute vec4 iA;        // rot, phase (age / life), kind, seed
     attribute vec3 iC; attribute float iAl;
     attribute vec3 iV;        // velocity (sparks draw a short motion streak along it)
-    varying vec2 vUv; varying vec4 vA; varying vec3 vC; varying float vAl; varying vec3 vP;
+    varying vec2 vUv; varying vec4 vA; varying vec3 vC; varying float vAl; varying vec3 vP; varying vec4 vW;
     void main(){
-      vUv = position.xy * 2.0; vA = iA; vC = iC; vAl = iAl; vP = iPos.xyz;
+      vUv = position.xy * 2.0; vA = iA; vC = iC; vAl = iAl; vP = iPos.xyz; vW = vec4(iPos.xyz, iPos.w);
       vec3 R = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]), U = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
       if (iA.z > 0.5 && iA.z < 1.5) {                                                  // P71 spark: a streak from the tail (where it was ~50 ms ago) to the head, bright at the head
         vec3 hv = (viewMatrix * vec4(iPos.xyz, 1.0)).xyz, vv = (viewMatrix * vec4(iV, 0.0)).xyz;
@@ -47,13 +47,22 @@
         vec3 vp = tl + (sg + ext) * (position.x + 0.5) + pr * position.y * iPos.w * 1.3;
         gl_Position = projectionMatrix * vec4(vp, 1.0); return;
       }
+      if (iA.z > 10.5) {                                                               // P87 water droplet: a motion-blurred streak (exposure ~ 40 ms) along its velocity, head forward
+        vec3 hv = (viewMatrix * vec4(iPos.xyz, 1.0)).xyz, vv = (viewMatrix * vec4(iV, 0.0)).xyz;
+        float sp = length(iV), lt = clamp(sp * 0.04, iPos.w * 0.9, 1.4);
+        vec3 tl = hv - vv * (lt / max(sp, 1e-3)), sg = hv - tl; float sl = length(sg);
+        vec3 pr = length(sg.xy) > 1e-5 ? vec3(-sg.y, sg.x, 0.0) / length(sg.xy) : vec3(1.0, 0.0, 0.0);
+        vec3 vp = tl + sg * (position.x + 0.5) + pr * position.y * max(iPos.w * 0.42, 0.012);
+        gl_Position = projectionMatrix * vec4(vp, 1.0); return;
+      }
       float c = cos(iA.x), s = sin(iA.x); vec2 q = mat2(c, s, -s, c) * position.xy;
       if (iA.z > 8.5 && iA.z < 9.5) { R = vec3(1.0, 0.0, 0.0); U = vec3(0.0, 0.0, 1.0); }          // a ground ring lies in the horizontal plane
+      vW = vec4(iPos.xyz + (R * q.x + U * q.y) * iPos.w, iPos.w);
       gl_Position = projectionMatrix * viewMatrix * vec4(iPos.xyz + (R * q.x + U * q.y) * iPos.w, 1.0);
     }`;
   const FS = /* glsl */`
-    uniform vec3 uSun, uSunC, uSky, uGnd, uGlowC; uniform vec4 uGlow; uniform float uTime;
-    varying vec2 vUv; varying vec4 vA; varying vec3 vC; varying float vAl; varying vec3 vP;
+    uniform vec3 uSun, uSunC, uSky, uGnd, uGlowC; uniform vec4 uGlow; uniform float uTime, uSoft, uSeaY; uniform sampler2D tHeight;
+    varying vec2 vUv; varying vec4 vA; varying vec3 vC; varying float vAl; varying vec3 vP; varying vec4 vW;
     float h3(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
     float vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
       return mix(mix(mix(h3(i), h3(i + vec3(1,0,0)), f.x), mix(h3(i + vec3(0,1,0)), h3(i + vec3(1,1,0)), f.x), f.y),
@@ -72,11 +81,19 @@
       float ph = vA.y, kind = vA.z, sd = vA.w;
       vec3 q = vec3(vUv * 1.6, sd * 17.0 + ph * 1.3);
       float nz = fbm(q + vec3(0.0, -ph * 1.5, 0.0));
-      if (kind > 6.5) {                                    // flash (7): a hard white core with four short rays; shock ring (8, 9): a thin bright front, torn by noise
+      if (kind > 10.5) {                                   // P87 water droplet: a lens-shaped streak, glassy white-blue, a bright rim light on the head
+        float ax = clamp(vUv.x * 0.5 + 0.5, 0.0, 1.0), body = exp(-vUv.y * vUv.y * 3.0) * (0.3 + 0.7 * smoothstep(0.0, 0.9, ax));
+        vec3 sunV = normalize((viewMatrix * vec4(uSun, 0.0)).xyz);
+        vec3 amb = mix(uGnd, uSky, 0.6);
+        vec3 lit = vC * (0.5 * amb + 0.45 * uSunC);
+        vec3 c = mix(vec3(0.88, 0.94, 1.0) * (0.35 + 0.65 * dot(lit, vec3(0.34))), lit, 0.3) + vec3(1.0) * 0.35 * pow(ax, 4.0) * (0.4 + 0.6 * max(0.0, sunV.y));   // clear water: sky-tinted, a glint on the leading edge
+        gl_FragColor = vec4(c, body * vAl * 0.6);
+      } else if (kind > 6.5) {                                    // flash (7): a hard white core with four short rays; shock ring (8, 9): a thin bright front, torn by noise
         float a;
-        if (kind > 9.5) { float fi = smoothstep(0.0, 0.2, ph); a = (0.16 * smoothstep(0.25, 0.92, r) + 0.7 * exp(-pow((r - 0.9) / 0.045, 2.0))) * (0.65 + 0.7 * nz) * fi * (1.0 - smoothstep(0.96, 1.0, r)); }     // P73: the condensation shell: a faint milky sphere with a thin brighter rim
+        if (kind > 9.5) { float fi = smoothstep(0.0, 0.2, ph); float an2 = atan(vUv.y, vUv.x), r2 = r * (1.0 - 0.05 * sin(an2 * 5.0 + sd * 9.0) - 0.03 * sin(an2 * 9.0 + sd * 3.0)); a = (0.16 * smoothstep(0.25, 0.92, r2) + 0.45 * exp(-pow((r2 - 0.9) / 0.06, 2.0))) * (0.4 + 0.9 * nz * nz) * fi * (1.0 - smoothstep(0.96, 1.0, r)); }     // P73: the condensation shell: a faint milky sphere with a thin brighter rim
         else if (kind < 7.5) { float ang = atan(vUv.y, vUv.x); a = exp(-r * r * 9.0) + 0.55 * pow(abs(cos(ang * 2.0 + sd)), 24.0) * exp(-r * 3.2) + 0.9 * exp(-r * r * 40.0); }
-        else { float w = 0.03 + 0.07 * ph; float rr = 0.9 - 0.04 * ph; a = exp(-pow((r - rr) / w, 2.0)) * (0.55 + 0.9 * nz); if (kind > 8.5) a += 0.22 * (1.0 - smoothstep(0.1, rr, r)) * nz * (1.0 - ph); }
+        else { float w = 0.03 + 0.07 * ph; float rr = 0.9 - 0.04 * ph; float an = atan(vUv.y, vUv.x), wob = 0.06 * sin(an * 3.0 + sd * 9.0) + 0.04 * sin(an * 7.0 + sd * 21.0) + 0.025 * sin(an * 13.0 + sd * 5.0), pat = smoothstep(-0.5, 0.6, sin(an * 5.0 + sd * 13.0) * 0.55 + sin(an * 11.0 + sd * 7.0) * 0.45) * 0.75 + 0.25;   // P87: broken, wobbling front, never a clean hoop
+        a = exp(-pow((r * (1.0 - wob) - rr) / w, 2.0)) * (0.3 + 1.0 * nz * nz) * pat; if (kind > 8.5) a += 0.22 * (1.0 - smoothstep(0.1, rr, r)) * nz * (1.0 - ph) * pat; }
         gl_FragColor = vec4(vC * a * vAl, 1.0);
       } else if (kind < 0.5) {                             // fire: turbulent puff, hot core
         float edge = 1.0 - smoothstep(0.35 + 0.45 * nz, 0.95, r);
@@ -105,17 +122,23 @@
         gl_FragColor = vec4(bb(Tk) * pow(Tk / 2000.0, 4.0) * 2.0 * a * vAl, 1.0);
       } else {                                             // smoke / dust / steam: lit puff
         float nz2 = fbm(q * 1.9 + vec3(3.3, 1.1, 0.0));
-        float dens = (1.0 - smoothstep(0.12 + 0.55 * nz, 0.98, r)) * (0.35 + 1.0 * nz2) * (0.9 + 0.4 * nz);
+        float dt3 = fbm(vec3(vUv * 4.6 + sd * 7.0, ph * 0.9 + sd));                // P87: a second, finer octave erodes the silhouette: ragged wisps, never a flat round disc
+        float dens = (1.0 - smoothstep(0.1 + 0.5 * nz, 0.9, r + 0.22 * (dt3 - 0.5))) * (0.3 + 1.0 * nz2) * (0.9 + 0.4 * nz) * (0.35 + 1.1 * dt3);
+        if (uSoft > 0.5) {                                                        // P87: soft particles: fade toward the terrain top / the sea under the fragment (no hard intersection line)
+          float tp = texture2D(tHeight, (vW.xz * 2.0 + 0.5) / float(textureSize(tHeight, 0).x)).r * 40.0;
+          float fw = clamp(0.25 + 0.55 * vW.w, 0.25, 1.1);
+          dens *= smoothstep(0.0, fw, vW.y - tp) * smoothstep(0.0, fw * 0.6, vW.y - uSeaY);
+        }
         if (dens < 0.01) discard;
         vec3 nrm = normalize(vec3(vUv, sqrt(max(0.0, 1.0 - r * r)) + 0.3));
         vec3 sunV = normalize((viewMatrix * vec4(uSun, 0.0)).xyz);
         float lam = 0.55 + 0.45 * dot(nrm, sunV);
-        vec3 amb = mix(kind > 3.5 ? 0.5 * (uGnd + uSky) : uGnd, uSky, 0.5 + 0.5 * vUv.y);
+        vec3 amb = mix(kind > 3.5 ? (0.2 * uGnd + 0.8 * uSky) : uGnd, uSky, 0.5 + 0.5 * vUv.y);   // (spray / steam are lit by the sky: not the brown ground tint)
         float sc = kind > 3.5 ? 0.9 : kind > 2.5 ? 0.85 : 0.25;                 // steam scatters, soot absorbs
         vec3 c = vC * (amb * 0.6 + uSunC * lam * sc + uSunC * 0.15);
         float gd = length(vP - uGlow.xyz);                                      // the fireball's afterglow lights the smoke / dust around it (night, dusk, storm)
         c += uGlowC * uGlow.w * (0.6 + 0.4 * (1.0 - vUv.y * 0.5)) / (1.0 + gd * gd * 0.18) * (0.25 + vC.r * 0.9) * (1.0 - 0.7 * clamp(dot(vC, vec3(0.33)), 0.0, 1.0));
-        if (kind > 3.5) { c *= 0.92 + 0.3 * lam; c = mix(c, vec3(dot(c, vec3(0.34))) * vec3(0.97, 1.0, 1.04), 0.55); dens = min(1.0, dens * 1.6); }               // spray and steam: denser, with a shaded side
+        if (kind > 3.5) { c *= 0.92 + 0.3 * lam; c = mix(c, vec3(dot(c, vec3(0.34))) * vec3(0.97, 1.0, 1.04), 0.8); dens = min(1.0, dens * 1.6); }               // spray and steam: denser, with a shaded side
         gl_FragColor = vec4(c, dens * vAl);
       }
       #include <tonemapping_fragment>
@@ -136,8 +159,8 @@
     return { g, mesh, iPos, iA, iC, iAl, iV };
   }
 
-  FX.init = function (sc, tx, quality) {
-    scene = sc; QN = Math.max(0.4, quality && quality.particles != null ? quality.particles : 1); CAP = Math.round(MAX * Math.min(1, 0.45 + 0.55 * QN));
+  FX.init = function (sc, tx, quality, heightTex) {
+    scene = sc; own.tHeight.value = heightTex || null; own.uSoft.value = heightTex ? 1 : 0; QN = Math.max(0.4, quality && quality.particles != null ? quality.particles : 1); CAP = Math.round(MAX * Math.min(1, 0.45 + 0.55 * QN));
     flash = new T.PointLight(0xffa850, 0, 16, 2); scene.add(flash);
     add = system(true); alp = system(false);
   };
@@ -421,7 +444,6 @@
       const kw = bd < 1e8 ? W3 * Math.max(0, 1 - bd / (3.4 * Rr)) : 0;
       if (kw > 0.22) later.push({ t: bd / 22, fn: () => {
         FX.waterBlast({ x: bx, y: bl, z: bz, R: Math.min(4.2, 1.6 + 1.8 * kw), jetH: 3.4 + 4.0 * kw, tJet: 0.1 + bd * 0.015, under: false, vis: 1.7 });
-        spawn(K_RING, bx, bl + 0.3, bz, { life: 0.3, s0: 0.6, s1: Rr * (2.5 + 1.5 * kw), c0: [0.9, 0.97, 1.0], c1: [0.6, 0.68, 0.76], a0: 0.4 });
       } });
     }
     // burning bits (the casing's hot fragments are drawn by render/shrapnel.js): sparks; hard ground (rock, concrete, steel) and metal props strike more
@@ -472,11 +494,11 @@
     const sz = Math.max(0.05, size), nC = Math.round(3 + 20 * sz), r0 = 0.12 + 0.2 * sz;
     for (let i = 0; i < nC; i++) {                                  // the crown: a thin sheet breaking into droplets, flaring out
       const a = i / nC * 6.283 + rnd(-0.2, 0.2), out = rnd(1.2, 2.6) * sz, up = rnd(3.2, 5.2) * Math.sqrt(sz);
-      spawn(K_STEAM, x + Math.cos(a) * r0, y + 0.03, z + Math.sin(a) * r0, { vx: Math.cos(a) * out, vy: up, vz: Math.sin(a) * out, life: rnd(0.55, 0.95), s0: 0.06 * sz + 0.03, s1: 0.1 * sz + 0.04, a0: 0.85, c0: [0.95, 0.98, 1], grav: 9.8, drag: 0.25 });
+      spawn(K_DROP, x + Math.cos(a) * r0, y + 0.03, z + Math.sin(a) * r0, { vx: Math.cos(a) * out, vy: up, vz: Math.sin(a) * out, life: rnd(0.55, 0.95), s0: 0.05 * sz + 0.04, s1: 0.05 * sz + 0.04, a0: 0.92, c0: [0.95, 0.98, 1], grav: 9.8, drag: 0.15 });
     }
     for (let i = 0; i < 14 * sz; i++) {                             // droplets flung higher and wider
       const a = rnd(0, 6.283), sp = rnd(0.4, 3) * sz;
-      spawn(K_STEAM, x, y + 0.03, z, { vx: Math.cos(a) * sp, vy: rnd(3.5, 7) * Math.sqrt(sz), vz: Math.sin(a) * sp, life: rnd(0.6, 1.1), s0: 0.04 * sz + 0.02, s1: 0.07 * sz + 0.03, a0: 0.8, c0: [0.92, 0.96, 1], grav: 9.8, drag: 0.3 });
+      spawn(K_DROP, x, y + 0.03, z, { vx: Math.cos(a) * sp, vy: rnd(3.5, 7) * Math.sqrt(sz), vz: Math.sin(a) * sp, life: rnd(0.6, 1.1), s0: 0.03 * sz + 0.03, s1: 0.03 * sz + 0.03, a0: 0.9, c0: [0.92, 0.96, 1], grav: 9.8, drag: 0.2 });
     }
     if (sz > 0.7) later.push({ t: 0.12, fn: () => {                  // the rebound jet: a narrow dense column that falls back in drops
       const nJ = Math.round(12 * sz), v0 = rnd(5.5, 7.5) * Math.sqrt(sz);
@@ -492,23 +514,35 @@
    *   - the base surge: a low ring of mist rolling out over the water;
    *   (the ring wave and the foam are the water sim and render/water.js) */
   const later = [], blasts = [];
-  function spray(x, y, z, vx, vy, vz, s, life) { s *= sprayK; spawn(K_STEAM, x, y, z, { vx, vy, vz, life, s0: s, s1: s * 1.6, a0: 0.9, c0: [0.93, 0.97, 1], c1: [0.96, 0.98, 1], grav: 9.8, drag: 0.25 }); }
+  /* P87: a droplet streak (ballistic, motion-blurred, makes a small impact where it lands) and, now and then, a puff of fine mist that the wind carries off */
+  function spray(x, y, z, vx, vy, vz, s, life) {
+    s *= sprayK;
+    spawn(K_DROP, x, y, z, { vx, vy, vz, life: Math.max(0.5, life), s0: Math.min(0.32, 0.07 + s * 0.55), s1: Math.min(0.32, 0.07 + s * 0.55), a0: 0.95, c0: [0.93, 0.97, 1], grav: 9.8, drag: 0.12 });
+    if (Math.random() < 0.3) spawn(K_STEAM, x, y, z, { vx: vx * 0.5, vy: vy * 0.55, vz: vz * 0.5, life: life * 1.3 + 0.6, s0: s * 0.7, s1: s * 2.2, a0: 0.2, c0: [0.95, 0.98, 1], c1: [0.9, 0.94, 0.98], grav: 2, drag: 1.2 });
+  }
   let sprayK = 1;                                                    // P73: spray size multiplier (a splash beside a blast must read at the game camera)
   FX.waterBlast = function (e) {
     sprayK = e.vis || 1; const vs = sprayK;
     const sz = Math.min(2.4, Math.max(0.6, e.R / 2.8)), R = e.R, jet = (e.jetH || 3 * sz) * 1.8, wx = FX.env.wx || 0, wz = FX.env.wz || 0, cnt = v => Math.max(1, Math.round(v * QN));
     const nC = cnt(46 * sz * (1 + 0.5 * (vs - 1))), crownV = Math.sqrt(2 * 9.8 * jet * (e.under ? 0.45 : 0.7));
     // P58: the foam ring: a bright front racing out over the water at once, a second slower one behind it, a flash of white where the cavity opens
-    spawn(K_RINGG, e.x, e.y + 0.07, e.z, { life: 0.9 + 0.3 * sz, s0: R * 0.9, s1: R * (5.2 + 1.2 * sz), c0: [0.85, 0.93, 1.0], c1: [0.4, 0.5, 0.6], a0: 0.8 });
-    later.push({ t: 0.3, fn: () => spawn(K_RINGG, e.x, e.y + 0.07, e.z, { life: 1.2, s0: R * 0.8, s1: R * 4.2, c0: [0.6, 0.72, 0.82], c1: [0.25, 0.33, 0.42], a0: 0.5 }) });
+    spawn(K_RINGG, e.x, e.y + 0.07, e.z, { life: 0.9 + 0.3 * sz, s0: R * 0.9, s1: R * (5.2 + 1.2 * sz), c0: [0.85, 0.93, 1.0], c1: [0.4, 0.5, 0.6], a0: 0.45 });
+    later.push({ t: 0.3, fn: () => spawn(K_RINGG, e.x, e.y + 0.07, e.z, { life: 1.2, s0: R * 0.8, s1: R * 4.2, c0: [0.6, 0.72, 0.82], c1: [0.25, 0.33, 0.42], a0: 0.25 }) });
     spawn(K_FLASH, e.x, e.y + 0.4, e.z, { life: 0.1, s0: R * 0.8, s1: R * 1.8, c0: [1.6, 2.0, 2.2], c1: [0.5, 0.8, 1.0], a0: 0.8 });
-    for (let i = 0; i < nC; i++) {                                  // crown: a cone of spray from the cavity rim
+    // P87: the crown is a SHEET that breaks into ligaments (Rayleigh-Plateau fingers, ~even spacing round the rim); each finger sheds 3-4 droplets
+    // at slightly different speeds (a streak chain), then the loose droplets and the fines
+    for (let i = 0, nL = cnt(12 + 8 * sz); i < nL; i++) {
+      const a = i / nL * 6.283 + rnd(-0.12, 0.12), r0 = R * rnd(0.3, 0.55), out = rnd(2.5, 5) * sz, up = crownV * rnd(0.7, 1.05);
+      for (let k = 0; k < 4; k++) { const f = 1 + 0.12 * k + rnd(-0.04, 0.04);
+        spray(e.x + Math.cos(a) * r0, e.y + 0.05, e.z + Math.sin(a) * r0, Math.cos(a) * out * f, up * (1 - 0.06 * k) * f, Math.sin(a) * out * f, rnd(0.24, 0.5) * sz * (1 - 0.15 * k), rnd(0.9, 1.6)); }
+    }
+    for (let i = 0; i < nC; i++) {                                  // loose droplets: a cone from the cavity rim
       const a = rnd(0, 6.283), r0 = R * rnd(0.15, 0.5), out = rnd(1.5, 4.5) * sz;
-      spray(e.x + Math.cos(a) * r0, e.y + 0.05, e.z + Math.sin(a) * r0, Math.cos(a) * out, crownV * rnd(0.55, 1.05), Math.sin(a) * out, rnd(0.12, 0.26) * sz, rnd(0.9, 1.6));
+      spray(e.x + Math.cos(a) * r0, e.y + 0.05, e.z + Math.sin(a) * r0, Math.cos(a) * out, crownV * rnd(0.55, 1.05), Math.sin(a) * out, rnd(0.12, 0.3) * sz, rnd(0.9, 1.6));
     }
     for (let i = 0, nd = cnt(14 * sz); i < nd; i++) {               // the dome: the cavity's wall, a sheet of dense white puffs thrown up and out
       const a = i / nd * 6.283 + rnd(-0.2, 0.2), r0 = R * rnd(0.45, 0.7), out = rnd(2.2, 4) * sz;
-      spawn(K_STEAM, e.x + Math.cos(a) * r0, e.y + 0.1, e.z + Math.sin(a) * r0, { vx: Math.cos(a) * out, vy: crownV * rnd(0.5, 0.8), vz: Math.sin(a) * out, drag: 0.5, grav: 8, life: rnd(0.8, 1.3), s0: 0.35 * sz, s1: 0.9 * sz, a0: 0.75, c0: [0.95, 0.98, 1], c1: [0.85, 0.9, 0.95] });
+      spawn(K_STEAM, e.x + Math.cos(a) * r0, e.y + 0.1, e.z + Math.sin(a) * r0, { vx: Math.cos(a) * out, vy: crownV * rnd(0.5, 0.8), vz: Math.sin(a) * out, drag: 0.5, grav: 8, life: rnd(0.8, 1.3), s0: 0.2 * sz, s1: 0.55 * sz, a0: 0.3, c0: [0.95, 0.98, 1], c1: [0.85, 0.9, 0.95] });
     }
     sprayK = 1;
     later.push({ t: e.tJet || 0.25, fn: () => {                     // the jet column
@@ -522,7 +556,7 @@
       sprayK = 1;
       for (let i = 0, nb = cnt(26 * vs); i < nb; i++) {                   // the column's body: white billows stacked up it, the cap spreading at the top and drifting off in the wind
         const f = (i + 0.5) / nb;
-        spawn(K_STEAM, e.x + rnd(-rj, rj), e.y + jet * (0.25 + 0.75 * f), e.z + rnd(-rj, rj), { vx: rnd(-0.3, 0.3) + wx * 0.2, vy: rnd(0.5, 1.6) * (0.5 + f), vz: rnd(-0.3, 0.3) + wz * 0.2, life: rnd(1.6, 2.7), s0: (0.55 + 0.7 * f) * sz * vs, s1: rnd(1.5, 2.4) * sz * (0.7 + 0.6 * f) * vs, a0: 0.9, c0: [0.98, 0.99, 1], c1: [0.9, 0.93, 0.97], drag: 1.2 });
+        spawn(K_STEAM, e.x + rnd(-rj, rj), e.y + jet * (0.25 + 0.75 * f), e.z + rnd(-rj, rj), { vx: rnd(-0.3, 0.3) + wx * 0.2, vy: rnd(0.5, 1.6) * (0.5 + f), vz: rnd(-0.3, 0.3) + wz * 0.2, life: rnd(1.6, 2.7), s0: (0.4 + 0.5 * f) * sz * vs, s1: rnd(1.1, 1.8) * sz * (0.7 + 0.6 * f) * vs, a0: 0.35, c0: [0.98, 0.99, 1], c1: [0.9, 0.93, 0.97], drag: 1.2 });
       }
     } });
     later.push({ t: (e.tJet || 0.25) + 0.15, fn: () => {            // base surge: mist rolling out low over the water
@@ -614,7 +648,7 @@
   FX.addShake = v => { shake = Math.min(1.2, shake + v); };           // P38 A5: small kicks (a bat hit, a bazooka shot)
   let nAdd = 0, nAlp = 0;
   FX.update = function (dt) {
-    own.uTime.value += dt;
+    own.uTime.value += dt; own.uSeaY.value = SS.world && SS.world.SEA != null && !SS.world.under ? SS.world.SEA : -99;
     for (let q = blasts.length - 1; q >= 0; q--) if ((blasts[q].t += dt) > 9) blasts.splice(q, 1);
     for (let q = later.length - 1; q >= 0; q--) if ((later[q].t -= dt) <= 0) { const L = later[q]; later.splice(q, 1); L.fn(); }
     let i = 0;
@@ -643,6 +677,11 @@
           spawn(K_DUST, P.x[i], P.y[i], P.z[i], { vx: P.vx[i] * 0.05, vy: 0.3, vz: P.vz[i] * 0.05, drag: 2, life: rnd(0.5, 0.8), s0: sz * 0.7, s1: sz * rnd(2.2, 3.2), c0: [c * 1.25 + 0.08, c1 * 1.25 + 0.07, c2 * 1.25 + 0.06], a0: 0.3 }); }
       }
       if (kk === K_CHUNK && SS.world && SS.world.sample && P.grav[i] > 0) chunkHit(i, px, py, pz, dt);
+      if (kk === K_DROP && P.vy[i] < 0 && P.y[i] < P.y0[i] - 0.02 && P.age[i] > 0.04) {        // P87: a falling droplet reaches the water: a tiny rebound of fines (the big ones only) and it is gone
+        if (P.s0[i] > 0.04 && n < CAP - 12 && Math.random() < 0.55) for (let m = 0, nm = 2 + (Math.random() * 2 | 0); m < nm; m++) { const a = rnd(0, 6.283), sp = rnd(0.3, 1.1);
+          spawn(K_DROP, P.x[i], P.y0[i] + 0.01, P.z[i], { vx: Math.cos(a) * sp, vy: rnd(0.9, 2.1), vz: Math.sin(a) * sp, life: 0.6, s0: 0.018, s1: 0.018, c0: [P.c0[i * 3], P.c0[i * 3 + 1], P.c0[i * 3 + 2]], grav: 9.8, a0: 0.7 }); }
+        P.age[i] = P.life[i];
+      }
       i++;
     }
     nAdd = 0; nAlp = 0;
@@ -651,12 +690,12 @@
       const f = P.age[k] / P.life[k], sz = P.s0[k] + (P.s1[k] - P.s0[k]) * (1 - (1 - f) * (1 - f));
       const ip = s.iPos.array, ia = s.iA.array, ic = s.iC.array;
       ip[q * 4] = P.x[k]; ip[q * 4 + 1] = P.y[k]; ip[q * 4 + 2] = P.z[k]; ip[q * 4 + 3] = sz;
-      if (P.kind[k] === K_SPARK) { const iv = s.iV.array; iv[q * 3] = P.vx[k]; iv[q * 3 + 1] = P.vy[k]; iv[q * 3 + 2] = P.vz[k]; }
+      if (P.kind[k] === K_SPARK || P.kind[k] === K_DROP) { const iv = s.iV.array; iv[q * 3] = P.vx[k]; iv[q * 3 + 1] = P.vy[k]; iv[q * 3 + 2] = P.vz[k]; }
       ia[q * 4] = P.rot[k]; ia[q * 4 + 1] = f; ia[q * 4 + 2] = P.kind[k] + (P.kind[k] === K_CHUNK ? 0.4 * P.ang[k] : 0); ia[q * 4 + 3] = P.seed[k];
       if (hot && P.kind[k] >= K_FLASH) for (let c = 0; c < 3; c++) ic[q * 3 + c] = P.c0[k * 3 + c] + (P.c1[k * 3 + c] - P.c0[k * 3 + c]) * f;
       else if (hot) { ic[q * 3] = P.c0[k * 3]; ic[q * 3 + 1] = P.c0[k * 3 + 1]; ic[q * 3 + 2] = 0; }
       else for (let c = 0; c < 3; c++) ic[q * 3 + c] = P.c0[k * 3 + c] + (P.c1[k * 3 + c] - P.c0[k * 3 + c]) * f;
-      s.iAl.array[q] = P.a0[k] * (hot ? (1 - f) : P.kind[k] === K_CHUNK ? Math.min(1, f * 20) * Math.min(1, (1 - f) * 6) : Math.min(1, f * 6) * (1 - f) * (1 - f));
+      s.iAl.array[q] = P.a0[k] * (hot ? (1 - f) : P.kind[k] === K_CHUNK ? Math.min(1, f * 20) * Math.min(1, (1 - f) * 6) : P.kind[k] === K_DROP ? Math.min(1, f * 30) * Math.min(1, (1 - f) * 8) : Math.min(1, f * 6) * (1 - f) * (1 - f));
     }
     for (const [s, c] of [[add, nAdd], [alp, nAlp]]) {
       s.g.instanceCount = c; s.mesh.visible = c > 0;

@@ -11,7 +11,7 @@
   const KEY = 'burrowBrawl3d.settings';
   let lastShow = null, root, panel, prog, bar, lbl, pct, cur, onStart, onResume, page = 'main', pv = null, pvTimer = 0, cv = {}, rowsEl = null, tabsEl = null;
   /* the right column is a tab strip + one page: main (match and rules), field (battlefield), lab, opts (display and sound) */
-  const TABS = [['main', 'Match'], ['field', 'Battlefield'], ['lab', 'Lab'], ['opts', 'Options']];
+  const TABS = [['main', 'Match'], ['crates', 'Crates'], ['field', 'Battlefield'], ['lab', 'Lab'], ['opts', 'Options']];
 
   const BIOME_LOOK = {
     random: 'linear-gradient(135deg,#6b5b95,#3a7bd5 50%,#d76d77)',
@@ -40,6 +40,7 @@
     turnTime: [['30', '30 s'], ['45', '45 s'], ['60', '60 s'], ['90', '90 s'], ['0', 'No limit']],
     mineFuse: [['random', 'Random'], ['0', '0 s'], ['1', '1 s'], ['2', '2 s'], ['3', '3 s']],
     toolCrates: [['off', 'Off'], ['low', 'Few'], ['normal', 'Normal'], ['high', 'Many']],
+    jackets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => [String(n), String(n)]),
     slice: [['thin', 'Thin'], ['thick', 'Thick'], ['full', 'Full']],
     ghost: [['0', 'Off'], ['15', '15 %'], ['30', '30 %'], ['50', '50 %'], ['75', '75 %'], ['100', '100 %']]      // P46: the front of the section as a ghost image (render/section.js)
   };
@@ -55,7 +56,8 @@
   const RULES = [
     { k: 'rotLock', t: 'Rotation lock', b: true, d: true, h: 'random start worm, rotate for 10 s, then fixed' },
     { k: 'mineFuse', t: 'Mine fuse', o: OPTS.mineFuse, w: 'seg', fn: v => (v === 'random' ? 'random' : parseInt(v, 10)) },
-    { k: 'toolCrates', t: 'Tool crates', o: OPTS.toolCrates, w: 'seg' },
+    { k: 'jackets', t: 'Life jackets per team', o: OPTS.jackets, n: 1, w: 'sel', h: 'a worm that lands in water inflates one (-6 HP) and swims back to the shore by itself; 0 = none' },
+    { k: 'jacketOn', t: 'Life jackets on at the start', b: true, d: true, h: 'each team switches its own in the match (the ; key or the vest chip)' },
     { k: 'sd', t: 'Sudden death', b: true, d: true, h: 'the sea rises from round 8' },
     { k: 'collapse', t: 'Land collapse', b: true, d: true, h: 'unsupported land breaks' },
     { k: 'blood', t: 'Blood and gibs', b: true, d: false }, { k: 'teamBlood', t: 'Team-coloured blood', b: true, d: false },
@@ -101,7 +103,7 @@
   MN.LAB = LAB;
   const labBits = () => LAB.reduce((n, r) => n + (((cur.labFlags | 0) & C.LAB.FLAG[r.id]) ? 1 : 0), 0);
   /* settings keys the host sends to net guests (js/main.js adds them to its whitelist) */
-  MN.NET_KEYS = ['dim', 'fort', 'rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags', 'jetpacks'].concat(D.KEYS);
+  MN.NET_KEYS = ['dim', 'fort', 'rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags', 'jetpacks', 'crateW', 'crateH', 'crateT', 'jackets', 'jacketOn'].concat(D.KEYS);
 
   /* P38 R6 (R2/R3): saved settings, URL parameters and net starts are untrusted data (an old build, a foreign key, a hand edit):
    * coerce every field into its legal range / type so the form and the generator never see a hole. Pure (tools/dev/gen/robusttest.cjs).
@@ -119,6 +121,7 @@
     o.hp = intIn(o.hp, 1, 999, intIn(def.hp, 1, 999, 100));
     o.turnTime = intIn(o.turnTime, 0, 600, intIn(def.turnTime, 0, 600, 0));
     o.ghost = intIn(o.ghost, 0, 100, intIn(def.ghost, 0, 100, 0));       // P46: front ghost opacity, percent (0 = off)
+    o.jackets = intIn(o.jackets, 0, 9, intIn(def.jackets, 0, 9, 3));       // P89: life jackets per team (sim/gear.js)
     o.labFlags = intIn(o.labFlags, 0, C.LAB.ALL, 0);                  // P42: the Lab's mechanics (bit mask, 0 = off)
     o.seed = intIn(o.seed, 0, 99999999, intIn(def.seed, 0, 99999999, 7));
     const dctl = Array.isArray(def.ctl) ? def.ctl : ['human', 'cpu', 'cpu', 'cpu'];
@@ -134,8 +137,11 @@
       if (typeof v !== 'string' && typeof v !== 'number') { if (def[k] != null) o[k] = def[k]; else delete o[k]; }
     }
     for (const k of D.KEYS) if (o[k] != null && D.LEVELS.indexOf(o[k]) < 0) o[k] = def[k] != null && D.LEVELS.indexOf(def[k]) >= 0 ? def[k] : 'medium';
+    // P84: supply-crate levels 0..10 (toolCrates, the old 4-step setting, maps onto crateT while crateT is not set)
+    const CR = C.CRATES; if (o.crateT == null && o.toolCrates != null && CR.LEGACY_TOOL[o.toolCrates] != null) o.crateT = CR.LEGACY_TOOL[o.toolCrates];
+    CR.SLIDERS.forEach(k => { o[k] = intIn(o[k], 0, CR.MAX, intIn(def[k], 0, CR.MAX, CR.DEF)); });
     o.dim = o.dim === '2d' ? '2d' : '3d';                              // P68a: the dimension (sim/dim2d.js)
-    for (const k of ['sd', 'collapse', 'blood', 'teamBlood', 'select', 'rooms', 'keepRope', 'rotLock', 'fort']) if (o[k] != null && typeof o[k] !== 'boolean') o[k] = !!o[k] && o[k] !== '0' && o[k] !== 'off';
+    for (const k of ['sd', 'collapse', 'blood', 'teamBlood', 'select', 'rooms', 'keepRope', 'rotLock', 'fort', 'jacketOn']) if (o[k] != null && typeof o[k] !== 'boolean') o[k] = !!o[k] && o[k] !== '0' && o[k] !== 'off';
     return o;
   };
 
@@ -279,12 +285,36 @@
     rowsEl.innerHTML = '';
     rowsEl.classList.remove('enter'); void rowsEl.offsetWidth; rowsEl.classList.add('enter');
     if (page === 'field') return buildField();
+    if (page === 'crates') return buildCrates();
     if (page === 'lab') return buildLab();
     if (page === 'opts') return buildOpts();
     let redraw = () => {};
     for (const r of MATCH) { rowOf(r, rowsEl, r.teams ? () => redraw() : null); if (r.teams) redraw = teamsBlock(rowsEl); }
     sec(rowsEl, 'Rules');
     for (const r of RULES) rowOf(r, rowsEl);
+  }
+  /* P84: the Crates page: one 0..10 slider per crate kind (0 = never, 5 = default = 20 % of the rounds, 10 = 40 %); the line under them shows the exact
+   * chances per round (sim/skills.js crate_chances: the chance of ONE crate = 4 % x the highest level, shared by the kinds in proportion to their levels) */
+  function buildCrates() {
+    rowsEl.appendChild(el('div', 'labintro', 'How often supply crates fall. At most one crate per round. Each slider goes from 0 (never) over 5 (default) to 10; the chance of a crate in a round is 4 % per level of the highest slider (5 = 20 %, 10 = 40 %), shared between the kinds in proportion to their sliders.'));
+    const KIND = [['crateW', 'Weapon crates', 'a random weapon, rarer ones less often'], ['crateH', 'Health crates', '+30 HP'], ['crateT', 'Tool crates', 'free rotation, laser sight, fast walk, low gravity, tinfoil hat, crate overload']];
+    const sum = el('div', 'labcount'), outs = {};
+    const upd = () => {
+      const ch = SS.skills && SS.skills.crate_chances ? SS.skills.crate_chances({ settings: cur }) : null, pc = v => (v * 100).toFixed(1).replace(/\.0$/, '') + ' %';
+      for (const [k] of KIND) { const o = outs[k]; if (o) o.textContent = cur[k] + (ch ? ' · ' + pc(ch[C.CRATES.KINDS[C.CRATES.SLIDERS.indexOf(k)]]) + ' / round' : ''); }
+      if (ch) sum.textContent = ch.any > 0 ? 'A crate falls in ' + pc(ch.any) + ' of the rounds' : 'No crates at all';
+    };
+    for (const [k, t, h] of KIND) {
+      const row = el('div', 'row'), lab = el('div', 'lab', t + `<em>${h}</em>`), box = el('div', 'cratebox'), w = el('input', 'vslider'), out = el('span', 'cratev');
+      w.type = 'range'; w.min = 0; w.max = C.CRATES.MAX; w.step = 1; w.value = cur[k]; w.dataset.key = k; w.setAttribute('aria-label', t);
+      w.oninput = () => { cur[k] = parseInt(w.value, 10); upd(); }; w.onchange = () => MN.save(cur);
+      outs[k] = out; box.append(w, out); row.append(lab, box); rowsEl.appendChild(row);
+    }
+    const bar = el('div', 'labbar'), def = el('button', 'back', 'Default (5)'), off = el('button', 'back', 'No crates');
+    def.type = off.type = 'button';
+    const setAll = v => { for (const [k] of KIND) cur[k] = v; MN.save(cur); buildRows(); };
+    def.onclick = () => setAll(C.CRATES.DEF); off.onclick = () => setAll(0);
+    bar.append(sum, def, off); rowsEl.appendChild(bar); upd();
   }
   function buildOpts() {
     sec(rowsEl, 'Display');

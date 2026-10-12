@@ -92,7 +92,7 @@
     squeeze(S, w, v, sp, dt);
     limp(S, w, v, sp, dt);
     SS.alien.infection(S, w, INF);
-    const sev = INF.stage === 2 ? 0.12 + 0.88 * INF.sev : 0;
+    const sev = INF.stage >= 1 && INF.ttd > 0 ? 0.12 + 0.88 * INF.sev : 0;
     v.infK = (v.infK || 0) + (sev - (v.infK || 0)) * Math.min(1, dt * 2.2);
     if (v.infK < 0.004) { v.infK = 0; return; }
     const t = (v.infT = (v.infT || 0) + dt), k = v.infK, hb = heart(t + (w.id || 0), k), th = thrash(t + (w.id || 0) * 3, k);

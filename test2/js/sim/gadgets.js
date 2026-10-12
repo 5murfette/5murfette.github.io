@@ -30,7 +30,11 @@
 
   /* ---------- constants ---------- */
   const K = C.TOOLB = C.TOOLB || {};
-  K.DOG = { SPEED: 5.2, ACC: 14, R: 0.36, TIMER: 8, REACH: 1.05, HOP_MAX: 0.95, STEP_UP: 0.28, DMG: 55, W: 1.5, BARK0: 1.2, BARK1: 3.0, MAX: 4 };
+  K.DOG = { SPEED: 5.2, ACC: 14, R: 0.36, TIMER: 8, REACH: 1.05, HOP_MAX: 0.95, STEP_UP: 0.28, DMG: 55, W: 1.5, BARK0: 1.2, BARK1: 3.0, MAX: 4,
+    // P84: released with a short aimed throw (THROW_V m/s along the aim angle: ~2 m flat, ~5 m at 45 degrees; the power input scales it 0.6..1) and ARMED only after
+    // it has walked ARM_DIST m AND ARM_T s have passed: nothing touches it off before (a worm underfoot, the thrower himself). Unarmed it walks straight ahead on
+    // the aim side, armed it steers to the nearest foe, so a thrower standing on an enemy sees it run away, turn and come back.
+    THROW_V: 7.5, ARM_DIST: 2.5, ARM_T: 0.8 };
   K.PUNCH = { REACH: 1.8, DY: 1.3, DT: 0.9, VY: 11, HIT_T: 0.16, DMG: 30, V_OUT: 20, V_UP: 12, SPIN: 14 };
   K.SENTRY = { AMMO: 100, HP: 60, RANGE: 14, SPIN: 1.7, BEAM_Y: 0.5, BURST: 6, ROUND_T: 0.09, SPREAD: 0.03, DMG: 4, ROUND_RANGE: 30, PUSH: 0.6,
     TURNS: 12, COOL: 0.6, TURN: 12, ER0: 0.05, ER1: 0.2, KNOCK_F: 0.15, FALL_T: 0.5, MAX: 6, ALIGN: 0.08 };
@@ -115,7 +119,7 @@
   GD.use = function (S, a, key, power) {
     const ap = P.to_plane(S, a.pos);
     switch (key) {
-      case 'dog': return useDog(S, a, ap);
+      case 'dog': return useDog(S, a, ap, power);
       case 'punch': return usePunch(S, a, ap);
       case 'sentry': return useSentry(S, a, ap);
       case 'claymore': return useClay(S, a, ap);
@@ -126,16 +130,18 @@
   const refuse = (S, txt) => { sim().log(S, txt, 0xffb27a); return false; };
 
   /* ===================== robotic dog ===================== */
-  function useDog(S, a, ap) {
+  function useDog(S, a, ap, power) {
     const KD = K.DOG;
     if (a.air || S.rope) return refuse(S, 'Stand on the ground to release the dog.');
     if (S.dogs.length >= KD.MAX) return refuse(S, 'Too many dogs.');
-    const f = a.facing; let s0 = ap.s + f * 0.75;
+    const f = a.facing; let s0 = ap.s + f * 0.75, vs0 = 0, vy0 = 0;
     let y0 = a.pos.y - 0.5 + KD.R + 0.05, up = 0;
     if (S.eow) { const q = SS.eow.dog_spawn(S, a, ap, f); if (!q) return refuse(S, 'No room for the dog here.'); s0 = q.s; y0 = q.y; }     // P68g: next to the worm along its own surface
     while (P.blocked2(S, s0, y0) && up < 0.7) { y0 += 0.05; up += 0.05; }
     if (P.blocked2(S, s0, y0)) return refuse(S, 'No room for the dog here.');
-    S.dogs.push({ id: nextId(S), team: a.team, owner: a.id, s: s0, y: y0, vs: 0, vy: 0, dir: f, life: KD.TIMER, age: 0, dist: 0, bark: rr(S, KD.BARK0, KD.BARK1), retarget: 0, blockT: 0, target: -1, hop: 0, state: 0 });
+    // the short throw along the aim (the End of the World's curved frames set the dog down beside the worm instead: its field is p86's)
+    if (!S.eow) { const ad = sim().aim_dir(S), v = KD.THROW_V * (power > 0 ? 0.6 + 0.4 * M.min(1, power) : 0.8); vs0 = ad.s * v; vy0 = ad.y * v + 1.0; }
+    S.dogs.push({ id: nextId(S), team: a.team, owner: a.id, s: s0, y: y0, vs: vs0, vy: vy0, thrown: S.eow ? 0 : 1, armed: 0, dir: f, life: KD.TIMER, age: 0, dist: 0, bark: rr(S, KD.BARK0, KD.BARK1), retarget: 0, blockT: 0, target: -1, hop: 0, state: 0 });
     sim().emit(S, 'dogstart', { wormId: a.id, x: a.pos.x, y: a.pos.y, z: a.pos.z });
     sim().log(S, `${a.name} lets the robo dog off the leash.`, sim().team_rgb(S, a.team));
     WPN().used(S, 'dog'); return true;
@@ -151,8 +157,10 @@
     const KD = K.DOG, R = KD.R, G = C.G;
     d.age += dt; d.life -= dt; d.retarget -= dt; d.bark -= dt;
     const wp = P.to_world(S, d.s, d.y);
+    // P84: armed after ARM_DIST m walked (or stuck against something for 0.5 s) AND ARM_T s
+    if (!d.armed && !d.thrown && (d.dist >= KD.ARM_DIST || d.blockT > 0.5) && d.age >= KD.ARM_T) { d.armed = 1; d.retarget = 0; }
     // steer to the nearest foe (3D distance, those on the section first), re-evaluated 4 x a second
-    if (d.retarget <= 0) {
+    if (d.retarget <= 0 && d.armed) {
       d.retarget = 0.25;
       let best = null, bd = 1e9;
       for (const o of foesOf(S, d.team)) {
@@ -163,15 +171,16 @@
       if (best) { const q = P.to_plane(S, best.pos); if (Math.abs(q.s - d.s) > 0.45) d.dir = q.s > d.s ? 1 : -1; }
     }
     // reached a foe: explode
-    for (const o of foesOf(S, d.team)) if (hypot3(o.pos, wp) < KD.REACH + C.WORM_R * 0.5) { dogBoom(S, d, 'reached'); return; }
+    if (d.armed) for (const o of foesOf(S, d.team)) if (hypot3(o.pos, wp) < KD.REACH + C.WORM_R * 0.5) { dogBoom(S, d, 'reached'); return; }
     if (d.life <= 0) { dogBoom(S, d, 'timer'); return; }
     if (inWater(S, wp)) { d.life = M.min(d.life, 0.8); d.vs *= 0.3; }
     if (d.bark <= 0) { d.bark = rr(S, KD.BARK0, KD.BARK1); sim().emit(S, 'dogbark', { x: wp.x, y: wp.y, z: wp.z }); }
     if (S.eow) { SS.eow.dog_step(S, d, dt, wp); return; }                                // P68g: any side of a chunk
     const grounded = P.blocked2(S, d.s, d.y - R - 0.06) && d.vy <= 0.01;
     // horizontal speed: accelerate to the run speed (a little in the air)
+    if (d.thrown && grounded) { d.thrown = 0; d.vs = 0; d.vy = 0; }                        // P84: landed on its feet, facing the aim side
     const want = d.dir * KD.SPEED, k = M.min(1, (grounded ? KD.ACC : 2) * dt);
-    d.vs += (want - d.vs) * k;
+    if (!d.thrown) d.vs += (want - d.vs) * k;                                              // (in the thrown flight the throw speed carries)
     // the obstacle ahead: how far up must the dog get to clear it? (probe the front at foot and head height)
     const px = d.s + d.dir * (R + 0.06 + Math.abs(d.vs) * dt);
     let need = 0;
@@ -618,7 +627,7 @@
     if (can('punch') && Math.abs(ds) < 1.5 && Math.abs(tgt.pos.y - a.pos.y) < 1.1 && Math.abs(tp.t) < 0.7) cands.push({ special: 'punch', v: M.min(tgt.hp, 30) + 30 + (tgt.hp <= 30 ? 25 : 0), aim: 0.3, facing });
     // the dog: worth it when the foe is on the section within ~30 m and the ground between is runnable (no wall over the dog's
     // 0.95 m hop, no cliff or water): it then beats most lobbed shots at a distant, covered or entrenched worm
-    if (can('dog') && onSec && dist > 3 && dist < 32 && Math.abs(tgt.pos.y - a.pos.y) < 6 && dogPathOk(S, ap.s, tp.s, a.pos.y)) cands.push({ special: 'dog', v: M.min(tgt.hp, K.DOG.DMG) * 0.55 + (tgt.hp <= K.DOG.DMG ? 8 : 0), aim: 0, facing });   // (P38: measured, the dog got there in 40 % of the runs: x 1.35 was 3 x too high)
+    if (can('dog') && onSec && dist > 3 && dist < 32 && Math.abs(tgt.pos.y - a.pos.y) < 6 && dogPathOk(S, ap.s, tp.s, a.pos.y)) cands.push({ special: 'dog', v: M.min(tgt.hp, K.DOG.DMG) * 0.55 + (tgt.hp <= K.DOG.DMG ? 8 : 0), aim: 0.2, facing });   // (P38: measured, the dog got there in 40 % of the runs: x 1.35 was 3 x too high)
     // (P38-R2: v 66 -> 20: the gun fires ~4 s at a foe in its view; needs a clear line, any shot worth >= ~18 beats it)
     if (can('sentry') && onSec && dist < 12 && dist > 4 && SS.world.solid_len(a.pos.x, a.pos.y + 0.5, a.pos.z, tgt.pos.x, tgt.pos.y + 0.3, tgt.pos.z) < 0.3) cands.push({ special: 'sentry', v: 20, aim: 0, facing });
     if (can('claymore') && onSec && dist < 7 && dist > 2.5) cands.push({ special: 'claymore', v: 34, aim: 0, facing });

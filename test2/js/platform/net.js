@@ -64,7 +64,7 @@
 
   // the Input struct as a compact array (field order fixed; P2 adds the arsenal fields at the end)
   const KEYS = ['move', 'up', 'down', 'jump', 'backflip', 'jet', 'fire_pressed', 'fire_held', 'weapon', 'rotate', 'rotate_mouse', 'fine', 'align_step', 'align_crate', 'align_refocus', 'align_id', 'end_turn', 'inspect',
-    'fuse', 'tgt', 'ts', 'ty', 'sdir', 'gang', 'drop', 'wsel', 'aimset', 'aimv', 'face', 'adj', 'gturn'];
+    'fuse', 'tgt', 'ts', 'ty', 'sdir', 'gang', 'drop', 'wsel', 'aimset', 'aimv', 'face', 'adj', 'gturn', 'gear'];
   /* wire format (P38 R7): the Input struct as an array of numbers in KEYS order; `weapon` travels as an i16 weapon INDEX + 1 (C.WEAPON_KEYS; 0 = no change), never the
    * string. JSON numbers are f64 today; the values are small ints / metres (a binary port quantises: i8 axes / flags, f32 for ts / ty / aimv, u8 fuse). */
   NT.pack = inp => KEYS.map(k => (k === 'weapon' ? (inp.weapon ? SS.CFG.WEAPON_KEYS.indexOf(inp.weapon) + 1 : 0) : inp[k] || 0));

@@ -107,12 +107,12 @@
       const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(p, 3)); g.setAttribute('color', new T.BufferAttribute(c, 3));
       stars = new T.Points(g, SS.section.exempt(new T.PointsMaterial({ map: tx.glow, size: 2.6, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, fog: false, blending: T.AdditiveBlending }), 'sky: stars'));
       stars.renderOrder = -5; stars.frustumCulled = false; scene.add(stars); }
-    SS.fx.init(scene, tx, Q);
+    SS.fx.init(scene, tx, Q, heightTex);
     if (SS.flameView) SS.flameView.init(scene, Q);
     if (SS.actors.init) SS.actors.init(scene, tx, Q);
     if (SS.armsView) SS.armsView.init(scene, tx);           // P7: the PoC arsenal's models and effects
     if (SS.weaponsView) SS.weaponsView.init(scene, tx);     // P37-W3: weapons A
-    if (SS.ventsView) SS.ventsView.init(scene);             // P25: fumaroles
+    if (SS.ventsView) SS.ventsView.init(scene, Q);             // P25: fumaroles
     if (SS.bloodView) SS.bloodView.init(scene);             // the PoC's optional gore (setup Blood: On)
     if (SS.weatherView) SS.weatherView.init(scene, tx, Q, { skyMat, sun, hemi, fill, motes, heightTex, renderer });
     if (SS.trailView) SS.trailView.init(scene, Q);     // P62: footstep dust, drag marks, wading rings, breath fog
@@ -241,7 +241,7 @@
   V.snapCamera = () => { view.camT = null; view.dir.cur = null; };
   /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
   const PX = 0.0643;
-  const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
+  const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView', 'jacketView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
   function interest(S, a) {
     const P2 = SS.plane, at = (s, y) => P2.to_world(S, s, y);
     if (S.phase === 'place') return null;
@@ -844,7 +844,8 @@
     if (SS.prewarm) SS.prewarm.tick();
     if (stars) { stars.position.copy(camera.position); stars.visible = !SS.world.under && stars.material.opacity > 0; }
     if (SS.lens) SS.lens.tick(dt);
-    const hz = SS.flameView && Q.haze && !SS.world.under && SS.flameView.haze().n > 0 ? SS.flameView.haze() : null;       // P45: heat haze over big fires (high quality only: costs a lens pass)
+    let hz = SS.flameView && Q.haze && !SS.world.under && SS.flameView.haze().n > 0 ? SS.flameView.haze() : null;
+    if (Q.haze && SS.ventsView && !SS.world.under) { const vh = SS.ventsView.haze(camera); if (vh.n > 0) { const fh = hz, d = new Float32Array(32); let n = 0; if (fh) { d.set(fh.d.subarray(0, fh.n * 4)); n = fh.n; } d.set(vh.d.subarray(0, vh.n * 4), n * 4); hz = { n: Math.min(4, n + vh.n), d }; } }   // P87: vents shimmer too       // P45: heat haze over big fires (high quality only: costs a lens pass)
     if (SS.lens && ((S.holes && S.holes.length) || SS.lens.active() || hz || (Q.grade && !SS.lens.off))) {                       // P29c: gravitational lensing (render/lens.js)
       const HK = C.ARMS.HOLE;
       SS.lens.render(renderer, scene, camera, !(S.holes && S.holes.length) ? NO_HOLES : S.holes.map(h => ({ x: h.x, y: h.y, z: h.z, s: 0.25 + 0.55 * Math.min(1, h.t / HK.GROW) })), hz);

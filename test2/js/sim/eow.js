@@ -782,6 +782,15 @@
     const c = WP.crate_make(S, kind, weapon, null, p); E.crate_drift(S, c); S.crates.push(c);
     SS.sim.emit(S, 'banner', { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
   };
+  // P84 x P86: the round's crate plan (skills.crate_plan) chose this turn and the kind; in space it appears at a random spot and drifts
+  E.crate_drop = function (S, kind) {
+    const WP = SS.weapons, R = S.armRng;
+    if (!WP.crate_room(S, false)) return;
+    const p = E.crate_spot(S); if (!p) return;
+    const w0 = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(M.rng_next(R)) : C.CRATE_POOL[Math.floor(M.rng_next(R) * C.CRATE_POOL.length)]) : null;
+    const c = WP.crate_make(S, kind, w0 && E.no_air(w0) ? 'bazooka' : w0, null, p); E.crate_drift(S, c); S.crates.push(c);
+    SS.sim.emit(S, 'banner', { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
+  };
   // a tool delivery / the overload at a random spot (skills.js hooks)
   E.crate_add = function (S, kind, weapon, tool) {
     const p = E.crate_spot(S); if (!p) return null;

@@ -41,6 +41,7 @@
   // the timed throwables get the +/- fuse; dynamite and the holy grenade join them (their old fixed fuses = the defaults)
   C.PROJ.holy.fuseSet = 1; C.PROJ.dynamite.fuseSet = 1;
   C.FUSE_DEFAULT = { grenade: 3, cluster: 3, banana: 3, holy: 3, dynamite: 5, gas: 3 };
+  C.FUSE_KEYS = ['grenade', 'cluster', 'banana', 'holy', 'dynamite', 'gas'];      // (a fixed order for the hash: P84)
   C.PARAM = { FUSE_MIN: 0.5, FUSE_MAX: 5, FUSE_STEP: 0.5, BURST_MIN: 1, BURST_MAX: 5, BURST_STEP: 1, BURST_DEF: 3, MINE_MIN: 0, MINE_MAX: 3, MINE_STEP: 0.5, MINE_DEF: 1.5 };
 
   /* ---------- constants of the weapons ---------- */

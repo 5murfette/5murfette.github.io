@@ -111,7 +111,11 @@
   }
   /* P38-R5 (B9): what a crate is worth to the CPU, in HP-eq. A weapon crate by its rarity band (the balance table: 10 + U / 2, clamped 10..60:
    * common ~20, uncommon ~32, rare ~45, super ~60), a tool crate 14 (overload 26), a health crate by the HP it would restore. */
+  // P84: infected with the hugger already off: only a health crate cures it (the parasite kills in the end), so it is worth a detour at any HP
+  const needsCure = a => !!(a.embryo && !(a.hug != null && a.hug >= 0));
+  AB.needs_cure = needsCure;
   const crateWorth = (S, a, c) => {
+    if (c.kind === 'health' && needsCure(a)) return 70;
     if (c.kind === 'health') return a.hp < 70 ? 24 + (100 - a.hp) * 0.4 : 6;
     if (c.kind === 'tool') return c.tool === 'overload' ? 26 : 14;
     const B = SS.balance, r = B && c.weapon ? B.row(c.weapon) : null;
@@ -151,8 +155,8 @@
       if (!c.landed || isBad(S, pl, c.id)) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z);
       if (d > K.FETCH_R + bonusR(S, a, c) || Math.abs(c.pos.y - a.pos.y) > 4) continue;
-      if (minHp != null && !(c.kind === 'health' && a.hp <= minHp)) continue;
-      if (minHp != null && a.hp > K.FETCH_HP_NOFOE && !foeOnCratePlane(S, a, c)) continue;      // (P38-R2: else the walk ends with no target on the new plane: 48 % of those turns had no shot)
+      if (minHp != null && !(c.kind === 'health' && (a.hp <= minHp || needsCure(a)))) continue;
+      if (minHp != null && a.hp > K.FETCH_HP_NOFOE && !needsCure(a) && !foeOnCratePlane(S, a, c)) continue;      // (P38-R2: else the walk ends with no target on the new plane: 48 % of those turns had no shot)
       const sc = crateValue(S, a, c) / (d + 6);
       if (!best || sc > best.sc) best = { c, sc, d };
     }
@@ -192,7 +196,7 @@
       if (pl.moves < K.MAX_MOVES && ropeStart(S, pl, a, { type: 1, s: ap.s, y: a.pos.y, dangerY: danger }, [1, -1])) { pl.moves++; return true; }
     }
     if (S.sudden && !W().dry && SS.water) {                                  // the sea rises after every turn: climb away from it
-      const surf = M.max(sim().surface_at(S, a.pos.x, a.pos.z), W().SEA), danger = surf + C.GAME.SD_RISE * 3;      // (the sea floods the low ground a little more every turn)
+      const surf = M.max(sim().surface_at(S, a.pos.x, a.pos.z), W().SEA), danger = surf + C.GAME.SD_AI_MARGIN;      // (P84: the sea rises slowly and without pause: stay SD_AI_MARGIN m above it, about two turns ahead)
       if (a.pos.y - 0.5 < danger) {
         let bestS = null, bestD = 1e9;
         for (let o = -30; o <= 30; o += 1) {
@@ -238,7 +242,7 @@
   AB.retreat_crate_dir = function (S, a) {
     let best = null; const ap = P.to_plane(S, a.pos);
     for (const c of S.crates) {
-      if (!c.landed || isBad(S, null, c.id) || (c.kind === 'health' && a.hp >= 80)) continue;
+      if (!c.landed || isBad(S, null, c.id) || (c.kind === 'health' && a.hp >= 80 && !needsCure(a))) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z), cp = P.to_plane(S, c.pos);
       if (d > M.min(K.RETREAT_R + bonusR(S, a, c), S.retreatT > 0 ? K.WALK_V * S.retreatT : 1e9) || Math.abs(c.pos.y - a.pos.y) > 3 || Math.abs(cp.t) > 1.0 || Math.abs(cp.s - ap.s) < K.WALK_TOL) continue;
       if (!walkable(S, ap.s, cp.s, a.pos.y) || shellNear(S, a, cp.s)) continue;

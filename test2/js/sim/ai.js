@@ -298,6 +298,10 @@
     let pl = S.aiPlan;
     if (!pl || pl.turn !== S.turnNo || pl.worm !== a.id) { pl = S.aiPlan = newPlan(S, a); }
     if (SS.aib && a.air) SS.aib.air(S, a);
+    if (SS.gear && S.phase === 'play' && !pl.gearT) {                                    // P89: a switched-off life jacket goes on once the turn starts near water
+      pl.gearT = 1; const gj = SS.gear.get(S, a.team, SS.gear.JACKET);
+      if (gj && !gj.on && gj.n > 0 && nearWater(S, a)) inp.gear = SS.gear.JACKET + 1;
+    }
     if (SS.lab4 && S.settings.labFlags && S.phase === 'play' && !a.air && !S.rope && !S.charging) {      // P79 LIGHTNING: run from a bolt's tell (1.4 s)
       const fd = SS.lab4.zap_flee(S, a);
       if (fd && SS.aib && SS.aib.safe_step(S, a, fd)) { inp.move = fd; return inp; }
@@ -450,6 +454,15 @@
       if (k === 'tesla') v += zapValue(S, tgt.pos) * 0.85;                // the two shocks (no flat bonus)
       cands.push({ special: k, v, ts: tp.s, ty: tgt.pos.y, facing });
     }
+    // P84: an ally with a face hugger on: a shotgun pellet tears it off (the worm keeps the infection and takes the pellet; a health crate cures it afterwards).
+    // Worth it when the ally can take the pellet and a health crate lies on the map to cure it
+    if (has('shotgun') && SS.alien) for (const o of S.worms) {
+      if (o === a || o.dead || o.hp <= 0 || o.team !== a.team || !(o.hug != null && o.hug >= 0) || o.hp <= C.ARMS.SHOTGUN.DMG * 1.5) continue;
+      const op = P.to_plane(S, o.pos), od = M.len2(op.s - ap.s, o.pos.y - a.pos.y);
+      if (od > (laserOn(a) ? 24 : 15) || Math.abs(op.t) > C.HALF || !clearLine(S, ap.s, a.pos.y, op.s, o.pos.y)) continue;
+      const crate = S.crates.some(c => c.kind === 'health' && c.landed);
+      cands.push({ special: 'shotgun', v: crate ? 30 : 14, aim: M.atan2(o.pos.y - a.pos.y, Math.abs(op.s - ap.s)), facing: op.s >= ap.s ? 1 : -1 });
+    }
     if (SS.aib) SS.aib.cands(S, pl, a, tgt, cands, { ap, tp, dist, facing, aim, clear });   // P38: force field, gravity gun, sniper
     if (SS.gadgets) SS.gadgets.ai_cands(S, pl, a, tgt, cands);       // P37 W4: robo dog, knockout punch, sentry gun, claymore
     if (SS.aic) SS.aic.cands(S, pl, a, tgt, cands, { ap, tp, dist, facing, aim, clear });     // P38-R5: dynamite, mine, spring, sheep, napalm, bat, torch
@@ -507,11 +520,13 @@
   /* P38 R9: the 3 x 3 rule weighs the +/- 1.7 sigma tails of the noise at 1/36 each, so a plan whose tail bursts on the shooter looked fine
    * (an easy banana planned 22 m out fell 6 m short at -1.85 sigma and its bomblets killed the thrower: 100 HP). A node that hurts the shooter
    * badly (a bomblet shell: bursting within its scatter ring; otherwise >= 30 HP or a knock-back >= SELF_DV m/s: the shooter is thrown off its ledge into the sea) costs SELF_RISK more: the CPU stays risk-averse about itself. */
+  // P89: is the worm within 6 m above the water (a knock-back could drop it in)?
+  function nearWater(S, a) { if (!SS.water || !S.water) return false; const sf = SS.sim.surface_at(S, a.pos.x, a.pos.z); return sf > -90 && a.pos.y - sf < 6; }
   function selfRisk(S, c, W, split, dmg) {
     const a = S.active; if (!a || a.dead) return 0;
     if (split) { const R = split.jx * 1.1; return M.len3(a.pos.x - c.x, a.pos.y - c.y, a.pos.z - c.z) < R ? K.SELF_RISK : 0; }
     const e = SS.blast.worm_effect(c, W, a.pos, dmg);
-    return e.dmg >= M.min(a.hp, 30) || e.dv >= K.SELF_DV ? K.SELF_RISK : 0;
+    return e.dmg >= M.min(a.hp, 30) || e.dv >= K.SELF_DV * (nearWater(S, a) && SS.gear && SS.gear.ready(S, a.team, SS.gear.JACKET) ? 1.6 : 1) ? K.SELF_RISK : 0;   // (P89: with a life jacket a knock into the sea costs 6 HP, not the worm: bolder near water)
   }
   AI.expected = expected;
   // the same expectation for any charged special: fn(hit) -> value of a burst (null / wet hit = 0)

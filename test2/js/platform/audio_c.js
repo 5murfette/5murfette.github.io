@@ -41,6 +41,7 @@
     hugger_detach() { tone('sawtooth', 900, 260, 0.35, 0.1, 0.004); squelch(0.9, 1100, 250, 0.04); noise(0.25, 'bandpass', 2200, 2, 0.12, 900, 1, 0.1); tone('sine', 120, 60, 0.3, 0.25, 0.01, 0.2); },
     parasite_pulse() { [0, 0.16].forEach(d => tone('sine', 62, 38, 0.18, 0.5, 0.004, d)); noise(0.22, 'bandpass', 700, 2.5, 0.3, 260, 1, 0.34); tone('sawtooth', 240, 120, 0.28, 0.1, 0.01, 0.36); squelch(0.7, 600, 200, 0.5); },
     chest_burst() { noise(0.5, 'lowpass', 1400, 0.8, 0.6, 130); [0, 0.05, 0.12, 0.2].forEach(d => { noise(0.05, 'highpass', 2200, 0.8, 0.4, 700, 1, d); tone('square', 180 - d * 200, 70, 0.05, 0.22, 0.002, d); }); squelch(1.4, 900, 160, 0.02); tone('sine', 85, 34, 0.6, 0.55); },
+    cure() { tone('sine', 520, 880, 0.35, 0.16); tone('sine', 780, 1320, 0.3, 0.1, 0.003, 0.1); noise(0.2, 'highpass', 4000, 0.6, 0.06, 7000, 1, 0.05); },      // P84: a health crate cured the infection
     embryo_lost() { squelch(0.9, 700, 140); tone('sawtooth', 700, 180, 0.4, 0.09, 0.004, 0.05); noise(0.3, 'lowpass', 600, 1, 0.2, 140, 1, 0.1); },
     acid_sizzle() { noise(0.55, 'highpass', 4200, 0.5, 0.2, 7000); noise(0.45, 'bandpass', 2600, 1.5, 0.1, 4200); for (let i = 0; i < 4; i++) noise(0.03, 'highpass', 5000, 0.8, 0.18, 8000, 1, rnd(0, 0.45)); },
     acid_hit() { noise(0.4, 'highpass', 3800, 0.6, 0.28, 7500); tone('sawtooth', 1700, 500, 0.22, 0.08, 0.004); squelch(0.8, 1200, 300, 0.01); },
@@ -63,6 +64,7 @@
       case 'parasite_pulse': S2('parasite_pulse', 0.9, 1, FX.parasite_pulse); break;
       case 'chest_burst': S2('chest_burst', 1, 1, FX.chest_burst); break;
       case 'embryo_lost': S2('embryo_lost', 0.8, 1, FX.embryo_lost); break;
+      case 'cure': S2('crate_pickup', 0.8, 1.25, FX.cure); break;
       case 'alien_born': S2('alien_born', 1, 1, FX.alien_born); break;
       case 'alien_hiss': S2('alien_hiss', 0.8, 1, FX.alien_hiss); break;
       case 'alien_sleep': S2('alien_sleep', 0.5, 1, FX.alien_sleep); break;

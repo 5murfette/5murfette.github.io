@@ -233,6 +233,13 @@
     const st = S.water; if (!st) return;
     st.nTeams = S.teams ? S.teams.length : 2;
     st.acc += dt;
+    // P87: the swell follows the wind's heading / strength by RAMPS (deterministic, per step): a new turn's wind used to snap
+    // the boundary wave train to a new phase and amplitude. A heading change fades the train out (~25 s), swaps, fades back in.
+    if (st.swellDirT !== undefined) {
+      const rate = K.SWELL_A * dt / 25;
+      if (Math.abs(st.swellDirT - st.swellDir) > 1e-6) { st.swellA = M.max(0, st.swellA - rate); if (st.swellA <= 0) st.swellDir = st.swellDirT; }
+      else st.swellA += M.clamp(st.swellAT - st.swellA, -rate, rate);
+    }
     while (st.acc >= K.DT - 1e-9) { st.acc -= K.DT; sub(S, st); }
   };
 
