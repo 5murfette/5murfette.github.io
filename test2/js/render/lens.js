@@ -33,7 +33,7 @@
         varying vec2 vUv;
         void main(){
           vec2 asp = vec2(uRes.x / uRes.y, 1.0), uv = vUv;
-          float dark = 1.0; vec3 ring = vec3(0.0);
+          float dark = 1.0, lit = 0.0; vec3 ring = vec3(0.0);
           for (int i = 0; i < ${MAXH}; i++) {
             if (i >= uN) break;
             vec2 c = uH[i].xy; float thE = uH[i].z, rh = uH[i].w, R = thE * ${R_FX.toFixed(2)};
@@ -51,6 +51,7 @@
             float d = uR[i].w * (exp(-band * band) * (band > 0.0 ? 1.0 : 0.6) - 0.5 * exp(-pow((band + 1.8) * 0.6, 2.0)));
             d += uR[i].w * 0.35 * exp(-pow(rr / uRk[i].y, 2.0)) * sin(rr * 260.0 - uR[i].z * 90.0);          // the hot core shimmers
             uv += dv / max(rr, 1e-4) / asp * d;
+            lit += uR[i].w * 4.0 * (exp(-band * band * 1.5) - 0.7 * exp(-pow((band + 1.8) * 0.6, 2.0)));      // P73: the compressed band is a touch brighter, the rarefaction behind it a touch darker (schlieren)
           }
           for (int i = 0; i < 4; i++) {                                              // heat haze over fires: x,y = the flame top (uv), z = half width (uv-height units), w = strength
             if (i >= uNZ) break;
@@ -64,7 +65,7 @@
             float n = mix(mix(a0, a1, fp.x), mix(a2, a3, fp.x), fp.y) - 0.5;
             uv += vec2(n * 0.9, sin(q.y * 1.7 + n * 6.0) * 0.25) * 0.0075 * m / asp;
           }
-          vec3 col = textureLod(tScene, clamp(uv, vec2(0.001), vec2(0.999)), 0.0).rgb * dark + ring;
+          vec3 col = textureLod(tScene, clamp(uv, vec2(0.001), vec2(0.999)), 0.0).rgb * dark * (1.0 + lit) + ring;
           #ifdef BLOOM
           // P61 bloom: the bright parts (HDR above the knee) of the scene's mip chain (lods 2, 3, 4: 5 taps each), added before the tone map
           {
@@ -103,7 +104,7 @@
     quadScene = new T.Scene(); quadCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const q = new T.Mesh(new T.PlaneGeometry(2, 2), mat); q.frustumCulled = false; quadScene.add(q);
   }
-  LN.shock = function (x, y, z, R, k) { if (rings.length >= MAXR) rings.shift(); rings.push({ x, y, z, R: Math.max(2, R), k: k || 1, t: 0 }); };
+  LN.shock = function (x, y, z, R, k, T) { if (rings.length >= MAXR) rings.shift(); rings.push({ x, y, z, R: Math.max(2, R), k: k || 1, t: 0, T: T || RING_T }); };
   LN.active = () => rings.length > 0;
   /* the grade of the frame (view.js applyLook): sat, con, vig, shadow tint [r, g, b], highlight tint [r, g, b]; init() is lazy */
   const NEUTRAL = { sat: 1, con: 0, vig: 0, sh: [0, 0, 0], hi: [1, 1, 1] };
@@ -114,7 +115,7 @@
   LN.applyGrade = function () { mat.uniforms.uGA.value.set(GR.sat, GR.con, GR.vig, 1 / 255); mat.uniforms.uSh.value.set(GR.sh[0], GR.sh[1], GR.sh[2]); mat.uniforms.uHi.value.set(GR.hi[0], GR.hi[1], GR.hi[2]); };
   LN.bloom = function (on) { bloomOn = !!on; };                  // P61: before the first frame (init reads it); quality-gated by view.js
   LN.clear = function () { rings.length = 0; };
-  LN.tick = function (dt) { for (let i = rings.length - 1; i >= 0; i--) if ((rings[i].t += dt) > RING_T) rings.splice(i, 1); };
+  LN.tick = function (dt) { for (let i = rings.length - 1; i >= 0; i--) if ((rings[i].t += dt) > rings[i].T) rings.splice(i, 1); };
   LN.render = function (renderer, scene, camera, holes, haze) {
     if (!rt) init(renderer);
     renderer.getDrawingBufferSize(size);
@@ -136,7 +137,7 @@
     let nr = 0;                                                                     // shock rings: front radius in uv-height units from a metre offset along camera right
     for (const g of rings) {
       v.set(g.x, g.y, g.z).project(camera); if (v.z > 1 || v.z < -1) continue;
-      const cx = v.x * 0.5 + 0.5, cy = v.y * 0.5 + 0.5, f = g.t / RING_T, front = g.R * (1 - Math.exp(-4.5 * f)) / (1 - Math.exp(-4.5));
+      const cx = v.x * 0.5 + 0.5, cy = v.y * 0.5 + 0.5, f = g.t / g.T, front = g.R * (1 - Math.exp(-4.5 * f)) / (1 - Math.exp(-4.5));
       v.set(g.x, g.y, g.z).addScaledVector(r, 1).project(camera);
       const px = Math.hypot((v.x * 0.5 + 0.5 - cx) * size.x / size.y, v.y * 0.5 + 0.5 - cy);
       mat.uniforms.uR.value[nr].set(cx, cy, front * px, 0.02 * g.k * (1 - f) * (1 - f) * Math.min(1, 6 / g.R + 0.3));

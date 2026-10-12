@@ -603,7 +603,7 @@
         case 'kill': if (e.worm) { deathId = e.worm.id; deathT = view.time; } break;
         case 'hurt': if (e.worm && !e.dot) { hurtId = e.worm.id; hurtT = view.time; } break;   // the camera follows the damage (interest)
         case 'explode': if (SS.bodyView && SS.bodyView.noteBlast) SS.bodyView.noteBlast(e);
-          SS.fx.env.S = S; SS.fx.env.tod = view.tod; SS.fx.env.under = !!(SS.world.under || SS.world.eow); SS.fx.env.vac = !!SS.world.eow; SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
+          SS.fx.env.S = S; SS.fx.env.biome = S.biome; SS.fx.env.tod = view.tod; SS.fx.env.under = !!(SS.world.under || SS.world.eow); SS.fx.env.vac = !!SS.world.eow; SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
         case 'splash': SS.fx.splash(e.x, e.y, e.z, e.size); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'waterblast': SS.fx.waterBlast(e); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'lavaplop': SS.fx.lava(e.x, e.y, e.z, Math.min(1.4, 0.35 + (e.speed || 0) * 0.06)); break;
