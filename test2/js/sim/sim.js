@@ -633,7 +633,7 @@
   const WD = C.WORM_DYN, GW = C.G_WORM;
   /* P37-7: a worm's walking speed (m/s) and gravity factor; the tool-crate skills (worm.skills: fastwalk / lowgrav, turns
    * left) act here and nowhere else. sim.jump_vs: the horizontal speed of a forward jump. */
-  sim.walk_speed = (S, w) => C.WALK * (w && w.skills && w.skills.fastwalk > 0 ? C.SKILL.FASTWALK_K : 1);
+  sim.walk_speed = (S, w) => C.WALK * (w && w.skills && w.skills.fastwalk > 0 ? C.SKILL.FASTWALK_K : 1) * (SS.lab4 && S.lab ? SS.lab4.walk_k(S, w) : 1);   // (P79 SLICK: mud slows the walk)
   sim.gravity_k = (S, w) => (w && w.skills && w.skills.lowgrav > 0 ? C.SKILL.LOWGRAV_K : 1) * (SS.lab ? SS.lab.gravity_k(S) : 1);
   // the forward jump covers what walking covers in the whole time (wind-up + flat flight 2 vy / g): spring speed = walk x (T_w + T_air) / T_air
   sim.jump_vs = (S, w) => { const ta = 2 * WD.JUMP_VY / (GW * sim.gravity_k(S, w)); return sim.walk_speed(S, w) * (WD.JUMP_WIND + ta) / ta; };
@@ -718,6 +718,7 @@
       const it = SS.ice && S.ice ? SS.ice.top_at(S, a.pos.x, a.pos.z) : -1e9;
       const onIce = it > -1e8 && Math.abs(a.pos.y - a.foot - it) < 0.15 && SS.ice.slippery(S, a.pos.x, a.pos.z);
       if (onIce) { a.iceV += (hs - a.iceV) * (1 - M.exp(-C.ICE.GRIP * dt)); hs = Math.abs(a.iceV) < 0.04 && !mv ? 0 : a.iceV; } else a.iceV = 0;
+      if (SS.lab4 && S.lab && S.settings.labFlags) hs += SS.lab4.slip(S, a, s, y);   // P79 SLICK: a wet slope steeper than the friction lets go
       if (hs) {
         const base = P.overlap2(S, s, y), ns = s + hs * dt, top = onWorm(S, a, s, y) ? WD.STEP_UP_WORM : WD.STEP_UP;
         let moved = false;

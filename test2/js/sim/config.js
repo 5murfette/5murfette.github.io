@@ -232,7 +232,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p80-assets',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p79-lab4',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
@@ -601,7 +601,7 @@
   SS.CFG.LIMITS = { WORMS: 16, PROJ: 512, PENDING: 256, FLAMES: 512, DEVICES: 64, HOLES: 16, STRIKES: 16, BULLETS: 64, ZAPS: 16, MOAIS: 16, FX: 256, PLANE_BODIES: 512, EVENTS: 4096, LOG: 7, LAB_METEORS: 8, WHIRLS: 4, WHIRL_RESP: 4 };
   /* P42 Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic */
   SS.CFG.LAB = {
-    FLAG: { BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32, PERKS: 64, STREAK: 128, LONGSHOT: 256, FATIGUE: 512, CRACKS: 1024 }, ALL: 2047,
+    FLAG: { BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32, PERKS: 64, STREAK: 128, LONGSHOT: 256, FATIGUE: 512, CRACKS: 1024, LIGHTNING: 2048, SLICK: 4096, QUAKE: 8192, RECOIL: 16384, SCAVENGE: 32768 }, ALL: 65535,
     BANK_K: 0.2, BANK_MAX: 3, BANK_SPEED: 2,
     UNDER_RATIO: 0.5, UNDER_K: 1.35,
     GUST_T0: 6, GUST_T1: 12, GUST_DIR: 0.9, GUST_V0: -4, GUST_V1: 5, GUST_MAX: 11,
@@ -612,7 +612,29 @@
     RADIUS_K: 1.15, PADDED_K: 0.8, SPRING_K: 1.2, THICK_K: 0.85, MAGNET_K: 2.5, TIME_S: 10,
     STREAK_K: 0.1, STREAK_MAX: 4,
     LONG_M: 25, LONG2_M: 40, LONG_K: 1.25, LONG2_K: 1.5,
-    FAT_M: 25, FAT_RAD: 0.1, FAT_STEP: 2
+    FAT_M: 25, FAT_RAD: 0.1, FAT_STEP: 2,
+    /* Batch 4 (P79, sim/lab4.js): LIGHTNING, SLICK, QUAKE, RECOIL, SCAVENGE. Units: m, s, m/s, N s, kg (game scale). */
+    L4: {
+      /* LIGHTNING: in a thunderstorm a leader comes down at a point P; it attaches to the highest grounded conductor within REACH of P
+       * (rolling-sphere rule): eff height = height + BONUS (steel girders reach up best, metal props next, then a bare worm, a tree, the ground). */
+      ZAP_WARN: 1.4, ZAP_REACH: 12, ZAP_NEAR: 30, ZAP_P1: 0.85, ZAP_P2: 0.5, ZAP_T0: 3, ZAP_CELL: 0.6, ZAP_CELL_R: 9,
+      B_STEEL: 4, B_METAL: 2, B_WORM: 0.9, B_CRATE: 0.6, ZAP_R: 4.5, ZAP_D_STEEL: 22, ZAP_D_WORM: 30, ZAP_IGN_R: 2.2, ZAP_IGN_WET: 0.6,
+      /* SLICK: wetness = max(weather wet, SNOW_K x snow cover) (0..1) lowers the friction of loose ground (soil, sand, ash, scree, snow):
+       * mu_eff = mu x (1 - MU_K x wet); a worm on a slope steeper than mu_eff slides downhill at SLIDE_K x (grade - mu_eff) m/s (max SLIDE_MAX);
+       * mud slows the walk by WALK_K x wet and absorbs FALL_K x wet of a landing's damage. */
+      SNOW_K: 0.6, MU_K: 0.55, SLIDE_K: 4, SLIDE_MAX: 3.5, WALK_K: 0.3, FALL_K: 0.5, SLICK_PUSH: 0.9,
+      /* QUAKE: every EVERY-th turn: a tremor warns for WARN s, then shakes for DUR s. Seismic load = (1 + A_K) x gravity in the structural
+       * load check of SPOTS windows around the action (the most dissected ground of 12 samples each), and a fault line FAULT_LEN long
+       * gains FAULT_DMG crack damage (FAULT_W half width, FAULT_DEPTH deep). Loose props (boulders, barrels, mines) jump by PROP_V m/s. */
+      EVERY: 5, WARN: 1.8, DUR: 2.5, A_K: 0.6, SPOTS: 3, QK_GAP: 0.15, SAMPLES: 12, REACH: 28, WIN: 11, FAULT_LEN: 16, FAULT_W: 0.8, FAULT_DMG: 160, FAULT_DEPTH: 6, PROP_V: 0.9, PROP_R: 22,
+      /* RECOIL: dv = m x v_exit x k / WORM_KG (a bazooka's back-blast, a shotgun's kick) along the plane, opposite the aim; the worm then slides with
+       * Coulomb friction (deceleration mu_eff x RC_G): dry soil 0.9 m, mud 1.9 m, bare ice 12 m for a full bazooka. */
+      WORM_KG: 6, RC_G: 9.81, RC_HOP: 0.4, RC_LIP: 0.25,
+      RC: { bazooka: { m: 0.8, k: 1 }, homing: { m: 0.8, k: 1 }, cluster: { m: 1, k: 0.8 }, grenade: { m: 1, k: 0.25 }, banana: { m: 1, k: 0.25 }, holy: { m: 2, k: 0.25 },
+        boulder: { m: 6, k: 0.2 }, foam: { m: 1.5, k: 0.8 }, shotgun: { imp: 14 }, sniper: { imp: 8 } },
+      /* SCAVENGE: a worm's settled grave leaves one random item of its team's stock (a finite crate weapon) as a pickup crate at the next turn start (no constants) */
+      SC_NONE: 0
+    }
   };
   /* P66b cracks (sim/cracks.js, lab flag CRACKS): persistent per-voxel damage W.crack (u8) + a structural load check.
    * Units: kPa strength (MATS[].strength), kg, N, m. Bond capacity of one voxel face = H^2 x strength x K[direction] x (1 - damage). */

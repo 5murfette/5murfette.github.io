@@ -168,6 +168,8 @@
     } else SS.sim.explode(S, c, { W: P.MINE.W, dmg: P.MINE.DMG, name: 'mine' }, null);
   }
 
+  SC.set_off = detonate;                                    // P79 (lab LIGHTNING): a bolt sets a mine / barrel off at once
+
   /* blast hook (blast.js, after bodies.blast): shatter crates, set off barrels and mines, light what the fireball reaches */
   SC.blast = function (S, c, Wkg, heK) {
     const BL = SS.blast, fire = C.BLAST.FIRE_R * (heK == null ? 1 : heK) * M.cbrt(Wkg);

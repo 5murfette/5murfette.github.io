@@ -40,13 +40,14 @@
   const rng = S => M.rng_next(S.lab.rng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
 
-  LB.flags = S => ((S.settings.labFlags | 0) & F.ALL);
+  LB.flags = S => { const f = (S.settings.labFlags | 0) & F.ALL; return (f & F.FLAG.QUAKE) ? (f | F.FLAG.CRACKS) : f; };   // (P79: a quake needs the crack system)
   LB.on = (S, bit) => (LB.flags(S) & bit) !== 0;
   LB.lab_make = S => ({ rng: M.rng_make(((Math.imul(S.settings.seed | 0, 48271) + 0x1ab5) >>> 0) || 1), gustT: 0, met: [], metN: 0, moon: false, bankN: 0, bankK: 1, evTick: -1, underAnn: -1,
     perks: [0, 0, 0, 0], streak: [0, 0, 0, 0], dealt: 0, curTeam: -1, draftRound: -1, longTick: -1, lx: 0, ly: 0, lz: 0, lid: -1, moved: [], tired: [],
     draft: { on: false, first: false, n: 0, idx: 0, team: -1, order: [0, 0, 0, 0], opts: [0, 0, 0], nopt: 0, t: 0 } });
   LB.init = function (S) {
     S.lab = LB.lab_make(S); S.lab.gustT = F.GUST_T0;
+    if (SS.lab4) SS.lab4.init(S);                                       // P79: batch 4 state (own RNG stream)
     for (let i = 0; i < C.LIMITS.WORMS; i++) { S.lab.moved.push(0); S.lab.tired.push(0); }
   };
 
@@ -102,7 +103,11 @@
     if (!S.lab || ownerId == null || ownerId < 0 || !LB.on(S, F.FLAG.PERKS)) return Wkg;
     const o = S.worms[ownerId]; return o && LB.has(S, o.team, F.PERK.RADIUS) ? Wkg * F.RADIUS_K * F.RADIUS_K * F.RADIUS_K : Wkg;
   };
-  LB.landing_dmg = (S, w, dmg) => (LB.has(S, w.team, F.PERK.PADDED) ? M.max(1, Math.round(dmg * F.PADDED_K)) : dmg);
+  LB.landing_dmg = function (S, w, dmg) {
+    if (LB.has(S, w.team, F.PERK.PADDED)) dmg = M.max(1, Math.round(dmg * F.PADDED_K));
+    if (SS.lab4 && dmg > 0 && S.lab && S.lab.b4) { const k = SS.lab4.landing_k(S, w); if (k < 1) dmg = M.max(1, Math.round(dmg * k)); }     // P79 SLICK: mud soaks up a fall
+    return dmg;
+  };
   LB.jump_k = (S, w) => (LB.has(S, w.team, F.PERK.SPRING) ? F.SPRING_K : 1);
   LB.pick_k = (S, w) => (LB.has(S, w.team, F.PERK.MAGNET) ? F.MAGNET_K : 1);
   /* weapons.use: the tired worm's aim error (one draw from the Lab stream per shot; the aim vector is rotated) */
@@ -227,6 +232,7 @@
       L.underAnn = S.turnNo; sim.emit(S, 'labunder', { team: S.active.team }); sim.log(S, `${sim.team_name(S, S.active.team)} are the underdogs: +${Math.round((F.UNDER_K - 1) * 100)} % blast damage.`, 0xffc08a);
     }
     if ((fl & F.FLAG.METEORS) && !first && S.turnNo % F.MET_EVERY === 0 && S.phase !== 'place') spawn_meteors(S);
+    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.turn_start(S, first);        // P79: lightning, quake, scavenge
   };
 
   function spawn_meteors(S) {
@@ -247,6 +253,7 @@
   LB.step = function (S, dt) {
     const fl = LB.flags(S); if (!fl || !S.lab || S.phase === 'over') return;
     const L = S.lab;
+    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.step(S, dt);                    // P79: lightning strikes, slick slopes, the quake
     if ((fl & F.FLAG.FATIGUE) && S.phase === 'play' && S.active && !S.active.dead) {
       const a = S.active;
       if (L.lid !== a.id) { L.lid = a.id; L.lx = a.pos.x; L.ly = a.pos.y; L.lz = a.pos.z; }
@@ -277,7 +284,7 @@
   };
 
   /* HUD badge text: the active mechanics; the live state (moon, underdog) in brackets */
-  const NAMES = [['BANK', 'Bank'], ['UNDERDOG', 'Underdog'], ['GUSTS', 'Gusts'], ['METEORS', 'Meteors'], ['CLOCK', 'Clock'], ['MOON', 'Moon'], ['PERKS', 'Perks'], ['STREAK', 'Streak'], ['LONGSHOT', 'Long shot'], ['FATIGUE', 'Fatigue'], ['CRACKS', 'Cracks']];
+  const NAMES = [['BANK', 'Bank'], ['UNDERDOG', 'Underdog'], ['GUSTS', 'Gusts'], ['METEORS', 'Meteors'], ['CLOCK', 'Clock'], ['MOON', 'Moon'], ['PERKS', 'Perks'], ['STREAK', 'Streak'], ['LONGSHOT', 'Long shot'], ['FATIGUE', 'Fatigue'], ['CRACKS', 'Cracks'], ['LIGHTNING', 'Lightning'], ['SLICK', 'Slick'], ['QUAKE', 'Quake'], ['RECOIL', 'Recoil'], ['SCAVENGE', 'Scavenge']];
   LB.badge = function (S) {
     const fl = LB.flags(S); if (!fl) return '';
     const out = [];
@@ -288,6 +295,7 @@
       else if (n[0] === 'METEORS' && S.lab && S.lab.met.length) s += ' (!)';
       else if (n[0] === 'STREAK' && S.active && S.lab && S.lab.streak[S.active.team] > 0) s += ' (x' + S.lab.streak[S.active.team] + ')';
       else if (n[0] === 'FATIGUE' && S.active && LB.tired(S, S.active.id) > 0.5) s += ' (tired ' + (F.FAT_RAD * M.min(1, LB.tired(S, S.active.id) / F.FAT_M) * 180 / M.PI).toFixed(1) + ' deg)';
+      else if (SS.lab4 && (SS.lab4.MASK & F.FLAG[n[0]])) s += SS.lab4.badge(S, n[0]);
       out.push(s);
     }
     return out.join(' · ');
@@ -299,6 +307,7 @@
     for (const m of L.met) { mix(m.t); mix(m.x); mix(m.z); }
     if (S.wind) { mix(S.wind.speed); mix(S.wind.dir); }
     if ((fl & F.FLAG.CRACKS) && SS.cracks) SS.cracks.hash(S, mix);                     // P66b: the damage field
+    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.hash(S, mix);                           // P79
     if (fl & (F.FLAG.PERKS | F.FLAG.STREAK | F.FLAG.FATIGUE)) {
       for (let i = 0; i < 4; i++) { mix(L.perks[i]); mix(L.streak[i]); }
       mix(L.dealt); mix(L.draftRound); mix(L.draft.on ? L.draft.idx + 1 : 0); mix(L.draft.t);

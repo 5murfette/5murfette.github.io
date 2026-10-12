@@ -285,7 +285,8 @@
       // (P38-R5: the direction is chosen once per turn: walking flips a.facing, and "-facing" evaluated every step made the worm shuffle on the spot,
       // so it never left its own blast: a dynamite 1.5 m ahead hit the thrower for 49 HP)
       const pl = S.aiPlan;
-      let dir = SS.aib.retreat_crate_dir(S, a);        // a crate within reach on the plane: collect it
+      let dir = SS.lab4 && S.settings.labFlags ? SS.lab4.zap_flee(S, a) : 0;       // P79: a static-crackle tell next to us: away from it
+      if (!dir) dir = SS.aib.retreat_crate_dir(S, a);        // a crate within reach on the plane: collect it
       if (!dir && needsRetreat(S, a, pl)) { if (pl && pl.ret === 0) pl.ret = -a.facing; dir = pl && pl.ret !== 0 ? pl.ret : -a.facing; }
       if (SS.aib.safe_step(S, a, dir)) RETIN.move = dir;
     }
@@ -297,6 +298,10 @@
     let pl = S.aiPlan;
     if (!pl || pl.turn !== S.turnNo || pl.worm !== a.id) { pl = S.aiPlan = newPlan(S, a); }
     if (SS.aib && a.air) SS.aib.air(S, a);
+    if (SS.lab4 && S.settings.labFlags && S.phase === 'play' && !a.air && !S.rope && !S.charging) {      // P79 LIGHTNING: run from a bolt's tell (1.4 s)
+      const fd = SS.lab4.zap_flee(S, a);
+      if (fd && SS.aib && SS.aib.safe_step(S, a, fd)) { inp.move = fd; return inp; }
+    }
     // P38-R2 safeguard: a plan that has not shot 30 s into the turn ("No limit" turns never time out) ends it
     if (S.phase === 'play' && !S.charging && S.time - S.turnStart > K.TURN_MAX && ((!a.air && !S.rope) || S.time - S.turnStart > 2 * K.TURN_MAX)) { inp.end_turn = true; pl.phase = 'done'; }   /* (P38 R3: also a worm stuck swinging / airborne, at twice the limit) */
     if (pl.phase === 'done') { if (pl.doneT == null) pl.doneT = S.time; else if (S.time - pl.doneT > 4 && !S.charging) inp.end_turn = true; }   // (a weapon that refused to fire must not hang the turn)
@@ -397,6 +402,18 @@
       case 'fire': {
         const b = pl.best, d = pl.diff;
         if (b.special) { fireSpecial(S, pl, a, b); break; }
+        if (SS.lab4 && S.settings.labFlags && !a.air && SS.aib) {                       // P79 RECOIL: the kick would slide us over an edge / into water: step forward first (up to 0.8 s)
+          const back = SS.lab4.recoil_dist(S, a, b.wpn, b.pw, b.aim);
+          if (back > 0.3 && (pl.rclT == null || S.time < pl.rclT)) {
+            if (pl.rclT == null) pl.rclT = S.time + 0.8;
+            const ap = P.to_plane(S, a.pos); let bad = false;
+            for (let t = 0.5; t <= back + 0.6 && !bad; t += 0.5) {
+              const s2 = ap.s - b.facing * t, g = SS.weapons.ground_below(S, s2, a.pos.y + 0.5);
+              if (g < -1e8 || a.pos.y - g > 3 || SS.aib.wet_at(S, s2, g + 0.2)) bad = true;
+            }
+            if (bad && SS.aib.safe_step(S, a, b.facing)) { inp.move = b.facing; break; }
+          }
+        }
         S.weapon = b.wpn; a.facing = b.facing;
         // the skill noise must not point the muzzle into an adjacent wall (the shot spawns 0.7 m out and goes off in the
         // CPU's face: an easy CPU blew itself into the sea that way): keep the planned, predicted aim then

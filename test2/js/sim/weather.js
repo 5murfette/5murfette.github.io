@@ -440,7 +440,7 @@
   WE.turn_lightning = function (S) {
     const we = S.weather; if (!we) return;
     we.nextStrike = null;
-    if (!we.storm || W().under) return;
+    if (!we.storm || W().under || (SS.lab4 && SS.lab4.own_lightning(S))) return;   // (P79: the lab LIGHTNING flag brings its own strikes)
     if (M.rng_next(we.rng) < L.TURN_P) { const T = S.settings.turnTime > 0 ? S.settings.turnTime : 45; we.nextStrike = S.time + M.rng_range(we.rng, 4, M.max(6, T * 0.8)); }
   };
   WE.strike_now = function (S) { return strike(S); };     // tests

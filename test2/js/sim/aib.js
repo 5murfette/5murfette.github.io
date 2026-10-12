@@ -60,6 +60,7 @@
     }
     const g = WPm().ground_below(S, ah, a.pos.y + 0.5);
     if (g < -1e8 || a.pos.y - g > 4.5) return false;
+    if (SS.lab4 && S.settings.labFlags && SS.lab4.magnet(S, wp.x, g + a.foot, wp.z) && !SS.lab4.magnet(S, a.pos.x, a.pos.y, a.pos.z)) return false;   // P79: not onto a lightning magnet in a storm
     return true;
   };
   // can the worm walk from s0 to s1 (every 0.4 m: a step up <= 0.7, a drop <= 2.5, no water)

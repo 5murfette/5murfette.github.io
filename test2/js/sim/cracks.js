@@ -50,7 +50,7 @@
   /* ---------- state ---------- */
   CR.on = S => !!S.crk && !!SS.world.crack;
   CR.init = function (S) {
-    const W = SS.world, fl = ((S.settings.labFlags | 0) & C.LAB.ALL) & LAB_BIT;
+    const W = SS.world, fl = ((S.settings.labFlags | 0) & C.LAB.ALL) & (LAB_BIT | C.LAB.FLAG.QUAKE);   // (P79: QUAKE needs the damage field)
     if (!fl) { W.crack = null; S.crk = null; return; }
     if (!W.crack || W.crack.length !== W.N) W.crack = new Uint8Array(W.N); else W.crack.fill(0);
     tables(W.H);

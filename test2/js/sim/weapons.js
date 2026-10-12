@@ -84,7 +84,14 @@
   WP.needs_sky = key => key === 'airstrike' || key === 'napalm' || key === 'moai' || key === 'tesla';
   WP.can_use = (S, key) => (G().ammo(S, S.active.team, key) > 0 || (S.shots > 0 && key === S.weapon)) && !(WP.needs_storm(key) && !(S.weather && S.weather.storm)) && !(WP.needs_sky(key) && W().under) && !(S.eow && SS.eow.no_air(key));   // P68d: no air in space
   // fire / use the selected weapon. power: charge 0..1 (charge kinds); target: S.tgt {s, y} (target kinds, homing)
+  /* P79 RECOIL: the shot itself is use0; afterwards (flag on) the shooter is pushed back */
   WP.use = function (S, power) {
+    if (!SS.lab4 || !S.settings.labFlags) return use0(S, power);
+    const a = S.active, key = S.weapon, aim = a ? sim().aim_dir(S) : null, ok = use0(S, power);
+    if (ok && a && SS.lab4.recoil) SS.lab4.recoil(S, a, key, power, aim);
+    return ok;
+  };
+  function use0(S, power) {
     const a = S.active, key = S.weapon, d = def(key);
     if (!a || a.dead || !WP.can_use(S, key)) { S.charging = false; return false; }   // (before any read of a: none in 'place')
     const aim = sim().aim_dir(S), ap = P.to_plane(S, a.pos);
@@ -118,7 +125,7 @@
       case 'skip': sim().log(S, `${a.name} skips the turn.`); sim().end_turn(S, 0.2); return true;
     }
     return false;
-  };
+  }
 
   /* ---------- projectiles ---------- */
   /* The projectile struct (P38 R7 / P3): one shape for every kind, every field present with its default (before, ~22 of them were added lazily).
