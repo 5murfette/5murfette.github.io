@@ -30,33 +30,18 @@
   const box = (x, y, z) => new T.BoxGeometry(x, y, z), cyl = (a, b, h, n) => new T.CylinderGeometry(a, b, h, n || 10), sph = r => new T.SphereGeometry(r, 10, 8);
   function part(g, geo, mat, x, y, z, rx, ry, rz) { const m = new T.Mesh(geo, mat); m.position.set(x || 0, y || 0, z || 0); m.rotation.set(rx || 0, ry || 0, rz || 0); m.castShadow = true; g.add(m); return m; }
 
-  /* ---------- the robotic dog (local +x = forward, y up, origin = the collision centre, the feet 0.3 m below) ---------- */
+  /* ---------- the robotic dog (P82: the baked rigged model gadget_dog; local +x = forward, y up, origin = the collision centre, the feet 0.345 m below) ----------
+   * parts (pivots at the joints): head (neck), tail, antenna, pack (explosive pack), hip<FL|FR|RL|RR> (thigh) > knee<..> (shin + foot). Render only: the pose is a function
+   * of the sim state (distance run -> gait phase, airborne -> hop pose, blocked -> scramble). The LED / eyes are emissive overlays so they can blink. */
+  const glowMat = c => new T.MeshBasicMaterial({ color: c, toneMapped: false });
   function dogMesh() {
-    const g = new T.Group(), body = new T.Group(); g.add(body);
-    part(body, box(0.46, 0.17, 0.2), MT.gunmetal, 0, 0, 0); part(body, box(0.17, 0.2, 0.25), MT.orange, 0.15, 0.01, 0); part(body, box(0.15, 0.18, 0.23), MT.orange, -0.17, 0, 0);
-    part(body, box(0.5, 0.03, 0.14), MT.dark, 0, -0.1, 0);                       // belly plate
-    // the explosive pack on its back: two charges and the timer LED
-    part(body, cyl(0.04, 0.04, 0.26, 10), MT.red, -0.04, 0.13, 0.05, Math.PI / 2, 0, 0); part(body, cyl(0.04, 0.04, 0.26, 10), MT.red, -0.04, 0.13, -0.05, Math.PI / 2, 0, 0);
-    const led = part(body, sph(0.028), MT.led.clone(), -0.12, 0.185, 0); led.castShadow = false;
-    // neck + head: visor eyes, snout, ears
-    const head = new T.Group(); head.position.set(0.3, 0.1, 0); body.add(head);
-    part(head, box(0.1, 0.1, 0.1), MT.dark, 0, 0, 0, 0, 0, -0.4);
-    const skull = new T.Group(); skull.position.set(0.1, 0.07, 0); head.add(skull);
-    part(skull, box(0.18, 0.13, 0.17), MT.gunmetal, 0, 0, 0); part(skull, box(0.14, 0.075, 0.11), MT.gunmetal, 0.14, -0.025, 0); part(skull, sph(0.022), MT.black, 0.215, -0.005, 0);
-    for (const z of [-0.06, 0.06]) { part(skull, box(0.03, 0.035, 0.04), MT.eye, 0.085, 0.025, z); part(skull, cyl(0.0, 0.035, 0.12, 4), MT.orange, -0.03, 0.12, z * 1.2, 0, 0, 0.35); }
-    // antenna tail
-    part(body, cyl(0.008, 0.012, 0.3, 6), MT.steel, -0.34, 0.12, 0, 0, 0, 0.9); part(body, sph(0.02), MT.eye, -0.44, 0.22, 0);
-    // legs: hip pivot -> thigh -> knee pivot -> shin + foot
+    const g = new T.Group(), body = new T.Group(), mo = SS.models.mesh('gadget_dog'), P = mo.userData.parts; g.add(body); body.add(mo);
     const legs = [];
-    for (const [x, z] of [[0.2, 0.1], [0.2, -0.1], [-0.2, 0.1], [-0.2, -0.1]]) {
-      const hip = new T.Group(); hip.position.set(x, -0.05, z); body.add(hip);
-      part(hip, box(0.07, 0.17, 0.06), MT.steel, 0, -0.075, 0); part(hip, sph(0.045), MT.dark, 0, 0, 0);
-      const knee = new T.Group(); knee.position.set(0, -0.15, 0); hip.add(knee);
-      part(knee, sph(0.035), MT.dark, 0, 0, 0); part(knee, box(0.05, 0.16, 0.05), MT.gunmetal, 0, -0.075, 0); part(knee, box(0.1, 0.035, 0.07), MT.dark, 0.02, -0.16, 0);
-      legs.push({ hip, knee, front: x > 0 });
-    }
-    g.scale.setScalar(1.15);
-    g.userData = { body, led, legs, head };
+    for (const k of ['FL', 'FR', 'RL', 'RR']) legs.push({ hip: P['hip' + k], knee: P['knee' + k], front: k[0] === 'F' });
+    const led = new T.Mesh(sph(0.021), glowMat(0xff3a24)); led.position.set(-0.05, 0.185, 0); P.pack.add(led);
+    const eyes = [-1, 1].map(sg => { const e = new T.Mesh(box(0.012, 0.036, 0.046), glowMat(0xff3a24)); e.position.set(0.1935, 0.09, sg * 0.055); P.head.add(e); return e; });
+    const tip = new T.Mesh(sph(0.019), glowMat(0xff3a24)); tip.position.set(-0.1, 0.215, 0); P.antenna.add(tip);
+    g.userData = { body, led, legs, head: P.head, tail: P.tail, antenna: P.antenna, eyes, tip, model: mo };
     return g;
   }
   function dogFrame(S, d, m, t) {
@@ -74,9 +59,15 @@
       else { const p = ph + off; l.hip.rotation.z = 0.7 * Math.sin(p); l.knee.rotation.z = -0.15 - 0.95 * Math.max(0, Math.cos(p)) * (l.front ? 0.7 : 1); }
     });
     u.head.rotation.z = 0.12 * Math.sin(ph) + (air ? -0.1 : 0);
-    // the LED blinks faster as the timer runs down
-    const rate = 3 + 14 * (1 - Math.max(0, d.life) / C.TOOLB.DOG.TIMER);
+    const urg = 1 - Math.max(0, d.life) / C.TOOLB.DOG.TIMER;
+    u.tail.rotation.y = (0.35 + 0.5 * urg) * Math.sin(t * (9 + 10 * urg) + d.id);                     // the stub wags faster as the fuse runs down
+    u.antenna.rotation.z = 0.10 * Math.sin(ph * 2 + 1) - 0.05 * M_clamp(d.vs || 0, -6, 6) * 0.1 * d.dir; u.antenna.rotation.x = 0.07 * Math.sin(t * 7 + d.id);
+    // the LED blinks faster as the timer runs down; the eyes pulse
+    const rate = 3 + 14 * urg;
     u.led.material.color.setHex(Math.sin(t * rate * 2.2) > 0 ? 0xff3a24 : 0x4a1208);
+    const ey = 0.75 + 0.25 * Math.sin(t * 5 + d.id);
+    for (const e of u.eyes) e.material.color.setRGB(1.0 * ey, 0.23 * ey, 0.14 * ey);
+    u.tip.material.color.setHex(Math.sin(t * rate * 2.2 + 1.6) > 0 ? 0xff3a24 : 0x4a1208);
   }
   const M_clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
@@ -92,30 +83,23 @@
   }
   let FAN = null;
   function sentryMesh() {
-    const g = new T.Group(), tilt = new T.Group(); g.add(tilt);
-    for (let i = 0; i < 3; i++) {                                                       // tripod
-      const a = i * 2.094 + 0.5, leg = new T.Group(); leg.rotation.y = a; tilt.add(leg);
-      part(leg, cyl(0.022, 0.03, 0.62, 6), MT.dark, 0.17, 0.27, 0, 0, 0, -0.5); part(leg, box(0.09, 0.02, 0.06), MT.dark, 0.34, 0.01, 0);
-    }
-    part(tilt, cyl(0.06, 0.07, 0.34, 10), MT.gunmetal, 0, 0.3, 0);
-    const turret = new T.Group(); turret.position.set(0, 0.5, 0); turret.rotation.order = 'YZX'; tilt.add(turret);
-    part(turret, box(0.3, 0.19, 0.26), MT.olive, -0.02, 0, 0); part(turret, box(0.12, 0.13, 0.2), MT.oliveL, -0.2, 0.0, 0);
-    part(turret, cyl(0.07, 0.07, 0.17, 12), MT.black, -0.02, -0.02, 0.2, Math.PI / 2, 0, 0);          // ammo drum
-    const bar = new T.Group(); bar.position.set(0.14, 0, 0); turret.add(bar);
-    for (let i = 0; i < 3; i++) { const a = i * 2.094; part(bar, cyl(0.016, 0.016, 0.34, 6), MT.steel, 0.17, Math.cos(a) * 0.04, Math.sin(a) * 0.04, 0, 0, Math.PI / 2); }
-    part(bar, cyl(0.06, 0.06, 0.03, 10), MT.dark, 0.12, 0, 0, 0, 0, Math.PI / 2); part(bar, cyl(0.06, 0.06, 0.03, 10), MT.dark, 0.32, 0, 0, 0, 0, Math.PI / 2);
-    const lens = part(turret, cyl(0.045, 0.05, 0.05, 12), MT.lens.clone(), -0.1, 0.13, 0); lens.castShadow = false;       // the scanner head
+    const g = new T.Group(), tilt = new T.Group(), mo = SS.models.mesh('gadget_sentry'), P = mo.userData.parts; g.add(tilt); tilt.add(mo);
+    const lens = new T.Mesh(cyl(0.024, 0.024, 0.004, 14).rotateZ(Math.PI / 2), MT.lens.clone()); lens.position.set(0.0525, 0.06, 0); P.eye.add(lens);       // the sensor eye's glass (blinks)
     // the scanning beam (a thin additive bar) + the fading fan behind it, both horizontal at turret height
     FAN = FAN || fanGeo();
     const bgeo = cyl(0.016, 0.016, 1, 6); bgeo.rotateZ(Math.PI / 2); bgeo.translate(0.5, 0, 0);
     const beam = new T.Mesh(bgeo, new T.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: 0.9, blending: T.AdditiveBlending, depthWrite: false }));
-    const echoes = [1, 2, 3].map(i => { const e = new T.Mesh(bgeo, new T.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: 0.5 / i, blending: T.AdditiveBlending, depthWrite: false })); e.rotation.y = 0.05 * i; return e; });   // afterimages trailing behind the sweep
+    const echoes = [1, 2, 3].map(i => { const e = new T.Mesh(bgeo, new T.MeshBasicMaterial({ color: 0xff2a1a, transparent: true, opacity: 0.5 / i, blending: T.AdditiveBlending, depthWrite: false })); e.rotation.y = 0.05 * i; return e; });   // afterimages trailing the sweep
     const spot = new T.Sprite(new T.SpriteMaterial({ map: tx.glow, color: 0xff3a24, transparent: true, blending: T.AdditiveBlending, depthWrite: false })); spot.scale.set(0.5, 0.5, 1);
     const fan = new T.Mesh(FAN, new T.ShaderMaterial({ vertexShader: BEAM_VS, fragmentShader: BEAM_FS, uniforms: { uA: { value: 1 } }, transparent: true, depthWrite: false, side: T.DoubleSide, blending: T.AdditiveBlending }));
     const scan = new T.Group(); scan.add(beam, fan, spot, ...echoes);
     g.add(scan);
-    const flash = new T.Sprite(new T.SpriteMaterial({ map: tx.glow, color: 0xffd27a, transparent: true, blending: T.AdditiveBlending, depthWrite: false, opacity: 0 })); flash.scale.set(0.7, 0.7, 1); bar.add(flash); flash.position.set(0.36, 0, 0);
-    g.userData = { tilt, turret, lens, beam, fan, scan, flash, echoes, spot, fireT: -9 };
+    // the muzzle flash: a procedural additive burst (a long cone + a short fat one + a core) at the tip of the cluster, drawn only for a few frames after each round
+    const flash = new T.Group(); flash.position.set(0.43, 0, 0); P.barrel.add(flash);
+    const fm = (c, o) => new T.MeshBasicMaterial({ color: c, transparent: true, opacity: o, blending: T.AdditiveBlending, depthWrite: false, toneMapped: false });
+    const c1 = new T.Mesh(new T.ConeGeometry(0.07, 0.55, 8, 1, true).rotateZ(-Math.PI / 2).translate(0.275, 0, 0), fm(0xffb24a, 0.9)), c2 = new T.Mesh(new T.ConeGeometry(0.12, 0.2, 8, 1, true).rotateZ(-Math.PI / 2).translate(0.1, 0, 0), fm(0xff7a1e, 0.7)), c3 = new T.Mesh(new T.SphereGeometry(0.06, 8, 6), fm(0xfff2c0, 1));
+    flash.add(c1, c2, c3); flash.userData.mats = [c1.material, c2.material, c3.material]; flash.visible = false;
+    g.userData = { tilt, P, lens, beam, fan, scan, flash, echoes, spot, fireT: -9, spinA: 0, spinV: 0, model: mo };
     return g;
   }
   const tiltAx = new T.Vector3(), ringZ = new T.Vector3(0, 0, 1), ringN = new T.Vector3();       // scratch (P38 R1)
@@ -128,7 +112,12 @@
     }
     // tilt over about the base in the direction of the fall
     u.tilt.quaternion.setFromAxisAngle(tiltAx.set(Math.sin(s.tiltAz), 0, -Math.cos(s.tiltAz)), s.tilt);
-    u.turret.rotation.set(0, -s.yaw, s.pitch, 'YZX');
+    u.P.yaw.rotation.y = -s.yaw; u.P.pitch.rotation.z = s.pitch;                                  // P82: the rigged turret: ring yaws, the cradle pitches
+    const fireAge = t - u.fireT, firing = fireAge < 0.3 && (s.state === 0 || s.state === 1);
+    u.spinV += ((firing ? 38 : s.state === 0 ? 0 : 0) - u.spinV) * Math.min(1, dtG * (firing ? 14 : 3)); u.spinA += u.spinV * dtG;     // the cluster spins up while it fires, then winds down
+    u.P.barrel.rotation.x = u.spinA; u.P.barrel.position.x = u.P.barrel.userData.rest.x - 0.035 * Math.max(0, 1 - fireAge / 0.09);   // recoil
+    u.P.pitch.position.x = u.P.pitch.userData.rest.x - 0.006 * Math.max(0, 1 - fireAge / 0.09);
+    u.P.eye.rotation.y = s.state === 0 && !firing ? 0.55 * Math.sin(t * 1.7 + s.id) : 0;                       // the sensor eye looks about while it scans
     const live = s.state === 0;
     u.scan.visible = live; u.scan.position.set(0, 0.5, 0);
     if (live) {
@@ -141,8 +130,9 @@
       u.fan.scale.z = s.spin > 0 ? L : -L;
     }
     u.lens.material.color.setHex(live ? (Math.sin(t * 9) > 0 ? 0xff2a1a : 0x7a1208) : 0x2a0a08);
-    u.flash.material.opacity = Math.max(0, 1 - (t - u.fireT) / 0.06) * (live || s.state === 1 ? 1 : 0);
-    u.flash.material.rotation = t * 30;
+    const fk = Math.max(0, 1 - fireAge / 0.07) * (live || s.state === 1 ? 1 : 0);
+    u.flash.visible = fk > 0.02; u.flash.rotation.x = t * 40; u.flash.scale.set(0.7 + 0.5 * fk, 0.8 + 0.4 * Math.sin(t * 90), 0.8 + 0.4 * Math.cos(t * 70));
+    for (const m_ of u.flash.userData.mats) m_.opacity = fk;
     if (s.state === 1 && Math.random() < 0.25) SS.fx.spark(s.pos.x, s.pos.y + 0.3, s.pos.z);
     if (s.state === 2 && s.deadT < 4 && Math.random() < 0.05) SS.fx.dust(s.pos.x, s.pos.y + 0.4, s.pos.z, 1, 0.3, 0x333333);
   }
@@ -216,6 +206,14 @@
     if (nx != null) m.quaternion.setFromUnitVectors(ringZ, ringN.set(nx, ny, nz).normalize());
     addFx(m, life, (o, k) => { const s = r0 + (r1 - r0) * Math.sqrt(k); o.scale.set(s, s, s); o.material.opacity = 0.9 * (1 - k); if (nx == null) o.quaternion.copy(SS.view.camera().quaternion); });
   }
+  /* P82: the baked model breaks into its chunks + the interior parts (battery, board, gears, wiring ...) at the pose of the live mesh (render-only debris, models.js shatter) */
+  function breakUp(id, e, map) {
+    if (!SS.models || !SS.models.hasChunks(id)) return;
+    let src = null, bd = 0.7;
+    for (const m of map.values()) { const d = Math.hypot(m.position.x - e.x, m.position.y - e.y, m.position.z - e.z); if (d < bd) { bd = d; src = m; } }
+    const g = new T.Group(); g.position.set(e.x, e.y, e.z); if (src) g.quaternion.copy(src.quaternion);
+    SS.models.shatter(id, g, (Math.round(e.x * 97) * 31 + Math.round(e.z * 89)) | 0);
+  }
   GV.onEvent = function (S, e) {
     evS = S;
     switch (e.type) {
@@ -226,7 +224,8 @@
       case 'claymorearm': ring(e.x, e.y, e.z, 0xff5b4f, 0.1, 0.6, 0.5); break;
       case 'dogstart': SS.fx.dust(e.x, e.y - 0.4, e.z, 4, 0.35, 0xb8a080); break;
       case 'doghop': SS.fx.dust(e.x, e.y - 0.25, e.z, 3, 0.3, 0xb8a080); break;
-      case 'dogboom': for (let i = 0; i < 4; i++) SS.fx.spark(e.x, e.y + 0.2, e.z); break;
+      case 'dogboom': for (let i = 0; i < 4; i++) SS.fx.spark(e.x, e.y + 0.2, e.z); breakUp('gadget_dog', e, live.dogs); break;
+      case 'devbreak': if (e.kind === 'sentry') breakUp('gadget_sentry', e, live.sentries); break;
       case 'claymoreblast': claymoreBlast(e); break;
       case 'punchhit': {
         ring(e.x, e.y, e.z, 0xfff0b0, 0.2, 1.8, 0.35); SS.fx.dust(e.x, e.y, e.z, 6, 0.5, 0xeeeeee);

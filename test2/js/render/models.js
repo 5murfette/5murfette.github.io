@@ -3,6 +3,7 @@
  * material (built once on first use, flagged userData.shared so SS.mat.disposeTree keeps them), null when the id has no
  * baked model (the caller then builds its procedural mesh), SS.models.decode(part) -> plain typed arrays (also used by
  * tests), SS.models.stats().
+ * Rigged models (P82): mesh(id).userData.parts = { name: THREE.Group } (pivots at the joints, parent-first, see rigParts).
  * Breakable models (fmt 2): SS.models.hasChunks(id), SS.models.shatter(id, group, seed) (render-only: the intact group is
  * hidden and its pre-fractured chunks + interior parts fly as debris, see below), SS.models.update(dt), SS.models.init(scene).
  * Conventions: local +X = nose / aim / flight direction, +Y = up, metres, pivot already applied by the baker. UVs keep the
@@ -125,13 +126,26 @@
   function build(id) {
     const m = SS.MODELS[id], side = m.double ? T.DoubleSide : T.FrontSide, tm = m.texmeta || {};
     const pbr = m.pbr || {}, outer = material(m.tex || {}, m.color === undefined ? 0xffffff : m.color, pbr.roughness === undefined ? 0.7 : pbr.roughness, pbr.metalness || 0.0, side, !!m.uv2 && tm.aoUv === 'uv2');
-    const b = { geo: geometry(m), mat: outer, inner: null, parts: null };
+    const b = { geo: geometry(m), mat: outer, inner: null, parts: null, pgeo: null };
     if (m.glass || m.shards) { b.glass = glassMaterial(m.glassmat, 0); b.shard = glassMaterial(m.glassmat, 0.3); }
     if (m.glass) b.glassGeo = geometry(m.glass);
+    if (m.parts) b.pgeo = m.parts.map(p => ({ name: p.name, parent: p.parent, origin: p.origin, geo: geometry(p) }));
     if (m.inner) b.inner = material(m.inner.tex || {}, m.inner.color, m.inner.roughness, m.inner.metalness, T.DoubleSide, false);
     return (built[id] = b);
   }
   function mats(b) { return b.inner ? [b.mat, b.inner] : b.mat; }
+
+  /* P82 rigged models: `parts` blocks (name, origin = the joint in model space, parent = the part it hangs from or '') become Groups positioned at origin - the
+   * parent's origin, each holding one mesh that shares the model's material. Rotate / translate the Groups to animate (the rest position is in userData.rest). The
+   * parts come parent-first from the baker. */
+  function rigParts(g, b) {
+    const map = {}; g.userData.parts = map;
+    for (const p of b.pgeo) {
+      const pg = new T.Group(), par = p.parent ? map[p.parent] : g, po = p.parent ? map[p.parent].userData.origin : [0, 0, 0];
+      pg.name = p.name; pg.userData.origin = p.origin; pg.position.set(p.origin[0] - po[0], p.origin[1] - po[1], p.origin[2] - po[2]); pg.userData.rest = pg.position.clone();
+      const me = new T.Mesh(p.geo, mats(b)); me.castShadow = true; me.receiveShadow = true; pg.add(me); par.add(pg); map[p.name] = pg;
+    }
+  }
 
   /* the intact model: one mesh (faces of material slot 1, if any, use the inner material) */
   MD.mesh = function (id) {
@@ -140,6 +154,7 @@
     const g = new T.Group(), mesh = new T.Mesh(b.geo, mats(b));
     mesh.castShadow = true; mesh.receiveShadow = true;
     g.add(mesh); g.userData.model = id; g.userData.props = [];
+    if (b.pgeo) rigParts(g, b);                                       // P82: named, pivoted parts (docs/MODELS.md): g.userData.parts[name] = a Group at the joint origin
     if (b.glassGeo) { const gm = new T.Mesh(b.glassGeo, b.glass); gm.renderOrder = 3; gm.castShadow = false; gm.receiveShadow = false; g.add(gm); }
     return g;
   };
