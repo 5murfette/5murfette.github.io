@@ -112,7 +112,7 @@
     S.lastBoom = S.time;
     const sp = M.len3(q.vel.x, q.vel.y, q.vel.z), n = M.max(1, Math.ceil(sp * dt / 0.08)), h = dt / n;
     for (let i = 0; i < n; i++) {
-      q.vel.y -= C.G * h;
+      if (S.eow) SS.eow.body_g(S, q, h); else q.vel.y -= C.G * h;                         // P68g: the field
       if (q.wet) { const dr = M.exp(-2.6 * h); q.vel.x *= dr; q.vel.y = q.vel.y * dr - C.G * 0.55 * h * 0.5; q.vel.z *= dr; }
       const nx = q.pos.x + q.vel.x * h, ny = q.pos.y + q.vel.y * h, nz = q.pos.z + q.vel.z * h;
       const oob = w.dry ? (sim().arena_r(nx, nz) > C.DRY.FAR_R) : (nx < -60 || nz < -60 || nx > w.SX + 60 || nz > w.SZ + 60);
@@ -247,7 +247,8 @@
     for (const f of S.ffields) {
       if (f.state === 0) {
         // the generator sits on the ground (falls when it is undermined)
-        if (W().sample(f.pos.x, f.pos.y - 0.07, f.pos.z) <= 0) { f.vy -= C.G * dt; f.pos.y += f.vy * dt; if (f.pos.y < 0.3) f.hp = 0; }
+        if (S.eow) { if (!SS.eow.dev_fall(S, f, dt)) f.hp = 0; }                                  // P68g: along the field
+        else if (W().sample(f.pos.x, f.pos.y - 0.07, f.pos.z) <= 0) { f.vy -= C.G * dt; f.pos.y += f.vy * dt; if (f.pos.y < 0.3) f.hp = 0; }
         else f.vy = 0;
         if (f.hp <= 0) drop(S, f, true);
         else if (f.pos.y < sim().surface_at(S, f.pos.x, f.pos.z) - 0.1) { f.hp = 0; drop(S, f, false); sim().emit(S, 'steam', { x: f.pos.x, y: f.pos.y, z: f.pos.z, power: 0.5 }); }   // shorts out in the water

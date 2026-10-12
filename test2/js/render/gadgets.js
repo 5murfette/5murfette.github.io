@@ -65,6 +65,7 @@
     const air = d.state === 2, blocked = d.state === 1;
     m.position.set(wp.x, wp.y, wp.z);
     m.rotation.set(0, -Math.atan2(dir.z * d.dir, dir.x * d.dir), 0, 'YXZ');
+    if (d.euy != null) m.rotation.z = d.dir * Math.atan2(-d.eus, d.euy);                      // P68g: lies along its surface (End of the World)
     u.body.position.y = air ? 0.02 : 0.018 * Math.abs(Math.sin(ph)) - (blocked ? 0.01 : 0);
     u.body.rotation.z = air ? M_clamp(Math.atan2(d.vy, 6), -0.5, 0.5) * 0.6 : 0.04 * Math.sin(ph * 2);
     u.legs.forEach((l, i) => {

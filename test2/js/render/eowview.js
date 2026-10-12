@@ -76,13 +76,64 @@
    * In this world steel and concrete are only the wreck's gunmetal plates and decks: panel grid with seams and rivets, grime and soot
    * streaks, scorch round the breaches (uEowB: xyz, radius), torn-open bays with live wiring, flickering emergency strips. */
   EV.U = { uEowB: { value: [new T.Vector4(0, 0, 0, 0), new T.Vector4(0, 0, 0, 0), new T.Vector4(0, 0, 0, 0), new T.Vector4(0, 0, 0, 0), new T.Vector4(0, 0, 0, 0), new T.Vector4(0, 0, 0, 0)] } };
+  /* P68g: per-texel temperature. Hot regions (sim pl.hot: centre, radius, seam-centre temperature in deg C) and magma pockets (pl.pockets) go to the shader
+   * as two vec4 arrays (a: xyz r, b: peak T, kind 0 region / 1 pocket); eoTemp cools a region from its peak toward 480 C at the rim, eoBB is the blackbody table of
+   * docs/notes/EOW_RESEARCH.md (600 dull red, 700 cherry, 800 orange-red, 900 orange, 1000-1200 yellow). */
+  const HN = 28;
+  EV.HN = HN;
+  EV.U.uEowHa = { value: [] }; EV.U.uEowHb = { value: [] };
+  for (let i = 0; i < HN; i++) { EV.U.uEowHa.value.push(new T.Vector4(0, 0, 0, 0)); EV.U.uEowHb.value.push(new T.Vector4(0, 0, 0, 0)); }
   EV.GLSL = /* glsl */`
     uniform vec4 uEowB[6];
+    uniform vec4 uEowHa[${HN}];
+    uniform vec4 uEowHb[${HN}];
+    vec3 eoBB(float T){
+      vec3 c = vec3(0.0);
+      c = mix(c, vec3(0.45, 0.03, 0.0), smoothstep(520.0, 600.0, T));
+      c = mix(c, vec3(1.2, 0.08, 0.01), smoothstep(600.0, 700.0, T));
+      c = mix(c, vec3(1.9, 0.38, 0.03), smoothstep(700.0, 800.0, T));
+      c = mix(c, vec3(2.8, 0.95, 0.08), smoothstep(800.0, 900.0, T));
+      c = mix(c, vec3(3.2, 1.5, 0.2), smoothstep(900.0, 1000.0, T));
+      c = mix(c, vec3(3.5, 2.2, 0.4), smoothstep(1000.0, 1150.0, T));
+      return c;
+    }
+    // x: the temperature of the seams here (deg C: the hottest region or pocket magma that reaches this point, cooling toward its rim), y: pocket crust heat (0..1)
+    vec2 eoTemp(vec3 p){
+      float T = 0.0, pc = 0.0;
+      for (int i = 0; i < ${HN}; i++) {
+        vec4 a = uEowHa[i]; if (a.w <= 0.0) continue;
+        vec4 b = uEowHb[i]; float d = length(p - a.xyz) / a.w;
+        if (b.y > 0.5) {
+          T = max(T, mix(b.x, 760.0, smoothstep(0.55, 1.1, d)) * step(d, 1.15));
+          pc = max(pc, 1.0 - smoothstep(1.0, 1.9, d));
+        } else if (d < 1.0) T = max(T, 470.0 + (b.x - 470.0) * pow(1.0 - d, 0.85));
+      }
+      return vec2(T, pc);
+    }
     float eoH(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
     float eoN(vec3 p){
       vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
       return mix(mix(mix(eoH(i), eoH(i + vec3(1,0,0)), f.x), mix(eoH(i + vec3(0,1,0)), eoH(i + vec3(1,1,0)), f.x), f.y),
                  mix(mix(eoH(i + vec3(0,0,1)), eoH(i + vec3(1,0,1)), f.x), mix(eoH(i + vec3(0,1,1)), eoH(i + vec3(1,1,1)), f.x), f.y), f.z);
+    }
+    // the glow of lava (wl) and crust (wc) voxels at p: lf = the cell texture (1 = the middle of a plate's crack, 0 = chilled plate), k = flicker
+    vec3 eoLava(vec3 p, float wl, float wc, float lf, float k){
+      vec2 h = eoTemp(p);
+      float nz = eoN(p * 0.9) - 0.5;
+      // the crack pattern in 3D (the terrain's lavaFlow is a top-down texture: it smears into vertical bars on a wall): ridged noise, drifting slowly
+      vec3 pq = p + vec3(0.0, uTime * 0.012, uTime * 0.008);
+      lf = smoothstep(0.3, 0.95, 0.6 * (1.0 - abs(2.0 * eoN(pq * 1.1 + 7.0) - 1.0)) + 0.4 * (1.0 - abs(2.0 * eoN(pq * 2.7 + 3.0) - 1.0)));
+      float Tl = h.x + 150.0 * (lf - 0.55) + 90.0 * nz;                         // inside a seam: hotter where the crack is open
+      float Tc = max(h.x - 260.0, 0.0) + 90.0 * nz;                             // crust seams run cooler than the lava beside them
+      vec3 e = wl * eoBB(Tl) * (0.3 + 0.7 * pow(lf, 1.2)) * k + wc * eoBB(Tc) * pow(lf, 3.0) * 0.9;
+      e += wc * h.y * eoBB(560.0 + 110.0 * h.y + 60.0 * nz) * 0.55;             // thin crust over a magma pocket: dull red all over
+      return e;
+    }
+    // the cut face through lava (mat 9) or crust (mat 10): the texture's brightness, the blackbody colour of the temperature here
+    vec3 eoCapHeat(vec3 em, vec3 p, int mat){
+      vec2 h = eoTemp(p); float k = clamp(dot(em, vec3(0.3, 0.6, 0.1)) / 0.45, 0.0, 1.6), nz = eoN(p * 0.9) - 0.5;
+      if (mat == 9) return eoBB(h.x + 70.0 * nz) * (0.25 + 0.33 * k);
+      return eoBB(max(h.x - 260.0, 0.0) + 90.0 * nz) * min(k, 1.0) * 0.6 + h.y * eoBB(560.0 + 110.0 * h.y) * 0.5;
     }
     // x: scorch (0..1, 3 radii round a breach), y: the white-hot torn rim
     vec2 eoBreach(vec3 p){
@@ -314,6 +365,13 @@
     }
     G.fx.geometry.attributes.aE.needsUpdate = true;
   }
+  // the hot regions and the magma pockets to the temperature shader (one new world: they never change; a blast only removes the voxels)
+  function heatUniforms(S, pl) {
+    const A = EV.U.uEowHa.value, B = EV.U.uEowHb.value, hot = pl.hot || [], pk = pl.pockets || []; let n = 0;
+    for (const g of hot) if (n < EV.HN) { A[n].set(g.x, g.y, g.z, g.r); B[n].set(g.T, 0, 0, 0); n++; }
+    for (const g of pk) if (n < EV.HN) { A[n].set(g.x, g.y, g.z, g.r * 1.05); B[n].set(g.T, 1, 0, 0); n++; }
+    for (; n < EV.HN; n++) { A[n].set(0, 0, 0, 0); B[n].set(0, 0, 0, 0); }
+  }
   function fxFrame(S, view, camera, ctx, G) {
     const w = SS.world, pl = w.features && w.features.eow; if (!pl) return;
     if (!G.fx) buildFx(G, ctx.scene);
@@ -321,6 +379,7 @@
     if (G.fxKey !== pl) {                                              // a new world
       G.fxKey = pl; G.em = []; G.breachU = []; G.lampPos = []; G.lava = []; G.fxNext = 0;
       hullEmitters(G, pl, w);
+      heatUniforms(S, pl);
       for (let i = 0; i < 6; i++) { const b = G.breachU[i]; EV.U.uEowB.value[i].set(b ? b[0] : 0, b ? b[1] : 0, b ? b[2] : 0, b ? b[3] : 0); }
     }
     if (t >= G.fxNext || t < G.fxNext - 3) {                           // once a second: which pockets are open (a blast can open one)
@@ -398,19 +457,29 @@
   };
 
   /* ---------- the heat of the pieces: point lights on the hot regions nearest the camera ---------- */
-  const HOT_N = 4;
+  const HOT_N = 4, tc3 = [0, 0, 0];
+  // blackbody colour of a temperature in deg C (the table of docs/notes/EOW_RESEARCH.md; same stops as eoBB in the shader), normalised to a light colour (max channel 1)
+  const BB = [[600, 0.45, 0.03, 0], [700, 1.2, 0.08, 0.01], [800, 1.9, 0.38, 0.03], [900, 2.8, 0.95, 0.08], [1000, 3.2, 1.5, 0.2], [1150, 3.5, 2.2, 0.4]];
+  function bbRGB(T, out) {
+    let r = 0, g = 0, b = 0;
+    if (T >= BB[0][0]) { let i = 0; while (i < BB.length - 2 && T > BB[i + 1][0]) i++; const a = BB[i], c = BB[i + 1], f = M.clamp((T - a[0]) / (c[0] - a[0]), 0, 1); r = a[1] + (c[1] - a[1]) * f; g = a[2] + (c[2] - a[2]) * f; b = a[3] + (c[3] - a[3]) * f; }
+    const m = M.max(M.max(r, g), M.max(b, 1e-3)); out[0] = r / m; out[1] = g / m; out[2] = b / m; return out;
+  }
+  EV.bbRGB = bbRGB;
   function hotLights(S, view, ctx, G) {
     G.lights = G.lights || [];
     if (!G.hotL) { G.hotL = []; for (let i = 0; i < HOT_N; i++) { const l = new T.PointLight(0xff6a20, 0, 40, 2); ctx.scene.add(l); G.hotL.push(l); } G.boomL = new T.PointLight(0xfff0d0, 0, 60, 1.5); ctx.scene.add(G.boomL); G.lights.push(...G.hotL, G.boomL); }
-    const hot = S.eow.hot || [], f = view.camT, n = SS.terrain.uniforms.uN.value, list = [];
-    for (let i = 0; i < hot.length; i++) { const h = hot[i], d = M.len3(h.x - f.x, h.y - f.y, h.z - f.z); list.push({ h, d }); }
+    const hot = S.eow.hot || [], pk = S.eow.pockets || [], f = view.camT, n = SS.terrain.uniforms.uN.value, list = [];
+    for (let i = 0; i < hot.length; i++) { const h = hot[i], d = M.len3(h.x - f.x, h.y - f.y, h.z - f.z); list.push({ h, d, T: h.T * 0.82, k: 1 }); }
+    for (let i = 0; i < pk.length; i++) { const h = pk[i], d = M.len3(h.x - f.x, h.y - f.y, h.z - f.z); list.push({ h, d, T: 640, k: 0.5 }); }      // a sealed pocket: its crust glows dull red
     list.sort((a, b) => a.d - b.d);
     for (let i = 0; i < HOT_N; i++) {
       const l = G.hotL[i], q = list[i]; l.visible = true;
       if (!q) { l.intensity = 0; continue; }
-      const h = q.h, fl = 0.85 + 0.1 * M.sin(view.time * 0.9 + i * 2.1) + 0.05 * M.sin(view.time * 2.3 + h.x);
+      const h = q.h, fl = 0.85 + 0.1 * M.sin(view.time * 0.9 + i * 2.1) + 0.05 * M.sin(view.time * 2.3 + h.x), tk = M.clamp((q.T - 450) / 700, 0, 1.2);
+      bbRGB(q.T, tc3);
       l.position.set(h.x + n.x * 3, h.y + n.y * 3 + 1, h.z + n.z * 3);
-      l.color.setHex(0xff6a22); l.distance = 12 + h.r * 3; l.intensity = 90 * h.heat * fl * (1 - M.smoothstep(34, 80, q.d));
+      l.color.setRGB(tc3[0], tc3[1], tc3[2]); l.distance = 12 + h.r * 3; l.intensity = 110 * tk * tk * q.k * fl * (1 - M.smoothstep(34, 80, q.d));
     }
     if (G.boom) { G.boom.t += 1 / 60; G.boomL.visible = true; G.boomL.intensity = G.boom.i * Math.exp(-G.boom.t * 16); if (G.boom.t > 0.6) G.boom = null; } else { G.boomL.visible = true; G.boomL.intensity = 0; }
   }

@@ -78,8 +78,8 @@
       const n = M.max(1, Math.ceil(sp * dt / K.SUB)), h = dt / n;
       let gone = false;
       for (let s = 0; s < n && !gone; s++) {
-        const k = 1 / (1 + K.KD * sp * h);           // implicit quadratic drag along the velocity
-        f.vx *= k; f.vy = f.vy * k - G * h; f.vz *= k;
+        if (S.eow) SS.eow.frag_g(S, f, h);           // P68g: vacuum: no drag, the chunk field pulls
+        else { const k = 1 / (1 + K.KD * sp * h); f.vx *= k; f.vy = f.vy * k - G * h; f.vz *= k; }   // implicit quadratic drag along the velocity
         f.x += f.vx * h; f.y += f.vy * h; f.z += f.vz * h;
         sp = M.len3(f.vx, f.vy, f.vz);
         // worms (all of them, also the active one: shrapnel is a 3D blast effect)

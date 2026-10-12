@@ -800,7 +800,7 @@
     // a crate falls onto the new turn's section, somewhere it can be reached (± 25 m along it)
     for (let tries = 0; tries < 12; tries++) {
       const s = rr(S, -25, 25), gy = groundBelow(S, s, W().SY - 0.5), at = P.to_world(S, s, gy);
-      if (gy < -1e8 || gy < sim().surface_at(S, at.x, at.z) + 0.3 || (W().dry && !sim().in_play(S, at.x, at.z))) continue;
+      if (gy < -1e8 || gy < sim().surface_at(S, at.x, at.z) + 0.3 || (W().dry && !sim().in_play(S, at.x, at.z)) || (S.eow && SS.eow.hot_near(S, at.x, gy, at.z))) continue;   // (P68g: not over a hot vein)
       const kind = rng(S) < CR.HEALTH ? 'health' : 'weapon', w0 = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(rng(S)) : C.CRATE_POOL[Math.floor(rng(S) * C.CRATE_POOL.length)]) : null, weapon = S.eow && w0 && SS.eow.no_air(w0) ? 'bazooka' : w0;   // (P68d: no crate of a weapon that needs air)   // P38 A2: weighted by rarity band (sim/balance.js)
       S.crates.push(WP.crate_make(S, kind, weapon, null, P.to_world(S, s, M.min(W().SY - 1, gy + 14))));
       sim().emit(S, 'banner', { title: 'Supply drop', sub: 'It drifts with the wind' });

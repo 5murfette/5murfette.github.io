@@ -130,8 +130,9 @@
     const KD = K.DOG;
     if (a.air || S.rope) return refuse(S, 'Stand on the ground to release the dog.');
     if (S.dogs.length >= KD.MAX) return refuse(S, 'Too many dogs.');
-    const f = a.facing, s0 = ap.s + f * 0.75;
+    const f = a.facing; let s0 = ap.s + f * 0.75;
     let y0 = a.pos.y - 0.5 + KD.R + 0.05, up = 0;
+    if (S.eow) { const q = SS.eow.dog_spawn(S, a, ap, f); if (!q) return refuse(S, 'No room for the dog here.'); s0 = q.s; y0 = q.y; }     // P68g: next to the worm along its own surface
     while (P.blocked2(S, s0, y0) && up < 0.7) { y0 += 0.05; up += 0.05; }
     if (P.blocked2(S, s0, y0)) return refuse(S, 'No room for the dog here.');
     S.dogs.push({ id: nextId(S), team: a.team, owner: a.id, s: s0, y: y0, vs: 0, vy: 0, dir: f, life: KD.TIMER, age: 0, dist: 0, bark: rr(S, KD.BARK0, KD.BARK1), retarget: 0, blockT: 0, target: -1, hop: 0, state: 0 });
@@ -166,6 +167,7 @@
     if (d.life <= 0) { dogBoom(S, d, 'timer'); return; }
     if (inWater(S, wp)) { d.life = M.min(d.life, 0.8); d.vs *= 0.3; }
     if (d.bark <= 0) { d.bark = rr(S, KD.BARK0, KD.BARK1); sim().emit(S, 'dogbark', { x: wp.x, y: wp.y, z: wp.z }); }
+    if (S.eow) { SS.eow.dog_step(S, d, dt, wp); return; }                                // P68g: any side of a chunk
     const grounded = P.blocked2(S, d.s, d.y - R - 0.06) && d.vy <= 0.01;
     // horizontal speed: accelerate to the run speed (a little in the air)
     const want = d.dir * KD.SPEED, k = M.min(1, (grounded ? KD.ACC : 2) * dt);
@@ -275,7 +277,8 @@
   function stepSentry(S, s, dt) {
     const KS = K.SENTRY, w = W();
     // gravity: settles onto the ground (and into the water: shorts out)
-    if (!supported(S, s.pos.x, s.pos.y, s.pos.z)) { s.vy -= C.G * dt; s.pos.y += s.vy * dt; if (s.pos.y < 0.3) { S.sentries.splice(S.sentries.indexOf(s), 1); return; } }
+    if (S.eow) { if (!SS.eow.dev_fall(S, s, dt)) { S.sentries.splice(S.sentries.indexOf(s), 1); return; } }    // P68g: along the field
+    else if (!supported(S, s.pos.x, s.pos.y, s.pos.z)) { s.vy -= C.G * dt; s.pos.y += s.vy * dt; if (s.pos.y < 0.3) { S.sentries.splice(S.sentries.indexOf(s), 1); return; } }
     else { s.vy = 0; let l = 0; while (w.sample(s.pos.x, s.pos.y - 0.02, s.pos.z) > 0 && l < 0.5) { s.pos.y += 0.02; l += 0.02; } }
     if (inWater(S, { x: s.pos.x, y: s.pos.y + 0.2, z: s.pos.z }) && s.state !== 2) { s.state = 2; sim().emit(S, 'steam', { x: s.pos.x, y: s.pos.y, z: s.pos.z, power: 0.4 }); }
     s.tilt += ((s.state === 1 || s.state === 2 && s.tilt > 0.1 ? 1.45 : 0) - s.tilt) * M.min(1, dt / KS.FALL_T * 3);
@@ -431,7 +434,8 @@
     if (c.attach === 1) ok = w.sample(c.pos.x - c.nrm.x * 0.14, c.pos.y - c.nrm.y * 0.14, c.pos.z - c.nrm.z * 0.14) > 0;
     else if (c.attach === 2) { const t = S.trees && S.trees.find(q => q.id === c.tree); ok = !!(t && t.alive && t.seg[c.seg] && t.seg[c.seg].on); }
     else ok = supported(S, c.pos.x, c.pos.y - 0.1, c.pos.z);
-    if (!ok) {
+    if (!ok && S.eow) { if (!SS.eow.dev_fall(S, c, dt)) { S.claymores.splice(S.claymores.indexOf(c), 1); return; } }   // P68g: along the field
+    else if (!ok) {
       c.vy -= C.G * dt; c.pos.y += c.vy * dt;
       if (supported(S, c.pos.x, c.pos.y - 0.1, c.pos.z)) { c.attach = 0; c.vy = 0; c.nrm = { x: 0, y: 1, z: 0 }; }
       if (c.pos.y < 0.3) { S.claymores.splice(S.claymores.indexOf(c), 1); return; }

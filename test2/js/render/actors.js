@@ -746,6 +746,7 @@
         if (p.type === 'dynamite' && trailT > 0.02 && Math.random() < 0.5) SS.fx.spark(wp.x, wp.y + 0.25, wp.z);
       } else if (p.type === 'sheep') {                                     // walks: faces its way, legs swing
         m.rotation.set(0, -Math.atan2(P.dir(S).z * p.dir, P.dir(S).x * p.dir), 0, 'YXZ');
+        if (p.euy != null) m.rotation.z = p.dir * Math.atan2(-p.eus, p.euy);                // P68g: End of the World: along its surface
         const L = m.userData.legs; if (L) for (let i = 0; i < 4; i++) L[i].rotation.z = Math.sin(p.age * 14 + i * 1.6) * 0.5;
         const wd = m.userData.waddle;
         if (wd) { const ph = p.age * 14; wd.position.y = 0.03 + Math.abs(Math.sin(ph)) * 0.025; wd.rotation.x = Math.sin(ph) * 0.07; wd.rotation.z = Math.sin(ph * 2) * 0.03; }     // P59: a waddle of the baked sheep

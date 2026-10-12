@@ -59,7 +59,7 @@
     // homing (= weapons.js pre): lock phase (low gravity, little wind), then steering toward the target at `turn` rad/s with the speed
     // growing by `accel`, for `fuel` s, then a plain shell again
     const hm = pd.homing && tgt ? pd.homing : null, hd0 = hm ? M.len2(tgt.s - s, tgt.y - y) : 0, hv0 = speed;
-    let gk = 1, wkk = 1;
+    let gk = 1, wkk = 1, esc = 0;
     while (t < K.MAX_T) {
       if (hm && !wet) {
         const age = t + dt, lock = M.clamp(hd0 / M.max(1, hv0) * 0.5, hm.lock0, hm.lock1);
@@ -71,6 +71,7 @@
         } else { gk = 1; wkk = 1; }
       }
       wp0.x = ox + s * co; wp0.y = y; wp0.z = oz + s * si; const wke = wk * wkk;
+      if (S.eow && (esc = SS.eow.esc_step(S, wp0.x, y, wp0.z, vs, vy, d, esc, dt)) < 0) return null;   // P68g: a shot that leaves every gravity well is lost (the sim's rule): never planned
       if (SS.weather && !wet && wke > 0) { SS.weather.wind_at(S, wp0.x, y, wp0.z, wv); const ws = wv.x * d.x + wv.z * d.z; vs += ws / C.WIND_UNIT * C.WIND_ACC * wke * dt; vy += (wv.y - vy) * C.WIND_GAIN * wke * dt * 0.04; }   // = stepProjectiles
       const n = M.max(1, Math.ceil(M.len2(vs, vy) * dt / 0.12)), h = dt / n;
       for (let i = 0; i < n; i++) {
@@ -440,19 +441,19 @@
       // the missile's real flight (predict: lock phase, steering, fuel) is flown for a fan of launch angles x powers, aimed at the
       // target; the 3 best are re-scored by their expectation under the aim noise. A fan that starts inside rock is skipped.
       const tg = { s: tp.s, y: tgt.pos.y }, all = [];
-      for (let ha = -0.2; ha < 1.45; ha += 0.1) {
-        if (!muzzleClear(S, ap.s, a.pos.y, facing, ha)) continue;
+      for (let fc = facing, fn = S.eow ? 2 : 1; fn > 0; fn--, fc = -fc) for (let ha = S.eow ? -0.8 : -0.2; ha < 1.45; ha += S.eow && fc !== facing ? 0.2 : 0.1) {   // P68g: in space the fan also covers the other side (the field bends the way)
+        if (!muzzleClear(S, ap.s, a.pos.y, fc, ha)) continue;
         for (const pw of [0.5, 0.75, 1]) {
-          const h = predict(S, 'homing', ha, facing, pw, tg); if (!h || h.wet) continue;
-          all.push({ ha, pw, v: score(S, h, C.PROJ.homing.W, null, C.PROJ.homing.dmg) });
+          const h = predict(S, 'homing', ha, fc, pw, tg); if (!h || h.wet) continue;
+          all.push({ ha, pw, fc, v: score(S, h, C.PROJ.homing.W, null, C.PROJ.homing.dmg) });
         }
       }
       M.sort_stable(all, (p, q) => q.v - p.v);
       let bh = null;
       for (let i = 0; i < all.length && i < 3; i++) {
         if (all[i].v <= 0) break;
-        const e = all[i], v = AI.expect_fn(S, pl, 'homing', e.ha, facing, e.pw, h => score(S, h, C.PROJ.homing.W, null, C.PROJ.homing.dmg), tg);
-        if (!bh || v > bh.v) bh = { special: 'homing', v, aim: e.ha, facing, ts: tp.s, ty: tgt.pos.y, pw: e.pw };
+        const e = all[i], v = AI.expect_fn(S, pl, 'homing', e.ha, e.fc, e.pw, h => score(S, h, C.PROJ.homing.W, null, C.PROJ.homing.dmg), tg);
+        if (!bh || v > bh.v) bh = { special: 'homing', v, aim: e.ha, facing: e.fc, ts: tp.s, ty: tgt.pos.y, pw: e.pw };
       }
       if (bh) cands.push(bh);
     }

@@ -253,6 +253,8 @@
   /* The heat of the shattered planet lives in the pieces: hot regions (the cleaved faces, a few random spots, three of the lumps) where the crust is
    * cracked by a net of glowing lava veins (LAVA voxels in a shell under the surface, thinner inside, dark CRUST seams round them). Cooling in vacuum is slow
    * (radiation only), so it glows all match. Done last (after the anchoring pass), so the veins never cost a chunk its support. */
+  const peak_T = h => 760 + 440 * M.clamp(h, 0, 1);
+  E.peak_T = peak_T;
   function heatVeins(pl, rng) {
     const D = Wd.d, Mt = Wd.mat, H = Wd.H, NX = Wd.NX, NY = Wd.NY, regs = [];
     const surfPt = (c, nx, ny, nz) => { let r = 0; for (; r < c.R * 2.2; r += 0.25) if (dAt(c.x + nx * r, c.y + ny * r, c.z + nz * r) < 0) break; return r; };
@@ -278,7 +280,8 @@
         else if (ridge < thr * 1.9 + 0.04) Mt[o] = MAT.CRUST;
       }
     }
-    pl.hot = regs.map(g => ({ x: g.x, y: g.y, z: g.z, r: g.r, heat: g.heat }));
+    pl.hot = regs.map(g => ({ x: g.x, y: g.y, z: g.z, r: g.r, heat: g.heat, T: peak_T(g.heat) }));         // T: the seam centre's temperature in deg C (the blackbody table of EOW_RESEARCH.md: 1000-1200 yellow at the hottest)
+    for (const q of pl.pockets) { q.r = M.max(M.max(q.rx, q.ry), q.rz); q.T = 1120; }                          // sealed magma: yellow-orange inside, the thin crust round it glows dull red
   }
   E.gen_begin = function (world, settings) {
     Wd = world; seedS = (settings.seed | 0) * 131 + 35;
@@ -328,7 +331,7 @@
     const w = W();
     if (!w.eow || !w.features || !w.features.eow) { S.eow = null; return; }
     const pl = w.features.eow;
-    S.eow = { bodies: pl.bodies, core: pl.core, lost: 0, shots: [], hot: pl.hot || [] };
+    S.eow = { bodies: pl.bodies, core: pl.core, lost: 0, shots: [], hot: pl.hot || [], pockets: pl.pockets || [] };
     S.settings.weather = 'clear'; S.settings.wind = 'calm';                  // no weather in space
   };
   const ensure = w => { if (!w.eup) { w.eup = { x: 0, y: 1, z: 0 }; w.eu2 = { s: 0, y: 1 }; w.eVoid = 0; w.eSense = 1; w.eLatch = 0; w.eMv = 0; w.eGround = false; w.eFlipC = false; w.eStill = 0; w.eAirPrev = false; } return w; };
@@ -375,6 +378,11 @@
   E.body_g = function (S, b, dt) {
     field(S, b.pos.x, b.pos.y, b.pos.z, fg); const a = C.G * K.BODY_G * (b.kind === 'chunk' ? K.PIECE_G / K.BODY_G : 1) * dt;
     b.vel.x += fg.x * a; b.vel.y += fg.y * a; b.vel.z += fg.z * a;
+  };
+  // a shrapnel fragment in vacuum (P68g): no air drag, only the summed field bends its path (it keeps its speed until it hits something)
+  E.frag_g = function (S, f, h) {
+    field(S, f.x, f.y, f.z, fg); const a = C.G * K.PROJ_G * h;
+    f.vx += fg.x * a; f.vy += fg.y * a; f.vz += fg.z * a;
   };
   // unit vector of "down" at a body (for the asleep support probe)
   E.gdir = function (S, p, out) {
@@ -632,12 +640,39 @@
     return best;
   }
   E.best_hop = best_hop;
+  /* The rope hop (P68g): when no jump lands closer (the gap is too wide, or the way is blocked) the CPU hooks the other piece: a fan of hook rays in the plane
+   * (both facings, aim -1.4 .. 1.4), the first solid on each is a candidate if it lies on a DIFFERENT piece than the worm, the line is free for the worm's body,
+   * and it is much nearer the target. The rope is then reeled in (the constraint draws the worm along the straight line) and let go near the hook. */
+  const rp = { aim: 0, f: 1, hb: -1 };
+  function rope_plan(S, a, ts, tw, out) {
+    const ap = P.to_plane(S, a.pos), bw = body_of(S, a.pos.x, a.pos.y, a.pos.z), bt = body_of(S, tw.x, tw.y, tw.z), base = P.overlap2(S, ap.s, a.pos.y), d0 = M.len2(ts - ap.s, tw.y - a.pos.y);
+    const SY = W().SY; let bv = 6;
+    out.f = 0;
+    for (let fi = 0; fi < 2; fi++) {
+      const f = fi === 0 ? 1 : -1;
+      for (let q = -7; q <= 7; q++) {
+        const aim = q * 0.2, ds = f * M.cos(aim), dy = M.sin(aim); let s = ap.s + ds * 0.4, y = a.pos.y + dy * 0.4, hit = -1, ok = true;
+        for (let r = 0.4; r < C.ROPE_MAX; r += 0.1) {
+          s += ds * 0.1; y += dy * 0.1;
+          if (P.solid2(S, s, y)) { hit = r; break; }
+          if (y < 0.2 || y > SY + 2) break;
+          if (r > 0.9 && (r * 10 + 0.5 | 0) % 4 === 0 && P.overlap2(S, s, y) > base) { ok = false; break; }       // the worm's body must fit along the line
+        }
+        if (!ok || hit < 3.5) continue;
+        const hw = P.to_world(S, s, y), hb = body_of(S, hw.x, y, hw.z); if (hb < 0 || hb === bw) continue;
+        const v = (d0 - M.len2(ts - s, tw.y - y)) - 0.15 * hit + (hb === bt ? 8 : 0);
+        if (v > bv) { bv = v; out.aim = aim; out.f = f; out.hb = hb; }
+      }
+    }
+    return out.f !== 0;
+  }
+  E.rope_plan = rope_plan;
   E.cpu_move = function (S, pl, a) {
     if (!S.eow || pl.moves >= 4 || a.air || S.rope) return false;
     const AIx = SS.ai, tgt = AIx.foe(S, pl, pl.fi) || (pl.foes0 && AIx.foe_of(S, pl, pl.foes0[0])); if (!tgt || tgt.alien) return false;
     if (Math.abs(P.to_plane(S, tgt.pos).t) > 3) return false;               // the target is not on this section
     ensure(a); pl.moves++;
-    pl.mv = { kind: 9, st: 'scan', t0: S.time, tmax: 10, tChk: S.time, lastS: P.to_plane(S, a.pos).s, nextEval: 0, stuck: 0, t1: 0, tid: tgt.id };
+    pl.mv = { kind: 9, st: 'scan', t0: S.time, tmax: 10, rNext: 0, noHop: !!pl.noHop, tChk: S.time, lastS: P.to_plane(S, a.pos).s, nextEval: 0, stuck: 0, t1: 0, tid: tgt.id };
     pl.phase = 'move'; return true;
   };
   // one sim step of the move; true = done (the planner searches again from wherever the worm is)
@@ -645,6 +680,19 @@
     const m = pl.mv; if (!m) return true;
     if (S.time - m.t0 > m.tmax) { pl.mv = null; return true; }
     if (m.st === 'fly') { if (!a.air && !S.rope) { pl.mv = null; return true; } return false; }
+    if (m.st === 'rfire') { S.weapon = 'rope'; S.aim = m.ra; a.facing = m.rf; inp.fire_pressed = 1; m.st = 'rhook'; m.t1 = S.time; return false; }          // P68g: the ninja rope between pieces
+    if (m.st === 'rhook') {
+      if (S.rope && S.rope.hooked) { m.st = 'rreel'; m.tR = S.time; }
+      else if (!S.hook && S.time - m.t1 > 0.05) { pl.mv = null; return true; }                                  // the hook found nothing
+      return false;
+    }
+    if (m.st === 'rreel') {                                                  // reel in (the rope is straight: the worm is drawn along it), let go near the other piece
+      if (!S.rope) { m.st = 'fly'; return false; }
+      inp.up = 1;
+      const hbd = S.eow.bodies[m.hb], sd = hbd ? M.len3(a.pos.x - hbd.x, a.pos.y - hbd.y, a.pos.z - hbd.z) - hbd.R * 1.08 : 0;   // inside the other piece's pull (the suit's brake lands it) or at the hook
+      if (sd < 6 || S.rope.len < 2.4 || S.time - m.tR > 8) { inp.jump = 1; m.st = 'fly'; m.t2 = S.time; }
+      return false;
+    }
     if (m.st === 'wind') { if (a.air) { m.st = 'fly'; return false; } if (S.time - m.t1 > 1.2) { pl.mv = null; return true; } return false; }
     if (a.air || S.rope) { m.st = 'fly'; return false; }
     const tgt = S.worms[m.tid]; if (!tgt || tgt.dead) { pl.mv = null; return true; }
@@ -652,8 +700,10 @@
     if (M.len2(tp.s - ap.s, tgt.pos.y - a.pos.y) < 4.5) { pl.mv = null; return true; }       // close enough: shoot / melee from here
     if (S.time >= m.nextEval) {
       m.nextEval = S.time + 0.2;
-      const b = best_hop(S, a, tp.s, tgt.pos.y);
+      const b = m.noHop ? null : best_hop(S, a, tp.s, tgt.pos.y);                                        // (noHop: a test seam, the rope path alone)
       if (b && b.v >= 5) { a.facing = b.dir; inp.jump = 1; m.st = 'wind'; m.t1 = S.time; return false; }
+      if (S.time >= m.rNext && SS.weapons.can_use(S, 'rope') && rope_plan(S, a, tp.s, tgt.pos, rp)) { m.ra = rp.aim; m.rf = rp.f; m.hb = rp.hb; m.st = 'rfire'; m.tmax += 12; return false; }   // no hop lands closer: hook the other piece
+      if (S.time >= m.rNext) m.rNext = S.time + 1.5;
     }
     inp.move = dir;
     if (S.time - m.tChk > 1.0) { if (Math.abs(ap.s - m.lastS) < 0.3 && ++m.stuck >= 2) { pl.mv = null; return true; } m.lastS = ap.s; m.tChk = S.time; }
@@ -709,6 +759,7 @@
     }
     for (let k = 0; k < 14 && P.blocked2(S, ns - us * R * 0.6, ny - uy * R * 0.6); k++) { ns += us * 0.05; ny += uy * 0.05; }   // never sink into the ground
     p.s = ns; p.y = ny; p.dir = Math.abs(fs) > 0.2 ? (fs >= 0 ? 1 : -1) : p.dir;
+    p.eus = us; p.euy = uy;                                          // (render: the sheep lies along its surface)
     const wp = P.to_world(S, p.s, p.y);
     if (p.y < 0.5 || surf_dist(S, wp.x, p.y, wp.z) > K.VOID_D) return 'gone';
     p.fuse -= dt;
@@ -722,6 +773,69 @@
     if (below) { d.gv = 0; d.vy = 0; for (let k = 0; k < 40 && w.sample(d.pos.x + cg.x * 0.1, d.pos.y + cg.y * 0.1, d.pos.z + cg.z * 0.1) > 0; k++) { d.pos.x -= cg.x * 0.05; d.pos.y -= cg.y * 0.05; d.pos.z -= cg.z * 0.05; } return true; }
     d.gv = (d.gv || 0) + C.G * K.PROJ_G * dt; d.pos.x += cg.x * d.gv * dt; d.pos.y += cg.y * d.gv * dt; d.pos.z += cg.z * d.gv * dt;
     return surf_dist(S, d.pos.x, d.pos.y, d.pos.z) < K.VOID_D && d.pos.y > 0.3;
+  };
+
+  /* ================= spawns away from the heat (P68g) ================= */
+  // true when a glowing vein (lava) is within 1.5 m of the point: no worm, crate or prop spawns there (rock that burns, and its glow)
+  E.hot_near = function (S, x, y, z) {
+    const R = 1.5, Hs = S.eow.hot, Pk = S.eow.pockets, w = W(); let near = false;
+    for (let i = 0; i < Hs.length && !near; i++) { const g = Hs[i]; near = M.len3(x - g.x, y - g.y, z - g.z) < g.r + R + 1.5; }
+    for (let i = 0; i < Pk.length && !near; i++) { const g = Pk[i]; near = M.len3(x - g.x, y - g.y, z - g.z) < g.r + R + 1.5; }
+    if (!near) return false;
+    for (let k = -3; k <= 3; k++) for (let j = -3; j <= 3; j++) for (let i = -3; i <= 3; i++) {
+      const dx = i * 0.5, dy = j * 0.5, dz = k * 0.5; if (dx * dx + dy * dy + dz * dz > R * R) continue;
+      if (w.mat_at(x + dx, y + dy, z + dz) === MAT.LAVA) return true;
+    }
+    return false;
+  };
+
+  /* ================= the robo dog on any side of a chunk (P68g) ================= */
+  const dq = { s: 0, y: 0 };
+  // the dog's start next to the worm along the worm's own surface frame (up = a.eu2); false = no room
+  E.dog_spawn = function (S, a, ap, f) {
+    const KD = C.TOOLB.DOG; ensure(a);
+    let us = a.eu2.s, uy = a.eu2.y; const l = M.len2(us, uy) || 1; us /= l; uy /= l;
+    const ts = uy, ty = -us, fk = Math.abs(ts) > 0.3 ? (ts * f >= 0 ? 1 : -1) : 1, lo = 0.5 - KD.R - 0.05;
+    let s0 = ap.s + ts * fk * 0.75 - us * lo, y0 = a.pos.y + ty * fk * 0.75 - uy * lo, up = 0;
+    while (P.blocked2(S, s0, y0) && up < 0.7) { s0 += us * 0.05; y0 += uy * 0.05; up += 0.05; }
+    if (P.blocked2(S, s0, y0)) return null;
+    dq.s = s0; dq.y = y0; return dq;
+  };
+  // stepDog of gadgets.js in the frame of the local up u (against the field) and the forward tangent f; wp = the dog's world position
+  E.dog_step = function (S, d, dt, wp) {
+    const KD = C.TOOLB.DOG, R = KD.R, dr = P.dir(S);
+    E.proj_acc(S, wp.x, d.y, wp.z, dr.x, dr.z, sa); const g = M.max(M.len2(sa.s, sa.y), 0.5);
+    let us = d.eus == null ? 0 : d.eus, uy = d.euy == null ? 1 : d.euy;
+    if (M.len2(sa.s, sa.y) > 0.3) { us = -sa.s / g; uy = -sa.y / g; }
+    d.eus = us; d.euy = uy;
+    const ts = uy, ty = -us;
+    if (Math.abs(ts) > 0.3) d.eT = d.dir * (ts >= 0 ? 1 : -1);
+    else {                                                              // on a wall: climb toward the target's height
+      let tg = null; for (let i = 0; i < S.worms.length; i++) if (S.worms[i].id === d.target) tg = S.worms[i];
+      d.eT = tg && Math.abs(tg.pos.y - d.y) > 0.5 && Math.abs(ty) > 0.3 ? (tg.pos.y > d.y ? 1 : -1) * (ty >= 0 ? 1 : -1) : (d.eT || d.dir);
+    }
+    const fs = d.eT * ts, fy = d.eT * ty;
+    let vu = d.vs * us + d.vy * uy, vt = d.vs * fs + d.vy * fy;
+    const grounded = P.blocked2(S, d.s - us * (R + 0.06), d.y - uy * (R + 0.06)) && vu <= 0.01;
+    vt += (KD.SPEED - vt) * M.min(1, (grounded ? KD.ACC : 2) * dt);
+    const ahead = R + 0.06 + Math.abs(vt) * dt, px = d.s + fs * ahead, py = d.y + fy * ahead; let need = 0;
+    while (need <= KD.HOP_MAX + 0.01 && (P.blocked2(S, px + us * (need - R + 0.1), py + uy * (need - R + 0.1)) || P.blocked2(S, px + us * (need + R * 0.6), py + uy * (need + R * 0.6)))) need += 0.07;
+    d.state = grounded ? 0 : 2;
+    if (need > 0.001 && grounded) {
+      if (need <= KD.STEP_UP) { d.s += us * need; d.y += uy * need; vu = 0; }
+      else if (need <= KD.HOP_MAX) { vu = Math.sqrt(2 * g * (need + 0.35)); d.hop = 0.3; d.state = 2; SS.sim.emit(S, 'doghop', { x: wp.x, y: wp.y, z: wp.z }); }
+      else { vt = 0; d.state = 1; d.blockT += dt; }
+    } else if (need > 0.001) vt = M.min(Math.abs(vt), 1.2) * 0.5;
+    if (d.state !== 1) d.blockT = 0;
+    d.hop = M.max(0, d.hop - dt); vu -= g * dt;
+    let ns = d.s + (vt * fs + vu * us) * dt, ny = d.y + (vt * fy + vu * uy) * dt;
+    if (P.blocked2(S, ns + fs * R, ny + fy * R) && !(need <= 0.001)) { ns = d.s; ny = d.y; }
+    if (vu <= 0 && P.blocked2(S, ns - us * R, ny - uy * R)) { let lift = 0; while (P.blocked2(S, ns - us * (R - 0.02), ny - uy * (R - 0.02)) && lift < 0.6) { ns += us * 0.02; ny += uy * 0.02; lift += 0.02; } vu = 0; }
+    if (vu > 0 && P.blocked2(S, ns + us * R, ny + uy * R)) vu = 0;
+    d.s = ns; d.y = ny; d.vs = vt * fs + vu * us; d.vy = vt * fy + vu * uy;
+    if (grounded) d.dist += Math.abs(vt) * dt;
+    const wl = P.to_world(S, d.s, d.y);
+    if (d.y < 0.4 || surf_dist(S, wl.x, d.y, wl.z) > K.VOID_D) { const i = S.dogs.indexOf(d); if (i >= 0) S.dogs.splice(i, 1); }
   };
 
   /* ================= vacuum rules (P68d) =================
@@ -743,22 +857,25 @@
     e.dv *= k; e.dmg *= k;
   };
   // a shell that has left every gravity well: lost to space. true = remove it (never explodes); it keeps drifting in S.eow.shots for the lost-shot view
-  const pe = { x: 0, y: 0, z: 0 };
+  // the lost-shot rule, shared by the sim (proj_escape) and the CPU's prediction (P68g: it never plans a shot that leaves every well):
+  // eEsc = the seconds spent so far where the field is below ESC_F; returns the new value, or -1 = lost to space
+  function esc_step(S, wx, y, wz, vs, vy, d, eEsc, dt) {
+    const wd = W();
+    field(S, wx, y, wz, fg); const l = M.len3(fg.x, fg.y, fg.z);
+    if (l >= K.ESC_F) return 0;
+    const out = wx < 0 || wz < 0 || wx > wd.SX || wz > wd.SZ || y > wd.SY + 2 || y < 1;
+    // receding from the nearest body (any body within the fade range)
+    const B = S.eow.bodies; let bn = -1, bd = 1e9, rec = true;
+    for (let i = 0; i < B.length; i++) { const dd = M.len3(wx - B[i].x, y - B[i].y, wz - B[i].z) - B[i].R; if (dd < bd) { bd = dd; bn = i; } }
+    if (bn >= 0) { const b = B[bn]; rec = (vs * d.x * (wx - b.x) + vs * d.z * (wz - b.z) + vy * (y - b.y)) > 0; }
+    eEsc += dt;
+    return eEsc > (rec ? K.ESC_T : K.ESC_T2) || (out && rec) ? -1 : eEsc;
+  }
+  E.esc_step = esc_step;
   E.proj_escape = function (S, p, dt) {
-    const d = P.dir(S), wl = P.to_world(S, p.s, p.y), wd = W();
-    field(S, wl.x, p.y, wl.z, fg); const l = M.len3(fg.x, fg.y, fg.z);
-    const out = wl.x < 0 || wl.z < 0 || wl.x > wd.SX || wl.z > wd.SZ || p.y > wd.SY + 2 || p.y < 1;
-    let lost = false;
-    if (l < K.ESC_F) {
-      const bi = body_of(S, wl.x, p.y, wl.z); let rec = true;
-      // receding from the nearest body (any body within the fade range)
-      const B = S.eow.bodies; let bn = -1, bd = 1e9;
-      for (let i = 0; i < B.length; i++) { const dd = M.len3(wl.x - B[i].x, p.y - B[i].y, wl.z - B[i].z) - B[i].R; if (dd < bd) { bd = dd; bn = i; } }
-      if (bn >= 0) { const b = B[bn]; rec = (p.vs * d.x * (wl.x - b.x) + p.vs * d.z * (wl.z - b.z) + p.vy * (p.y - b.y)) > 0; }
-      p.eEsc = (p.eEsc || 0) + dt;
-      lost = p.eEsc > (rec ? K.ESC_T : K.ESC_T2) || (out && rec);
-    } else p.eEsc = 0;
-    if (!lost) return false;
+    const d = P.dir(S), wl = P.to_world(S, p.s, p.y), e = esc_step(S, wl.x, p.y, wl.z, p.vs, p.vy, d, p.eEsc || 0, dt);
+    if (e >= 0) { p.eEsc = e; return false; }
+    p.eEsc = 0;
     S.eow.shots.push({ id: p.id | 0, type: p.type, owner: p.owner, x0: wl.x, y0: p.y, z0: wl.z, x: wl.x, y: p.y, z: wl.z, vx: p.vs * d.x, vy: p.vy, vz: p.vs * d.z, t0: S.time });
     if (S.eow.shots.length > 8) S.eow.shots.shift();
     SS.sim.emit(S, 'eowlost', { x: wl.x, y: p.y, z: wl.z, type: p.type, owner: p.owner, speed: M.len2(p.vs, p.vy) });

@@ -164,6 +164,7 @@
     }
     const cs = W().features.canals || [];
     for (let c = 0; c < cs.length; c++) for (const pt of cs[c].pts) if (M.len2(pt[0] - x, pt[2] - z) < pt[3] * 0.5 + 2.5) return true;
+    if (S.eow && SS.eow.hot_near(S, x, W().topHeight(x, z), z)) return true;       // P68g: no spawn on or within 1.5 m of a hot vein
     return false;
   }
   sim.near_lava = nearLava;

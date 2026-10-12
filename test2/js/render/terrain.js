@@ -413,6 +413,7 @@
         float pulse = 0.88 + 0.12 * sin(uTime * 0.6 + vT.x * 0.5 + vT.z * 0.4);
         // crust: only a faint dull-red residual heat in the deepest cracks (it is cold rock; open lava is render/lava.js)
         emis = wl * pow(lf, 1.9) * 3.8 * pulse * vec3(1.0, 0.34, 0.06) + wc * pow(lf, 5.0) * (uEow > 0.5 ? 2.2 : 0.45) * vec3(1.0, 0.2, 0.03);
+        if (uEow > 0.5) emis = eoLava(vW, wl, wc, lf, pulse);                  // P68g: the colour follows the temperature (render/eowview.js)
         col = mix(col, vec3(0.12, 0.06, 0.04), wl * 0.6);
       }
       // P65d: the ground within ~0.6 m of open lava is heated: a dull orange glow that dies off with the distance to the nearest lava column (no hard line where the lava meets the ground)
@@ -769,6 +770,7 @@
             col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, 0.35) * 1.2 + vec3(0.05, 0.06, 0.07);
             col = mix(col * vec3(1.0, 1.04, 1.08), col * vec3(0.62, 0.8, 1.0), smoothstep(0.2, 1.5, dd));
           }
+          if (uEow > 0.5 && (mat == 9 || mat == 10)) em = eoCapHeat(em, vW, mat);   // P68g: the cut's glow follows the temperature
           return col;
         }
         ` + sh.fragmentShader
