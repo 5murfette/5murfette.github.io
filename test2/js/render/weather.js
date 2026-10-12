@@ -58,7 +58,7 @@
   const PREC_V = /* glsl */`
     attribute vec4 seed;
     uniform sampler2D tHeight;
-    uniform vec3 uC, uB, uOff, uVel, uO, uN;
+    uniform vec3 uC, uB, uOff, uVel, uO, uN; uniform vec2 uNear;
     uniform float uTime, uSize, uExpo, uSway, uFallVar, uPix, uFogD, uFlick, uRound, uInsp;
     varying vec2 vUv; varying float vA;
     ${HASH}
@@ -72,7 +72,7 @@
       float spd = length(v);
       vec3 ax = spd > 0.01 ? v / spd : vec3(0.0, -1.0, 0.0);
       vec3 toC = cameraPosition - p; float d = max(length(toC), 1e-3);
-      float a = smoothstep(0.6, 2.5, d) * exp(-uFogD * uFogD * d * d);
+      float a = smoothstep(uNear.x, uNear.y, d) * exp(-uFogD * uFogD * d * d);     // P74: near fade 2.2-7 m (a streak a few m from the lens was a fat white bar)
       vec2 e = abs(p.xz - uC.xz) / (0.5 * uB.xz);
       a *= (1.0 - smoothstep(0.8, 1.0, max(e.x, e.y))) * (1.0 - smoothstep(uC.y + 0.3 * uB.y, uC.y + 0.5 * uB.y, p.y));
       a *= mix(1.0, 0.45 + 0.55 * sin(uTime * (5.0 + 4.0 * seed.y) + ph), uFlick);
@@ -112,7 +112,7 @@
         uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uInsp: { value: 0 },
         uSize: { value: round ? 0.05 : 0.024 }, uExpo: { value: round ? 0.022 : 0.065 }, uSway: { value: round ? 0.35 : 0 },
         uFallVar: { value: round ? 0.35 : 0.15 }, uPix: { value: 0.001 }, uFogD: { value: 0.006 }, uFlick: { value: 0 },
-        uRound: { value: round ? 1 : 0 }, uCol: { value: new T.Color(0.7, 0.74, 0.8) }, uFlash: { value: 0 }, uAlpha: { value: round ? 0.85 : 0.8 }
+        uNear: { value: round ? new T.Vector2(1.0, 3.5) : new T.Vector2(2.2, 7) }, uRound: { value: round ? 1 : 0 }, uCol: { value: new T.Color(0.7, 0.74, 0.8) }, uFlash: { value: 0 }, uAlpha: { value: round ? 0.85 : 0.8 }
       }
     });
   }
@@ -378,7 +378,8 @@
     const ct = view.camT, cp = camera.position;
     const cx = ct.x + (cp.x - ct.x) * 0.4, cz = ct.z + (cp.z - ct.z) * 0.4, cy = ct.y + 6;
     const pix = 2 * Math.tan(camera.fov * Math.PI / 360) / Math.max(1, P && P.renderer ? P.renderer.domElement.height : 800);
-    const lum = 0.55 + 0.45 * (1 - 0.5 * oc);
+    const tk = view.tod === 'night' ? 0.2 : view.tod === 'dusk' ? 0.72 : 1;          // P74: drops / flakes are lit by the scene (they glowed white at night)
+    const lum = (0.55 + 0.45 * (1 - 0.5 * oc)) * (SS.world.under ? 0.5 : tk);
 
     // rain: drops follow the wind (0.85 of the 10 m mean near the ground), 6.5-9 m/s fall
     const fallR = 6.5 + 2.5 * rainA;
@@ -436,6 +437,7 @@
       const fs = ovK >= 0.7 ? Math.pow(1 - ovK, 1.5) : 1 - 0.5 * ovK;
       P.sun.intensity = base.sun * fs;
       P.hemi.intensity = base.hemi * (1 + 0.15 * oc) + base.sun * base.sunEl * (1 - fs) * 0.25 + flash * 2.5;
+      if (view.tod === 'night' && ovK > 0.5) P.hemi.intensity = Math.max(P.hemi.intensity, base.hemi * 1.5 + base.sun * base.sunEl * 0.5);     // P74: a rainy night kept almost no light: the ground and the worms were unreadable
       if (flash > 0.01) { P.fill.intensity = base.fill + flash * 4; P.fill.color.setRGB(0.8, 0.85, 1); P.fill.position.copy(flashDir); }
       else { P.fill.intensity = base.fill; P.fill.color.copy(base.fillCol); P.fill.position.copy(base.fillPos); }
       const sm = P.skyMat.uniforms; sm.uDark.value = base.phys ? 0 : oc * (base.storm ? 0.3 : 0.6); sm.uFlash.value = flash * 0.8;

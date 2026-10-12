@@ -263,7 +263,7 @@
     for (let i = pops.length - 1; i >= 0; i--) {
       const el = pops[i], age = S.time - el._t;
       if (age > (el._bub ? 1.9 : 1.6) || age < 0) { dropPop(i); continue; }
-      if (el._bub) { const bp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.25, z: el._w.pos.z }); el.style.transform = `translate(${bp.x}px,${bp.y}px) translate(-50%,-100%)`; el.style.opacity = Math.min(1, (1.9 - age) * 3); continue; }
+      if (el._bub) { const bp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.25, z: el._w.pos.z }); el.style.transform = `translate(${bp.x}px,${bp.y - 58}px) translate(-50%,-100%)`; el.style.opacity = Math.min(1, (1.9 - age) * 3); continue; }
       const sp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.5 + age * 0.8, z: el._w.pos.z });
       el.style.transform = `translate(${sp.x + el._dx}px,${sp.y}px) translate(-50%,-100%)`; el.style.opacity = age < 1 ? 1 : Math.max(0, 1 - (age - 1) / 0.6);
     }

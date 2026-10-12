@@ -16,7 +16,7 @@
   'use strict';
   const T = window.THREE;
   const SV = SS.shrapView = {};
-  const MAXQ = 2048, SHUTTER = 0.035, STREAK_MAX = 9, MIN_PX = 3.2, COOL = 0.9, EMBER_T = 1.6, EMBER_R = 0.06, TRAIL_T = 0.2, TRAIL_N = 8;
+  const MAXQ = 2048, SHUTTER = 0.035, STREAK_MAX = 4, MIN_PX = 3.2, COOL = 0.9, EMBER_T = 1.6, EMBER_R = 0.06, TRAIL_T = 0.12, TRAIL_N = 8;
   let mesh = null, geo = null, pos, uvh, n = 0, embers = [], sparks = [], pxScale = 1000, now = 0;
   const trails = new Map();                       // fragment id -> { p: [[x, y, z, t]...], h, dead }
   const VS = /* glsl */`
