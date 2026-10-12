@@ -73,6 +73,7 @@
     }
     shift_features(F, W.MZ - z0);
     W.flat = true; W.kz = kz; W.sepk = C.DIM2.SEP_K;
+    if (SS.collapse) SS.collapse.remove_floating_all(W);               // P72: the slice cuts 3D arches / bridges / lips whose support was sideways: nothing may float in the section
     W.dry = false; W.far = null; W.circ = null; W.frz = null;          // a finite slab: no endless dunes, no frozen ring (the desert's hot-sand rules are 3D)
   };
 

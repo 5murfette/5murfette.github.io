@@ -31,12 +31,14 @@
     const sCav = smax(smin(smin(Rin - r, y), K.H_WALL - y), smin(Rd - K.WALL - dd, y - K.H_WALL + 0.01));
     // door (rear) and window (front): local axes along the opening (a) and across it (c)
     const ux = M.cos(b.phi), uz = M.sin(b.phi);
-    const aD = -(dx * ux + dz * uz), cD = -dx * uz + dz * ux;                     // rear: phi + pi
+    const aD = (b.flat ? 1 : -1) * (dx * ux + dz * uz), cD = -dx * uz + dz * ux;                     // rear: phi + pi
     const sDoor = smin(smin(smin(K.DOOR_W / 2 - Math.abs(cD), y), K.DOOR_H - y), smin(aD - (Rin - 0.4), K.R_OUT + 2.5 - aD));
     const aW = dx * ux + dz * uz, cW = -dx * uz + dz * ux, kW = M.clamp((aW - Rin) / K.WALL, 0, 1.5);
     const half = K.SLIT_W_IN / 2 + kW * (K.SLIT_W_OUT - K.SLIT_W_IN) / 2;
     const sWin = smin(smin(smin(half - Math.abs(cW), y - K.SLIT_Y0 + kW * 0.12), K.SLIT_Y1 + kW * 0.2 - y), smin(aW - (Rin - 0.4), K.R_OUT + 0.6 - aW));
-    const sAir = smax(smax(sCav, sDoor), sWin);
+    // P72: 2D: the plane cuts the whole section open where an opening is, so the door sits in the FRONT wall (the rear wall stays whole and carries the
+    // roof down to the footing: a door in the rear and a slit in the front left the dome hanging in the air); the slit is part of the opening
+    const sAir = b.flat ? smax(sCav, sDoor) : smax(smax(sCav, sDoor), sWin);
     out.conc = smin(sOuter, -sAir); out.air = sAir;
     return out;
   }
@@ -56,23 +58,45 @@
     return { lo, hi };
   }
 
+  /* P72: the 2D rim ground: the top at 5 points across the footprint on the plane (the slab is z-invariant), same limits as rimGround */
+  function rimGround2(x, z) {
+    const w = W(); let lo = 1e9, hi = -1e9;
+    for (let q = -2; q <= 2; q++) {
+      const px = x + q * 0.5 * (K.R_OUT + 0.5);
+      if (w.outside(px, z)) return null;
+      const t = w.top_at(px, z), m = w.mat_at(px, t - 0.3, z);
+      if (m === MAT.LAVA || m === MAT.ICE || m === MAT.STEEL || m === MAT.CONCRETE) return null;
+      if (t < lo) lo = t; if (t > hi) hi = t;
+    }
+    return { lo, hi };
+  }
+
+  /* P72: 2D: the door and the slit lie along the plane, so phi is 0 or pi: toward the map centre, unless the ground rises there (the slit,
+   * which reaches only 0.6 m out of the wall, would be buried): then it looks down the slope and the door (cut through the ground) sits uphill */
+  function phi2d(x, y0) {
+    const w = W(), sgn = x < w.MX ? 1 : -1, r = K.R_OUT + 0.8, f = w.top_at(x + sgn * r, w.MZ), b = w.top_at(x - sgn * r, w.MZ);
+    const s2 = f > y0 + 1.6 && b < f - 0.6 ? -sgn : sgn;
+    return s2 > 0 ? 0 : M.PI;
+  }
+
   BK.populate = function (S, taken) {
     S.bunkers = [];
     const w = W();
-    const NB0 = K ? [0, 1, K.N, K.N + 1][C.density_level(S.settings, 'dBunkers')] : 0, NB = NB0 > 1 ? Math.round(NB0 * w.SC * w.SC) : NB0;   // (P38: more on a bigger map)   // P37 W5: none / low / medium (= K.N) / high
+    const NB0 = K ? [0, 1, K.N, K.N + 1][C.density_level(S.settings, 'dBunkers')] : 0, NB = NB0 > 1 ? Math.round(NB0 * w.SC * (w.flat ? 1 : w.SC)) : NB0;   // (P38: more on a bigger map)   // P37 W5: none / low / medium (= K.N) / high
     if (!K || !(NB > 0) || w.under) return;
     const sea = w.SEA, seed = (S.settings.seed | 0) >>> 0;
-    // flat ground first; steep maps (alpine) get a second pass at 2.5 x FLAT (the footing reaches the low side)
-    for (const flat of [K.FLAT, K.FLAT * 2.5]) if (S.bunkers.length < NB) place(S, taken, flat, sea, seed, NB);
+    // flat ground first; steep maps (alpine) get a second pass at 2.5 x FLAT (the footing reaches the low side); P72: the 2D line is bumpier: a third pass
+    for (const flat of w.flat ? [K.FLAT, K.FLAT * 2.5, K.FLAT * 3.75] : [K.FLAT, K.FLAT * 2.5]) if (S.bunkers.length < NB) place(S, taken, flat, sea, seed, NB);
     if (S.bunkers.length) SS.sim.log(S, `${S.bunkers.length} concrete bunker${S.bunkers.length > 1 ? 's' : ''} on the map: get in through the back door, shoot through the slit.`, 0xc8ccd0);
   };
   function place(S, taken, flat, sea, seed, NB) {
-    const w = W(), cands = [];
-    for (let z = K.EDGE; z <= w.SZ - K.EDGE; z += 4) for (let x = K.EDGE; x <= w.SX - K.EDGE; x += 4) {
+    const w = W(), cands = [], fl = !!w.flat, clr = fl ? K.R_OUT + 1.5 : K.CLEAR;       // (2D: a worm just outside the wall is fine: the line is crowded)
+                          // P72: the 2D slab: a line of candidates on the plane (z = MZ), 2 m apart
+    for (let z = fl ? w.MZ : K.EDGE; z <= (fl ? w.MZ : w.SZ - K.EDGE); z += 4) for (let x = K.EDGE; x <= w.SX - K.EDGE; x += fl ? 2 : 4) {
       if (w.dry && SS.sim.arena_r(x, z) > S.playR - K.R_OUT - 2) continue;
-      const g = rimGround(x, z); if (!g || g.hi - g.lo > flat || g.lo < sea + 0.8) continue;
+      const g = fl ? rimGround2(x, z) : rimGround(x, z); if (!g || g.hi - g.lo > flat || g.lo < sea + 0.8) continue;
       let ok = true;
-      for (const t of taken) if (M.len2(t.x - x, t.z - z) < K.CLEAR) { ok = false; break; }
+      for (const t of taken) if (M.len2(t.x - x, t.z - z) < clr) { ok = false; break; }
       if (!ok || (SS.struct && SS.struct.near && SS.struct.near(S, x, z, K.R_OUT + 3, g.hi + 3))) continue;
       cands.push({ x, z, g, v: (g.hi - g.lo) + 2.5 * M.hash3(x | 0, z | 0, seed & 0xffff) });   // flat first, varied
     }
@@ -80,16 +104,16 @@
     for (const c of cands) {
       if (S.bunkers.length >= NB) break;
       if (S.bunkers.some(b => M.len2(b.x - c.x, b.z - c.z) < K.APART)) continue;
-      if (taken.some(t => M.len2(t.x - c.x, t.z - c.z) < K.CLEAR)) continue;   // (the first pass's bunkers are taken too)
-      const y0 = (c.g.lo + c.g.hi) / 2 + 0.05, phi = M.atan2(W().MZ - c.z, W().MX - c.x);   // the embrasure faces the map centre
+      if (taken.some(t => M.len2(t.x - c.x, t.z - c.z) < clr)) continue;   // (the first pass's bunkers are taken too)
+      const y0 = (c.g.lo + c.g.hi) / 2 + 0.05, phi = W().flat ? phi2d(c.x, y0) : M.atan2(W().MZ - c.z, W().MX - c.x);   // the embrasure faces the map centre
       BK.build(S, taken, c.x, c.z, y0, phi, K.FOUND + (y0 - c.g.lo) + 0.3);
     }
   }
   /* stamp one bunker at (x, z) with its floor at y0 and the footing foot m deep, and register it (P68b: fort mode builds its own) */
   BK.build = function (S, taken, x, z, y0, phi, foot) {
-    const b = { x, z, y0, phi, foot };
+    const b = { x, z, y0, phi, foot, flat: !!W().flat };
     stamp(b);
-    S.bunkers.push({ x: b.x, z: b.z, y0: b.y0, phi: b.phi });
+    S.bunkers.push({ x: b.x, z: b.z, y0: b.y0, phi: b.phi, flat: b.flat });
     taken.push({ x: b.x, y: y0, z: b.z });
   };
 

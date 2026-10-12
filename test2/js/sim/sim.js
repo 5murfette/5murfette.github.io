@@ -343,16 +343,17 @@
       taken.push(spot);
       S.worms.push(sim.worm_make(i, team, names[i], hp0, spot));
     }
-    const flat = W().flat;                                         // P68a: the 2D slab has no room for the 3D structure stamps
+    const flat = W().flat;                                         // P68a: the 2D slab: derelict ship / alien nest stay 3D (P72: bridges, bunkers, ruins stamp their cross section)
     if (S.eow) SS.eow.spawned(S);                                  // P68c: the worms' suit state (no bridges, bunkers, ruins, aliens, trees in space)
     if (fortOn) SS.fort.populate(S, taken);                        // P68b: the forts' bunkers (+ the bunker worms), instead of the structure stamps below
     if (S.settings.rooms && !W().under && !flat) SS.game.rooms(S); else S.rooms = [];   // PoC buried rooms (option)
     if (!S.eow) {
-    if (SS.struct && !flat && !fortOn) SS.struct.populate(S, taken);                  // M: steel bridges (before props / trees: they avoid the abutments)
-    if (SS.bunker && !flat && !fortOn) SS.bunker.populate(S, taken);                  // P29d: concrete bunkers (before props / trees too)
+    if (SS.struct && !fortOn) SS.struct.populate(S, taken);                  // M: steel bridges (before props / trees: they avoid the abutments; P72: 2D: one truss on the plane)
+    if (SS.bunker && !fortOn) SS.bunker.populate(S, taken);                  // P29d: concrete bunkers (before props / trees too)
     if (SS.derelict && !flat && !fortOn) SS.derelict.populate(S, taken);              // P37: the crashed derelict alien ship (voxel stamp)
-    if (SS.ruins && !flat && !fortOn) SS.ruins.populate(S, taken);                    // P37: volcanic ruined town + rocks (voxel stamps, before the props)
+    if (SS.ruins && !fortOn) SS.ruins.populate(S, taken);                    // P37: volcanic ruined town + rocks (voxel stamps, before the props)
     if (SS.alien) SS.alien.populate(S, taken);                    // P37: face-hugger eggs (after the ship: the nest)
+    if (flat && SS.collapse && SS.collapse.remove_floating_all(W()) > 0) W().mark_all();   // P72: 2D stamps (wall fragments, rubble, a cut footing) that hold on nothing are removed, nothing floats
     sim.unbury_worms(S, taken);                                          // P38 R1: lift a worm the hull / rubble stamps entombed (before the props use taken)
     } else if (SS.alien) SS.alien.populate(S, taken);                 // (P68c: in space only the alien state is made)
     if (SS.scatter) SS.scatter.populate(S, taken);

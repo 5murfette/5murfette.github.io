@@ -172,6 +172,58 @@
     for (let t = 0; t < f.n; t++) { lo = M.min(lo, a[t]); hi = M.max(hi, a[t]); }
     return hi > 0 ? lo / hi : 0;
   }
+  /* P72: a big fort holds more than one bunker: one per BK_AREA m^2 of the fort's land (2D: one per BK_LEN m of its length), at most 3, the SAME
+   * count for every team (the smallest fort decides; a team with no room for its n-th bunker lowers everybody's count). The extra sites are
+   * appended to f.sites after the n primary ones (f.sites[team] stays the team's first), each tagged with its team, spread apart (a greedy
+   * farthest-point pick: the score adds the distance to the team's other bunkers) and facing the nearest enemy anchor (2D: along the line). */
+  const BK_AREA = 600, BK_LEN = 26, BK_MAX = 3, BK_APART = 16;
+  function extraSites(w, hgt, f, gdA, tmA, Rp, need0) {
+    const NX = w.NX, NZ = w.NZ, H = w.H, SEA = w.SEA, area = [0, 0, 0, 0], n = f.n;
+    const kz = Math.round(f.sliceZ / H);
+    for (let k = f.line ? kz : 0; k <= (f.line ? kz : NZ - 1); k++) for (let i = 0; i < NX; i++) {
+      const c = k * NX + i; if (gdA[c] <= f.hw || !isLand(w, f, hgt[c], i * H, k * H)) continue;
+      area[tmA[c]] += f.line ? H : H * H;
+    }
+    let want = BK_MAX; for (let t = 0; t < n; t++) want = M.min(want, M.max(1, M.min(BK_MAX, Math.floor(area[t] / (f.line ? BK_LEN : BK_AREA)))));
+    f.bkWant = want; f.land = area.slice(0, n);
+    if (want < 2) return;
+    const mine = [], full = [false, false, false, false];
+    for (let t = 0; t < n; t++) mine.push([f.sites[t]]);
+    for (let j = 1; j < want; j++) for (let t = 0; t < n; t++) {
+      if (mine[t].length > j || full[t]) continue;
+      let best = null, bs = -1e9;
+      for (let relax = 0; relax < 3 && !best; relax++) {
+        const need = need0 * (relax === 0 ? 1 : relax === 1 ? 0.75 : 0.5), apart = BK_APART * (relax === 2 ? 0.8 : 1);
+        const k0 = f.line ? kz : 8, k1 = f.line ? kz : NZ - 9;
+        for (let k = k0; k <= k1; k += (f.line ? 1 : K.SITE_STEP)) for (let i = 8; i <= NX - 9; i += K.SITE_STEP) {
+          const c = k * NX + i, x = i * H, z = k * H;
+          if (tmA[c] !== t) continue;
+          const h = hgt[c], g = gdA[c];
+          if (g < need || (!f.dry && h < SEA + 3.3) || h > 30) continue;
+          if (f.dry && M.len2(x - C.DRY.CX, z - C.DRY.CZ) > C.DRY.PLAY_R - 7) continue;
+          let dn = 1e9, ok = true;
+          for (let q = 0; q < f.sites.length && ok; q++) { const o = f.sites[q], d = M.len2(x - o.x, f.line ? 0 : z - o.z); if (d < apart) ok = false; if (o.team === t || q === t) dn = M.min(dn, d); }
+          if (!ok) continue;
+          let lo = h, hi = h;
+          const nb = [c - 6, c + 6, c - 6 * NX, c + 6 * NX];
+          for (let q = 0; q < (f.line ? 2 : 4); q++) { const v = hgt[nb[q]]; if (v < lo) lo = v; if (v > hi) hi = v; }
+          const sc = 0.5 * h - 1.5 * (hi - lo) + 0.35 * M.min(dn, 30) + 3 * M.hash3(i, k, (f.seed & 0xffff) + t + 17 * j);
+          if (sc > bs) { bs = sc; best = { x, z, h }; }
+        }
+      }
+      if (!best) { full[t] = true; continue; }                          // (no room for another: the count of every team drops to the smallest)
+      let tg = -1, td = 1e18;
+      for (let q = 0; q < n; q++) { if (q === t) continue; const d = M.len2(f.ax[q] - best.x, f.line ? 0 : f.az[q] - best.z); if (d < td) { td = d; tg = q; } }
+      const phi = f.line ? (f.ax[tg] >= best.x ? 0 : Math.PI) : M.atan2(f.az[tg] - best.z, f.ax[tg] - best.x);
+      const site = { x: best.x, z: f.line ? f.sliceZ : best.z, y: M.max(best.h, f.dry || f.kind === 'lava' ? 0 : SEA + 3.2), phi, r: Rp, team: t, extra: true };
+      mine[t].push(site); f.sites.push(site);
+    }
+    let have = want; for (let t = 0; t < n; t++) have = M.min(have, mine[t].length);
+    if (have < want) {                                                  // balance: drop the surplus sites of the richer teams (the latest first)
+      for (let q = f.sites.length - 1; q >= n; q--) { const s0 = f.sites[q]; if (mine[s0.team].indexOf(s0) >= have) f.sites.splice(q, 1); }
+    }
+    f.bkWant = have;
+  }
   function bunkerSites(w, hgt, f, gdA, tmA) {
     const NX = w.NX, NZ = w.NZ, H = w.H, SEA = w.SEA, Rp = f.line ? B.R_OUT + 1.8 : B.R_OUT + 2.5;
     const need0 = f.hw + 4.5 + Rp * 0.85;
@@ -203,8 +255,9 @@
       const padH = M.max(best.h, f.dry || f.kind === 'lava' ? 0 : SEA + 3.2);
       f.sites[t] = { x: best.x, z: f.line ? f.sliceZ : best.z, y: padH, phi, r: Rp };
     }
+    extraSites(w, hgt, f, gdA, tmA, Rp, need0);
     // flatten the pads (a disc in 3D, a strip across the slab in 2D), blended over 4 m
-    for (let t = 0; t < f.n; t++) {
+    for (let t = 0; t < f.sites.length; t++) {
       const s = f.sites[t], bl = f.line ? 3 : 4, R = s.r + bl;
       const i0 = M.max(0, Math.floor((s.x - R) / H)), i1 = M.min(NX - 1, Math.ceil((s.x + R) / H));
       const k0 = f.line ? 0 : M.max(0, Math.floor((s.z - R) / H)), k1 = f.line ? NZ - 1 : M.min(NZ - 1, Math.ceil((s.z + R) / H));
@@ -317,14 +370,15 @@
   FT.populate = function (S, taken) {
     const f = FT.of(); if (!f || !SS.bunker) return;
     const w = W(); let made = 0;
-    for (let t = 0; t < f.n && t < S.teams.length; t++) {
+    for (let t = 0; t < f.sites.length; t++) {                              // (P72: the n primary sites first = one per team, then the extra bunkers of big forts)
       const s = f.sites[t], z = w.flat ? w.MZ : s.z;
+      if (t < f.n && t >= S.teams.length) continue;
       const y0 = s.y + 0.05, foot = B.FOUND + 0.5;                      // (the pad is flat at s.y; under a rock bridge the rim's top would read the deck)
       SS.bunker.build(S, taken, s.x, z, y0, s.phi, foot);
-      const wm = S.worms[t];
+      const wm = t < f.n ? S.worms[t] : null;
       if (wm && wm.team === t) { wm.pos.x = s.x; wm.pos.y = y0 + 0.56; wm.pos.z = z; wm.vel.x = 0; wm.vel.y = 0; wm.vel.z = 0; wm.rest = false; wm.vs = 0; wm.vy = 0; }
       made++;
     }
-    SS.sim.log(S, `Fort mode: ${made} forts, one bunker each. ${f.kind === 'sea' ? 'The sea' : f.kind === 'lava' ? 'Lava rivers' : f.kind === 'chasm' ? 'Deep canyons' : 'A deep pit'} separate${f.kind === 'pit' ? 's' : ''} the teams: rope, jump or shoot across.`, 0xc8ccd0);
+    SS.sim.log(S, `Fort mode: ${f.n} forts, ${made} bunker${made > 1 ? 's' : ''}${made > f.n ? ' (' + (made / f.n) + ' per fort)' : ''}. ${f.kind === 'sea' ? 'The sea' : f.kind === 'lava' ? 'Lava rivers' : f.kind === 'chasm' ? 'Deep canyons' : 'A deep pit'} separate${f.kind === 'pit' ? 's' : ''} the teams: rope, jump or shoot across.`, 0xc8ccd0);
   };
 })(window.SS = window.SS || {});

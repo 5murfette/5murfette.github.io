@@ -32,10 +32,12 @@
     { w: 0, h: 0.008, A: 0 }                         // deck plate (w = deck width, A per 0.5 m strip below)
   ];
   const len = (a, b) => M.len3(b.x - a.x, b.y - a.y, b.z - a.z);
+  /* distance point -> segment. P72: in the 2D slab the slab's depth is not a distance: a charge on the plane cuts a truss member 1 m in front
+   * of it as if it lay on the plane (the section through the bridge is its deck; the side trusses are seen in front / behind it) */
   function segd(p, a, b) {
-    const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
-    const u = M.sat(((p.x - a.x) * abx + (p.y - a.y) * aby + (p.z - a.z) * abz) / (abx * abx + aby * aby + abz * abz || 1));
-    return M.len3(p.x - a.x - abx * u, p.y - a.y - aby * u, p.z - a.z - abz * u);
+    const fl = W().flat, abx = b.x - a.x, aby = b.y - a.y, abz = fl ? 0 : b.z - a.z, pz = fl ? 0 : p.z - a.z;
+    const u = M.sat(((p.x - a.x) * abx + (p.y - a.y) * aby + pz * abz) / (abx * abx + aby * aby + abz * abz || 1));
+    return M.len3(p.x - a.x - abx * u, p.y - a.y - aby * u, pz - abz * u);
   }
 
   /* ---------- placement: the best gap to span ---------- */
@@ -74,8 +76,9 @@
   function findSpans(S, taken) {
     const w = W(), pts = [], out = [];
     const cx = w.dry ? C.DRY.CX : w.MX, cz = w.dry ? C.DRY.CZ : w.MZ;
-    for (let z = cz - 38 * w.SC; z <= cz + 38 * w.SC; z += K.GRID) for (let x = cx - 38 * w.SC; x <= cx + 38 * w.SC; x += K.GRID) {
-      if (M.len2(x - cx, z - cz) > K.PLACE_R * w.SC) continue;
+    const z0 = w.flat ? w.MZ : cz - 38 * w.SC, z1 = w.flat ? w.MZ : cz + 38 * w.SC;          // P72: the 2D slab: candidate ledges on the plane only
+    for (let z = z0; z <= z1; z += K.GRID) for (let x = cx - 38 * w.SC; x <= cx + 38 * w.SC; x += K.GRID) {
+      if (M.len2(x - cx, w.flat ? 0 : z - cz) > K.PLACE_R * w.SC) continue;
       const p = ledge(x, z); if (p) pts.push(p);
     }
     const cand = [];
@@ -97,25 +100,26 @@
   function build(S, A, B, look) {
     const L = M.len2(B.x - A.x, B.z - A.z), ux = (B.x - A.x) / L, uz = (B.z - A.z) / L, vx = -uz, vz = ux;
     const n = M.max(3, Math.round(L / K.PANEL)), p = L / n, h = M.clamp(L / 10, K.DEPTH_MIN, K.DEPTH_MAX), hw = K.WIDTH / 2;
+    const ns = 2, hs = hw;
     const st = { id: S.structId = (S.structId || 0) + 1, kind: 'truss', look, n, L, h, ux, uz, A: { x: A.x, y: A.y, z: A.z }, B: { x: B.x, y: B.y, z: B.z }, nodes: [], mem: [], ver: 1, fallen: false };
     const node = (x, y, z) => { st.nodes.push({ x, y, z, anchor: 0 }); return st.nodes.length - 1; };
     const yAt = t => A.y + (B.y - A.y) * t + K.DECK_LIFT;
     const bot = [[], []], top = [[], []], cen = [];
     for (let i = 0; i <= n; i++) {
       const t = i / n, x = A.x + ux * L * t, z = A.z + uz * L * t, y = yAt(t);
-      for (let s = 0; s < 2; s++) { const sg = s ? 1 : -1; bot[s].push(node(x + vx * hw * sg, y, z + vz * hw * sg)); }
+      for (let s = 0; s < ns; s++) { const sg = s ? 1 : -1; bot[s].push(node(x + vx * hs * sg, y, z + vz * hs * sg)); }
       cen.push(node(x, y, z));
     }
     for (let i = 0; i < n; i++) {
       const t = (i + 0.5) / n, x = A.x + ux * L * t, z = A.z + uz * L * t, y = yAt(t) + h;
-      for (let s = 0; s < 2; s++) { const sg = s ? 1 : -1; top[s].push(node(x + vx * hw * sg, y, z + vz * hw * sg)); }
+      for (let s = 0; s < ns; s++) { const sg = s ? 1 : -1; top[s].push(node(x + vx * hs * sg, y, z + vz * hs * sg)); }
     }
     const mem = (a, b, kind, i, s) => {
       const sc = SEC[kind], Lm = len(st.nodes[a], st.nodes[b]);
       const area = kind === 3 ? K.WIDTH * 0.008 : sc.A;
       st.mem.push({ a, b, kind, w: kind === 3 ? K.WIDTH - 0.12 : sc.w, h: sc.h, A: kind === 3 ? 0.008 * 0.5 : sc.A, mass: 7850 * area * Lm, on: 1, dmg: 0, i, s });
     };
-    for (let s = 0; s < 2; s++) {
+    for (let s = 0; s < ns; s++) {
       for (let i = 0; i < n; i++) mem(bot[s][i], bot[s][i + 1], 0, i, s);                       // bottom chords
       for (let i = 0; i + 1 < n; i++) mem(top[s][i], top[s][i + 1], 0, i + 0.5, s);              // top chords (between top nodes)
       for (let i = 0; i < n; i++) { mem(bot[s][i], top[s][i], 1, i, s); mem(top[s][i], bot[s][i + 1], 1, i, s); }   // diagonals
@@ -127,12 +131,56 @@
     return st;
   }
 
+  /* P72: the 2D slab has ONE line of ground, so a natural gap to span is rare (alpine: 2 maps in 8, the rest none). When the line has none,
+   * a gorge is cut where the ground is quiet: GORGE_L m wide at the top, walls at GORGE_SLOPE (a worm can still climb out of it, the
+   * bridge is the shortcut), GORGE_D m deep, written to the middle slice (w.mark copies it over the slab). Site: the best of the candidates
+   * (lava / ice / sea clear, few worms on it, both rims flat and level, floor above the sea), nearest the map centre first. Returns { A, B } or null. */
+  const GORGE_L = 11, GORGE_D = 4.5, GORGE_SLOPE = 1.5;
+  function gorge(S, taken) {
+    const w = W(), z = w.MZ, H = w.H, cands = [];
+    for (let xa = 10; xa + GORGE_L <= w.SX - 10; xa += 2) {
+      const xb = xa + GORGE_L, yA = w.top_at(xa - 0.6, z), yB = w.top_at(xb + 0.6, z);
+      if (Math.abs(yA - yB) > 1.1 || M.min(yA, yB) - GORGE_D < w.SEA + 0.8) continue;
+      let ok = true, hi = -1e9;
+      for (let x = xa - 1.8; x <= xb + 1.8; x += 0.6) {                      // rims level (the 1.8 m outside), no lava / ice / steel / concrete anywhere, land
+        const t = w.top_at(x, z), m = w.mat_at(x, t - 0.3, z);
+        if (w.outside(x, z) || m === C.MAT.LAVA || m === C.MAT.ICE || m === C.MAT.STEEL || m === C.MAT.CONCRETE) { ok = false; break; }
+        if (x < xa || x > xb) { if (Math.abs(t - (x < xa ? yA : yB)) > 1.0) { ok = false; break; } }
+        else if (t > hi) hi = t;
+      }
+      if (!ok || hi - M.max(yA, yB) > 6) continue;                          // (a hill in the middle is cut away; a mountain is not)
+      let nw = 0; for (const t of taken) if (t.x > xa - 1 && t.x < xb + 1) nw++;     // (a worm on the cut ground just falls into the gorge: prefer sites without)
+      if (SS.sim.near_lava && (SS.sim.near_lava(S, xa, z) || SS.sim.near_lava(S, xb, z) || SS.sim.near_lava(S, (xa + xb) / 2, z))) continue;
+      cands.push({ xa, xb, yE: (yA + yB) / 2, yA, yB, v: Math.abs((xa + xb) / 2 - w.MX) + 30 * nw });
+    }
+    if (!cands.length) return null;
+    cands.sort((p, q) => p.v - q.v || p.xa - q.xa);
+    const g = cands[0], NX = w.NX, NY = w.NY, kz = w.kz;
+    const i0 = M.max(1, Math.floor(g.xa / H)), i1 = M.min(NX - 2, Math.ceil(g.xb / H)), j0 = M.max(1, Math.floor((g.yE - GORGE_D - 1) / H)), j1 = M.min(NY - 2, Math.ceil((g.yE + 6) / H));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const x = i * H, y = j * H, dep = M.clamp(GORGE_SLOPE * M.min(x - g.xa, g.xb - x), 0, GORGE_D), fl = g.yE - dep, o = (kz * NY + j) * NX + i;
+      if (x <= g.xa || x >= g.xb) continue;
+      const dn = M.min(w.d[o], fl - y);                                       // above the floor: air; the field stays a distance
+      if (dn < w.d[o]) { w.d[o] = M.max(dn, -1.5); if (dn <= 0) { w.mat[o] = C.MAT.AIR; w.heat[o] = 0; } }
+    }
+    w.mark(i0, j0, kz, i1, j1, kz);
+    const A = { x: g.xa - 0.6, y: w.top_at(g.xa - 0.6, z), z }, B = { x: g.xb + 0.6, y: w.top_at(g.xb + 0.6, z), z };
+    for (const o of S.worms) {                                              // a worm that stood on the cut ground is set down on the gorge's floor (the spot list follows)
+      if (o.dead || o.pos.x <= g.xa - 0.5 || o.pos.x >= g.xb + 0.5) continue;
+      o.pos.y = w.topHeight(o.pos.x, z) + 0.55; o.vel.x = o.vel.y = o.vel.z = 0; o.rest = false;
+      if (taken[o.id]) taken[o.id] = { x: o.pos.x, y: o.pos.y - 0.55, z };
+    }
+    return { A, B, s: 1, n: 0 };
+  }
+
   ST.populate = function (S, taken) {
     S.structs = [];
     if (!K || K.OFF || W().under) return;                                  // U: no gaps to bridge underground
     S_ref = S;
     const w = W(), look = { temperate: 0, alpine: 1, canyon: 2, desert: 3, volcanic: 4 }[S.biome] || 0;
-    for (const c of findSpans(S, taken || [])) {
+    let spans = findSpans(S, taken || []);
+    if (!spans.length && w.flat) { const g = gorge(S, taken || []); if (g) spans = [g]; }     // P72
+    for (const c of spans) {
       const st = build(S, c.A, c.B, look);
       S.structs.push(st);
       if (taken) { taken.push({ x: c.A.x, y: c.A.y, z: c.A.z }); taken.push({ x: c.B.x, y: c.B.y, z: c.B.z }); }
