@@ -1,5 +1,5 @@
-/* render/vents.js — fumaroles / thermal vents of the volcanic island (P25; positions from worldgen F.vents): a low
- * mound of sulphur-crusted rock (yellow-white crust, a dark throat) and a continuous gas plume. P29g (user 2026-10-08:
+/* render/vents.js — fumaroles / thermal vents of the volcanic island (P25; positions from worldgen F.vents): a
+ * crater in the terrain shader (P90) and a continuous gas plume. P29g (user 2026-10-08:
  * "make the gas coming from the vents more realistic"; it was a few steam puffs per second, popping): a procedural plume
  * per vent, a camera-facing ribbon PLUME_H m tall whose density is noise advected upward (domain-warped, 3 octaves),
  * narrow and faintly sulphur-yellow at the throat, widening, thinning and bending with the wind as it rises, lit by the
@@ -50,7 +50,7 @@
       float core = exp(-(r * r) / (R * R) * 1.7);
       float thr = 0.27 + 0.5 * hn;                                          // condensation: the vapour re-evaporates as it mixes
       float d = core * smoothstep(thr, thr + 0.34, n + 0.22 * (1.0 - hn) * core);
-      return d * (1.0 - smoothstep(0.55, 1.0, hn)) * smoothstep(-0.1, 0.12, hh);
+      return d * (1.0 - smoothstep(0.55, 1.0, hn)) * smoothstep(0.0, 0.55, hh);
     }
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
@@ -79,37 +79,6 @@
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
     }`;
-  /* sulphur deposits on the ground around the vent mouth: a terrain-draped polar patch, noisy broken edge, crystalline specks */
-  const DEP_V = /* glsl */`
-    attribute float rho; varying float vR; varying vec2 vXZ;
-    void main(){ vR = rho; vXZ = (modelMatrix * vec4(position, 1.0)).xz; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); }`;
-  const DEP_F = /* glsl */`
-    uniform sampler2D tNoise; uniform vec3 uLight; uniform float uSeed; varying float vR; varying vec2 vXZ;
-    void main(){
-      float n1 = texture2D(tNoise, vXZ * 0.55 + uSeed).r, n2 = texture2D(tNoise, vXZ * 1.7 + 0.31).g, n3 = texture2D(tNoise, vXZ * 5.3).b, n4 = texture2D(tNoise, vXZ * 13.0 + 0.7).r;
-      float crack = smoothstep(0.035, 0.0, abs(n2 - 0.5));                          // thin cracks in the crust
-      float cover = (1.0 - smoothstep(0.08, 0.95, vR)) * (0.55 + 0.9 * n1) - 0.38 * n3 - 0.2 * crack;   // dense at the rim, breaking up into patches outward
-      float a = smoothstep(0.05, 0.4, cover) * (0.35 + 0.4 * n4) ;
-      if (a < 0.02) discard;
-      vec3 ochre = vec3(0.62, 0.45, 0.12), pale = vec3(0.82, 0.76, 0.42), ash = vec3(0.3, 0.29, 0.27), white = vec3(0.9, 0.88, 0.8);
-      vec3 col = mix(ochre, pale, smoothstep(0.3, 0.8, n4 * 0.6 + n2 * 0.5));
-      col = mix(col, ash, smoothstep(0.6, 0.85, n1) * 0.18 + 0.08 * smoothstep(0.5, 1.0, vR));           // part mixed with grey ash
-      col = mix(col, white, smoothstep(0.8, 0.95, n3 * 0.5 + n4 * 0.5) * 0.5);                           // white efflorescence specks
-      col *= 0.8 + 0.4 * n4;
-      gl_FragColor = vec4(col * uLight * 0.7, a * 0.5);
-      #include <tonemapping_fragment>
-      #include <colorspace_fragment>
-    }`;
-  function depositGeo(x, z, R) {
-    const NR = 7, NA = 28, P = [], H = [], I = [];
-    for (let r = 0; r <= NR; r++) for (let a = 0; a <= NA; a++) {
-      const rho = r / NR, ang = a / NA * 6.2832, px = x + Math.cos(ang) * rho * R, pz = z + Math.sin(ang) * rho * R;
-      P.push(px - x, SS.world.top_at(px, pz) + 0.04, pz - z); H.push(rho);
-    }
-    for (let r = 0; r < NR; r++) for (let a = 0; a < NA; a++) { const v = r * (NA + 1) + a; I.push(v, v + 1, v + NA + 2, v, v + NA + 2, v + NA + 1); }
-    const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(new Float32Array(P), 3)); g.setAttribute('rho', new T.BufferAttribute(new Float32Array(H), 1)); g.setIndex(I);
-    return g;
-  }
   function plume(v) {
     const q = QQ && QQ.particles || 1, steps = q >= 0.95 ? 12 : q >= 0.6 ? 8 : 5;
     const m = new T.Mesh(plumeGeo, new T.ShaderMaterial({
@@ -121,48 +90,19 @@
     m.frustumCulled = false; m.renderOrder = 7.2;
     return m;
   }
-  function deposit(v) {
-    const m = new T.Mesh(depositGeo(v.x, v.z, 1.5), new T.ShaderMaterial({
-      uniforms: { tNoise: { value: SS.terrain.uniforms.tNoise.value }, uLight: { value: new T.Color(1, 1, 1) }, uSeed: { value: v.seed } },
-      vertexShader: DEP_V, fragmentShader: DEP_F, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-    m.position.set(v.x, 0, v.z); m.frustumCulled = false; m.renderOrder = 3;
-    return m;
-  }
   let QQ = null;
   VV.init = function (sc, Q) { scene = sc; QQ = Q || null; };
-  // ASSET: fumarole (models/fumarole.glb; the steam stays VFX)
-  function mound() {
-    if (!MAT) {
-      MAT = new T.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: false, side: T.DoubleSide });
-      THROAT = new T.MeshStandardMaterial({ color: 0x1a1612, roughness: 1, emissive: 0x3a1a06, emissiveIntensity: 0.6 });
-    }
-    // a crater: raised crusty rim, a dark throat. Lathe profile (r, y), irregular rim radius / height, rock-coloured with ochre crust and soot / heat staining
-    const prof = [[0.95, -0.06], [0.78, 0.0], [0.6, 0.05], [0.46, 0.08], [0.36, 0.06], [0.28, -0.02], [0.2, -0.14], [0.11, -0.26], [0.001, -0.3]].map(q => new T.Vector2(q[0], q[1]));
-    const g = new T.LatheGeometry(prof, 56), pa = g.attributes.position, col = new Float32Array(pa.count * 3), ph = Math.random() * 6;
-    for (let i = 0; i < pa.count; i++) {
-      const x = pa.getX(i), y = pa.getY(i), z = pa.getZ(i), a = Math.atan2(z, x), r = Math.hypot(x, z), jit = 1 + 0.12 * Math.sin(a * 3 + ph) + 0.08 * Math.sin(a * 7 + ph * 2) + 0.05 * (Math.random() - 0.5);
-      pa.setX(i, x * jit); pa.setZ(i, z * jit); pa.setY(i, y + (r > 0.25 && r < 0.9 ? 0.025 * Math.sin(a * 5 + ph) + 0.03 * Math.random() : 0));
-      const rim = Math.max(0, 1 - Math.abs(r - 0.46) / 0.3), thr = Math.max(0, 1 - r / 0.3), n = 0.8 + 0.4 * Math.random();
-      let cr = 0.035 + 0.01 * rim, cg = 0.034 + 0.01 * rim, cb = 0.036;                       // basalt
-      { const p = Math.max(0, Math.sin(a * 4 + ph) * Math.sin(a * 9 + ph * 3) + 0.2 * Math.random()); cr += rim * 0.1 * p; cg += rim * 0.07 * p; cb += rim * 0.01 * p; }   // an ochre sulphur crust on the rim, in patches
-      cr *= 1 - 0.7 * thr; cg *= 1 - 0.7 * thr; cb *= 1 - 0.6 * thr;                      // sooty, heat-stained throat
-      col[i * 3] = cr * n; col[i * 3 + 1] = cg * n; col[i * 3 + 2] = cb * n;
-    }
-    g.setAttribute('color', new T.BufferAttribute(col, 3)); g.computeVertexNormals();
-    const m = new T.Group(), body = new T.Mesh(g, MAT); body.receiveShadow = true; m.add(body);
-    return m;
-  }
   VV.reset = function (S) {
     lastT = -1;
+    if (SS.terrain && SS.terrain.uniforms && SS.terrain.uniforms.uNVent) SS.terrain.uniforms.uNVent.value = 0;
     if (group) { scene.remove(group); group.traverse(o => { if (o.isMesh && o.geometry && o.geometry !== plumeGeo) o.geometry.dispose(); if (o.isMesh && o.material && o.material.isShaderMaterial) o.material.dispose(); }); }
     group = new T.Group(); scene.add(group); list = [];
     const F = SS.world.features || {};
     for (const v of F.vents || []) {
       if (v.kind !== 'fumarole') continue;
-      const y = SS.world.top_at(v.x, v.z), m = mound(); m.position.set(v.x, y - 0.06, v.z); group.add(m);
+      const y = SS.world.top_at(v.x, v.z);
       const seed = Math.random() * 10, pl = plume({ x: v.x, y: y + 0.12, z: v.z, seed }); group.add(pl);
-      const dp = deposit({ x: v.x, z: v.z, seed }); group.add(dp);
-      list.push({ x: v.x, y, z: v.z, m, pl, dp, rise: 0, ax: 0, az: 0 });
+      list.push({ x: v.x, y, z: v.z, pl, seed: seed * 0.1 + 0.03, shown: true, rise: 0, ax: 0, az: 0 });
     }
   };
   VV.frame = function (S, view, camera, dt) {
@@ -179,18 +119,25 @@
     const kw = 1 - Math.exp(-fdt / 4); sw.x += ((wm ? M_clamp(wm.x, -8, 8) : 0.4) - sw.x) * kw; sw.z += ((wm ? M_clamp(wm.z, -8, 8) : 0.1) - sw.z) * kw;
     const lum = (Lc.r + Lc.g + Lc.b) / 3, night = 1 - smooth(0.12, 0.5, lum);
     for (const v of list) {
-      v.m.visible = SS.view.shownAt(S, v, 0.8);
-      const near = v.m.visible && Math.hypot(v.x - cp.x, v.z - cp.z) <= 70;
-      v.pl.visible = near; v.dp.visible = v.m.visible && Math.hypot(v.x - cp.x, v.z - cp.z) <= 90;
-      if (v.dp.visible) v.dp.material.uniforms.uLight.value.copy(Lc);
+      v.shown = SS.view.shownAt(S, v, 0.8);
+      const near = v.shown && Math.hypot(v.x - cp.x, v.z - cp.z) <= 70;
+      v.pl.visible = near;
       if (!near) continue;
-      v.y = SS.world.top_at(v.x, v.z); v.m.position.y = v.y - 0.06;     // follows the ground (a blast may lower it)
+      v.y = SS.world.top_at(v.x, v.z);                                  // follows the ground (a blast may lower it)
       v.rise += 1.05 * fdt; v.ax += sw.x * 0.5 * fdt; v.az += sw.z * 0.5 * fdt;
       const U = v.pl.material.uniforms;
       U.uBase.value.set(v.x, v.y + 0.04, v.z); U.uRise.value = v.rise; U.uLight.value.copy(Lc);
       U.uAdv.value.set(v.ax, v.az); U.uShear.value.set(sw.x * 0.5, sw.z * 0.5); U.uGlow.value = 0.35 * night;
       if (sun) U.uSun.value.copy(sun.position).sub(sun.target.position).normalize();
     }
+    /* P90: the crater / heat stain / sulphur dusting live in the terrain shader: hand it the vents within 90 m of the camera */
+    const TU = SS.terrain && SS.terrain.uniforms; if (!TU || !TU.uVent) return;
+    let nv = 0;
+    for (const v of list) {
+      if (nv >= 8 || !v.shown || Math.hypot(v.x - cp.x, v.z - cp.z) > 90) continue;
+      TU.uVent.value[nv++].set(v.x, SS.world.top_at(v.x, v.z), v.z, v.seed);
+    }
+    TU.uNVent.value = nv; TU.uVentHot.value = 0.08 * night;
   };
   /* heat haze over the vents (render/lens.js list: x, y, z, strength): the two nearest vents in view, high quality with ?haze=1 only */
   const hz = { n: 0, d: new Float32Array(8) };

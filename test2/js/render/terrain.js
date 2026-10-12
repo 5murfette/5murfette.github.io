@@ -303,6 +303,49 @@
       vec3 R = reflect(-Vv, gFacetV);
       return gMask * pow(max(dot(R, Lv), 0.0), 150.0) * 12.0 * smoothstep(0.0, 0.1, dot(gFacetV, Lv));
     }
+
+    /* P90: a fumarole IN the rock (user 2026-10-12: the P87 lathe rim read as a brown blob floating on the surface). No mesh: the terrain
+     * itself gets a small elongated crater: a noise-warped distance field in the slope plane around each vent (uVent xyz + seed) drives
+     * (a) the relief height, so the lit normals show a real bowl and a lumpy raised lip, (b) a sooty throat, (c) an encrusted rim in
+     * ochre / pale yellow / white patches broken up by noise thresholds, (d) a wide heat stain with sulphur efflorescence that thins
+     * into the basalt. Nothing has an edge: every mask is a smoothstep of a warped distance, so the effect fades into the slope. */
+    uniform vec4 uVent[8]; uniform int uNVent; uniform float uVentHot;
+    void ventLook(inout vec3 col, inout float rough, inout vec3 emis, inout float relief, vec3 pos, vec3 nW){
+      for (int i = 0; i < 8; i++){
+        if (i >= uNVent) break;
+        vec4 v = uVent[i]; vec3 dd = pos - v.xyz;
+        float dl = length(dd);
+        if (dl > 5.0) continue;
+        vec3 tp = dd - nW * dot(dd, nW);
+        float an = v.w * 6.2832;
+        vec3 A = vec3(cos(an), 0.0, sin(an)); A = normalize(A - nW * dot(A, nW) + vec3(0.0, 1e-4, 0.0));
+        vec3 Bv = normalize(cross(nW, A));
+        float u = dot(tp, A), sd = dot(tp, Bv);
+        vec2 nq = vec2(u, sd) * 0.85 + v.w * 13.0;      // noise in the slope plane: no stretching on a steep face
+        float n1 = texture(tNoise, nq).r, n2 = texture(tNoise, nq * 2.7 + 0.3).g, n3 = texture(tNoise, nq * 7.9 + 0.6).b, n4 = texture(tNoise, nq * 21.0 + 0.2).r;
+        float d = sqrt(u * u * 0.4 + sd * sd) * (0.72 + 0.55 * n1 + 0.22 * (n2 - 0.5)) * 1.7;
+        float bowl = 1.0 - smoothstep(0.1, 0.66, d);
+        float throat = 1.0 - smoothstep(0.04, 0.3 + 0.08 * n2, d);
+        float lip = smoothstep(0.36, 0.62, d) * (1.0 - smoothstep(0.66, 1.15, d));
+        float heat = 1.0 - smoothstep(0.5, 3.4, d * (0.9 + 0.3 * n2));
+        float fb = 0.5 * n2 + 0.3 * n3 + 0.25 * n1, ringW = exp(-pow((d - 0.58 + 0.3 * (n1 - 0.5)) / 0.3, 2.0)), outW = exp(-d * 1.4);
+        float crust = smoothstep(0.8, 0.9, fb + 0.24 * ringW + 0.16 * outW + 0.12 * (n4 - 0.5) + 0.14 * clamp(u / (d + 0.4), -1.0, 1.0)) * (1.0 - smoothstep(0.8, 1.8, d));      // a threshold map: broken patches, thickest on the lip, a few outliers further out
+        relief += -0.24 * pow(bowl, 0.85) + 0.1 * lip * (0.72 + 0.5 * n3) + 0.006 * (n3 - 0.5) * (bowl + lip);
+        float lum = dot(col, vec3(0.3, 0.55, 0.15));
+        col = mix(col, vec3(lum) * vec3(1.1, 0.95, 0.82) * 0.7, 0.2 * heat * (0.4 + n1));
+        col *= 1.0 - 0.22 * heat * heat;
+        vec3 ocher = mix(vec3(0.24, 0.17, 0.05), vec3(0.5, 0.43, 0.19), smoothstep(0.25, 0.8, n3 * 0.6 + n1 * 0.5));
+        ocher = mix(ocher, vec3(0.62, 0.6, 0.52), smoothstep(0.55, 0.85, n4 * 0.5 + n2 * 0.5) * 0.6);
+        ocher *= 0.8 + 0.4 * n4;
+        float cA = crust * (0.8 - 0.7 * throat);
+        col = mix(col, ocher, cA);
+        float speck = smoothstep(0.8, 0.93, n4 * 0.55 + n3 * 0.5) * (1.0 - smoothstep(0.4, 2.2, d)) * 0.45;
+        col = mix(col, vec3(0.86, 0.82, 0.55), speck);
+        col = mix(col * (1.0 - 0.38 * bowl * bowl), vec3(0.012, 0.011, 0.012), throat * throat);
+        rough = mix(rough, 0.97, max(heat * 0.5, max(cA, throat)));
+        emis += vec3(0.9, 0.3, 0.06) * throat * throat * uVentHot;
+      }
+    }
     ${HOT}
     vec3 terrainColor(vec3 nW, out float rough, out vec3 emis, out float relief, out float glintD){
       gMetal = 0.0;
@@ -556,6 +599,7 @@
           vec3 nW = normalize(vWN);
           float tRough, tRelief, tGlint; vec3 tEmis;
           vec3 col = terrainColor(normalize(vTN), tRough, tEmis, tRelief, tGlint);
+          ${body ? '' : 'if (uVolc > 0.5 && uNVent > 0 && gl_FrontFacing) ventLook(col, tRough, tEmis, tRelief, vW, nW);'}
           ${mode === 0 ? `if (!gl_FrontFacing) { col = texture(tMats, vec3(vT.xz*0.1 + vT.y*0.07, 14.0)).rgb * 0.35; tEmis = vec3(0.0);
             col = mix(col, vec3(0.88, 0.92, 0.97), smoothstep(0.2, 0.55, vMD.y));   // P37 W4: the inside of foam is white, not dark
             if (uDbgBack > ${body ? '0.5' : '1.5'}) { col = vec3(0.0); tEmis = vec3(4.0, 0.0, 4.0); } }` : ''}
@@ -1028,6 +1072,7 @@
       uGrassTint: { value: new T.Color(1, 1, 1) }, uDryTint: { value: new T.Color(1, 1, 1) }, uSunDir: { value: new T.Vector3(0, 1, 0) },
       uHalf: { value: C.HALF }, uBack: { value: C.HALF }, uAlpha: { value: 0 }, uTime: { value: 0 }, uSea: { value: W.SEA }, uWaterTex: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
       uCaustic: { value: 1 }, uCloudSh: { value: new T.Vector4(0, 0, 0, 0) }, uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
+      uVent: { value: Array.from({ length: 8 }, () => new T.Vector4()) }, uNVent: { value: 0 }, uVentHot: { value: 0 },   // P90: fumarole craters in the terrain shader (render/vents.js)
       uNL: { value: W.NX }, uSL: { value: W.SX },
       uLatR: { value: new T.Vector3(48, 48, 0) },   // D6: dry worlds' lattice disc (x, z, r; r 0 = off, set per frame)
       uPlA: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uPlB: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uPlC: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uNPl: { value: 0 },   // P37 W4: plate registry

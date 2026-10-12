@@ -27,7 +27,7 @@
   const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9, K_SHELL = 10, K_DROP = 11;   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
   // K_CHUNK: a solid rock / clod / ice shard (alpha pass, bounces on the ground)
   const ADDITIVE = k => k === K_FIRE || k === K_SPARK || k === K_LAVA || (k >= K_FLASH && k !== K_DROP);   // K_DROP (P87): a water droplet streak, alpha-blended
-  const own = { tHeight: { value: null }, uSoft: { value: 0 }, uSeaY: { value: -99 }, uSun: { value: new T.Vector3(-0.4, 0.7, 0.6) }, uSunC: { value: new T.Color(1, 0.95, 0.85) }, uGlow: { value: new T.Vector4(0, 0, 0, 0) }, uGlowC: { value: new T.Color(1, 0.45, 0.12) }, uSky: { value: new T.Color(0.55, 0.6, 0.7) }, uGnd: { value: new T.Color(0.3, 0.27, 0.24) }, uTime: { value: 0 } };
+  const own = { tHeight: { value: null }, uSoft: { value: 0 }, uCliff: { value: 1 }, uSeaY: { value: -99 }, uSun: { value: new T.Vector3(-0.4, 0.7, 0.6) }, uSunC: { value: new T.Color(1, 0.95, 0.85) }, uGlow: { value: new T.Vector4(0, 0, 0, 0) }, uGlowC: { value: new T.Color(1, 0.45, 0.12) }, uSky: { value: new T.Color(0.55, 0.6, 0.7) }, uGnd: { value: new T.Color(0.3, 0.27, 0.24) }, uTime: { value: 0 } };
 
   const VS = /* glsl */`
     attribute vec4 iPos;      // xyz, size
@@ -61,7 +61,7 @@
       gl_Position = projectionMatrix * viewMatrix * vec4(iPos.xyz + (R * q.x + U * q.y) * iPos.w, 1.0);
     }`;
   const FS = /* glsl */`
-    uniform vec3 uSun, uSunC, uSky, uGnd, uGlowC; uniform vec4 uGlow; uniform float uTime, uSoft, uSeaY; uniform sampler2D tHeight;
+    uniform vec3 uSun, uSunC, uSky, uGnd, uGlowC; uniform vec4 uGlow; uniform float uTime, uSoft, uSeaY, uCliff; uniform sampler2D tHeight;
     varying vec2 vUv; varying vec4 vA; varying vec3 vC; varying float vAl; varying vec3 vP; varying vec4 vW;
     float h3(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
     float vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -128,6 +128,13 @@
           float tp = texture2D(tHeight, (vW.xz * 2.0 + 0.5) / float(textureSize(tHeight, 0).x)).r * 40.0;
           float fw = clamp(0.25 + 0.55 * vW.w, 0.25, 1.1);
           dens *= smoothstep(0.0, fw, vW.y - tp) * smoothstep(0.0, fw * 0.6, vW.y - uSeaY);
+          if (uCliff > 0.5) {                                                      // P90: cliffs. The quad plane meets a vertical face along a line the height fade cannot see: march 4 taps along the view ray behind the fragment through the same height map; a tap inside the rock fades the puff by how close it is
+            vec3 rd = normalize(vW.xyz - cameraPosition); float cf = 1.0;
+            for (int k = 1; k <= 4; k++){ float sk = fw * 0.3 * float(k); vec3 pk = vW.xyz + rd * sk;
+              float tk = texture2D(tHeight, (pk.xz * 2.0 + 0.5) / float(textureSize(tHeight, 0).x)).r * 40.0;
+              cf *= 1.0 - 0.8 * smoothstep(0.0, 0.25, tk - pk.y) * (1.0 - 0.18 * float(k)); }
+            dens *= cf;
+          }
         }
         if (dens < 0.01) discard;
         vec3 nrm = normalize(vec3(vUv, sqrt(max(0.0, 1.0 - r * r)) + 0.3));
@@ -705,5 +712,6 @@
     glowT += dt; own.uGlow.value.w = glowI * Math.exp(-glowT * 3.2) * (glowT < 2 ? 1 : 0);
     shake = Math.max(0, shake - dt * 2.2);
   };
+  FX.cliffSoft = on => { own.uCliff.value = on ? 1 : 0; };
   FX.stats = () => ({ n, add: nAdd, alpha: nAlp });
 })(window.SS = window.SS || {});
