@@ -182,7 +182,8 @@
     VR(); VR();
     let n = 0;
     const fv = settings && settings.volcanoes, forced = fv != null && fv !== 'auto' && fv !== '' && !isNaN(+fv);
-    if (forced) n = M.clamp(+fv | 0, 0, 3);
+    if (SS.fort && SS.fort.on(settings)) n = 0;                                    // P68b: fort mode has no cones (the channels would cut the crater)
+    else if (forced) n = M.clamp(+fv | 0, 0, 3);
     else if (VR() < 0.7) { n = 1; if (VR() < 0.35) { n = 2; if (VR() < 0.17) n = 3; } }
     if (!forced && W.SC > 1 && n >= 1 && n < 3 && VR() < 0.5) n++;                // P38: a bigger island carries one more cone half of the time (no draw on the normal map)
     const sz = [[36, 44, 28, 34], [24, 32, 18, 26], [19, 25, 14, 20]][M.max(0, n - 1)];
@@ -329,6 +330,7 @@
       const x = RR(W.MX - 30 * W.SC, W.MX + 30 * W.SC), z = RR(W.MZ - 30 * W.SC, W.MZ + 30 * W.SC), h = hgt[Math.round(z / H) * NX + Math.round(x / H)];
       if (h < SEA + 3 || M.len2(x - W.MX, z - W.MZ) > 32 * W.SC) continue;
       if (nearVolcano(x, z, 7)) continue;
+      if (F.fort && SS.fort.keep_out(x, z, 6, 6)) continue;                 // P68b: no spire in a channel or on a bunker pad
       if (canalD && canalD[Math.round(z / H) * NX + Math.round(x / H)] < 7) continue;     // keep canals free (lava under a spire)
       if (sp.some(s => M.len2(s[0] - x, s[1] - z) < 12)) continue;
       sp.push([x, z, RR(spec.r0, spec.r1), M.min(34, h + RR(spec.h0, spec.h1))]);
@@ -337,6 +339,7 @@
     for (let a = 0; a < sp.length && br.length < nBr; a++) for (let b = a + 1; b < sp.length && br.length < nBr; b++) {
       const L = M.len2(sp[a][0] - sp[b][0], sp[a][1] - sp[b][1]);
       if (L < 14 || L > 30 || R() < 0.35) continue;
+      if (F.fort && !SS.fort.span_ok(sp[a][0], sp[a][1], sp[b][0], sp[b][1])) continue;   // P68b: no rock bridge from fort to fort
       if (canalD) {                                     // no bridge over a canal: the lava layer sees only the top surface
         let over = false;
         for (let q = 0; q <= 12 && !over; q++) { const x = sp[a][0] + (sp[b][0] - sp[a][0]) * q / 12, z = sp[a][1] + (sp[b][1] - sp[a][1]) * q / 12; over = canalD[Math.round(z / H) * NX + Math.round(x / H)] < 4; }
@@ -369,6 +372,9 @@
       for (let i = 0; i < NX; i++) {
         const x = i * H, col = k * NX + i, h = hgt[col], r = M.len2(x - W.MX, z - W.MZ);
         const near = sp.filter(s => M.len2(x - s[0], z - s[1]) < s[2] + 5);
+        const uc = F.fort ? SS.fort.undercut_col(x, z) : 99;                // P68b: a chasm's walls lean out (nothing climbs them)
+        const noBand = !!F.fort && SS.fort.keep_out(x, z, 8, 8);               // P68b: no overhang ledge over a channel or a bunker pad
+        const noCave = !!F.fort && (F.fort.line || noBand);                    // ... nor a cave shell under one (2D fort maps: solid forts)
         const edge = i === 0 || k === 0 || i === NX - 1 || k === NZ - 1;
         const caveOK = !W.dry || (M.min(M.min(M.min(i, k), NX - 1 - i), NZ - 1 - k) * H > BORDER_SOLID && r < C.DRY.LAT_R - BORDER_SOLID);   // D4/D6: the cut at the disc's edge matches the solid far ground
         for (let j = 0; j < NY; j++) {
@@ -388,17 +394,18 @@
           }
           // Every term below is continuous (max/min of continuous fields) so the iso-surface stays smooth:
           // overhang band: floating-looking ledges grown out of the hillside between 14 and 26 m
-          if (spec.band && y > 10 && y < 31) d = M.max(d, bandD(x, y, z, r));
+          if (spec.band && y > 10 && y < 31 && !noBand) d = M.max(d, bandD(x, y, z, r));
           // caves: thin noise shells above 4 m. `CAVE_WALL - d` keeps >= CAVE_WALL m of rock (d ~ signed distance) to
           // every outside surface, including cliffs, spires and bridges; a vertical-only limit left sub-voxel sheets
           // on steep walls that meshed as a waffle of holes.
-          if (spec.caves && caveOK && y > 2.5 && d > CAVE_WALL * 0.5) {
+          if (spec.caves && caveOK && !noCave && y > 2.5 && d > CAVE_WALL * 0.5) {
             let cv = M.max(M.max(M.max((Math.abs(M.fbm3(x / 17, y / 8.5, z / 17, seed + 9, 2) - 0.5) - spec.caves * 1.15) * 16, 4 - y), CAVE_WALL - d), 8.5 - h);
             // user 2026-10-08: no caves in the volcano's core (a hollow under the crater let a holed floor turn the lake
             // into a free-standing lava tube); the core holds the rock-walled feeding conduit (stampConduit)
             for (const vo of F.volcanoes || []) cv = M.max(cv, (vo.Rc + 7 - M.len2(x - vo.x, z - vo.z)) * 0.5);
             if (cv < d) { d = cv; m = 0; }
           }
+          if (uc < 90) d = M.min(d, SS.fort.undercut(F.fort, uc, y));
           d = M.max(d, 1.2 - y);
           if (edge && y > 1.2 && !W.dry) d = M.min(d, -1);                 // islands: a closed rim; dry: dunes to the border
           D[o] = clamp(d, -3, 3); Mt[o] = d > 0 ? m : 0; W.heat[o] = 0;
@@ -459,6 +466,7 @@
   function underPlan(biome) {
     const SY = W.SY, ch = [], tu = [], ni = [];
     for (let k = 0; k < NZ * NX; k++) hgt[k] = SY - 0.5;
+    if (F.fort) { UF = SS.fort.under_plan(W, F); F.caves = { chambers: UF.ch.map(c => ({ x: c.x, y: c.y, z: c.z, rx: c.rx, ry: c.ry, rz: c.rz })), tunnels: UF.tu.length, niches: UF.ni.length }; return; }   // P68b
     const levels = [[5, 11], [14, 21], [24, 31]], n = 8 + M.rng_int(rng, 3);
     for (let t = 0; ch.length < n && t < 600; t++) {
       const L = levels[ch.length % 3], x = RR(12, 84), z = RR(12, 84), y = RR(L[0], L[1]);
@@ -919,6 +927,7 @@
       const ir = M.rng_make((seed * 977 + 5) >>> 0 || 1), A = [0.1, 0.13, 0.08, 0.05];
       F.isl = { A: A.map(v => v * (0.5 + M.rng_next(ir))), P: [0, 1, 2, 3].map(() => M.rng_next(ir) * Math.PI * 2), k: biome === 'volcanic' ? 0.45 : 1 };
     }
+    if (SS.fort) F.fort = SS.fort.layout(W, F, settings, biome, seed);   // P68b fort mode (null when off)
     W.features = F; W.biome = biome;
     return { settings, biome, spec: SPEC[biome], stage: 0, k: 0, label: W.under ? 'Boring the caves' : 'Shaping the land', under: W.under };
   };
@@ -944,6 +953,7 @@
           const e = M.min(C.DRY.LAT_R - M.len2(i * H - C.DRY.CX, k * H - C.DRY.CZ), M.min(M.min(M.min(i, k), NX - 1 - i), NZ - 1 - k) * H);
           if (e < BORDER_BAND) { const c = k * NX + i; hgt[c] = e <= 0 ? raw[c] : M.lerp(raw[c], hgt[c], sm(e / BORDER_BAND)); }
         }
+        if (F.fort) SS.fort.shape(W, hgt, F, seed, lavaZone);          // P68b: one fort per team, channels between, bunker pads
         // 1/|grad(h - y)|: turns h - y into an approximate signed distance (smooth meshes on steep slopes)
         ginv = new Float32Array(NC);
         for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) { const g = gradH(i, k); ginv[k * NX + i] = g[0] * g[0] + g[1] * g[1]; }
@@ -966,7 +976,7 @@
         if (job.lava) stampPockets(Math.round((biome === 'volcanic' ? 3 + M.rng_int(rng, 2) : 1 + M.rng_int(rng, 2)) * W.SC * W.SC));
         if (job.lava && biome === 'volcanic') F.volcanoes.forEach((v, vi) => stampConduit(v, vi));
         if (biome === 'volcanic') placeFumaroles();
-        if (biome === 'alpine' && !job.under) stampIceShelf();
+        if (biome === 'alpine' && !job.under && !F.fort) stampIceShelf();           // (P68b: a sea ice shelf would bridge the channels)
         cliffMax = neighborhoodMax(2.5);
         if (biome === 'alpine') {
           const bl = boxBlur(hgt, 7); glacier = new Float32Array(NC);

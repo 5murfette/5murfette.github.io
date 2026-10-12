@@ -282,7 +282,7 @@
         tpQ[t++] = nq;
       }
     }
-    return false;
+    return !!(w.under && SS.fort && SS.fort.is() && t > 80);      // P68b: a cave's "ground top" is the roof (the flood can never reach it: every cave teleport said "sealed in rock"); in fort mode a pocket of > 80 cells (27 m3) is open enough
   };
 
   /* ---------- target kinds ---------- */

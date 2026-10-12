@@ -82,22 +82,27 @@
       if (S.bunkers.some(b => M.len2(b.x - c.x, b.z - c.z) < K.APART)) continue;
       if (taken.some(t => M.len2(t.x - c.x, t.z - c.z) < K.CLEAR)) continue;   // (the first pass's bunkers are taken too)
       const y0 = (c.g.lo + c.g.hi) / 2 + 0.05, phi = M.atan2(W().MZ - c.z, W().MX - c.x);   // the embrasure faces the map centre
-      const b = { x: c.x, z: c.z, y0, phi, foot: K.FOUND + (y0 - c.g.lo) + 0.3 };
-      stamp(b);
-      S.bunkers.push({ x: b.x, z: b.z, y0: b.y0, phi: b.phi });
-      taken.push({ x: b.x, y: y0, z: b.z });
+      BK.build(S, taken, c.x, c.z, y0, phi, K.FOUND + (y0 - c.g.lo) + 0.3);
     }
   }
+  /* stamp one bunker at (x, z) with its floor at y0 and the footing foot m deep, and register it (P68b: fort mode builds its own) */
+  BK.build = function (S, taken, x, z, y0, phi, foot) {
+    const b = { x, z, y0, phi, foot };
+    stamp(b);
+    S.bunkers.push({ x: b.x, z: b.z, y0: b.y0, phi: b.phi });
+    taken.push({ x: b.x, y: y0, z: b.z });
+  };
 
   /* write the shell into the lattice: concrete where conc > 0, air where the bunker cuts (cavity, door, window) */
   function stamp(b) {
     const w = W(), H = w.H, NX = w.NX, NY = w.NY, NZ = w.NZ, R = K.R_OUT + 2.8;
     const i0 = M.max(1, Math.floor((b.x - R) / H)), i1 = M.min(NX - 2, Math.ceil((b.x + R) / H));
-    const k0 = M.max(1, Math.floor((b.z - R) / H)), k1 = M.min(NZ - 2, Math.ceil((b.z + R) / H));
+    // P68a / P68b: in the 2D slab the bunker is its cross section at the plane (dz = 0), written to the middle slice (w.mark copies it over the slab)
+    const k0 = w.flat ? w.kz : M.max(1, Math.floor((b.z - R) / H)), k1 = w.flat ? w.kz : M.min(NZ - 2, Math.ceil((b.z + R) / H));
     const j0 = M.max(1, Math.floor((b.y0 - b.foot - 1) / H)), j1 = M.min(NY - 2, Math.ceil((b.y0 + K.H_WALL + K.R_OUT) / H));
     for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const o = (k * NY + j) * NX + i;
-      shape(b, i * H - b.x, j * H - b.y0, k * H - b.z, tmp);
+      shape(b, i * H - b.x, j * H - b.y0, w.flat ? 0 : k * H - b.z, tmp);
       if (tmp.conc > -0.5) {                                                       // the shell (and its smooth skin)
         if (tmp.conc > 0 || w.d[o] <= 0) { w.d[o] = M.clamp(tmp.conc, -0.6, 1.5); w.mat[o] = tmp.conc > 0 ? MAT.CONCRETE : MAT.AIR; w.heat[o] = 0; }
       } else if (tmp.air > 0) { w.d[o] = M.clamp(-tmp.air, -1.5, -0.05); w.mat[o] = MAT.AIR; w.heat[o] = 0; }

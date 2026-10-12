@@ -187,7 +187,7 @@
     const s = Object.assign({}, C.SETTINGS);
     for (const k of ['biome', 'weather', 'lava', 'wind', 'quality', 'slice', 'ghost', 'under', 'cpu', 'skill', 'placement', 'time', 'art', 'shape', 'first', 'volcanoes', 'mapSize', 'dim']) if (params.has(k)) s[k] = params.get(k);
     for (const k of SS.CFG.DENSITY.KEYS.concat(['mineFuse', 'toolCrates'])) if (params.has(k)) s[k] = params.get(k);
-    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto', 'cine']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
+    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto', 'cine', 'fort']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
     for (const k of ['teams', 'worms', 'hp', 'turnTime']) if (params.has(k)) s[k] = parseInt(params.get(k), 10) || 0;
     if (params.has('ctl')) s.ctl = params.get('ctl').split(',');
     if (params.has('lab')) s.labFlags = parseInt(params.get('lab'), 10) || 0;     // P42: Lab mechanics bit mask (tests)

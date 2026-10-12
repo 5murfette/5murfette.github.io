@@ -94,6 +94,7 @@
   // value of standing at (s, y) for a goal: foe: closer, a clear line, a good range, a little height; high: height above the danger
   function spotValue(S, goal, s0, s, y, ld) {
     if (ld && (ld.wet || -ld.vy > K.LAND_V)) return -100;
+    if (SS.fort && SS.fort.is()) { const q = P.to_world(S, s, y); if (SS.fort.trapped(q.x, q.z, y)) return -100; }      // P68b: never land in a fort-mode chasm / pit
     if (goal.type === 1) return M.min(y - goal.dangerY, 8) * 2;
     const d = Math.abs(goal.s - s), d0 = Math.abs(goal.s - s0), clear = clearLine(S, s, y + 0.4, goal.s, goal.y);
     let v = (d0 - d) * 1.2 + (clear ? 12 : 0) + (d > 5 && d < 26 ? 4 : 0) + M.clamp((y - goal.y) * 0.5, -3, 5);
@@ -183,6 +184,11 @@
       let bs = null, bd = 1e9; for (const nd of X.n) { const d = M.len3(nd.x - a.pos.x, nd.y - a.pos.y, nd.z - a.pos.z); if (d < bd) { bd = d; bs = P.to_plane(S, nd).s; } }
       const dir = bs > ap.s ? -1 : 1;
       if (AB.safe_step(S, a, dir)) return startWalk(S, pl, a, ap.s + dir * (X.range + 7 - bd), 'xeno', 5);
+    }
+    if (SS.fort && SS.fort.is() && SS.fort.trapped(a.pos.x, a.pos.z, a.pos.y) && !a.air && !S.rope) {      // P68b: in a fort-mode chasm / pit: the teleport, else the rope
+      const danger = a.pos.y + 4;
+      if (SS.aic && SS.aic.escape(S, pl, a, danger)) return true;                  // (the teleport first: the rope plan rarely finds a swing out of a pit)
+      if (pl.moves < K.MAX_MOVES && ropeStart(S, pl, a, { type: 1, s: ap.s, y: a.pos.y, dangerY: danger }, [1, -1])) { pl.moves++; return true; }
     }
     if (S.sudden && !W().dry && SS.water) {                                  // the sea rises after every turn: climb away from it
       const surf = M.max(sim().surface_at(S, a.pos.x, a.pos.z), W().SEA), danger = surf + C.GAME.SD_RISE * 3;      // (the sea floods the low ground a little more every turn)

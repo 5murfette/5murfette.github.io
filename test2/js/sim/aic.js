@@ -154,7 +154,7 @@
   function spotFree(S, s, y) {
     const w = SS.world, q = P.to_world(S, s, y), EM = 10;
     if (q.x < EM || !w.zin(q.z, EM) || q.x > w.SX - EM || !SS.sim.in_play(S, q.x, q.z)) return false;
-    if (P.overlap2(S, s, y) > 0 || y < SS.sim.surface_at(S, q.x, q.z) + 0.5 || y > w.SY - 1) return false;
+    if (P.overlap2(S, s, y) > 0 || (y < SS.sim.surface_at(S, q.x, q.z) + 0.5 && !(w.under && SS.fort && SS.fort.is())) || y > w.SY - 1) return false;   // (P68b: in a fort-mode cave the 'surface' is the roof: only the overlap test counts)
     for (let i = 0; i < S.worms.length; i++) { const o = S.worms[i]; if (!o.dead && M.len3(o.pos.x - q.x, o.pos.y - y, o.pos.z - q.z) < 2.5) return false; }
     return SS.weapons.open_air(q.x, y, q.z);
   }

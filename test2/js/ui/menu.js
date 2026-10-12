@@ -47,6 +47,7 @@
   const MATCH = [
     { k: 'dim', t: 'Dimension', o: [['3d', '3D'], ['2d', '2D']], w: 'seg', h: '3D: turn the world to aim. 2D: a classic side-on slice, no rotation' },
     { k: 'teams', t: 'Teams', o: OPTS.teams, n: 1, w: 'seg', teams: 1 }, { k: 'worms', t: 'Worms per team', o: OPTS.worms, n: 1, w: 'seg' },
+    { k: 'fort', t: 'Fort mode', b: true, d: false, h: 'each team owns a separate island / mesa / crag with a bunker; the gaps between are the hazard' },
     { k: 'hp', t: 'Worm health', o: OPTS.hp, n: 1, w: 'seg' }, { k: 'turnTime', t: 'Turn time', o: OPTS.turnTime, n: 1, w: 'seg' },
     { k: 'skill', t: 'CPU skill', o: OPTS.skill, w: 'seg' }, { k: 'placement', t: 'Worm placement', o: OPTS.placement, w: 'seg' },
     { k: 'first', t: 'Who starts', o: OPTS.first, w: 'sel', fn: v => (v === 'random' ? 'random' : parseInt(v, 10)) }
@@ -95,7 +96,7 @@
   MN.LAB = LAB;
   const labBits = () => LAB.reduce((n, r) => n + (((cur.labFlags | 0) & C.LAB.FLAG[r.id]) ? 1 : 0), 0);
   /* settings keys the host sends to net guests (js/main.js adds them to its whitelist) */
-  MN.NET_KEYS = ['dim', 'rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags'].concat(D.KEYS);
+  MN.NET_KEYS = ['dim', 'fort', 'rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags'].concat(D.KEYS);
 
   /* P38 R6 (R2/R3): saved settings, URL parameters and net starts are untrusted data (an old build, a foreign key, a hand edit):
    * coerce every field into its legal range / type so the form and the generator never see a hole. Pure (tools/dev/gen/robusttest.cjs).
@@ -129,7 +130,7 @@
     }
     for (const k of D.KEYS) if (o[k] != null && D.LEVELS.indexOf(o[k]) < 0) o[k] = def[k] != null && D.LEVELS.indexOf(def[k]) >= 0 ? def[k] : 'medium';
     o.dim = o.dim === '2d' ? '2d' : '3d';                              // P68a: the dimension (sim/dim2d.js)
-    for (const k of ['sd', 'collapse', 'blood', 'teamBlood', 'select', 'rooms', 'keepRope', 'rotLock']) if (o[k] != null && typeof o[k] !== 'boolean') o[k] = !!o[k] && o[k] !== '0' && o[k] !== 'off';
+    for (const k of ['sd', 'collapse', 'blood', 'teamBlood', 'select', 'rooms', 'keepRope', 'rotLock', 'fort']) if (o[k] != null && typeof o[k] !== 'boolean') o[k] = !!o[k] && o[k] !== '0' && o[k] !== 'off';
     return o;
   };
 

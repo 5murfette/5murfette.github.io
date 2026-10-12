@@ -25,6 +25,7 @@
   function pick_slice(W) {
     const H = W.H, NX = W.NX, NY = W.NY, NZ = W.NZ, F = W.features || {};
     const lo = Math.round(14 / H), hi = NZ - 1 - lo;
+    if (F.fort) return Math.round(F.fort.sliceZ / H);                  // P68b: fort mode lays its forts along this slice
     if (W.under) {
       let best = -1, bk = Math.round(W.MZ / H);
       for (let k = lo; k <= hi; k += 4) {

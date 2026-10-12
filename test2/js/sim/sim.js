@@ -123,6 +123,7 @@
     if (S.teams) for (const t of S.teams) if (t.ammo) for (const k of C.ARSENAL_ORDER) { const v = t.ammo[k]; mix(v === Infinity ? -7 : v || 0); }
     for (const w of S.worms) { mix(w.vel.x); mix(w.vel.y); mix(w.vel.z); mix(w.vs || 0); mix(w.vy || 0); mix(w.facing || 0); mix(w.hp0 || 0); mix(w.air ? 1 : 0); mix(w.dead ? 1 : 0); }
     if (S.settings) for (const k of HASH_SETTINGS) { const v = S.settings[k]; mix(typeof v === 'number' ? v : typeof v === 'boolean' ? (v ? 1 : 0) : typeof v === 'string' ? str(v) % 1000003 : -1); }
+    if (S.settings && S.settings.fort) mix(2003);                          // P68b: fort mode (off: the hashes stay what they were)
     if (S.settings && S.settings.dim === '2d') mix(2002);                  // P68a: the dimension, only while it is 2D (3D hashes stay what they were)
     { const wd = W(), d = wd.d, mt = wd.mat; let t = 0, u = 0; for (let i = 0; i < d.length; i += 97) t += d[i]; for (let i = 3; i < mt.length; i += 101) u += mt[i]; mix(t); mix(u); mix(wd.SEA); mix(wd.SX); }
     return HH;
@@ -209,6 +210,7 @@
       let ok = w.sample(x, y + (o.clear || 1.6), z) <= 0 && w.sample(x, y + 0.8, z) <= 0;
       for (const [dx, dz] of [[0.6, 0], [-0.6, 0], [0, 0.6], [0, -0.6]]) { if (!ok) break; if (w.sample(x + dx, y + 0.3, z + dz) > 0 || w.sample(x + dx, y - 0.4, z + dz) <= 0) ok = false; }
       if (!ok) continue;
+      if (o.team != null && !SS.fort.spot_ok(x, z, y, o.team)) continue;           // P68b: the worm's own fort
       const m = w.mat_at(x, y - 0.2, z);
       if (m === MAT.LAVA || (m === MAT.ICE && !o.ice) || (o.mats && o.mats.indexOf(m) < 0)) continue;
       if (taken.some(t => M.len3(t.x - x, t.z - z, (t.y - y) * 1.5) < minSep)) continue;
@@ -229,6 +231,7 @@
       const x = 8 + rand(S) * (w.SX - 16), z = w.zpick(rand(S), 8), top = w.topHeight(x, z);
       if (top < w.SEA + (o.minAlt || 1.5) || top > (o.maxAlt || 99)) continue;
       if (w.dry && sim.arena_r(x, z) > DRY.SPAWN_R) continue;                     // dry: everything starts in the play area
+      if (o.team != null && !SS.fort.spot_ok(x, z, top, o.team)) continue;        // P68b: the worm's own fort
       const m = w.mat_at(x, top - 0.2, z);
       if (m === MAT.LAVA || m === MAT.ICE && !o.ice || (o.mats && o.mats.indexOf(m) < 0)) continue;
       let ok = true;
@@ -253,7 +256,7 @@
     S.settings = Object.assign({}, C.SETTINGS, settings || S.settings);
     // P38 R7 (P5): the seed is an i32 from here on (every seed mix is Math.imul / u32 wrap-around, identical in C); ?seed= and net settings are unbounded
     if (typeof S.settings.seed !== 'number' || S.settings.seed !== (S.settings.seed | 0)) S.settings.seed = S.settings.seed | 0;
-    if (S.settings.biome === 'eow') S.settings.dim = '3d';            // P68c: space is never sliced (the floating chunks need the full volume)
+    if (S.settings.biome === 'eow') { S.settings.dim = '3d'; S.settings.fort = false; }   // P68c: space is never sliced and has no forts (floating chunks, own layout)
     return { stage: 0, gen: W().gen_begin(S.settings), label: 'Shaping the land' };
   };
   sim.reset_step = function (S, job) {
@@ -332,20 +335,22 @@
     if (SS.ice) SS.ice.init(S);                                   // Step I: sea / pool ice (after the water)
     emit(S, 'reset', {});
     const taken = [], nT = S.teams.length, nW = nT * M.clamp(S.settings.worms | 0 || 3, 1, 4), names = SS.game.names(S, nW);
-    const hp0 = M.clamp(S.settings.hp | 0 || 100, 1, 999), sep = nW > 8 ? 11 : 15;
+    const hp0 = M.clamp(S.settings.hp | 0 || 100, 1, 999), sep = nW > 8 ? 11 : 15, fortOn = !!SS.fort && SS.fort.is();
     for (let i = 0; i < nW; i++) {                                   // interleaved round-robin across the teams (PoC populate)
-      const team = i % nT, spot = sim.find_spot(S, sep, taken) || sim.find_spot(S, 6, taken) || sim.find_spot(S, 3, taken) || fallbackSpot(S);
+      const team = i % nT, fo = fortOn ? { team } : undefined;                       // P68b: fort mode: worm t (the team's first) sits in its bunker, the rest on the team's fort
+      const spot = fortOn && i < nT ? SS.fort.seat(team) : sim.find_spot(S, sep, taken, fo) || sim.find_spot(S, 6, taken, fo) || sim.find_spot(S, 3, taken, fo) || (fortOn ? SS.fort.seat(team) : fallbackSpot(S));
       taken.push(spot);
       S.worms.push(sim.worm_make(i, team, names[i], hp0, spot));
     }
     const flat = W().flat;                                         // P68a: the 2D slab has no room for the 3D structure stamps
     if (S.eow) SS.eow.spawned(S);                                  // P68c: the worms' suit state (no bridges, bunkers, ruins, aliens, trees in space)
+    if (fortOn) SS.fort.populate(S, taken);                        // P68b: the forts' bunkers (+ the bunker worms), instead of the structure stamps below
     if (S.settings.rooms && !W().under && !flat) SS.game.rooms(S); else S.rooms = [];   // PoC buried rooms (option)
     if (!S.eow) {
-    if (SS.struct && !flat) SS.struct.populate(S, taken);                  // M: steel bridges (before props / trees: they avoid the abutments)
-    if (SS.bunker && !flat) SS.bunker.populate(S, taken);                  // P29d: concrete bunkers (before props / trees too)
-    if (SS.derelict && !flat) SS.derelict.populate(S, taken);              // P37: the crashed derelict alien ship (voxel stamp)
-    if (SS.ruins && !flat) SS.ruins.populate(S, taken);                    // P37: volcanic ruined town + rocks (voxel stamps, before the props)
+    if (SS.struct && !flat && !fortOn) SS.struct.populate(S, taken);                  // M: steel bridges (before props / trees: they avoid the abutments)
+    if (SS.bunker && !flat && !fortOn) SS.bunker.populate(S, taken);                  // P29d: concrete bunkers (before props / trees too)
+    if (SS.derelict && !flat && !fortOn) SS.derelict.populate(S, taken);              // P37: the crashed derelict alien ship (voxel stamp)
+    if (SS.ruins && !flat && !fortOn) SS.ruins.populate(S, taken);                    // P37: volcanic ruined town + rocks (voxel stamps, before the props)
     if (SS.alien) SS.alien.populate(S, taken);                    // P37: face-hugger eggs (after the ship: the nest)
     sim.unbury_worms(S, taken);                                          // P38 R1: lift a worm the hull / rubble stamps entombed (before the props use taken)
     } else if (SS.alien) SS.alien.populate(S, taken);                 // (P68c: in space only the alien state is made)
@@ -381,6 +386,7 @@
         if (x < 6 || x > w.SX - 6 || !w.zin(z, 6)) continue;
         const top = w.topHeight(x, z), y = top + 0.55;
         if (top < w.SEA + 0.8 || (w.dry && !sim.in_play(S, x, z)) || nearLava(S, x, z) || w.mat_at(x, top - 0.2, z) === MAT.LAVA || !bodyFree(o, x, y, z)) continue;
+        if (SS.fort && SS.fort.is() && SS.fort.team_at(x, z, y) !== o.team) continue;      // P68b: stay on the worm's own fort
         if (!(w.sample(x, y - 0.6, z) > 0)) continue;                               // stand on something
         let clash = false; for (const p of S.worms) if (p !== o && !p.dead && M.len3(p.pos.x - x, p.pos.y - y, p.pos.z - z) < 3) clash = true;
         if (clash) continue;

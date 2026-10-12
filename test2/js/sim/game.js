@@ -105,9 +105,10 @@
   G.PLACE = PL;
   G.begin_placement = function (S) {
     S.placeOrder = [];
-    const n = S.teams.length, per = S.teams.reduce((m, t, i) => M.max(m, S.worms.filter(w => w.team === i).length), 0);
-    for (let k = 0; k < per; k++) for (let t = 0; t < n; t++) { const w = S.worms.filter(o => o.team === t)[k]; if (w) S.placeOrder.push(w); }
-    for (const w of S.worms) { w.reserve = true; w.dead = true; w.grave = null; }
+    const n = S.teams.length, per = S.teams.reduce((m, t, i) => M.max(m, S.worms.filter(w => w.team === i).length), 0), fort = !!SS.fort && SS.fort.is();
+    const seated = w => fort && w.id < n;                                  // P68b: the first worm of each team already sits in its fort's bunker
+    for (let k = 0; k < per; k++) for (let t = 0; t < n; t++) { const w = S.worms.filter(o => o.team === t)[k]; if (w && !seated(w)) S.placeOrder.push(w); }
+    for (const w of S.worms) { if (seated(w)) continue; w.reserve = true; w.dead = true; w.grave = null; }
     S.placeIdx = 0; S.phase = 'place'; S.placeT = PL.T; S.placeDone = -1;
     nextPlace(S);
   };
@@ -126,6 +127,7 @@
       const yy = y + l, p = P.to_world(S, s, yy);
       if (yy < 0.6 || yy > w.SY - 1 || P.overlap2(S, s, yy) > 0) continue;
       if (yy - 0.5 < SS.sim.surface_at(S, p.x, p.z)) return null;
+      if (S.active && SS.fort && SS.fort.is() && !SS.fort.spot_ok(p.x, p.z, yy, S.active.team)) return null;   // P68b: only on the team's own fort
       if (w.dry && !SS.sim.in_play(S, p.x, p.z)) return null;
       if (S.worms.some(o => !o.dead && M.len3(o.pos.x - p.x, o.pos.y - yy, o.pos.z - p.z) < PL.SEP)) return null;
       return { x: p.x, y: yy, z: p.z };
@@ -145,7 +147,8 @@
   }
   function autoSpot(S) {
     const taken = S.worms.filter(o => !o.dead).map(o => ({ x: o.pos.x, z: o.pos.z }));
-    const sp = SS.sim.find_spot(S, 8, taken) || SS.sim.find_spot(S, 3, taken);
+    const fo = S.active && SS.fort && SS.fort.is() ? { team: S.active.team } : undefined;     // P68b
+    const sp = SS.sim.find_spot(S, 8, taken, fo) || SS.sim.find_spot(S, 3, taken, fo);
     return sp ? { x: sp.x, y: sp.y + 0.55, z: sp.z } : null;
   }
   // deaths during deployment are immediate (PoC: no beat while placing)
@@ -163,7 +166,7 @@
     if (!cpu && inp.tgt && inp.fire_pressed) {
       const p = G.place_point(S, inp.ts, inp.ty);
       if (p) return put(S, w, p, 'is deployed');
-      SS.sim.log(S, 'No room there.', 0xffb27a);
+      SS.sim.log(S, SS.fort && SS.fort.is() ? 'No room there (place the worm on your own fort).' : 'No room there.', 0xffb27a);
     }
     if ((!cpu && inp.jump) || (cpu && S.placeT <= PL.T - PL.CPU_T) || S.placeT <= 0) {
       const p = autoSpot(S);
