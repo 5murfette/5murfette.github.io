@@ -321,21 +321,51 @@
   }
   /* P9 weapon grid (built per match), info line */
   let gridBuilt = null; const gridBtn = {};
+  /* P75: the weapon bar shows one category at a time (large tiles) instead of a wall of 42 small icons. Keys still pick any weapon: the bar follows
+   * the selection to its category (not on the "All" tab, the old dense grid). Skip Go lives on the Core tab. */
+  const W_CATS = [
+    { id: 'core', n: 'Core', ks: ['bazooka', 'grenade', 'cluster', 'shotgun', 'rope', 'airstrike', 'skip'] },
+    { id: 'throw', n: 'Thrown', ks: ['homing', 'banana', 'holy', 'boulder', 'blackhole', 'mortar', 'acid', 'gas', 'boomerang', 'foam', 'gravgun', 'flamethrower'] },
+    { id: 'place', n: 'Placed', ks: ['dynamite', 'sheep', 'mine', 'magnet', 'spring', 'dog', 'sentry', 'claymore', 'ffield'] },
+    { id: 'strike', n: 'Strikes', ks: ['napalm', 'tesla', 'moai', 'raven'] },
+    { id: 'gun', n: 'Guns', ks: ['sniper', 'handgun', 'minigun', 'bat', 'punch'] },
+    { id: 'tool', n: 'Tools', ks: ['drill', 'parachute', 'zipline', 'teleport', 'girder', 'bellows', 'scrambler'] },
+    { id: 'all', n: 'All', ks: null },
+  ];
+  const W_CAT_OF = {}; for (const c of W_CATS) if (c.ks) for (const k of c.ks) W_CAT_OF[k] = c.id;
+  let wTab = 'core', wLast = '';
+  function showTab(id) {
+    wTab = id; const el = $('weapons'); if (!el) return;
+    const cat = W_CATS.find(c => c.id === id) || W_CATS[0], grid = el.querySelector('.wgrid'); if (!grid) return;
+    grid.dataset.m = id === 'all' ? 'all' : id === 'core' ? 'big' : 'mid';
+    const ord = cat.ks || C.ARSENAL_ORDER;
+    for (const k of C.ARSENAL_ORDER) { const g = gridBtn[k]; if (g) { g.b.classList.toggle('off', !!cat.ks && cat.ks.indexOf(k) < 0); g.b.style.order = ord.indexOf(k); } }
+    for (const t of el.querySelectorAll('.wtab')) { const on = t.dataset.c === id; t.classList.toggle('on', on); t.setAttribute('aria-selected', on ? 'true' : 'false'); }
+    fitGH();
+  }
+  /* --gh = the bar's height: the info line, the debug panel and the tooltip sit above it (the tab and the window size change it) */
+  function fitGH() { const el = $('weapons'); if (el && el.offsetHeight > 0) document.documentElement.style.setProperty('--gh', (el.offsetHeight + 12) + 'px'); }
+  if (typeof addEventListener === 'function') addEventListener('resize', () => setTimeout(fitGH, 0));
+
   // ASSET: weapon_icons, hud_panels (ui/icons/*.png, ui/hud/*.png)
   function buildGrid(S) {
     const vector = S && S.settings.art === 'procedural' && SS.icons;     // PoC "Artwork": painted icons / original vector icons
-    const el = $('weapons'); el.innerHTML = '';
+    const el = $('weapons'); el.innerHTML = '<div class="wtabs" role="tablist"></div><div class="wgrid"></div>';
+    const tabs = el.firstChild, grid = el.lastChild;
+    for (const c of W_CATS) { const t = document.createElement('button'); t.type = 'button'; t.className = 'wtab'; t.dataset.c = c.id; t.setAttribute('role', 'tab'); t.textContent = c.n; tabs.appendChild(t); }
     for (const k of C.ARSENAL_ORDER) {
       const d = C.ARSENAL[k], b = document.createElement('button');
       b.className = 'wpn'; b.type = 'button'; b.dataset.k = k; b.setAttribute('aria-label', `${d.name} (${d.key}): ${d.info}`);
       const ico = (vector || !(SS.iconsArt && SS.iconsArt[k])) && SS.icons[k] ? `<svg viewBox="0 0 24 24" class="vi">${SS.icons[k]}</svg>` : `<img src="assets/icons/icon-${k}.webp" alt="">`;
       b.innerHTML = `${ico}<span class="k">${d.key}</span><span class="a"></span><span class="n">${d.name.replace('Baseball ', '').replace(' Rifle', '').replace('Pocket ', '').replace('Fuse ', '').replace('Flamethrower', 'Flamer')}</span>`;
       b.onclick = () => { if (U.onPick) U.onPick(k); b.blur(); };
-      el.appendChild(b); gridBtn[k] = { b, a: b.querySelector('.a'), s: '' };
+      grid.appendChild(b); gridBtn[k] = { b, a: b.querySelector('.a'), s: '' };
     }
+    showTab(wTab);
     gridBuilt = S ? S.settings.art || 'painted' : 'painted';
     if (!el._tip) {                                                       // (once: the grid element stays, its buttons are rebuilt)
       el._tip = 1;
+      el.addEventListener('click', e => { const t = e.target.closest ? e.target.closest('.wtab') : null; if (t) { showTab(t.dataset.c); t.blur(); } });
       el.addEventListener('pointerover', e => { const b = e.target.closest ? e.target.closest('.wpn') : null; if (b) showTip(b.dataset.k, b); });
       el.addEventListener('pointerleave', hideTip);
       el.addEventListener('focusin', e => { const b = e.target.closest ? e.target.closest('.wpn') : null; if (b) showTip(b.dataset.k, b); });
@@ -364,6 +394,7 @@
   function drawWeapons(S, a) {
     if (gridBuilt !== (S.settings.art || 'painted')) buildGrid(S);
     lastS = S; lastA = a;
+    if (S.weapon !== wLast) { wLast = S.weapon; const c = W_CAT_OF[S.weapon]; if (c && wTab !== 'all' && c !== wTab) showTab(c); }
     const mine = !(SS.game && SS.game.is_cpu(S, a.team)) && !(SS.net && SS.net.active && a.team !== SS.net.team);
     for (const k of C.ARSENAL_ORDER) {
       const g = gridBtn[k], n = SS.game ? SS.game.ammo(S, a.team, k) : Infinity, usable = n > 0 && !(SS.weapons.needs_storm(k) && !(S.weather && S.weather.storm)) && !(S.eow && SS.eow.no_air(k));
@@ -382,7 +413,14 @@
     if (SS.sim.can_switch && SS.sim.can_switch(S)) hint = ` · <em>\\: switch worm (${Math.max(0, Math.ceil(10 - (S.time - (S.selStart != null ? S.selStart : S.turnStart))))} s)</em>` + hint;
     if (S.phase === 'place') { setHTML('winfo', mine ? `Deploy <em>${esc(a.name)}</em>: click a free spot on the section · Q / E rotate it · Enter auto-places` : `${esc(a.name)} is being deployed…`); return; }
     const shot = S.weapon === 'shotgun' && C.ARMS && C.ARMS.SHOTGUN ? ` · shot ${Math.min(C.ARMS.SHOTGUN.SHOTS, (S.shots || 0) + 1)} of ${C.ARMS.SHOTGUN.SHOTS}` : '';
-    setHTML('winfo', S.phase === 'play' && mine ? `${d.name || ''}${(() => { const par = SS.weaponsA && SS.weaponsA.param(S, S.weapon); return par ? ` · <em>${par.name} ${par.value} ${par.unit}</em> (+ / −)` : pd.fuseSet ? ' · fuse ' + S.fuse + ' s (F)' : ''; })()}${shot} — ${d.info || ''}${hint}` : '');
+    if (!(S.phase === 'play' && mine)) { setHTML('winfo', ''); return; }
+    const par = SS.weaponsA && SS.weaponsA.param(S, S.weapon), nA = SS.game ? SS.game.ammo(S, a.team, S.weapon) : Infinity;
+    let line = `<b>${esc(d.name || '')}</b>`;
+    if (nA !== Infinity) line += ` <span class="chip">×${nA}</span>`;
+    if (par) line += ` <span class="chip">${esc(par.name)} ${esc(String(par.value))} ${esc(par.unit)} <kbd>+ −</kbd></span>`;
+    else if (pd.fuseSet) line += ` <span class="chip">fuse ${S.fuse} s <kbd>F</kbd></span>`;
+    if (shot) line += ` <span class="chip">${shot.replace(/^ · /, '')}</span>`;
+    setHTML('winfo', `${line}<span class="di"> ${esc(d.info || '')}</span>${hint}`);
   }
   /* P37 W4: the active worm's skills (tool deliveries): icon + turns left (the hat: for the rest of the game) */
   const SKILL_ORDER = ['freerot', 'laser', 'fastwalk', 'lowgrav', 'tinfoil'];
@@ -474,8 +512,29 @@
     const tot = (S.teams || []).map((t, i) => teamHP(S, i));
     // P1: N teams; bars relative to the team's starting total (worms x starting HP)
     drawTeams(S, a, tot);
-    // the log fades in 0.05 steps (so the string, and the DOM, change a few times per line instead of every frame)
-    setHTML('log', S.log.map(l => `<div style="color:${css(l.rgb)};opacity:${Math.max(0.35, Math.round((1 - (S.time - l.t) / 14) * 20) / 20)}">${esc(l.text)}</div>`).join(''));
+    drawLog(S);
+  }
+
+  /* P75: the combat log. Collapsed: at most 3 short lines, each fading out after ~7 s (important events: deaths, crates, sudden death, the result stay
+   * 12 s); verbose setup / hint lines are dropped. The "log" chip expands the full list (all 7 kept lines, wrapped, no fading). */
+  const LOG_KEEP = /sudden death|final stand|crate|win after|nobody survived|\bdies\b|\bdied\b|killed|buried|sank|drifted|wandered|head off|escaped|infected|bursts out|collaps|streak|void|explod|take over|weather turns|moon phase|meteor/i;
+  const LOG_NOISE = /^(rope|nothing within|no terrain|cannot drop|the line|stand on|click a target|view locked|section locked|section aligned|debug|the parachute opens)|section aligned with|rotate with|on the map: get in|ruined buildings|on the island|a \d+ m side-on|a crashed derelict|magnetic suits|no room there/i;
+  let logOpen = false;
+  function drawLog(S) {
+    const el = $('log'); if (!el) return;
+    if (!el._tog) { el._tog = 1; el.addEventListener('click', e => { if (e.target.closest && e.target.closest('.lt')) { logOpen = !logOpen; if (lastS) drawLog(lastS); } }); }
+    let out = '', n = 0;
+    for (const l of S.log) {
+      const age = S.time - l.t, imp = LOG_KEEP.test(l.text);
+      if (!logOpen) {
+        if (LOG_NOISE.test(l.text) && !imp) continue;
+        const life = imp ? 12 : 7; if (age > life || n >= 3) continue;
+        const op = Math.min(1, Math.max(0, (life - age) / 2.5));
+        out += `<div class="${imp ? 'imp' : ''}" style="color:${css(l.rgb)};opacity:${Math.round(op * 20) / 20}">${esc(l.text)}</div>`; n++;
+      } else out += `<div class="full" style="color:${css(l.rgb)}">${esc(l.text)}</div>`;
+    }
+    el.classList.toggle('quiet', !logOpen && n === 0); el.classList.toggle('open', logOpen);
+    setHTML('log', S.log.length ? out + `<button type="button" class="lt" title="Show or hide the full event log">${logOpen ? 'hide log' : 'log'}</button>` : '');
   }
 
   /* Section minimap base: rebuilt when the section changes. Solid has red channel > 90, air/sea do not. */

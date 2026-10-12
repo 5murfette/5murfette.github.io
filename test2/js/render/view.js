@@ -8,7 +8,7 @@
   const V = SS.view = {};
   let headSpot, renderer, scene, camera, tx, Q, sun, hemi, fill, sky, skyMat, water, heightTex, surfTex, scyTex, blankTex, outline, outlineMat, motes, lamp, stars = null;
   const view = {
-    camT: null, camZ: 0, dir: { cur: null, since: 0 }, zoom: 19, time: 0, heightVer: 0, heightFor: -1, heightT: -99, heightmap: null, secWV: -1, secT: -99, edgeA: 0,
+    camT: null, camZ: 0, dir: { cur: null, since: 0 }, zoom: 19, autoZ: 0, time: 0, heightVer: 0, heightFor: -1, heightT: -99, heightmap: null, secWV: -1, secT: -99, edgeA: 0,
     pan: { s: 0, y: 0 }, orbit: { yaw: 0, tilt: 0 }, look: null, activeId: -1, surf: null, surfN: 0
   };
   V.state = view;
@@ -218,6 +218,23 @@
     if (team == null || team < 0) return !(S.mapMinesUntil >= 0) || S.time < S.mapMinesUntil;
     return v === team || S.time - (planted || -99) < SS.CFG.ARMS.TRAPS.PLANT_SEEN;
   };
+  /* P75: the default camera distance. The old fixed 19 m made the worm ~25 px tall at 1280x800. Now the distance follows the window so the worm is
+   * WORM_PX tall (about 4.6 % of the window height, 34..60 px), a little further out on big maps and on narrow / portrait windows (the width must still
+   * show some battlefield). The player's wheel / pinch / tool value is kept: auto only follows while view.zoom still equals the last auto value. */
+  const WORM_H = 0.46;
+  V.autoZoom = function () {
+    const h = vh || 800, w = vw || 1280, W = SS.world, tgt = M.clamp(h * 0.056, 34, 60);
+    let z = (h * 0.5 / Math.tan(camera.fov * Math.PI / 360)) * WORM_H / tgt;
+    z *= Math.pow(M.clamp(W && W.SC ? W.SC : 1, 0.7, 2.2), 0.3);
+    const asp = w / h; if (asp < 1.25) z *= Math.min(1.7, Math.pow(1.25 / asp, 0.5));
+    return M.clamp(z, 8, 40);
+  };
+  function applyAutoZoom() {
+    const z = V.autoZoom();
+    if (!view.autoZ || Math.abs(view.zoom - view.autoZ) < 1e-6) view.zoom = z;
+    else if (Math.abs(z - view.autoZ) > 1e-6) view.zoom = M.clamp(view.zoom * z / view.autoZ, 8, 80);    // a window resize keeps the player's own factor
+    view.autoZ = z;
+  }
   V.zoom = d => { view.zoom = M.clamp(view.zoom * Math.pow(1.1, M.clamp(d, -8, 8)), 8, 80); };   // d notches (the 🔍 button sends 6)
   V.camKey = () => (view.dir.cur ? view.dir.cur.key : '');      // (tools: the director's current interest)
   V.snapCamera = () => { view.camT = null; view.dir.cur = null; };
@@ -268,6 +285,7 @@
       const p = S.proj[0], sp = Math.hypot(p.vs, p.vy), cin = SS.cine && SS.cine.enabled, ld = cin ? 0.2 : 0.12, c = at(p.s + p.vs * ld, p.y + p.vy * ld);
       return { key: 'proj' + (p.id || 0), x: c.x, y: c.y, z: c.z, d: M.clamp(560 + sp / PX * 0.3, 560, cin ? 980 : 860), p: 7 };   // P63: a long shot zooms out a little more
     }
+    if (S.crates && S.phase !== 'place') for (const c of S.crates) if (!c.landed && !c.held && c.pos) return { key: 'crate' + c.id, x: c.pos.x, y: c.pos.y - 0.5, z: c.pos.z, d: 560, p: 6.5 };     // P75: a supply drop is followed down to the ground
     if (S.moais) for (const m of S.moais) { const b = SS.bodies.by_id(S, m.body); if (b && Math.hypot(b.vel.x, b.vel.y, b.vel.z) > 25 * PX) return { key: 'moai', x: b.pos.x, y: b.pos.y, z: b.pos.z, d: 640, p: 6 }; }
     const ex = S.lastExplosion;
     if (ex && S.time - (S.lastBlastT == null ? -99 : S.lastBlastT) < 1.4 && ex.R >= 14 * PX) return { key: 'boom' + S.lastBlastT.toFixed(2), x: ex.x, y: ex.y, z: ex.z, d: M.clamp(470 + ex.R / PX * 4.5, 540, 1050), p: 6 };
@@ -713,7 +731,10 @@
     const cur = view.lock || dr.cur || { key: 'active', x: a ? a.pos.x : SS.world.MX, y: a ? a.pos.y : 10, z: a ? a.pos.z : SS.world.MZ, d: 0, p: 0 };
     const co = cin ? SS.cine.frame(S, dtU, cur.key, view) : null;                    // P63: the cinematic moves on top of the director
     const pk = cur.key === 'active' ? 1 : 0, fx = cur.x + d.x * view.pan.s * pk, fy = cur.y + 1.2 + view.pan.y * pk + (co ? co.dy : 0), fz = cur.z + d.z * view.pan.s * pk;
-    const wantZ = cur.key === 'active' ? view.zoom : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * cur.d / 640);   // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
+    applyAutoZoom();
+    // active: a charging shot / a target pick pulls the view back a little so the flight and the target stay in frame; an event (shell, blast, death) frames x1.4 of the default
+    const pull = cur.key === 'active' && a && S.phase === 'play' ? (SS.CFG.ARSENAL[S.weapon] && SS.CFG.ARSENAL[S.weapon].kind === 'target' ? 1.6 : S.charging ? 1.35 : 1) : 1;
+    const wantZ = cur.key === 'active' ? view.zoom * pull : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * 1.4 * cur.d / 640);   // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
     if (!view.camT) { view.camT = new T.Vector3(fx, fy, fz); view.camZ = wantZ; }
     else if (!cin && SS.cine && cur.key !== prevKey && prevKey && !view.lock) { view.camT.set(fx, fy, fz); view.camZ = wantZ; }     // cinematic camera off: an instant cut to a new interest
     const rate = cur.key === 'active' ? 6 : cur.p >= 7 ? 4.5 : 3.2;
