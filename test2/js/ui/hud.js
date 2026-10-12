@@ -21,6 +21,7 @@
     labels = $('labels'); secC = $('secmap'); secX = secC.getContext('2d'); secBase = document.createElement('canvas');
     topC = $('topmap'); topX = topC.getContext('2d'); topBase = document.createElement('canvas');
     fuseEl = document.createElement('div'); fuseEl.className = 'fuse'; labels.appendChild(fuseEl);
+    if (SS.offscreen) SS.offscreen.init(labels, cam, cv);
     $('bRematch').onclick = () => U.onRematch && U.onRematch();
     $('bSetup').onclick = () => U.onSetup && U.onSetup();
   };
@@ -60,6 +61,9 @@
     const L = SAY[kind], el = document.createElement('div'); el.className = 'pop bubble';
     el.textContent = L[Math.floor(Math.random() * L.length)].replace('{w}', arg || ''); el._bub = 1; addPop(el, w, curS ? curS.time : 0);
   }
+  /* P85: speech bubbles of the ACTIVE worm come from its own events (start, fire, pass, pickup); everybody else's only when render/reactq.js
+   * lets that worm speak (affected by the attack, one at a time, same moment as its voice and the camera visit) */
+  if (SS.reactq) SS.reactq.listen(function (S, it) { const w = S.worms[it.wid]; if (w && it.kind && !(w.dead && it.kind !== 'die') && (it.kind === 'die' || it.kind === 'shock' || it.kind === 'fall' || Math.random() < 0.7)) say(w, it.kind); });
   /* damage number: the team colour of the hurt worm, bigger for hard hits (>= 30) and crits (>= 60), small for burning / poison ticks;
    * a damage-over-time tick is skipped while the previous one of that worm is still fresh; neighbours are spread sideways */
   function damagePop(S, e) {
@@ -91,18 +95,11 @@
   }
   U.onEvent = function (S, e) {
     curS = S;
-    if (e.type === 'dying' && e.worm) say(e.worm, 'die');
-    if (e.type === 'hurt' && e.worm && !e.worm.dead && e.worm.hp > 0 && e.amount >= 5 && Math.random() < 0.45) say(e.worm, 'ouch');
-    if (e.type === 'turn' && e.worm) say(e.worm, 'start');                                            // PoC: every turn
+    if (SS.offscreen) SS.offscreen.onEvent(S, e);
+    if (e.type === 'turn' && e.worm && S.active && e.worm.id === S.active.id) say(e.worm, 'start');                                            // PoC: every turn
     if (e.type === 'fire' && S.active && Math.random() < 0.3) say(S.active, 'fire');
-    if (e.type === 'hurt' && e.worm && !e.worm.dead && (C.DS_FLAGS[e.src | 0] & C.DSF.FX_HOT) && Math.random() < 0.3) say(e.worm, 'hot');
-    if (e.type === 'zap' && e.worm && !e.worm.dead) say(e.worm, 'shock');
-    if (e.type === 'wash' && e.worm) say(e.worm, 'wash');
-    if (e.type === 'cough' && e.worm && !e.worm.dead && Math.random() < 0.6) say(e.worm, 'cough');          // P37-W3
-    if (e.type === 'ouch' && e.acid && e.worm && !e.worm.dead && Math.random() < 0.7) say(e.worm, 'acid');
     if (e.type === 'use' && e.weapon === 'skip' && S.active) say(S.active, 'pass');
-    if (e.type === 'spring' && e.worm) say(e.worm, 'fall');
-    if (e.type === 'pickup' && e.worm) say(e.worm, e.kind === 'health' ? 'health' : 'crate', e.weapon && C.ARSENAL[e.weapon] ? C.ARSENAL[e.weapon].name : '');
+    if (e.type === 'pickup' && e.worm && S.active && e.worm.id === S.active.id) say(e.worm, e.kind === 'health' ? 'health' : 'crate', e.weapon && C.ARSENAL[e.weapon] ? C.ARSENAL[e.weapon].name : '');
     if (e.type === 'hugger_attach' && e.worm && !e.worm.dead) { say(e.worm, 'hugged'); banner(`${e.worm.name} was face-hugged!`, 'A face hugger latched on', '#b6ff4a'); }       // P47
     if (e.type === 'hugger_detach' && e.worm && !e.worm.dead) { say(e.worm, 'sick'); banner('INFECTED', `${e.worm.name} loses ${SS.alien.K.PARA_HP} HP every ${SS.alien.K.PARA_T} s`, '#b6ff4a'); }
     if (e.type === 'chest_burst' && e.wormId != null) banner('Something bursts out!', e.worm ? e.worm.name : '', '#b6ff4a');
@@ -156,6 +153,20 @@
     const l = mine && SS.rotlock && SS.rotlock.enabled(S) ? SS.rotlock.left(S) : -1, txt = l > 0 ? 'ROTATE NOW<b>' + Math.ceil(l) + '</b>' : '';
     if (txt !== rotTxt) { rotTxt = txt; if (txt) rotEl.innerHTML = txt; rotEl.classList.toggle('on', !!txt); }
     rotEl.classList.toggle('low', l > 0 && l <= 3);
+  }
+  /* P86: End of the World: the jetpack chips, one per team (charges left, ON / OFF); a click / key J toggles the active team's (sim: S.eow.jet) */
+  let jetEl = null, jetTxt = '';
+  function jetChips(S) {
+    if (!jetEl) {
+      jetEl = document.createElement('div'); jetEl.id = 'eowJet';
+      jetEl.style.cssText = 'position:fixed;left:12px;bottom:118px;z-index:12;display:none;font:700 12px/1 "Barlow Semi Condensed",system-ui,sans-serif;color:#dbe9ff;pointer-events:auto';
+      jetEl.addEventListener('click', () => { if (SS.input) SS.input.jetReq = 1; });
+      document.body.appendChild(jetEl);
+    }
+    const J = S.eow && S.eow.jet; if (!J) { if (jetTxt) { jetTxt = ''; jetEl.style.display = 'none'; } return; }
+    const a = S.active; let txt = '';
+    for (let t = 0; t < J.length; t++) txt += '<div style="display:flex;gap:6px;align-items:center;margin:2px 0;padding:4px 8px;border-radius:6px;background:rgba(8,12,22,.72);border:1px solid ' + (a && a.team === t ? '#9fd0ff' : 'rgba(255,255,255,.12)') + ';cursor:pointer"><i style="width:9px;height:9px;border-radius:50%;background:' + css(C.TEAMS[t].rgb) + '"></i>JETPACK <b style="color:' + (J[t].on && J[t].n > 0 ? '#9fd0ff' : '#ff9a7a') + '">' + (J[t].n > 0 ? (J[t].on ? 'ON' : 'OFF') : 'EMPTY') + '</b> x' + J[t].n + (a && a.team === t ? ' <span style="opacity:.6">[J]</span>' : '') + '</div>';
+    if (txt !== jetTxt) { jetTxt = txt; jetEl.innerHTML = txt; jetEl.style.display = 'block'; }
   }
   /* P42: the Lab badge: the active experimental mechanics (sim/lab.js) */
   let labEl = null, labTxt = '';
@@ -242,7 +253,8 @@
     return (pk ? ` <em class="tperk" title="perks: ${esc(SS.lab.perk_list(S, t))}">${pk}</em>` : '') + (st > 0 ? ` <em class="tstreak" title="streak: +${st * 10} % blast damage">x${st}</em>` : '');
   }
   U.draw = function (S) {
-    netPanel(); rotSplash(S); labBadge(S); perkPanel(S); alienLabels(S);
+    netPanel(); rotSplash(S); jetChips(S); labBadge(S); perkPanel(S); alienLabels(S);
+    if (SS.offscreen) SS.offscreen.draw(S);
     const a = S.active, insp = M.clamp(S.inspect, 0, 1);
     for (const w of S.worms) {
       const el = label(w);

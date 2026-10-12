@@ -309,7 +309,7 @@
   const cv3 = new T.Vector3();
   const CRATE_CORNERS = [[0.3, 0.3], [0.3, -0.3], [-0.3, -0.3], [-0.3, 0.3]];      // (P38-R2: hoisted: 40 arrays per crate per frame)
   function crateFrame(m, c, t, dt) {
-    const u = m.userData, flying = !c.landed && !c.thrown && !c.held;
+    const u = m.userData, flying = !c.landed && !c.thrown && !c.held && !c.eV;                         // (P86: in space a crate is never on a parachute: c.eV = a free-floating one)
     if (flying) u.wasFlying = true;
     // P65b: after the landing the canopy sags: it deflates and slides off to one side over ~2.4 s (only a crate that came down on a parachute)
     let sag = 0;
@@ -365,7 +365,8 @@
     roomTorches(S, t);
     sync(live.devices, S.devices || [], o => deviceMesh(o.kind), (o, m) => {
       m.position.set(o.pos.x, o.pos.y + 0.1, o.pos.z); m.rotation.y = -o.theta;
-      if (SS.groundView) {                                                                                      // P65b: the pad lies on the slope (full lean up to 29 deg) with a contact shadow
+      if (S.eow && SS.eowView) SS.eowView.seat(m, o.eu, -o.theta, 0.1, o.pos);                                  // P86: End of the World: on its local up, whatever side of the rock it is on
+      else if (SS.groundView) {                                                                                      // P65b: the pad lies on the slope (full lean up to 29 deg) with a contact shadow
         const GR = SS.groundView; if (!m.userData.cf) m.userData.cf = GR.cf(o.pos.x * 3 + o.pos.z);
         GR.seat(m.userData.cf, m, o.pos.x, o.pos.y, o.pos.z, -o.theta, 0.18, 0.15, 0.9, 0.5, dt, t, 0.1); GR.blob(o.pos.x, o.pos.y - 0.02, o.pos.z, 0.55, 1);
       }
@@ -392,6 +393,7 @@
       m.position.set(c.pos.x, c.pos.y, c.pos.z); m.rotation.y = c.id * 0.7;
       m.visible = SS.view.shownAt(S, c.pos, 0.6);
       if (m.visible) crateFrame(m, c, t, dt);
+      if (m.visible && S.eow && c.eV && !c.held && !c.thrown && SS.eowView) { SS.eowView.crate(m, c, t, dt); return; }                       // P86: adrift / landed on its local up (no parachute, no slope lean)
       if (m.visible && c.landed && !c.held && !c.thrown && SS.groundView) {                                  // P65b: a landed crate sits on the slope (leans up to 9 deg, sinks to its lowest corner) with a contact shadow
         const GR = SS.groundView; if (!m.userData.cf) m.userData.cf = GR.cf(c.id);
         GR.seat(m.userData.cf, m, c.pos.x, c.pos.y - 0.3, c.pos.z, c.id * 0.7, 0.3, 0.3, 0.75, 0.16, dt, t, 0.3); GR.blob(c.pos.x, c.pos.y - 0.32, c.pos.z, 0.7, 1);

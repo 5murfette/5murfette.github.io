@@ -10,6 +10,7 @@
   I.panX = 0; I.panY = 0;  // accumulated left-drag (pixels): camera pan, or orbit while inspecting (view only)
   I.panReset = false;
   I.clicks = [];           // P9: left clicks without a drag (client x, y): targets on the section
+  I.jetReq = 0;            // P86: the HUD's jetpack chip was clicked (consumed by the next sample)
   I.pickWeapon = '';       // P9: a weapon chosen on the weapon grid (consumed by the next sample)
   I.perkPick = 0;          // P50: a perk card clicked in the draft overlay (1..3, consumed by the next sample)
   /* PoC mouse aim (aimAt / pointerdown / pointermove): the cursor aims the active worm (the shot line runs through it,
@@ -146,6 +147,7 @@
     inp.drop = ropeDrop && p.has('Enter') ? 1 : 0;
     inp.jump = !ropeDrop && p.has('Enter') ? 1 : 0;
     inp.backflip = p.has('Backspace') ? 1 : 0;
+    inp.jet = p.has('KeyJ') || I.jetReq ? 1 : 0; I.jetReq = 0;                                                   // P86: the team's jetpack on / off (End of the World)
     inp.fire_pressed = p.has('Space') || I.mfirePressed ? 1 : 0;
     inp.fire_held = k.has('Space') || I.mfire ? 1 : 0;
     // mouse aim: from the worm's centre (the shots leave along the aim from there) through the cursor on the section

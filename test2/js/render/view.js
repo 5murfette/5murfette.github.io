@@ -86,6 +86,7 @@
     outlineMat = SS.mat.outline();
     outline = new T.Mesh(new T.BufferGeometry(), outlineMat); outline.renderOrder = 7; outline.frustumCulled = false; scene.add(outline);
     if (SS.edgeView) SS.edgeView.init(scene, tx, Q);   // material edge that replaces the outline once rotation stops
+    if (SS.secCut) SS.secCut.init(scene);              // P85: the yellow cut of the overview
 
     // floating pollen / dust motes in the light (cosmetic, render-side randomness is fine)
     const mp = new Float32Array(Q.motes * 3);
@@ -241,11 +242,10 @@
   /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
   const PX = 0.0643;
   const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
-  let deathId = -1, deathT = -99;    // P38 R3: the last worm that died (a drowning / poison death has no dying beat and no discrete hurt: the camera framed nothing)
-  let hurtId = -1, hurtT = -99;      // the last worm hurt (id: worm objects are replaced by a replay restore)
   function interest(S, a) {
     const P2 = SS.plane, at = (s, y) => P2.to_world(S, s, y);
     if (S.phase === 'place') return null;
+    const ctl = S.phase === 'play';                                                        // P85: the player has control: nothing but its own worm and its own shot may take the camera (edge indicators, ui/offscreen.js, point at the rest)
     if (S.phase === 'over' && S.over >= 0 && SS.cine && SS.cine.victory()) {                 // P63: the winners
       let win = S.active && !S.active.dead && S.active.team === S.over ? S.active : null;      // (the team's centroid can lie inside the land: frame one worm)
       if (!win) for (const w of S.worms) if (!w.dead && w.team === S.over) { win = w; break; }
@@ -253,7 +253,7 @@
     }
     if (S.free3d && S.free3d.length) { const q = S.free3d[0]; return { key: 'free3d', x: q.pos.x, y: q.pos.y, z: q.pos.z, d: 900, p: 9 }; }   // P37 W4: a shell bounced off a force field flies in 3D
     if (S.phase === 'dying' && S.dyingW) { const w = S.dyingW, g = S.dyingGrave && w.grave ? w.grave : w.pos; return { key: 'dying', x: g.x, y: g.y, z: g.z, d: 480, p: 9 }; }
-    if (S.strikes && S.strikes.length) {
+    if (!ctl && S.strikes && S.strikes.length) {
       const st = S.strikes[0], pl = at(st.s, st.y);
       if (st.k === 0 && Math.abs(st.s - st.tS) > 14) return { key: 'plane', x: pl.x, y: pl.y - 2, z: pl.z, d: 820, p: 8 };
       const gy = SS.weapons && SS.weapons.ground_below ? SS.weapons.ground_below(S, st.tS, st.y) : st.y - 8, tp = at(st.tS, gy + 3.9);
@@ -261,19 +261,18 @@
     }
     // Thunder Strike: during its delay the camera looks at the TARGET on the ground (not the sky / cloud), then the
     // electrocuted worms take over (hurt, above)
-    if (S.zaps && S.zaps.length) {
+    if (!ctl && S.zaps && S.zaps.length) {
       const z = S.zaps[0], gy = SS.weapons && SS.weapons.ground_below ? SS.weapons.ground_below(S, z.s, SS.world.SY - 0.5) : 0, tp = at(z.s, Math.max(gy, SS.world.SEA) + 1.5);
       return { key: 'zap', x: tp.x, y: tp.y, z: tp.z, d: 600, p: 8 };
     }
-    if (SS.alien && SS.alien.camera) { const ac = SS.alien.camera(S); if (ac) return ac; }      // P37: the alien strikes / a face hugger leaps
+    if (!ctl && SS.alien && SS.alien.camera) { const ac = SS.alien.camera(S); if (ac) return ac; }      // P37: the alien strikes / a face hugger leaps
     if (S.dogs && S.dogs.length) { const d = S.dogs[0], c = at(d.s, d.y); return { key: 'dog' + d.id, x: c.x, y: c.y, z: c.z, d: 560, p: 7 }; }     // P37 W4: the camera runs with the robo dog
-    if (S.holes && S.holes.length) { const h = S.holes[0]; return { key: 'hole', x: h.x, y: h.y, z: h.z, d: 720, p: 8 }; }
+    if (!ctl && S.holes && S.holes.length) { const h = S.holes[0]; return { key: 'hole', x: h.x, y: h.y, z: h.z, d: 720, p: 8 }; }
     // P29 (user 2026-10-08): after the shot the camera follows the DAMAGE: the worm being hurt (fire, a late blast)
     // wins over falling shells / gel, explosions and the shooter ("most important")
-    const hw = S.phase !== 'play' && hurtId >= 0 && view.time - hurtT < 1.6 ? S.worms[hurtId] : null;
-    const dw = S.phase !== 'play' && deathId >= 0 && view.time - deathT < 1.8 ? S.worms[deathId] : null;
-    if (dw && dw.dead) { const g = dw.grave || dw.pos; return { key: 'death' + dw.id, x: g.x, y: g.y, z: g.z, d: 520, p: 7.6 }; }
-    if (hw && !hw.dead) return { key: 'hurt' + hw.id, x: hw.pos.x, y: hw.pos.y, z: hw.pos.z, d: 520, p: 7.5 };
+    const rv = SS.reactq && !ctl ? SS.reactq.visit(S) : null, rw = rv ? S.worms[rv.id] : null;      // P85: the affected worms, one after the other, in the order they speak
+    if (rw && rw.dead) { const g = rw.grave || rw.pos; return { key: 'death' + rw.id, x: g.x, y: g.y, z: g.z, d: 520, p: 7.6 }; }
+    if (rw) return { key: 'hurt' + rw.id, x: rw.pos.x, y: rw.pos.y, z: rw.pos.z, d: 520, p: 7.5 };
     if (S.eow && SS.eowView) { const lf = SS.eowView.lostFocus(S); if (lf) return lf; }   // P68d: a shell lost to space: the camera holds
     if (S.proj.length) {
       if (S.proj.length > 1) {
@@ -285,10 +284,10 @@
       const p = S.proj[0], sp = Math.hypot(p.vs, p.vy), cin = SS.cine && SS.cine.enabled, ld = cin ? 0.2 : 0.12, c = at(p.s + p.vs * ld, p.y + p.vy * ld);
       return { key: 'proj' + (p.id || 0), x: c.x, y: c.y, z: c.z, d: M.clamp(560 + sp / PX * 0.3, 560, cin ? 980 : 860), p: 7 };   // P63: a long shot zooms out a little more
     }
-    if (S.crates && S.phase !== 'place') for (const c of S.crates) if (!c.landed && !c.held && c.pos) return { key: 'crate' + c.id, x: c.pos.x, y: c.pos.y - 0.5, z: c.pos.z, d: 560, p: 6.5 };     // P75: a supply drop is followed down to the ground
-    if (S.moais) for (const m of S.moais) { const b = SS.bodies.by_id(S, m.body); if (b && Math.hypot(b.vel.x, b.vel.y, b.vel.z) > 25 * PX) return { key: 'moai', x: b.pos.x, y: b.pos.y, z: b.pos.z, d: 640, p: 6 }; }
+    // P85: no camera interest for falling crates (user: "you randomly move camera away to show some crate, thats stupid"): ui/offscreen.js shows an edge arrow instead
+    if (!ctl && S.moais) for (const m of S.moais) { const b = SS.bodies.by_id(S, m.body); if (b && Math.hypot(b.vel.x, b.vel.y, b.vel.z) > 25 * PX) return { key: 'moai', x: b.pos.x, y: b.pos.y, z: b.pos.z, d: 640, p: 6 }; }
     const ex = S.lastExplosion;
-    if (ex && S.time - (S.lastBlastT == null ? -99 : S.lastBlastT) < 1.4 && ex.R >= 14 * PX) return { key: 'boom' + S.lastBlastT.toFixed(2), x: ex.x, y: ex.y, z: ex.z, d: M.clamp(470 + ex.R / PX * 4.5, 540, 1050), p: 6 };
+    if (!ctl && ex && S.time - (S.lastBlastT == null ? -99 : S.lastBlastT) < 1.4 && ex.R >= 14 * PX) return { key: 'boom' + S.lastBlastT.toFixed(2), x: ex.x, y: ex.y, z: ex.z, d: M.clamp(470 + ex.R / PX * 4.5, 540, 1050), p: 6 };
     if (S.phase === 'play' && a && !a.dead) return { key: 'active', x: a.pos.x, y: a.pos.y, z: a.pos.z, d: 0, p: 5 };
     let fw = null, fs = 150 * PX;                 // a thrown worm (PoC 150 px/s; worms fly at the PoC gravity here)
     for (const w of S.worms) if (!w.dead && !w.rest && w !== a && w.vel) { const sp = Math.hypot(w.vel.x, w.vel.y, w.vel.z); if (sp > fs) { fs = sp; fw = w; } }
@@ -622,10 +621,9 @@
     const camDist = view.zoom;
     for (const e of S.events) {
       SS.sim.event_bind(S, e);                                  // R7 P2: the sim's events carry worm ids; the view code reads e.worm
+      if (SS.reactq) SS.reactq.onEvent(S, e);                   // P85: who may speak after an attack, and the camera visits
       switch (e.type) {
-        case 'reset': clearActors(); hurtId = -1; deathId = -1; break;
-        case 'kill': if (e.worm) { deathId = e.worm.id; deathT = view.time; } break;
-        case 'hurt': if (e.worm && !e.dot) { hurtId = e.worm.id; hurtT = view.time; } break;   // the camera follows the damage (interest)
+        case 'reset': clearActors(); break;
         case 'explode': if (SS.bodyView && SS.bodyView.noteBlast) SS.bodyView.noteBlast(e);
           SS.fx.env.S = S; SS.fx.env.biome = S.biome; SS.fx.env.tod = view.tod; SS.fx.env.under = !!(SS.world.under || SS.world.eow); SS.fx.env.vac = !!SS.world.eow; SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
         case 'splash': SS.fx.splash(e.x, e.y, e.z, e.size); if (SS.waterView) SS.waterView.onEvent(e); break;
@@ -720,7 +718,7 @@
     SS.fx.env.wx = wind && wind.mean ? wind.mean.x : 0; SS.fx.env.wz = wind && wind.mean ? wind.mean.z : 0;
     SS.grass.frame(S, view.time, wind ? wind.mean : null, wind ? wind.whirls : null, S.weather ? S.weather.snowCover : 0);
     if (SS.clutterView) SS.clutterView.frame(S, view, wind ? wind.mean : null);
-    outlineMat.uniforms.uTime.value = view.time; outlineMat.uniforms.uAlpha.value = (0.55 + 0.45 * (1 - insp)) * (1 - edgeA);
+    outlineMat.uniforms.uTime.value = view.time; outlineMat.uniforms.uAlpha.value = (0.55 + 0.45 * (1 - insp)) * (1 - edgeA) * (1 - insp);   // (P85: the overview draws its own yellow cut, render/seccut.js)
     outline.visible = edgeA < 0.999;
     if (water) water.material.uniforms.uTime.value = view.time;
 
@@ -730,13 +728,15 @@
     if (a && !a.dead && (a.walking || a.air || S.charging || S.proj.length) && (view.pan.s || view.pan.y)) { const k = Math.exp(-dtU * 5); view.pan.s *= k; view.pan.y *= k; if (Math.abs(view.pan.s) + Math.abs(view.pan.y) < 0.05) view.pan.s = view.pan.y = 0; }
     // PoC camera director (interest() / updateCamera): the most interesting thing wins by priority, a new interest of
     // the same or lower priority takes over only after 1.2 s; zoom = the PoC distance / its default 640 px x the user's
+    if (SS.reactq) SS.reactq.frame(S, dtU);
     const it = interest(S, a), dr = view.dir, cin = SS.cine && SS.cine.enabled, prevKey = dr.cur ? dr.cur.key : '';
     dr.since += dtU;
     if (it && (!dr.cur || it.key === dr.cur.key || it.p > dr.cur.p || dr.since > 1.2 || (dr.cur.key.startsWith('proj') && it.key.startsWith('boom')) || (S.phase === 'play' && it.key === 'active'))) { if (!dr.cur || it.key !== dr.cur.key) dr.since = 0; dr.cur = it; }
     else if (!it && dr.cur && dr.since > 1.2) dr.cur = null;
     const cur = view.lock || dr.cur || { key: 'active', x: a ? a.pos.x : SS.world.MX, y: a ? a.pos.y : 10, z: a ? a.pos.z : SS.world.MZ, d: 0, p: 0 };
     const co = cin ? SS.cine.frame(S, dtU, cur.key, view) : null;                    // P63: the cinematic moves on top of the director
-    const pk = cur.key === 'active' ? 1 : 0, fx = cur.x + d.x * view.pan.s * pk, fy = cur.y + 1.2 + view.pan.y * pk + (co ? co.dy : 0), fz = cur.z + d.z * view.pan.s * pk;
+    const pk = cur.key === 'active' ? 1 : 0, Wd = SS.world, oi = Wd && !Wd.flat ? insp : 0;   // P85: the overview (V) frames the WHOLE map: the focus slides to the world centre, the distance grows to fit it
+    const fx = cur.x + d.x * view.pan.s * pk + (Wd ? (Wd.MX - cur.x) * oi : 0), fy = cur.y + 1.2 + view.pan.y * pk + (co ? co.dy : 0) + (Wd ? (Wd.SY * 0.3 - cur.y) * oi : 0), fz = cur.z + d.z * view.pan.s * pk + (Wd ? (Wd.MZ - cur.z) * oi : 0);
     applyAutoZoom();
     // active: a charging shot / a target pick pulls the view back a little so the flight and the target stay in frame; an event (shell, blast, death) frames x1.4 of the default
     const pull = cur.key === 'active' && a && S.phase === 'play' ? (SS.CFG.ARSENAL[S.weapon] && SS.CFG.ARSENAL[S.weapon].kind === 'target' ? 1.6 : S.charging ? 1.35 : 1) : 1;
@@ -748,7 +748,13 @@
     if (tp) view.camT.copy(tp); else view.camT.lerp(v4.set(fx, fy, fz), 1 - Math.exp(-dtU * rate));
     view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dtU * 2.4));
     if (insp < 0.05) { view.orbit.yaw *= Math.exp(-dtU * 4); view.orbit.tilt *= Math.exp(-dtU * 4); }
-    const tilt = 0.2 + insp * (0.5 + view.orbit.tilt), yaw = insp * (0.55 + view.orbit.yaw) + (co && insp < 0.05 ? co.yaw : 0), dist = M.max(co ? 7 : 0, (view.camZ || view.zoom) * (1 + insp * 0.9) * (co ? co.k : 1));
+    const tilt = 0.2 + insp * (0.5 + view.orbit.tilt), yaw = insp * (0.55 + view.orbit.yaw) + (co && insp < 0.05 ? co.yaw : 0), dist0 = M.max(co ? 7 : 0, (view.camZ || view.zoom) * (1 + insp * 0.9) * (co ? co.k : 1)), fitD = oi > 0 && Wd ? 0.52 * Math.hypot(Wd.SX, Wd.SZ) / Math.tan(camera.fov * Math.PI / 360) * (camera.aspect < 1.3 ? 1.3 / camera.aspect : 1) : 0, dist = dist0 + (M.max(dist0, fitD) - dist0) * oi;
+    // P85 (user: "when zooming out dont multiply the fog ... player wants to see more of the map not more of the fog"): the fog / haze / weather
+    // density is keyed to the DEFAULT camera distance, not the real one: fogK = default / actual distance, so the play area looks the same at any
+    // zoom (only what lies farther than the focus fades more); the overview (V) clears the haze fully
+    if (SS.secCut) SS.secCut.frame(S, view, camera, insp, dist);
+    view.fogK = M.clamp((view.autoZ || view.zoom) / Math.max(dist, 1), 0.04, 1) * (1 - 0.9 * insp);
+    SS.terrain.uniforms.uCtxHaze.value = (V.slice === 'full' ? 0 : 1) * (1 - insp);
     const cy = Math.cos(yaw), sy = Math.sin(yaw), bx = n.x * cy + d.x * sy, bz = n.z * cy + d.z * sy;
     camera.position.set(view.camT.x + bx * dist * Math.cos(tilt), view.camT.y + dist * Math.sin(tilt), view.camT.z + bz * dist * Math.cos(tilt));
     camera.lookAt(view.camT);
@@ -782,6 +788,7 @@
     if (SS.waterView) SS.waterView.frame(S, view, camera);
     if (SS.dunesView) SS.dunesView.frame(S, view);
     if (SS.weatherView) SS.weatherView.frame(S, view, camera, dt);
+    if (SS.world.under && insp > 0.02) hemi.intensity += insp * 2.2;       // P85: the overview of a cave world is lit: the whole map has to be readable (the cave dark is for the play view)
     if (SS.lifeView) SS.lifeView.frame(S, view, camera, dt);
     if (SS.trailView) SS.trailView.frame(S, view, camera, dt);
     if (SS.farView) SS.farView.frame(view.time);

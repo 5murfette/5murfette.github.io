@@ -102,11 +102,13 @@
     g.userData = { tilt, P, lens, beam, fan, scan, flash, echoes, spot, fireT: -9, spinA: 0, spinV: 0, model: mo };
     return g;
   }
-  const tiltAx = new T.Vector3(), ringZ = new T.Vector3(0, 0, 1), ringN = new T.Vector3();       // scratch (P38 R1)
+  const sFr = {}, tiltAx = new T.Vector3(), ringZ = new T.Vector3(0, 0, 1), ringN = new T.Vector3();       // scratch (P38 R1)
   function sentryFrame(S, s, m, t, view) {
     const u = m.userData;
     m.position.set(s.pos.x, s.pos.y, s.pos.z);
-    if (SS.groundView && s.state === 0) {                                 // P65b: the tripod leans with the slope (<= 11 deg) and sinks to its lowest foot; a contact shadow
+    if (S.eow) {                                                          // P86: End of the World: the tripod stands on its local up (the pull's opposite), not the camera's
+      const F = SS.eow.frame(s.eu, sFr); mBasis.makeBasis(vX.set(F.e1x, F.e1y, F.e1z), vY.set(F.ux, F.uy, F.uz), vZ.set(F.e2x, F.e2y, F.e2z)); m.quaternion.setFromRotationMatrix(mBasis);
+    } else if (SS.groundView && s.state === 0) {                                 // P65b: the tripod leans with the slope (<= 11 deg) and sinks to its lowest foot; a contact shadow
       const GR = SS.groundView; if (!u.cf) u.cf = GR.cf(s.id);
       m.quaternion.identity(); GR.seat(u.cf, m, s.pos.x, s.pos.y, s.pos.z, 0, 0.36, 0.36, 0.55, 0.19, dtG, t); GR.blob(s.pos.x, s.pos.y - 0.02, s.pos.z, 0.8, 1);
     }
@@ -156,8 +158,8 @@
     const u = m.userData;
     m.position.set(c.pos.x, c.pos.y, c.pos.z); m.scale.setScalar(1.5);
     vX.set(c.dir.x, c.dir.y, c.dir.z); vZ.set(c.pn.x, 0, c.pn.z); vY.crossVectors(vZ, vX).normalize(); vZ.crossVectors(vX, vY).normalize();
-    if (c.attach === 0 && c.nrm && c.nrm.y > 0.75) {                                       // P65b: lying on the ground: the case sits on the slope (its up = the ground normal), not upright on it
-      vY.set(c.nrm.x, c.nrm.y, c.nrm.z).lerp(vUp, 0.2).normalize(); vX.set(c.dir.x, 0, c.dir.z); vX.addScaledVector(vY, -vX.dot(vY)).normalize(); vZ.crossVectors(vX, vY);
+    if (c.attach === 0 && c.nrm && (c.nrm.y > 0.75 || S.eow)) {                           // P65b: lying on the ground: the case sits on the slope (its up = the ground normal), not upright on it (P86: in space on any side: up = its surface's, nothing pulled toward the world's up)
+      vY.set(c.nrm.x, c.nrm.y, c.nrm.z).lerp(vUp, S.eow ? 0 : 0.2).normalize(); if (S.eow) vX.set(c.dir.x, c.dir.y, c.dir.z); else vX.set(c.dir.x, 0, c.dir.z); vX.addScaledVector(vY, -vX.dot(vY)).normalize(); vZ.crossVectors(vX, vY);
     }
     mBasis.makeBasis(vX, vY, vZ); m.quaternion.setFromRotationMatrix(mBasis);
     if (c.attach === 0 && SS.groundView) SS.groundView.blob(c.pos.x, c.pos.y - 0.12, c.pos.z, 0.55, 1);
@@ -236,7 +238,7 @@
       case 'punch': SS.fx.dust(e.worm.pos.x, e.worm.pos.y - 0.45, e.worm.pos.z, 4, 0.4, 0xb8a080); break;
       case 'grab': ring(e.x, e.y, e.z, 0x9fe8ff, 0.2, 1.4, 0.45); break;
       case 'cratehit': for (let i = 0; i < 10; i++) SS.fx.spark(e.x, e.y, e.z); SS.fx.dust(e.x, e.y, e.z, 5, 0.5, 0xb89a6a); break;                    // P38-A4: a thrown supply crate hits a worm
-      case 'cratedrop': SS.fx.dust(e.x, e.y - 0.3, e.z, Math.min(8, 2 + Math.floor(e.v * 0.4)), 0.5, 0xb8a080); break;
+      case 'cratedrop': if (!SS.world.eow) SS.fx.dust(e.x, e.y - 0.3, e.z, Math.min(8, 2 + Math.floor(e.v * 0.4)), 0.5, 0xb8a080); break;
       case 'gravthrow': ring(e.x, e.y, e.z, 0x9fe8ff, 0.3, 2.0, 0.4); SS.fx.dust(e.x, e.y, e.z, 4, 0.3, 0xcfefff); break;
     }
   };

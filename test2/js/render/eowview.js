@@ -42,19 +42,20 @@
     }
     void main(){
       vec3 d = normalize(vD), q = uRot * d;
-      vec3 col = vec3(0.004, 0.005, 0.013);
+      vec3 col = vec3(0.003, 0.0035, 0.009);
       float band = exp(-pow(dot(q, normalize(vec3(0.3, 0.9, 0.25))) / 0.3, 2.0));
-      float n1 = fbm(q * 2.1 + vec3(0.0, uTime * 0.003, 0.0)), n2 = fbm(q * 4.7 + 11.0), dust = 0.55 + 0.9 * fbm(q * 9.0 + 3.0);
-      col += (mix(vec3(0.02, 0.03, 0.08), vec3(0.42, 0.09, 0.28), smoothstep(0.35, 0.8, n1)) * band * 1.1
-            + vec3(0.04, 0.26, 0.34) * smoothstep(0.5, 0.9, n2) * band * 0.55
-            + vec3(0.9, 0.33, 0.12) * pow(smoothstep(0.55, 0.95, n1 * n2 * 1.9), 2.0) * band * 0.45) * dust * 0.55;
-      col += starLayer(q, 28.0, 0.93, 0.19, 2.2) + starLayer(q, 70.0, 0.945, 0.19, 1.5) + starLayer(q, 170.0, 0.965, 0.19, 1.1);
-      col += vec3(0.03, 0.05, 0.1) * band * smoothstep(0.55, 0.9, vn(q * 120.0));
+      float n1 = fbm(q * 2.1 + vec3(0.0, uTime * 0.0015, 0.0)), n2 = fbm(q * 4.7 + 11.0), dust = 0.55 + 0.9 * fbm(q * 9.0 + 3.0);
+      // P86: the backdrop must not compete with the playfield: a dark, desaturated nebula, a few dim stars
+      col += (mix(vec3(0.016, 0.02, 0.04), vec3(0.17, 0.1, 0.15), smoothstep(0.35, 0.8, n1)) * band * 0.75
+            + vec3(0.05, 0.1, 0.13) * smoothstep(0.5, 0.9, n2) * band * 0.3
+            + vec3(0.3, 0.2, 0.14) * pow(smoothstep(0.55, 0.95, n1 * n2 * 1.9), 2.0) * band * 0.12) * dust * 0.32;
+      col += starLayer(q, 28.0, 0.972, 0.17, 1.0) + starLayer(q, 70.0, 0.982, 0.17, 0.7) + starLayer(q, 170.0, 0.99, 0.17, 0.55);
+      col += vec3(0.02, 0.03, 0.06) * band * smoothstep(0.6, 0.9, vn(q * 120.0)) * 0.5;
       // the asteroid belt: a thin great circle of specks and dust
       float bn = dot(d, uBeltN), bb = exp(-pow(bn / 0.04, 2.0));
       vec3 bp = d * 230.0, bi = floor(bp); float bh = h13(bi + 5.0);
-      col += vec3(0.75, 0.62, 0.5) * bb * smoothstep(0.55, 0.9, bh) * smoothstep(0.3, 0.0, length(fract(bp) - 0.5)) * 2.2;
-      col += vec3(0.16, 0.11, 0.08) * bb * (0.4 + fbm(d * 26.0)) * 0.5;
+      col += vec3(0.75, 0.62, 0.5) * bb * smoothstep(0.65, 0.95, bh) * smoothstep(0.3, 0.0, length(fract(bp) - 0.5)) * 0.8;
+      col += vec3(0.16, 0.11, 0.08) * bb * (0.4 + fbm(d * 26.0)) * 0.18;
       // the moon: a dark body lit by the sun
       float cm = dot(d, uMoon), rad = 0.075, crad = cos(rad);
       if (cm > crad - 0.002) {
@@ -62,7 +63,7 @@
         vec2 uv = vec2(dot(d, t1), dot(d, t2)) / sin(rad); float r2 = dot(uv, uv);
         vec3 nr = normalize(t1 * uv.x + t2 * uv.y + uMoon * sqrt(max(0.0, 1.0 - r2)));
         float lit = max(dot(nr, uSun), 0.0), tex = fbm(nr * 5.0 + 3.0), cr = smoothstep(0.55, 0.7, fbm(nr * 11.0));
-        vec3 mc = mix(vec3(0.05, 0.045, 0.05), vec3(0.62, 0.56, 0.5), tex) * (1.0 - 0.35 * cr) * lit * 1.5 + vec3(0.012, 0.014, 0.025);
+        vec3 mc = mix(vec3(0.05, 0.045, 0.05), vec3(0.62, 0.56, 0.5), tex) * (1.0 - 0.35 * cr) * lit * 1.1 + vec3(0.008, 0.01, 0.018);
         col = mix(col, mc, smoothstep(crad - 0.002, crad + 0.0007, cm));
       }
       // the sun: a disc, an aureole and a corona
@@ -225,18 +226,18 @@
     G.dome = new T.Mesh(new T.SphereGeometry(500, 48, 24), skyMat); G.dome.renderOrder = -11; G.dome.frustumCulled = false; scene.add(G.dome); G.objs.push(G.dome);
     // far debris: an asteroid ring about the core, far silhouettes, near scrap
     const rng = M.rng_make(0x5eed), rr = (a, b) => M.rng_range(rng, a, b);
-    const N = 230 + 48, geo = lump(new T.IcosahedronGeometry(1, 2), 3), mat = new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0.05, flatShading: true });
+    const N = 50 + 10, geo = lump(new T.IcosahedronGeometry(1, 3), 3), mat = new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0.05, flatShading: true });
     const im = new T.InstancedMesh(geo, mat, N); im.frustumCulled = false; im.castShadow = false; im.receiveShadow = false;
     const col = new T.Color();
     G.deb = [];
+    // P86: only pure background is drawn here (out of reach: an asteroid ring 70-150 m from the core, outside the 96 m box, and big far silhouettes); every rock inside the box
+    // is a real voxel body in the sim (landable, gravity by mass), so the scrap that spun in place and the orbiters are gone. They turn slowly, nothing can stand on them.
     for (let i = 0; i < N; i++) {
-      const kind = i < 130 ? 0 : i < 165 ? 1 : i < 230 ? 2 : 3, d = { kind, ax: new T.Vector3(rr(-1, 1), rr(-1, 1), rr(-1, 1)).normalize(), w: rr(0.05, 0.5) * (rr(0, 1) < 0.5 ? -1 : 1), q0: rr(0, 6.28) };
-      if (kind === 0) { d.r = rr(70, 150); d.th = rr(0, 6.2832); d.y = rr(-9, 9); d.sc = rr(0.5, 2.4) * (rr(0, 1) < 0.08 ? 2.5 : 1); d.om = rr(0.004, 0.011); }
-      else if (kind === 1) { const u = rr(-1, 1), a = rr(0, 6.2832), s = Math.sqrt(1 - u * u), r = rr(70, 190); d.px = Math.cos(a) * s * r; d.py = u * r * 0.6; d.pz = Math.sin(a) * s * r; d.sc = rr(2.5, 8); d.om = 0; }
-      else if (kind === 3) { d.ax.set(rr(-0.45, 0.45), 1, rr(-0.45, 0.45)).normalize(); d.rf = rr(1.0, 1.4); d.sc = rr(0.22, 0.75); d.w = rr(0.12, 0.34) * (rr(0, 1) < 0.5 ? -1 : 1); d.om = rr(0, 6.28); d.spin = new T.Vector3(rr(-1, 1), rr(-1, 1), rr(-1, 1)).normalize(); d.spinW = rr(0.2, 0.9); }
-      else { d.px = rr(4, 92); d.py = rr(3, 38); d.pz = rr(4, 92); d.sc = rr(0.12, 0.45); d.vx = rr(-0.25, 0.25); d.vy = rr(-0.18, 0.18); d.vz = rr(-0.25, 0.25); d.om = 0; }
+      const kind = i < 50 ? 0 : 1, d = { kind, ax: new T.Vector3(rr(-1, 1), rr(-1, 1), rr(-1, 1)).normalize(), w: rr(0.02, 0.14) * (rr(0, 1) < 0.5 ? -1 : 1), q0: rr(0, 6.28) };
+      if (kind === 0) { d.r = rr(70, 150); d.th = rr(0, 6.2832); d.y = rr(-9, 9); d.sc = rr(0.5, 2.4) * (rr(0, 1) < 0.08 ? 2.5 : 1); d.om = rr(0.0015, 0.0045); }
+      else { const u = rr(-1, 1), a = rr(0, 6.2832), s = Math.sqrt(1 - u * u), r = rr(70, 190); d.px = Math.cos(a) * s * r; d.py = u * r * 0.6; d.pz = Math.sin(a) * s * r; d.sc = rr(2.5, 8); d.om = 0; }
       const t = rr(0, 1);
-      col.setRGB(0.28 + 0.2 * t, 0.23 + 0.14 * t, 0.2 + 0.1 * t); if (rr(0, 1) < 0.12) col.setRGB(0.32, 0.34, 0.38);
+      col.setRGB(0.2 + 0.14 * t, 0.165 + 0.1 * t, 0.145 + 0.07 * t); if (rr(0, 1) < 0.12) col.setRGB(0.22, 0.24, 0.27);
       im.setColorAt(i, col); G.deb.push(d);
     }
     scene.add(im); G.im = im; G.objs.push(im); G.dummy = new T.Object3D(); G.q = new T.Quaternion();
@@ -530,15 +531,16 @@
       for (let i = 0; i < D.list.length; i++) {
         const p = D.list[i], a = p.age / p.life;
         if (p.kind !== 3 && !p.rest) {
-          if (p.kind !== 0) { E.field(S, p.x, p.y, p.z, fieldv); const g = C.G * (p.kind === 2 ? 0.25 : 0.7) * dt; p.vx += fieldv.x * g; p.vy += fieldv.y * g; p.vz += fieldv.z * g; }
+          if (p.kind !== 0 && p.kind !== 4) { E.field(S, p.x, p.y, p.z, fieldv); const g = C.G * (p.kind === 2 ? 0.25 : 0.7) * dt; p.vx += fieldv.x * g; p.vy += fieldv.y * g; p.vz += fieldv.z * g; }
           const nx = p.x + p.vx * dt, ny = p.y + p.vy * dt, nz = p.z + p.vz * dt;
-          if (p.kind !== 0 && W.sample(nx, ny, nz) > 0) { p.rest = true; p.vx = p.vy = p.vz = 0; if (p.kind === 1) p.life = Math.min(p.life, p.age + 2.5); }
+          if (p.kind !== 0 && p.kind !== 4 && W.sample(nx, ny, nz) > 0) { p.rest = true; p.vx = p.vy = p.vz = 0; if (p.kind === 1) p.life = Math.min(p.life, p.age + 2.5); }
           else { p.x = nx; p.y = ny; p.z = nz; }
-          if (p.kind === 0 && W.sample(p.x, p.y, p.z) > 0) { p.rest = true; p.life = Math.min(p.life, p.age + 0.25); }
+          if ((p.kind === 0 || p.kind === 4) && W.sample(p.x, p.y, p.z) > 0) { p.rest = true; p.life = Math.min(p.life, p.age + 0.1); }
         }
         const o = n * 3, c4 = n * 4;
         D.pos[o] = p.x; D.pos[o + 1] = p.y; D.pos[o + 2] = p.z;
         if (p.kind === 0) { tempCol(1 - a * 0.95, tc); const al = (1 - a) * (1 - a); D.col[c4] = tc[0]; D.col[c4 + 1] = tc[1]; D.col[c4 + 2] = tc[2]; D.col[c4 + 3] = al; D.sz[n] = p.size * (1 - 0.5 * a); }
+        else if (p.kind === 4) { const f = 1 - a; D.col[c4] = 0.5 + 1.5 * f * f; D.col[c4 + 1] = 0.85 + 0.9 * f; D.col[c4 + 2] = 0.5 + 2.0 * f; D.col[c4 + 3] = f * f * 0.85; D.sz[n] = p.size * (0.7 + 0.9 * a); }    // P86: a thruster plume: pale blue-white, widening and fading
         else if (p.kind === 1) { D.col[c4] = p.r; D.col[c4 + 1] = p.g; D.col[c4 + 2] = p.b; D.col[c4 + 3] = 1 - M.smoothstep(0.8, 1, a) + (p.rest ? -0.0 : 0); D.sz[n] = p.size; }
         else if (p.kind === 2) {                        // globule: cools yellow -> red -> a black bead (the glow is the additive system, the bead the opaque one)
           const k = M.max(0, 1 - p.age / 9);
@@ -662,36 +664,23 @@
     SS.terrain.capEow(true);
     lamp.intensity = 0; hotLights(S, view, ctx, G);
     const c = e.core;
-    // debris: the far ring precesses (its plane wobbles slowly), the far silhouettes turn about the core, small scrap drifts, and orbiters circle the chunks
-    // (all presentation: the chunks themselves stay in the sim's lattice, see docs/notes/P68c.md "Rotation")
-    const d0 = G.dummy, im = G.im, q = G.q, pl = SS.world.features && SS.world.features.eow, nch = pl ? pl.chunks.length : 0;
-    const pa = 0.075 * M.sin(t * 0.011), pb = 0.09 * M.sin(t * 0.0083 + 1.0), ca = M.cos(pa), sa = M.sin(pa), cb = M.cos(pb), sb = M.sin(pb), yaw = t * 0.0016, cy = M.cos(yaw), sy = M.sin(yaw);
+    // far background only (P86): the ring precesses very slowly, the far silhouettes turn about the core (all presentation; every near rock is a sim body)
+    const d0 = G.dummy, im = G.im, q = G.q;
+    const pa = 0.03 * M.sin(t * 0.004), pb = 0.036 * M.sin(t * 0.003 + 1.0), ca = M.cos(pa), sa = M.sin(pa), cb = M.cos(pb), sb = M.sin(pb), yaw = t * 0.0006, cy = M.cos(yaw), sy = M.sin(yaw);
     for (let i = 0; i < G.deb.length; i++) {
-      const d = G.deb[i]; let vis = 1;
+      const d = G.deb[i];
       if (d.kind === 0) {
         const an = d.th + t * d.om; let x = M.cos(an) * d.r, y = d.y + M.sin(an * 1.7 + d.q0) * 1.5, z = M.sin(an) * d.r;
         const y1 = y * ca - z * sa, z1 = y * sa + z * ca; y = y1 * cb - x * sb; x = y1 * sb + x * cb; z = z1;   // tilt about x, then about z
         d0.position.set(c.x + x, c.y + y, c.z + z);
-      } else if (d.kind === 1) d0.position.set(c.x + d.px * cy - d.pz * sy, c.y + d.py, c.z + d.px * sy + d.pz * cy);
-      else if (d.kind === 2) d0.position.set(d.px + d.vx * M.sin(t * 0.07 + d.q0) * 40, d.py + d.vy * M.sin(t * 0.05 + d.q0) * 40, d.pz + d.vz * M.sin(t * 0.06 + d.q0) * 40);
-      else {
-        if (!nch) vis = 0;
-        else {
-          const ch = pl.chunks[i % nch], ro = d.rf * (M.max(ch.rx, ch.rz) + 4.4), a = d.om + t * d.w, n = d.ax;
-          let ux = n.y, uy = -n.x; const uz = 0, ul = M.len3(ux, uy, uz) || 1; ux /= ul; uy /= ul;   // u = n x (0,0,1) normalised
-          const vx = n.y * uz - n.z * uy, vy = n.z * ux - n.x * uz, vz = n.x * uy - n.y * ux, ca2 = M.cos(a) * ro, sa2 = M.sin(a) * ro;
-          const px = ch.x + ux * ca2 + vx * sa2, py = ch.y + uy * ca2 + vy * sa2, pz = ch.z + uz * ca2 + vz * sa2;
-          d0.position.set(px, py, pz);
-          vis = 1 - M.smoothstep(-1.5, 0.3, SS.world.sample(px, py, pz));            // a piece that dives into rock shrinks away
-        }
-      }
-      if (d.kind === 3) q.setFromAxisAngle(d.spin, d.q0 + d.spinW * t); else q.setFromAxisAngle(d.ax, d.q0 + d.w * t);
-      d0.quaternion.copy(q); d0.scale.set(d.sc * vis, d.sc * vis * (0.7 + 0.3 * M.sin(d.q0 * 3)), d.sc * vis * 1.2);
+      } else d0.position.set(c.x + d.px * cy - d.pz * sy, c.y + d.py, c.z + d.px * sy + d.pz * cy);
+      q.setFromAxisAngle(d.ax, d.q0 + d.w * t);
+      d0.quaternion.copy(q); d0.scale.set(d.sc, d.sc * (0.7 + 0.3 * M.sin(d.q0 * 3)), d.sc * 1.2);
       d0.updateMatrix(); im.setMatrixAt(i, d0.matrix);
     }
     im.instanceMatrix.needsUpdate = true;
     fxFrame(S, view, camera, ctx, G);
-    EV.S = S; dynInit(G, ctx); { const dtp = M.clamp(view.time - (G.dynT == null ? view.time : G.dynT), 0, 0.1); G.dynT = view.time; dynStep(S, G, dtp); }
+    EV.S = S; dynInit(G, ctx); { const dtp = M.clamp(view.time - (G.dynT == null ? view.time : G.dynT), 0, 0.1); G.dynT = view.time; plumes(S, G, dtp); dynStep(S, G, dtp); }
     G.dynA.pts.material.uniforms.uScale.value = G.dynN.pts.material.uniforms.uScale.value = camera.projectionMatrix.elements[5] * ctx.renderer.domElement.height * 0.5;
     arrow(S, camera, ctx);
     view.eowSun = LOOK.sunDir;
@@ -710,6 +699,48 @@
     r.lamp.color.setHex(saved.lamp[0]); r.lamp.distance = saved.lamp[1]; r.lamp.decay = saved.lamp[2];
   };
 
+  /* ---------- placed objects on their local up (P86) ---------- */
+  const qA = new T.Quaternion(), qB = new T.Quaternion(), vA = new T.Vector3(), vY = new T.Vector3(0, 1, 0), vC = new T.Vector3();
+  // an object on its surface: the model's +y along u (the pull's opposite), then turned by yaw about it; lift = metres along u
+  EV.seat = function (m, u, yaw, lift, pos) {
+    const ux = u ? u.x : 0, uy = u ? u.y : 1, uz = u ? u.z : 0;
+    vA.set(ux, uy, uz); qA.setFromUnitVectors(vY, vA); qB.setFromAxisAngle(vY, yaw); m.quaternion.copy(qA).multiply(qB);
+    m.position.set(pos.x + ux * lift, pos.y + uy * lift, pos.z + uz * lift);
+  };
+  // a stone: its +y along u, its face (+z) turned to the camera side (nrm = the section normal) as far as the up allows
+  EV.seatFacing = function (m, u, nrm, pos) {
+    const ux = u ? u.x : 0, uy = u ? u.y : 1, uz = u ? u.z : 0;
+    vA.set(ux, uy, uz); qA.setFromUnitVectors(vY, vA);
+    vC.set(0, 0, 1).applyQuaternion(qA);                                     // where the face points now
+    let tx = nrm.x - ux * (nrm.x * ux + nrm.z * uz), ty = -uy * (nrm.x * ux + nrm.z * uz), tz = nrm.z - uz * (nrm.x * ux + nrm.z * uz);
+    const tl = Math.hypot(tx, ty, tz);
+    if (tl > 0.05) { tx /= tl; ty /= tl; tz /= tl; const cs = vC.x * tx + vC.y * ty + vC.z * tz, sn = (vC.y * tz - vC.z * ty) * ux + (vC.z * tx - vC.x * tz) * uy + (vC.x * ty - vC.y * tx) * uz; qB.setFromAxisAngle(vA, Math.atan2(sn, cs)); qA.premultiply(qB); }
+    m.quaternion.copy(qA); m.position.set(pos.x, pos.y, pos.z);
+  };
+  // a supply crate in space: no canopy; adrift it tumbles slowly (weightless), landed it turns smoothly onto its surface's up
+  EV.crate = function (m, c, t, dt) {
+    const u = m.userData; if (!u.eq) { u.eq = new T.Quaternion(); u.eqInit = false; }
+    const ph = c.id * 1.7;
+    vC.set(Math.sin(ph), Math.cos(ph * 1.3), Math.sin(ph * 2.1) + 0.3).normalize();
+    if (c.landed) {
+      const up = c.eUp || { x: 0, y: 1, z: 0 }; vA.set(up.x, up.y, up.z); qA.setFromUnitVectors(vY, vA); qB.setFromAxisAngle(vY, c.id * 0.7); qA.multiply(qB);
+      if (!u.eqInit) { u.eq.copy(qA); u.eqInit = true; } else u.eq.slerp(qA, 1 - Math.exp(-(dt || 1 / 60) * 7));
+    } else { u.eq.setFromAxisAngle(vC, ph + t * (0.25 + 0.15 * Math.sin(ph))); u.eqInit = false; }
+    m.quaternion.copy(u.eq); m.position.set(c.pos.x, c.pos.y, c.pos.z);
+  };
+  // the jetpack's plume of every thrusting worm (called each frame from frame())
+  function plumes(S, G, dt) {
+    if (!G.dynA) return;
+    for (const w of S.worms) {
+      if (w.dead || !(w.eJet > 0) || !w.eJd) continue;
+      const n = Math.round(dt * 160 + Math.random() - 0.5), d = w.eJd;
+      for (let i = 0; i < n; i++) {
+        const v = rnd(5, 9), jx = rnd(-0.9, 0.9), jy = rnd(-0.9, 0.9), jz = rnd(-0.9, 0.9);
+        dynPush(G.dynA, { kind: 4, x: w.pos.x - d.x * 0.5 + jx * 0.08, y: w.pos.y - d.y * 0.5 + jy * 0.08, z: w.pos.z - d.z * 0.5 + jz * 0.08, vx: -d.x * v + jx, vy: -d.y * v + jy, vz: -d.z * v + jz, age: 0, life: rnd(0.25, 0.5), size: rnd(0.2, 0.38), ph: 0 });
+      }
+    }
+  }
+
   /* ---------- worms ---------- */
   const gv = { x: 0, y: 0, z: 0 };
   // the soft solver is off in space: the animator's muscle pose, scaled like the solver's goal, is the drawn spine
@@ -722,6 +753,18 @@
     return OUT;
   };
   // the worm lies along the surface it is stuck to (grounded: its up; in flight: against the pull of the field)
+  // the draw facing (P86, sim E.look_face): the sim's facing is the screen side, the body is drawn along its own tangent: underside -> opposite, so the walk cycle runs forward
+  EV.face = function (S, w, v, f) {
+    const e = w.eu2; if (!e || !S.eow) return f;
+    const flying = w === S.active ? w.air : !w.rest;
+    v.eowF = SS.eow.look_face(w === S.active ? f : 1, e.y, w.eSense || 1, flying, v.eowF || 0);
+    return v.eowF;
+  };
+  // the aim in the worm's own frame (screen aim S.aim, sim facing fs, draw facing fr), plus v.tilt so that `aim - v.tilt` is the local angle
+  EV.aim = function (S, w, v, fs, fr) {
+    const e = w.eu2; if (!e) return S.aim;
+    return SS.eow.look_aim(S.aim, fs, fr, e.s, e.y) + (v.tilt || 0);
+  };
   EV.orient = function (S, w, v, f, dt) {
     const e = w.eu2; if (!e || !S.eow) return;
     const d = SS.plane.dir(S), a = S.active;

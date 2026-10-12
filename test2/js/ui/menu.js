@@ -101,7 +101,7 @@
   MN.LAB = LAB;
   const labBits = () => LAB.reduce((n, r) => n + (((cur.labFlags | 0) & C.LAB.FLAG[r.id]) ? 1 : 0), 0);
   /* settings keys the host sends to net guests (js/main.js adds them to its whitelist) */
-  MN.NET_KEYS = ['dim', 'fort', 'rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags'].concat(D.KEYS);
+  MN.NET_KEYS = ['dim', 'fort', 'rotLock', 'mineFuse', 'teamBlood', 'toolCrates', 'mapSize', 'labFlags', 'jetpacks'].concat(D.KEYS);
 
   /* P38 R6 (R2/R3): saved settings, URL parameters and net starts are untrusted data (an old build, a foreign key, a hand edit):
    * coerce every field into its legal range / type so the form and the generator never see a hole. Pure (tools/dev/gen/robusttest.cjs).

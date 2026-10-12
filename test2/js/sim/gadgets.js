@@ -274,6 +274,9 @@
     sim().explode(S, { x: s.pos.x, y: s.pos.y + 0.3, z: s.pos.z }, { W: 0.06, dmg: 6, name: 'a sentry gun' }, null);
   }
   const wrapA = a => M.wrap_angle(a);
+  const SFR = {}, sl0 = { x: 0, y: 0, z: 0 }, slv = { x: 0, y: 0, z: 0 };
+  // a world vector in the sentry's frame (P86): identity when F is null (the world's x, y, z)
+  const sloc = (F, x, y, z) => { if (F) return SS.eow.floc(F, x, y, z, slv); slv.x = x; slv.y = y; slv.z = z; return slv; };
   function stepSentry(S, s, dt) {
     const KS = K.SENTRY, w = W();
     // gravity: settles onto the ground (and into the water: shorts out)
@@ -292,14 +295,15 @@
       }
     }
     if (s.state === 2) { s.deadT += dt; return; }
-    const o = { x: s.pos.x, y: s.pos.y + KS.BEAM_Y, z: s.pos.z };
+    const F = S.eow ? SS.eow.frame(s.eu, SFR) : null;                                 // P86: in space the gun stands on its local up: yaw / pitch / the beam sheet are measured in that frame (the world's on flat ground)
+    const o = F ? { x: s.pos.x + F.ux * KS.BEAM_Y, y: s.pos.y + F.uy * KS.BEAM_Y, z: s.pos.z + F.uz * KS.BEAM_Y } : { x: s.pos.x, y: s.pos.y + KS.BEAM_Y, z: s.pos.z };
     s.cool = M.max(0, s.cool - dt);
     if (s.state === 1) {                                                              // erratic fire until the rounds are out
       s.erT -= dt;
       if (s.erT <= 0) {
         s.erT = rr(S, KS.ER0, KS.ER1);
         s.yaw = rr(S, -3.14159, 3.14159); s.pitch = rr(S, -0.25, 0.7);
-        const d = { x: M.cos(s.yaw) * M.cos(s.pitch), y: M.sin(s.pitch), z: M.sin(s.yaw) * M.cos(s.pitch) };
+        const d = F ? SS.eow.fdir(F, s.yaw, s.pitch, { x: 0, y: 0, z: 0 }) : { x: M.cos(s.yaw) * M.cos(s.pitch), y: M.sin(s.pitch), z: M.sin(s.yaw) * M.cos(s.pitch) };
         GD.round(S, { x: o.x, y: o.y - 0.25, z: o.z }, d, s.owner, KS.DMG); s.ammo--;
         sim().emit(S, 'sentryshot', { x: o.x, y: o.y, z: o.z });
         if (s.ammo <= 0) { s.state = 2; sim().log(S, 'The toppled sentry gun runs out of rounds.', 0xdfe8f1); }
@@ -311,9 +315,10 @@
     if (b.left > 0) {
       const tw = S.worms.find(q => q.id === b.target);
       const tp = tw ? { x: tw.pos.x, y: tw.pos.y, z: tw.pos.z } : null;
-      if (!tw || tw.dead || w.solid_len(o.x, o.y, o.z, tp.x, tp.y, tp.z) > 0.4 || M.len2(tp.x - o.x, tp.z - o.z) > KS.RANGE + 2) { b.left = 0; s.cool = KS.COOL; }
+      const lv = tp ? sloc(F, tp.x - o.x, tp.y - o.y, tp.z - o.z) : sl0;
+      if (!tw || tw.dead || w.solid_len(o.x, o.y, o.z, tp.x, tp.y, tp.z) > 0.4 || M.len2(lv.x, lv.z) > KS.RANGE + 2) { b.left = 0; s.cool = KS.COOL; }
       else {
-        const wantY = M.atan2(tp.z - o.z, tp.x - o.x), wantP = M.atan2(tp.y - o.y, M.len2(tp.x - o.x, tp.z - o.z));
+        const wantY = M.atan2(lv.z, lv.x), wantP = M.atan2(lv.y, M.len2(lv.x, lv.z));
         const dy = wrapA(wantY - s.yaw), st = KS.TURN * dt; s.yaw += Math.abs(dy) < st ? dy : Math.sign(dy) * st; s.pitch += (wantP - s.pitch) * M.min(1, 10 * dt);
         b.t -= dt;
         if (b.t <= 0 && Math.abs(dy) < KS.ALIGN) {
@@ -329,12 +334,12 @@
     }
     s.yaw = wrapA(s.yaw + s.spin * dt); s.pitch += (0 - s.pitch) * M.min(1, 6 * dt);
     // beam length (to the first terrain) for the render
-    { const d = { x: M.cos(s.yaw), y: 0, z: M.sin(s.yaw) }, h = GD.ray(S, o, d, KS.RANGE, { skip: -2, team: s.team, step: 0.3 }); s.beamLen = h && !h.worm ? h.t : KS.RANGE; }
+    { const d = F ? SS.eow.fdir(F, s.yaw, 0, { x: 0, y: 0, z: 0 }) : { x: M.cos(s.yaw), y: 0, z: M.sin(s.yaw) }, h = GD.ray(S, o, d, KS.RANGE, { skip: -2, team: s.team, step: 0.3 }); s.beamLen = h && !h.worm ? h.t : KS.RANGE; }
     if (s.cool > 0) return;
     for (const f of foesOf(S, s.team)) {
-      const dx = f.pos.x - o.x, dz = f.pos.z - o.z, r = M.len2(dx, dz);
+      const lv = sloc(F, f.pos.x - o.x, f.pos.y - o.y, f.pos.z - o.z), dx = lv.x, dz = lv.z, r = M.len2(dx, dz);
       if (r > KS.RANGE || r < 0.3) continue;
-      if (Math.abs(f.pos.y - o.y) > C.WORM_R + 0.12) continue;                            // the beam is a flat sheet: hop over it
+      if (Math.abs(lv.y) > C.WORM_R + 0.12) continue;                            // the beam is a flat sheet: hop over it
       const diff = Math.abs(wrapA(M.atan2(dz, dx) - s.yaw)), half = M.atan2(C.WORM_R, r) + 0.5 * Math.abs(s.spin) * dt;
       if (diff > half) continue;
       if (w.solid_len(o.x, o.y, o.z, f.pos.x, f.pos.y, f.pos.z) > 0.3) continue;          // behind cover
@@ -435,6 +440,7 @@
     else if (c.attach === 2) { const t = S.trees && S.trees.find(q => q.id === c.tree); ok = !!(t && t.alive && t.seg[c.seg] && t.seg[c.seg].on); }
     else ok = supported(S, c.pos.x, c.pos.y - 0.1, c.pos.z);
     if (!ok && S.eow) { if (!SS.eow.dev_fall(S, c, dt)) { S.claymores.splice(S.claymores.indexOf(c), 1); return; } }   // P68g: along the field
+    if (S.eow && c.attach === 0) SS.eow.clay_frame(S, c);                                    // P86: lies on its surface: up = the pull's opposite, the blast runs along it
     else if (!ok) {
       c.vy -= C.G * dt; c.pos.y += c.vy * dt;
       if (supported(S, c.pos.x, c.pos.y - 0.1, c.pos.z)) { c.attach = 0; c.vy = 0; c.nrm = { x: 0, y: 1, z: 0 }; }

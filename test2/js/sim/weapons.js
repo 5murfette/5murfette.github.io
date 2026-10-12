@@ -148,7 +148,8 @@
   /* The supply crate struct: C: struct Crate { i32 id; f32 t0; u8 kind (0 weapon, 1 health, 2 tool); u8 weapon, tool (ids, 255 none); vec3 pos; u8 landed, held;
    * u8 thrown; i16 by (the worm that threw it, -1 none); f32 pickT (that worm may not pick it up before), spin; vec3 vel (valid while thrown); } */
   WP.crate_make = function (S, kind, weapon, tool, pos) {
-    return { id: ++S.crateId, t0: S.time, kind, tool, weapon, pos, landed: false, held: false, thrown: 0, by: -1, pickT: 0, spin: 0, vel: null };
+    const c = { id: ++S.crateId, t0: S.time, kind, tool, weapon, pos, landed: false, held: false, thrown: 0, by: -1, pickT: 0, spin: 0, vel: null };
+    return S.eow ? SS.eow.crate_init(c) : c;                        // P86: in space a crate is free-floating (no parachute): velocity + local up
   };
   // per projectile, before the generic flight: homing steering, napalm airburst, sheep walking
   WP.pre = function (S, p, dt) {
@@ -802,6 +803,7 @@
     if (SS.skills) SS.skills.turn_start(S, first);                  // P37 W4: tool deliveries
     // PoC applyTurnStart: the strike side resets to downwind every turn (the in-plane wind at the worm)
     if (S.active && SS.weather && SS.weather.wind_at) { const wv = { x: 0, y: 0, z: 0 }, a = S.active, d = P.dir(S); SS.weather.wind_at(S, a.pos.x, a.pos.y + 6, a.pos.z, wv); S.strikeDir = wv.x * d.x + wv.z * d.z >= 0 ? 1 : -1; }
+    if (S.eow) return SS.eow.crate_turn(S, first);                    // P86: crates appear at random in space, drift, get caught by a gravity well (no parachute)
     if (first || S.turnNo < 2 || rng(S) >= CR.CHANCE || !S.active || W().under) return;
     if (!WP.crate_room(S, false)) return;                            // (P38 R3: full -> the oldest landed crate goes; only crates still in the air refuse)
     // a crate falls onto the new turn's section, somewhere it can be reached (± 25 m along it)
@@ -819,7 +821,7 @@
    * where whoever's turn it is picks it up (not the thrower for CRATE_LOCK s). Returns false when it fell into the sea / out. */
   function flyCrate(S, c, dt) {
     const w = W(), KG = (C.TOOLB && C.TOOLB.GRAV) || { CRATE_DMG_K: 0.9, CRATE_DMG_MAX: 22, CRATE_DMG_MIN_V: 4 };
-    c.vel.y -= C.G * dt;
+    if (S.eow) SS.eow.crate_g(S, c, dt); else c.vel.y -= C.G * dt;           // P86: the field in space
     const n = M.max(1, Math.ceil(M.len3(c.vel.x, c.vel.y, c.vel.z) * dt / 0.15)), h = dt / n;
     for (let q = 0; q < n; q++) {
       const nx = c.pos.x + c.vel.x * h, ny = c.pos.y + c.vel.y * h, nz = c.pos.z + c.vel.z * h, sp = M.len3(c.vel.x, c.vel.y, c.vel.z);
@@ -837,11 +839,11 @@
       if (w.sample(nx, ny - 0.3, nz) > 0 || w.sample(nx, ny, nz) > 0) {                          // lands
         if (c.vel.y < -1) sim().emit(S, 'cratedrop', { x: c.pos.x, y: c.pos.y, z: c.pos.z, v: -c.vel.y });
         c.landed = true; c.thrown = 0; c.vel = null; c.pos.y = M.max(c.pos.y, 0);
-        for (let k = 0; k < 40 && w.sample(c.pos.x, c.pos.y - 0.3, c.pos.z) > 0; k++) c.pos.y += 0.05;
+        if (S.eow) SS.eow.crate_settle(S, c); else for (let k = 0; k < 40 && w.sample(c.pos.x, c.pos.y - 0.3, c.pos.z) > 0; k++) c.pos.y += 0.05;
         return true;
       }
       c.pos.x = nx; c.pos.y = ny; c.pos.z = nz;
-      if (c.pos.y < sim().surface_at(S, c.pos.x, c.pos.z) || c.pos.y < 0.3) { sim().emit(S, 'splash', { x: c.pos.x, y: c.pos.y, z: c.pos.z, size: 0.8 }); return false; }
+      if (S.eow) { if (SS.eow.crate_out(S, c)) return false; } else if (c.pos.y < sim().surface_at(S, c.pos.x, c.pos.z) || c.pos.y < 0.3) { sim().emit(S, 'splash', { x: c.pos.x, y: c.pos.y, z: c.pos.z, size: 0.8 }); return false; }
     }
     return true;
   }
@@ -854,7 +856,8 @@
       if (c.thrown && !c.landed) { if (!flyCrate(S, c, dt)) S.crates.splice(i, 1); continue; }
       if (!c.landed) {
         if (SS.weather) SS.weather.wind_at(S, c.pos.x, c.pos.y, c.pos.z, wv); else { wv.x = wv.z = 0; }
-        c.pos.x += wv.x * CR.DRIFT * dt; c.pos.z += wv.z * CR.DRIFT * dt; if (S.eow) { if (!SS.eow.crate_fall(S, c, dt, CR.FALL)) { S.crates.splice(i, 1); continue; } } else c.pos.y -= CR.FALL * dt;   // P68d: along the gravity field
+        if (S.eow) { if (!SS.eow.crate_step(S, c, dt)) S.crates.splice(i, 1); continue; }           // P86: free-floating, caught by the field, lands on any side (no parachute, no wind)
+        c.pos.x += wv.x * CR.DRIFT * dt; c.pos.z += wv.z * CR.DRIFT * dt; c.pos.y -= CR.FALL * dt;
         if (w.sample(c.pos.x, c.pos.y - 0.35, c.pos.z) > 0) { c.landed = true; while (w.sample(c.pos.x, c.pos.y - 0.3, c.pos.z) > 0) c.pos.y += 0.05; }
         if (c.pos.y < sim().surface_at(S, c.pos.x, c.pos.z) || c.pos.y < 0.3) { S.crates.splice(i, 1); sim().emit(S, 'splash', { x: c.pos.x, y: c.pos.y, z: c.pos.z, size: 0.8 }); continue; }
       } else if (S.eow ? SS.eow.crate_loose(S, c) : w.sample(c.pos.x, c.pos.y - 0.4, c.pos.z) <= 0) c.landed = false;                 // ground blasted away (P68d: along the field)

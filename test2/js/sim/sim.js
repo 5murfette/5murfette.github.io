@@ -26,7 +26,7 @@
   sim.input_copy = (dst, src) => { for (let i = 0; i < INPUT_FIELDS.length; i++) dst[INPUT_FIELDS[i]] = src[INPUT_FIELDS[i]]; return dst; };
   sim.input_make = () => ({
     move: 0, up: 0, down: 0,          // held axes
-    jump: 0, backflip: 0,             // edge-triggered
+    jump: 0, backflip: 0, jet: 0,     // edge-triggered (jet: P86, the team's jetpack switch in space)
     fire_pressed: 0, fire_held: 0,
     weapon: '',                       // '' or weapon key to select
     rotate: 0, rotate_mouse: 0, fine: 0,
@@ -104,6 +104,7 @@
     if (SS.ffield && S.ffields) SS.ffield.hash(S, mix);
     if (SS.weather && S.weather && SS.weather.hash) SS.weather.hash(S, mix);   // P65a: wind, whirlwind life cycle, respawn queue
     if (SS.skills && S.skRng) SS.skills.hash(S, mix);
+    if (S.eow) SS.eow.hash(S, mix);                                            // P86: jetpack charges / switches, free crates' drift (End of the World only)
     if (SS.lab && S.lab) SS.lab.hash(S, mix);                                  // P42: only with a Lab flag on (baseline hashes unchanged)
     // (review P36: the fluid / ice state too, so a divergence there shows before it moves a worm; a sum per field,
     // every HASH_EVERY steps in a match: ~40k cells each)
@@ -799,6 +800,7 @@
 
   function controlActive(S, a, dt, inp, retreat) {
     const mv = inp.move || 0, WP = SS.weapons;                 // (partial Input structs from tools / tests: 0)
+    if (inp.jet && S.eow) SS.eow.jet_toggle(S, a);                // P86: the team's jetpack switch (J)
     if (mv || inp.jump || inp.backflip || inp.fire_pressed || inp.drop) S.acted = true;     // (worm select: only before acting)
     // P2: weapon choice (only with ammo; locked after the first shotgun shot), fuse, strike side, girder angle, target
     // P37-8: choosing Skip Go only SELECTS it (the worm shows a hand gesture); the turn ends when fire is pressed (WP.use 'skip')
@@ -1512,7 +1514,7 @@
    * the weapon key must be an arsenal key. Table = { field, lo, hi, int }: in a port, clamp the fields of the Input struct.
    * Legit ranges: held axes / edge flags -1..1 (or 0..1), rotate_mouse = accumulated right-drag pixels * 0.6 (<< 200),
    * fuse 0..5, align_id = worm id + 1, ts / ty = plane coordinates in metres (the world is < 2000 m wide). */
-  const IN_LIM = [['move', -1, 1], ['up', -1, 1], ['down', -1, 1], ['jump', -1, 1], ['backflip', -1, 1], ['fire_pressed', -1, 1], ['fire_held', -1, 1],
+  const IN_LIM = [['move', -1, 1], ['up', -1, 1], ['down', -1, 1], ['jump', -1, 1], ['backflip', -1, 1], ['jet', -1, 1], ['fire_pressed', -1, 1], ['fire_held', -1, 1],
     ['rotate', -1, 1], ['rotate_mouse', -200, 200], ['fine', -1, 1], ['align_step', -1, 1], ['align_crate', -1, 1], ['align_refocus', -1, 1], ['align_id', 0, 64],
     ['end_turn', -1, 1], ['inspect', -1, 1], ['fuse', 0, 5], ['tgt', -1, 1], ['ts', -4000, 4000], ['ty', -4000, 4000], ['sdir', -1, 1], ['gang', -1, 1], ['gturn', -1, 1],
     ['drop', -1, 1], ['wsel', -1, 1], ['aimset', -1, 1], ['aimv', -4, 4], ['face', -1, 1], ['adj', -1, 1],

@@ -301,7 +301,24 @@
    * SS.SFX_FILES['worm_hurt_small@t1'] ... '@t4' (team 1..4) when delivered, else the shared id at pitch 1.0. Detune only +-2 %.
    * Throttled per worm. */
   const lastVoice = new Map();
+  /* P85: who may speak. ACTIVE lines (turn opener, aim / fire, hop, pass, pickup, idle chatter) only from S.active; REACTION lines go through
+   * render/reactq.js (affected worms only, one at a time, the most dramatic first): hurt / burn / bat / dying / drown / wash / dizzy are fed by the
+   * events there, fall scream / cough / acid / flinch are submitted from here. Anything else from a bystander is dropped (returns true: handled, no synth). */
+  const V_EVENTFED = { worm_hurt_small: 1, worm_hurt_big: 1, worm_burn: 1, worm_bat_hit: 1, worm_dying: 1, worm_drown: 1, worm_wash: 1, worm_dizzy: 1 };
+  const V_SUBMIT = { worm_fall_scream: 'fall', worm_cough: 'cough', worm_ouch: 'acid', worm_flinch: null };
+  let curS = null;
   AU.voice = function (id, w, vol, minGap) {
+    if (!w) return false;
+    if (id === 'worm_victory') return AU.voiceNow(id, w, vol, minGap);
+    const RQ = SS.reactq, S = curS;
+    if (RQ && S && S.active) {
+      if (V_EVENTFED[id]) return true;
+      if (id in V_SUBMIT) { if (S.phase === 'play' && w.id !== S.active.id) return true; RQ.submit(S, w, { id, kind: V_SUBMIT[id], vol: vol == null ? 0.9 : vol, prio: id === 'worm_flinch' ? 0 : 1, cam: false, amt: 0 }); return true; }
+      if (w.id !== S.active.id) return true;
+    }
+    return AU.voiceNow(id, w, vol, minGap);
+  };
+  AU.voiceNow = function (id, w, vol, minGap) {
     if (!w) return false;
     const t = ctx ? ctx.currentTime : 0, l = lastVoice.get(w.id) || -9;   // (by id: a replay restore replaces the worm objects)
     if (t - l < (minGap == null ? 0.6 : minGap)) return false;
@@ -313,6 +330,7 @@
   const LOUD = { explode: 1, waterblast: 1, airburst: 1, collapse: 1, bridgefall: 1, holy: 1, lightning: 1, lavabreach: 1, hole: 1, treeshatter: 1, moai: 0 };
   const QUIET = { land: 1, bodyhit: 1, fuse: 1, minearm: 1, pickup: 1, jump: 1, switch: 1, rope_hook: 1 };
   AU.onEvent = function (S, e) {
+    curS = S;
     if (!ctx && !(AM && AM.gestured)) return;
     const wp = e.worm && e.worm.pos;
     curPos = e.x != null && e.y != null && e.z != null ? { x: e.x, y: e.y, z: e.z } : wp ? { x: wp.x, y: wp.y, z: wp.z } : null;
@@ -344,6 +362,8 @@
       case 'rope_release': if ((e.speed || 0) > 4) S2('rope_release', 0.6, 1, () => SFX.whoosh(Math.min(1, e.speed / 25))); break;
       case 'rope_knock': S2('body_hit', 0.6, 1, () => SFX.thud(0.6)); break;
       case 'chute_open': S2('chute_open', 0.8, 1, () => SFX.whoosh(0.8)); break;
+      case 'eowjet': if (e.phase === 0) S2('eow_jet', 0.8, 1, () => SFX.whoosh(0.9), { x: e.x, y: e.y, z: e.z }); else S2('eow_jet_hiss', 0.3, 1, () => SFX.whoosh(0.25), { x: e.x, y: e.y, z: e.z }); break;   // P86: the jetpack (through the suit: muffled by audiospace unless it is the listener's own)
+      case 'eowjetmode': S2('ui_click', 0.5, e.on ? 1 : 0.8, () => SFX.click()); break;
       case 'chute_cut': S2('chute_cut', 0.5, 1, () => SFX.whoosh(0.4)); break;
       case 'zip_fire': S2('zip_fire', 0.7, 1, () => SFX.thwip()); break;
       case 'zip_hook': S2('zip_hook', 0.8, 1, () => SFX.clink()); break;
@@ -447,9 +467,16 @@
       SFX.chargeStop(); wasCharging = false;
     }
   };
+  let rqHooked = false;
+  AU.reactSpeak = function (S, it) {                               // P85: a reaction line starts (render/reactq.js)
+    const w = S.worms[it.wid]; if (!w || !it.id) return;
+    if (!AU.voiceNow(it.id, w, it.vol, 0.2) && !AU.has(it.id) && it.prio >= 1 && ctx) SFX.ouch();
+  };
   let wasCharging = false, lastFrameMs = 0;
   const screamed = new WeakSet();   // (audio state stays off the sim objects)
   AU.frame = function (S) {
+    curS = S;
+    if (!rqHooked && SS.reactq) { rqHooked = true; SS.reactq.listen(AU.reactSpeak); }
     if (!ctx || held) return;
     if (S.charging && !wasCharging) { if (!AU.play('charge_power', 0.7)) SFX.chargeStart(); } else if (!S.charging && wasCharging) SFX.chargeStop();
     wasCharging = !!S.charging;

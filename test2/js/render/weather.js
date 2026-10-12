@@ -375,7 +375,7 @@
     dt = Math.min(Math.max(dt || 0, 0), 0.1);
     oc = clamp01((cloud - 0.2) / 0.8);
     fogMul = 1 + 0.6 * rainA + (1 + 0.08 * ws) * snowA + 0.8 * ashA + (we && we.kind === 'fog' ? 7 : 0);   // PoC fog: ~8 x the haze
-    const fogD = base.fog * fogMul;
+    const fogD = base.fog * fogMul * (view.fogK == null ? 1 : view.fogK);   // P85: not thicker with zoom (view.js fogK)
     const ct = view.camT, cp = camera.position;
     const cx = ct.x + (cp.x - ct.x) * 0.4, cz = ct.z + (cp.z - ct.z) * 0.4, cy = ct.y + 6;
     const pix = 2 * Math.tan(camera.fov * Math.PI / 360) / Math.max(1, P && P.renderer ? P.renderer.domElement.height : 800);
@@ -469,7 +469,7 @@
     if (scene.fog) { scene.fog.density = fogD; scene.fog.color.copy(fogC); }
     if (U.uHaze) U.uHaze.value.copy(fogC);
     U.uWet.value = we ? we.wet || 0 : 0;
-    if (SS.waterView && SS.waterView.weather) SS.waterView.weather(rainA, fogMul, fogC, cloud);
+    if (SS.waterView && SS.waterView.weather) SS.waterView.weather(rainA, fogMul * (view.fogK == null ? 1 : view.fogK), fogC, cloud);
 
     // cover texture (uploaded when the sim's cover grids change)
     if (we && we.snowD) {

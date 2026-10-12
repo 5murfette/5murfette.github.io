@@ -490,7 +490,7 @@
       const inSec = SS.view.inSlab(S, w.pos) || w === a;
       v.root.visible = inSec && !teles.some(f => f.w === w);       // hidden while the beam carries it (ghosts stand in)
       v.root.position.set(w.pos.x, w.pos.y, w.pos.z);
-      const f = w === a ? w.facing : 1;
+      const fs = w === a ? w.facing : 1, f = S.eow && SS.eowView ? SS.eowView.face(S, w, v, fs) : fs;       // P86: End of the World: drawn along its own tangent (the walk cycle must not run backwards on the underside)
       const phiw = -Math.atan2(d.z * f, d.x * f), nnw = P.nrm(S), zsw = Math.sign(Math.sin(phiw) * nnw.x + Math.cos(phiw) * nnw.z) || 1;     // zsw: the local z sign that faces the camera
       v.root.rotation.y = phiw;
       // P8: pose (crawl wave speed from the walking speed, air, the aim) -> live body, eyes and held weapon at the head
@@ -519,7 +519,8 @@
       ps.wave += dt * (0.12 + 2.6 * ps.crawl * (1 - 0.15 * ps.eff));      // contraction waves run head -> tail (u + wave); P65h: the cadence follows the measured ground speed (the hump pattern moves back at ~0.75 of the walk speed)
       // P33: swimming / struggling in the water: fast contraction waves, the head thrown up and about
       if (w.swim || w.ropeWet) ps.wave += dt * 3.2;
-      let look = aiming && !w.ropeWet ? S.aim : w.swim || w.ropeWet ? 1.1 + 0.5 * Math.sin(ps.t * 9.0) : 0.25 * Math.sin(ps.t * 0.37);
+      const aimV = S.eow && SS.eowView ? SS.eowView.aim(S, w, v, fs, f) - (v.tilt || 0) : S.aim;                   // P86: the screen aim in the worm's own frame
+      let look = aiming && !w.ropeWet ? aimV : w.swim || w.ropeWet ? 1.1 + 0.5 * Math.sin(ps.t * 9.0) : 0.25 * Math.sin(ps.t * 0.37);
       // the head takes most of the turn (its tip may rotate a lot), the arc a little: the body stays ~1 m tall
       if (idl && idl.lookW > 0.001) look += (idl.look - look) * idl.lookW;
       if (rx && rx.lookW > 0.001) look += (rx.look - look) * rx.lookW;                            // P57: watching a projectile, sad, relieved
@@ -567,7 +568,7 @@
         v.eyes.position.set(sp.x[hi] + Math.cos(ha) * 0.05 - Math.sin(ha) * 0.06, sp.y[hi] + Math.sin(ha) * 0.05 + Math.cos(ha) * 0.06, 0);
         v.eyes.rotation.z = ha;
         v.eyes.scale.y = (Math.sin(ps.t * 0.9) > 0.995) ? 0.15 : 1;
-        const pl = aiming ? M.clamp(S.aim - ha, -0.8, 0.8) : rx && rx.watch > 0.1 ? M.clamp(rx.look - ha, -0.8, 0.8) * rx.watch : rx && rx.sad > 0.1 ? -0.55 * rx.sad : 0;
+        const pl = aiming ? M.clamp(aimV - ha, -0.8, 0.8) : rx && rx.watch > 0.1 ? M.clamp(rx.look - ha, -0.8, 0.8) * rx.watch : rx && rx.sad > 0.1 ? -0.55 * rx.sad : 0;
         { const dx0 = 0.34 + 0.4 * Math.cos(pl), dy0 = 0.62 * Math.sin(pl), dz0 = Math.sqrt(Math.max(0.05, 1 - dx0 * dx0 - dy0 * dy0));     // P57: the pupils sit on the eye towards the camera (they were on the front edge: a blank white eye from the side)
           for (let q = 0; q < 2; q++) { const p = v.pupils[q], sg = q ? 1 : -1; p.position.set(0.05 * dx0, 0.067 * dy0, sg * (0.075 + 0.05 * dz0)); v.glints[q].position.set(p.position.x + 0.02, p.position.y + 0.02, p.position.z + sg * 0.012); } }
         const wkey = sw ? 'bat' : S.weapon;
@@ -579,7 +580,7 @@
           if (SS.weaponsView) SS.weaponsView.held(S, w, hm, dt, view.time);        // P37-W3: rolling barrels, nozzle glow
           // on the shot line (the shots leave the worm's centre along the aim): the root is tilted with the slope,
           // so the aim in its frame is aim - tilt; in front of the body on the camera's side (local z sign)
-          const kk = SS.polishView ? SS.polishView.kick(w) : 0, a2 = S.aim - v.tilt + (sw ? sw.ang : 0) + 0.14 * kk, phi = v.root.rotation.y, nn = P.nrm(S), zs = Math.sign(Math.sin(phi) * nn.x + Math.cos(phi) * nn.z) || 1;
+          const kk = SS.polishView ? SS.polishView.kick(w) : 0, a2 = (S.eow ? aimV : S.aim - v.tilt) + (sw ? sw.ang : 0) + 0.14 * kk, phi = v.root.rotation.y, nn = P.nrm(S), zs = Math.sign(Math.sin(phi) * nn.x + Math.cos(phi) * nn.z) || 1;
           const gr = hm.userData.grips || [];
           const rk = 0.14 - 0.09 * kk;                                                 // recoil: the weapon is pushed back into the shoulder
           v.held.position.set(Math.cos(a2) * rk + SS.softView.OUT.dx, Math.sin(a2) * rk + 0.02 + SS.softView.OUT.dy, 0.17 * zs);   // (rides with the soft shoulder)

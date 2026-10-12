@@ -23,7 +23,8 @@
   const K = E.K = {
     CORE_Y: 20, CORE_R: 4.4,                                     // the lost planet's centre (P68d: no ball, no pull: the keep-out zone of the plan and the origin of the crust layers)
     ESC_F: 0.05, ESC_T: 0.6, ESC_T2: 8, LOST_T: 3.2, BURN_DT: 0.4, BURN_HP: 8,   // a shell is lost when the field is under ESC_F and it recedes for ESC_T s (stuck: ESC_T2); the lost-shot view lasts LOST_T s; contact with lava: BURN_HP every BURN_DT s
-    WORM_G: 0.42, PROJ_G: 0.8, BODY_G: 0.6, PIECE_G: 0.3,        // gravity at a chunk's surface for worms (x G_WORM), shells (x G), props, drifting pieces
+    WORM_G: 0.55, PROJ_G: 0.8, BODY_G: 0.6, PIECE_G: 0.3,        // gravity at a chunk's surface for worms (x G_WORM; P86: 0.42 -> 0.55, a small jump no longer reaches escape speed), shells (x G), props, drifting pieces
+    MASS_R0: 1.3, MASS_R1: 6, MASS_K0: 0.45, WELL_R0: 5, WELL_R1: 8,   // P86: surface gravity grows with the body's size (uniform density: g ~ R): k = MASS_K0 at radius MASS_R0 up to 1 from MASS_R1; a small rock's well is at least R + WELL_R0 (fades by R + WELL_R1)
     FADE0: 2.6, FADE1: 4.2, F_MAX: 1.8,                           // the field fades between FADE0 and FADE1 body radii; its cap
     VOID_D: 14, VOID_T: 2.2, OUT_M: 6,                            // lost: m from the nearest surface, for s; m outside the box
     SAFE: 24, BRAKE_A: 28, V_LAND: 3.2, BRAKE_L: 5, BRAKE_STEP: 0.35,   // magnetic landing: damage above SAFE m/s, deceleration m/s2, soft speed m/s, look-ahead m
@@ -32,6 +33,9 @@
   };
   const TAU = M.TAU;
   const lerp = M.lerp, clamp = M.clamp;
+  // P86: the surface pull of a body of radius R relative to a big chunk (smaller = weaker)
+  const mass_k = R => K.MASS_K0 + (1 - K.MASS_K0) * clamp((R - K.MASS_R0) / (K.MASS_R1 - K.MASS_R0), 0, 1);
+  E.mass_k = mass_k;
   const COS16 = [], SIN16 = [];
   for (let i = 0; i < 16; i++) { COS16.push(M.cos(i / 16 * TAU)); SIN16.push(M.sin(i / 16 * TAU)); }
   const RIM = []; for (let i = 0; i < 12; i++) { const t = i / 12 * TAU; RIM.push(M.cos(t) * C.WORM_R, M.sin(t) * C.WORM_R); }
@@ -74,9 +78,9 @@
     const spikeOf = c => { for (let q = 0, n = 4 + M.rng_int(rng, 4); q < n; q++) { const d = sphere(); c.spikes.push({ dx: d.x, dy: d.y, dz: d.z, L: rr(3, 5.6), r: rr(0.55, 0.95) }); } };
     for (let q = 0; q < chunks.length; q++) if (q % 2 === 0 && q < 5) spikeOf(chunks[q]);
     // debris: small lumps and a few steel plates, 2.5-7 m from a big chunk
-    const nDeb = Math.round(7 * sc * sc);
-    for (let tries = 0; debris.length < nDeb && tries < 600 && chunks.length; tries++) {
-      const pj = chunks[M.rng_int(rng, chunks.length)], d = sphere(), Rd = rr(1.3, 3.0), plate = debris.length === 2 || debris.length === 5, Rg = plate ? Rd * 1.9 : Rd, dist = pj.R + Rg + rr(3, 7);
+    const nDeb = Math.round(13 * sc * sc);                 // P86: the free rocks are real bodies now (landable, gravity by mass); more of them
+    for (let tries = 0; debris.length < nDeb && tries < 1400 && chunks.length; tries++) {
+      const pj = chunks[M.rng_int(rng, chunks.length)], d = sphere(), Rd = rr(1.3, 3.5), plate = debris.length === 2 || debris.length === 5, Rg = plate ? Rd * 1.9 : Rd, dist = pj.R + Rg + rr(3, 7);
       const x = pj.x + d.x * dist, y = pj.y + d.y * dist * 0.7, z = pj.z + d.z * dist;
       if (x < Rd + 3 || x > sx - Rd - 3 || z < Rd + 3 || z > sx - Rd - 3 || y < Rd + 3 || y > sy - Rd - 3) continue;
       if (M.len3(x - mx, y - K.CORE_Y, z - mz) < Rd + K.CORE_R + 3) continue;
@@ -89,7 +93,7 @@
     }
     for (const c of chunks) B.push({ x: c.x, y: c.y, z: c.z, R: c.R, k: 1, kind: 0 });
     if (hull) for (const u of [-9 * sc, 0, 9 * sc]) B.push({ x: hull.x + hull.ax * u, y: hull.y, z: hull.z + hull.az * u, R: 6.5, k: 0.85, kind: 1 });
-    for (const d of debris) B.push({ x: d.x, y: d.y, z: d.z, R: d.R, k: 1, kind: 2 });
+    for (const d of debris) B.push({ x: d.x, y: d.y, z: d.z, R: d.plate ? d.R * 1.4 : d.R, k: mass_k(d.plate ? d.R * 1.4 : d.R), kind: 2 });
     const core = { x: mx, y: K.CORE_Y, z: mz, R: K.CORE_R, k: 1, kind: 3 };
     return { sx, chunks, hull, debris, bodies: B, core };
   }
@@ -334,10 +338,12 @@
     S.eow = { bodies: pl.bodies, core: pl.core, lost: 0, shots: [], hot: pl.hot || [], pockets: pl.pockets || [] };
     S.settings.weather = 'clear'; S.settings.wind = 'calm';                  // no weather in space
   };
-  const ensure = w => { if (!w.eup) { w.eup = { x: 0, y: 1, z: 0 }; w.eu2 = { s: 0, y: 1 }; w.eVoid = 0; w.eSense = 1; w.eLatch = 0; w.eMv = 0; w.eGround = false; w.eFlipC = false; w.eStill = 0; w.eAirPrev = false; } return w; };
+  const ensure = w => { if (!w.eup) { w.eup = { x: 0, y: 1, z: 0 }; w.eu2 = { s: 0, y: 1 }; w.eVoid = 0; w.eSense = 1; w.eLatch = 0; w.eMv = 0; w.eGround = false; w.eFlipC = false; w.eStill = 0; w.eAirPrev = false; w.eJet = 0; w.eJb = -1; w.eJh = 0; w.eJd = { x: 0, y: 1, z: 0 }; } return w; };
   E.spawned = function (S) {
     for (const w of S.worms) ensure(w);
-    SS.sim.log(S, 'End of the world: magnetic suits hold you to any surface. Hot rock burns, the void is fatal, there is no air.', 0x9fd0ff);
+    const nj = S.settings.jetpacks == null ? K.JET.N : M.clamp(S.settings.jetpacks | 0, 0, 9);            // P86: jetpack charges per team (setting, default 3)
+    S.eow.jet = []; for (let t = 0; t < S.teams.length; t++) S.eow.jet.push({ n: nj, on: true });
+    SS.sim.log(S, 'End of the world: magnetic suits hold you to any surface. Hot rock burns, the void is fatal, there is no air. Jetpacks (' + nj + ' per team, J) save a worm drifting away.', 0x9fd0ff);
   };
 
   /* ================= gravity field ================= */
@@ -345,11 +351,11 @@
   function field(S, x, y, z, out) {
     const B = S.eow.bodies; let gx = 0, gy = 0, gz = 0;
     for (let i = 0; i < B.length; i++) {
-      const b = B[i], dx = b.x - x, dy = b.y - y, dz = b.z - z, r2 = dx * dx + dy * dy + dz * dz, R = b.R;
-      if (r2 > K.FADE1 * K.FADE1 * R * R) continue;
-      const r = Math.sqrt(r2);
+      const b = B[i], dx = b.x - x, dy = b.y - y, dz = b.z - z, r2 = dx * dx + dy * dy + dz * dz, R = b.R, f1 = M.max(K.FADE1 * R, R + K.WELL_R1);
+      if (r2 > f1 * f1) continue;
+      const r = Math.sqrt(r2), f0 = M.max(K.FADE0 * R, R + K.WELL_R0);
       let f = r < R ? b.k * r / R : b.k * R * R / r2;
-      if (r > K.FADE0 * R) f *= 1 - M.smoothstep(K.FADE0 * R, K.FADE1 * R, r);
+      if (r > f0) f *= 1 - M.smoothstep(f0, f1, r);
       const q = f / M.max(r, 1e-6); gx += dx * q; gy += dy * q; gz += dz * q;
     }
     const l = M.len3(gx, gy, gz);
@@ -391,7 +397,28 @@
     return out;
   };
   // graves float where the worm died (no ground to fall to in space)
-  E.grave = function (S, o, g) { g.rest = true; g.vy = 0; if (g.landT < 0 && !o.gravePending) g.landT = S.time; };
+  // P86: a grave is a small object like any other: it falls along the field to the rock under it and stands on that surface's local up (g.eu); in empty space (no pull) it floats where it is
+  E.grave = function (S, o, g) {
+    const w = W(), dt = C.STEP, l = down_at(S, g.x, g.y, g.z, cg);
+    if (!g.eu) g.eu = { x: 0, y: 1, z: 0 };
+    if (l >= 0.03) { if (g.rest) local_up(w, g.x, g.y, g.z, -cg.x, -cg.y, -cg.z, g.eu); else { g.eu.x = -cg.x; g.eu.y = -cg.y; g.eu.z = -cg.z; } }
+    if (g.rest) {
+      if (l < 0.03 || w.sample(g.x + cg.x * 0.12, g.y + cg.y * 0.12, g.z + cg.z * 0.12) > 0) { g.vy = 0; if (g.landT < 0 && !o.gravePending) g.landT = S.time; return; }
+      g.rest = false; g.gv = 0;
+    }
+    if (l < 0.03) { g.rest = true; g.vy = 0; if (g.landT < 0 && !o.gravePending) g.landT = S.time; return; }       // no pull here: it floats
+    g.gv = (g.gv || 0) + C.G_WORM * K.WORM_G * M.min(1, l) * dt;
+    const n = M.max(1, Math.ceil(g.gv * dt / 0.05)), h = dt / n;
+    for (let i = 0; i < n && !g.rest; i++) {
+      const nx = g.x + cg.x * g.gv * h, ny = g.y + cg.y * g.gv * h, nz = g.z + cg.z * g.gv * h;
+      if (w.sample(nx + cg.x * 0.06, ny + cg.y * 0.06, nz + cg.z * 0.06) > 0) {                     // ground: settle with the base 6 cm in
+        let x = nx, y = ny, z = nz; for (let k = 0; k < 40 && w.sample(x + cg.x * 0.06, y + cg.y * 0.06, z + cg.z * 0.06) > 0; k++) { x -= cg.x * 0.05; y -= cg.y * 0.05; z -= cg.z * 0.05; }
+        g.x = x; g.y = y; g.z = z; g.rest = true; g.vy = 0; break;
+      }
+      g.x = nx; g.y = ny; g.z = nz;
+    }
+    if (g.rest && g.landT < 0 && !o.gravePending) g.landT = S.time;
+  };
   // nearest chunk surface (estimate), the void test
   function surf_dist(S, x, y, z) {
     const B = S.eow.bodies; let m = 1e9;
@@ -718,18 +745,102 @@
     if (l < 0.03) { out.x = 0; out.y = -1; out.z = 0; return 0; }
     out.x = fg.x / l; out.y = fg.y / l; out.z = fg.z / l; return l;
   }
-  // a crate on its parachute drifts down the field (slower where the pulls cancel); lands on any side; false = lost in the void
-  E.crate_fall = function (S, c, dt, v) {
-    const w = W(), l = down_at(S, c.pos.x, c.pos.y, c.pos.z, cg), sp = v * M.min(1, 0.25 + l / 0.2) * dt;
-    c.pos.x += cg.x * sp; c.pos.y += cg.y * sp; c.pos.z += cg.z * sp;
-    if (w.sample(c.pos.x + cg.x * 0.35, c.pos.y + cg.y * 0.35, c.pos.z + cg.z * 0.35) > 0) {
-      c.landed = true;
-      for (let k = 0; k < 40 && w.sample(c.pos.x + cg.x * 0.3, c.pos.y + cg.y * 0.3, c.pos.z + cg.z * 0.3) > 0; k++) { c.pos.x -= cg.x * 0.05; c.pos.y -= cg.y * 0.05; c.pos.z -= cg.z * 0.05; }
-    }
-    return !(c.pos.x < -K.OUT_M * 2 || c.pos.z < -K.OUT_M * 2 || c.pos.x > w.SX + K.OUT_M * 2 || c.pos.z > w.SZ + K.OUT_M * 2 || c.pos.y > w.SY + K.OUT_M * 2 || c.pos.y < 0);
+  /* ---- supply crates in space (P86) ----
+   * No parachute, ever: there is no air. A crate appears at a random point of the box with a small random drift (0.5 - 1.8 m/s). In open space it just coasts;
+   * when a body's pull catches it (the summed field, BODY_G) it falls along the field, lands on that body (its up = the surface normal there) and stays.
+   * One that escapes every well is lost: the shell's rule (esc3), with the long time constants of a slow object. State: c.eV (velocity), c.eUp (local up once landed), c.eEsc. */
+  const CRK = K.CRATE = { V0: 0.5, V1: 1.8, ESC_T: 20, AGE: 600, FREE: 0.6, FREE_F: 0.12, CLEAR: 2.0 };
+  const cn = { x: 0, y: 1, z: 0 };
+  E.crate_init = function (c) { c.eV = { x: 0, y: 0, z: 0 }; c.eUp = { x: 0, y: 1, z: 0 }; c.eEsc = 0; return c; };
+  // a drifting start: a random direction, 0.5 - 1.8 m/s (S.armRng, the supply stream)
+  E.crate_drift = function (S, c) {
+    const R = S.armRng, u = M.rng_range(R, -1, 1), a = M.rng_range(R, 0, TAU), s2 = Math.sqrt(M.max(0, 1 - u * u)), v = M.rng_range(R, CRK.V0, CRK.V1);
+    if (!c.eV) E.crate_init(c);
+    c.eV.x = s2 * M.cos(a) * v; c.eV.y = u * v; c.eV.z = s2 * M.sin(a) * v; return c;
   };
-  // a landed crate whose ground (along the field) was blasted away falls again
-  E.crate_loose = function (S, c) { down_at(S, c.pos.x, c.pos.y, c.pos.z, cg); return W().sample(c.pos.x + cg.x * 0.4, c.pos.y + cg.y * 0.4, c.pos.z + cg.z * 0.4) <= 0; };
+  const clearAt = (w, x, y, z, r) => w.sample(x, y, z) < -0.5 && w.sample(x + r, y, z) < 0 && w.sample(x - r, y, z) < 0 && w.sample(x, y + r, z) < 0 && w.sample(x, y - r, z) < 0 && w.sample(x, y, z + r) < 0 && w.sample(x, y, z - r) < 0;
+  // a random spot in the box, in the open: 60 % in the weak-field gaps (it floats for a while), the rest anywhere (a well catches it at once)
+  E.crate_spot = function (S) {
+    const w = W(), R = S.armRng, free = M.rng_next(R) < CRK.FREE;
+    for (let t = 0; t < 60; t++) {
+      const x = M.rng_range(R, 8, w.SX - 8), y = M.rng_range(R, 6, w.SY - 6), z = M.rng_range(R, 8, w.SZ - 8);
+      if (!clearAt(w, x, y, z, CRK.CLEAR)) continue;
+      field(S, x, y, z, fg); if (free && M.len3(fg.x, fg.y, fg.z) > CRK.FREE_F && t < 50) continue;
+      if (S.eow.hot && E.hot_near(S, x, y, z)) continue;
+      return { x, y, z };
+    }
+    return null;
+  };
+  // the supply of one turn (hook in weapons.js turn_start; per-type rates of the crate settings when the rules branch provides them, else the old chance)
+  E.crate_turn = function (S, first) {
+    if (first || S.turnNo < 2 || !S.active) return;
+    const WP = SS.weapons, CR = WP.CRATE, R = S.armRng, rate = typeof WP.crate_chance === 'function' ? WP.crate_chance(S, 'weapon') : CR.CHANCE;
+    if (M.rng_next(R) >= rate) return;
+    if (!WP.crate_room(S, false)) return;
+    const p = E.crate_spot(S); if (!p) return;
+    const kind = M.rng_next(R) < CR.HEALTH ? 'health' : 'weapon', w0 = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(M.rng_next(R)) : C.CRATE_POOL[Math.floor(M.rng_next(R) * C.CRATE_POOL.length)]) : null, weapon = w0 && E.no_air(w0) ? 'bazooka' : w0;
+    const c = WP.crate_make(S, kind, weapon, null, p); E.crate_drift(S, c); S.crates.push(c);
+    SS.sim.emit(S, 'banner', { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
+  };
+  // a tool delivery / the overload at a random spot (skills.js hooks)
+  E.crate_add = function (S, kind, weapon, tool) {
+    const p = E.crate_spot(S); if (!p) return null;
+    const c = SS.weapons.crate_make(S, kind, weapon && E.no_air(weapon) ? 'bazooka' : weapon, tool, p); E.crate_drift(S, c); S.crates.push(c); return c;
+  };
+  // the surface normal around a point, smoothed over 0.45 m (a voxel's gradient alone is noisy on a rough face): the unit sum of the normals at the point and at its six neighbours
+  const sn = { x: 0, y: 0, z: 0 };
+  function smooth_normal(w, x, y, z, out) {
+    let ax = 0, ay = 0, az = 0; const r = 0.45;
+    for (let i = 0; i < 7; i++) {
+      const o = i === 0 ? 0 : r, dx = i === 1 ? o : i === 2 ? -o : 0, dy = i === 3 ? o : i === 4 ? -o : 0, dz = i === 5 ? o : i === 6 ? -o : 0;
+      w.normal(x + dx, y + dy, z + dz, sn); ax += sn.x; ay += sn.y; az += sn.z;
+    }
+    const l = M.len3(ax, ay, az); if (l < 1e-6) { out.x = out.y = out.z = 0; return out; }
+    out.x = ax / l; out.y = ay / l; out.z = az / l; return out;
+  }
+  // the local up of a resting object: the smoothed surface normal under it when it agrees with the pull's opposite (u0), else u0 (a spike, a crevice)
+  const lu = { x: 0, y: 1, z: 0 };
+  function local_up(w, x, y, z, u0x, u0y, u0z, out) {
+    smooth_normal(w, x - u0x * 0.2, y - u0y * 0.2, z - u0z * 0.2, lu);
+    if (M.len3(lu.x, lu.y, lu.z) > 0.3 && lu.x * u0x + lu.y * u0y + lu.z * u0z > 0.5) { out.x = lu.x; out.y = lu.y; out.z = lu.z; } else { out.x = u0x; out.y = u0y; out.z = u0z; }
+    return out;
+  }
+  const cprobe = (w, x, y, z, r) => w.sample(x, y, z) > 0 || w.sample(x + r, y, z) > 0 || w.sample(x - r, y, z) > 0 || w.sample(x, y + r, z) > 0 || w.sample(x, y - r, z) > 0 || w.sample(x, y, z + r) > 0 || w.sample(x, y, z - r) > 0;
+  E.crate_up = function (S, c) { return c.eUp || cn; };
+  // one step of a free crate: the field pulls it, it lands on whatever it touches (up = that surface's normal); false = lost to space (remove it)
+  E.crate_step = function (S, c, dt) {
+    const w = W(); if (!c.eV) E.crate_init(c);
+    const v = c.eV, sp0 = M.len3(v.x, v.y, v.z), n = M.max(1, Math.ceil(sp0 * dt / 0.15)), h = dt / n, a = C.G * K.BODY_G * h;
+    for (let i = 0; i < n; i++) {
+      field(S, c.pos.x, c.pos.y, c.pos.z, fg); v.x += fg.x * a; v.y += fg.y * a; v.z += fg.z * a;
+      const nx = c.pos.x + v.x * h, ny = c.pos.y + v.y * h, nz = c.pos.z + v.z * h;
+      if (!cprobe(w, nx, ny, nz, 0.32)) { c.pos.x = nx; c.pos.y = ny; c.pos.z = nz; continue; }
+      smooth_normal(w, nx, ny, nz, cn); if (M.len3(cn.x, cn.y, cn.z) < 0.3) { const l = M.len3(v.x, v.y, v.z) || 1; cn.x = -v.x / l; cn.y = -v.y / l; cn.z = -v.z / l; }
+      const vn = -(v.x * cn.x + v.y * cn.y + v.z * cn.z);
+      c.eUp = { x: cn.x, y: cn.y, z: cn.z }; c.landed = true; v.x = v.y = v.z = 0; c.eEsc = 0;
+      for (let k = 0; k < 40 && cprobe(w, c.pos.x, c.pos.y, c.pos.z, 0.3); k++) { c.pos.x += cn.x * 0.05; c.pos.y += cn.y * 0.05; c.pos.z += cn.z * 0.05; }
+      if (vn > 3) SS.sim.emit(S, 'cratedrop', { x: c.pos.x, y: c.pos.y, z: c.pos.z, v: vn });
+      return true;
+    }
+    const e = esc3(S, c.pos.x, c.pos.y, c.pos.z, v.x, v.y, v.z, c.eEsc || 0, dt, CRK.ESC_T, CRK.ESC_T);
+    if (e < 0 || S.time - c.t0 > CRK.AGE || c.pos.x < -K.OUT_M * 2 || c.pos.z < -K.OUT_M * 2 || c.pos.x > w.SX + K.OUT_M * 2 || c.pos.z > w.SZ + K.OUT_M * 2 || c.pos.y > w.SY + K.OUT_M * 2 || c.pos.y < 0) {
+      SS.sim.emit(S, 'cratelost', { x: c.pos.x, y: c.pos.y, z: c.pos.z });
+      SS.sim.log(S, 'A supply crate drifted off into space.', 0x9fd0ff); return false;
+    }
+    c.eEsc = e; return true;
+  };
+  // a landed crate whose ground (along its up) was blasted away is free again
+  E.crate_loose = function (S, c) { const u = c.eUp || cn; return !cprobe(W(), c.pos.x - u.x * 0.4, c.pos.y - u.y * 0.4, c.pos.z - u.z * 0.4, 0.2); };
+  // a crate thrown by the gravity gun (weapons.js flyCrate): the field instead of -y
+  E.crate_g = function (S, c, dt) { field(S, c.pos.x, c.pos.y, c.pos.z, fg); const a = C.G * K.BODY_G * dt; c.vel.x += fg.x * a; c.vel.y += fg.y * a; c.vel.z += fg.z * a; };
+  // after a thrown crate touched down: its up from the terrain's normal, placed along it
+  E.crate_settle = function (S, c) {
+    const w = W(); smooth_normal(w, c.pos.x, c.pos.y, c.pos.z, cn); if (M.len3(cn.x, cn.y, cn.z) < 0.3) { cn.x = 0; cn.y = 1; cn.z = 0; }
+    c.eUp = { x: cn.x, y: cn.y, z: cn.z }; if (c.eV) c.eV.x = c.eV.y = c.eV.z = 0;
+    for (let k = 0; k < 40 && cprobe(w, c.pos.x, c.pos.y, c.pos.z, 0.3); k++) { c.pos.x += cn.x * 0.05; c.pos.y += cn.y * 0.05; c.pos.z += cn.z * 0.05; }
+  };
+  // left the box / every well while thrown: lost
+  E.crate_out = function (S, c) { const w = W(); return c.pos.x < -K.OUT_M * 2 || c.pos.z < -K.OUT_M * 2 || c.pos.x > w.SX + K.OUT_M * 2 || c.pos.z > w.SZ + K.OUT_M * 2 || c.pos.y > w.SY + K.OUT_M * 2 || c.pos.y < 0; };
 
   const sa = { s: 0, y: 0, x: 0, z: 0 };
   // the sheep walks on any side of a chunk: sheepStep of weapons.js in the frame of the local up (u) and tangent (t = u rotated clockwise)
@@ -769,7 +880,9 @@
   // devices (magnet, spring trap ...) fall along the field instead of -y: d.gv = the speed along it
   E.dev_fall = function (S, d, dt) {
     const w = W(); down_at(S, d.pos.x, d.pos.y, d.pos.z, cg);
+    if (!d.eu) d.eu = { x: 0, y: 1, z: 0 };
     const below = w.sample(d.pos.x + cg.x * 0.18, d.pos.y + cg.y * 0.18, d.pos.z + cg.z * 0.18) > 0;
+    if (below) local_up(w, d.pos.x, d.pos.y, d.pos.z, -cg.x, -cg.y, -cg.z, d.eu); else { d.eu.x = -cg.x; d.eu.y = -cg.y; d.eu.z = -cg.z; }   // P86: its local up (sentry, mine, claymore ... follow it, render and aim): the surface it rests on, else the pull's opposite
     if (below) { d.gv = 0; d.vy = 0; for (let k = 0; k < 40 && w.sample(d.pos.x + cg.x * 0.1, d.pos.y + cg.y * 0.1, d.pos.z + cg.z * 0.1) > 0; k++) { d.pos.x -= cg.x * 0.05; d.pos.y -= cg.y * 0.05; d.pos.z -= cg.z * 0.05; } return true; }
     d.gv = (d.gv || 0) + C.G * K.PROJ_G * dt; d.pos.x += cg.x * d.gv * dt; d.pos.y += cg.y * d.gv * dt; d.pos.z += cg.z * d.gv * dt;
     return surf_dist(S, d.pos.x, d.pos.y, d.pos.z) < K.VOID_D && d.pos.y > 0.3;
@@ -859,18 +972,20 @@
   // a shell that has left every gravity well: lost to space. true = remove it (never explodes); it keeps drifting in S.eow.shots for the lost-shot view
   // the lost-shot rule, shared by the sim (proj_escape) and the CPU's prediction (P68g: it never plans a shot that leaves every well):
   // eEsc = the seconds spent so far where the field is below ESC_F; returns the new value, or -1 = lost to space
-  function esc_step(S, wx, y, wz, vs, vy, d, eEsc, dt) {
+  function esc3(S, x, y, z, vx, vy, vz, eEsc, dt, tRec, tStuck) {
     const wd = W();
-    field(S, wx, y, wz, fg); const l = M.len3(fg.x, fg.y, fg.z);
+    field(S, x, y, z, fg); const l = M.len3(fg.x, fg.y, fg.z);
     if (l >= K.ESC_F) return 0;
-    const out = wx < 0 || wz < 0 || wx > wd.SX || wz > wd.SZ || y > wd.SY + 2 || y < 1;
+    const out = x < 0 || z < 0 || x > wd.SX || z > wd.SZ || y > wd.SY + 2 || y < 1;
     // receding from the nearest body (any body within the fade range)
     const B = S.eow.bodies; let bn = -1, bd = 1e9, rec = true;
-    for (let i = 0; i < B.length; i++) { const dd = M.len3(wx - B[i].x, y - B[i].y, wz - B[i].z) - B[i].R; if (dd < bd) { bd = dd; bn = i; } }
-    if (bn >= 0) { const b = B[bn]; rec = (vs * d.x * (wx - b.x) + vs * d.z * (wz - b.z) + vy * (y - b.y)) > 0; }
+    for (let i = 0; i < B.length; i++) { const dd = M.len3(x - B[i].x, y - B[i].y, z - B[i].z) - B[i].R; if (dd < bd) { bd = dd; bn = i; } }
+    if (bn >= 0) { const b = B[bn]; rec = (vx * (x - b.x) + vz * (z - b.z) + vy * (y - b.y)) > 0; }
     eEsc += dt;
-    return eEsc > (rec ? K.ESC_T : K.ESC_T2) || (out && rec) ? -1 : eEsc;
+    return eEsc > (rec ? tRec : tStuck) || (out && rec) ? -1 : eEsc;
   }
+  E.esc3 = esc3;
+  function esc_step(S, wx, y, wz, vs, vy, d, eEsc, dt) { return esc3(S, wx, y, wz, vs * d.x, vy, vs * d.z, eEsc, dt, K.ESC_T, K.ESC_T2); }
   E.esc_step = esc_step;
   E.proj_escape = function (S, p, dt) {
     const d = P.dir(S), wl = P.to_world(S, p.s, p.y), e = esc_step(S, wl.x, p.y, wl.z, p.vs, p.vy, d, p.eEsc || 0, dt);
@@ -884,9 +999,145 @@
   };
   // per sim step: the lost shots drift on (no field, no drag) for K.LOST_T s
   E.step = function (S, dt) {
+    jet_tick(S, dt);
     const L = S.eow.shots;
     for (let i = L.length - 1; i >= 0; i--) { const q = L[i]; if (S.time - q.t0 > K.LOST_T) { L.splice(i, 1); continue; } q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt; }
   };
+  /* ================= local frames for placed objects (P86) =================
+   * A placed object's "up" is the pull's opposite where it sits (d.eu, kept by dev_fall), never the world's y. frame() gives the right-handed basis (e1, u, e2 = e1 x u):
+   * with u = (0, 1, 0) it is the old world basis (x, y, z), so on flat ground nothing changes; the sentry's yaw / pitch, its beam and the claymore's blast are measured in it. */
+  const FR0 = { e1x: 1, e1y: 0, e1z: 0, ux: 0, uy: 1, uz: 0, e2x: 0, e2y: 0, e2z: 1 };
+  E.frame = function (u, out) {
+    const ux = u ? u.x : 0, uy = u ? u.y : 1, uz = u ? u.z : 0;
+    let rx = 1, rz = 0; if (Math.abs(ux) > 0.9) { rx = 0; rz = 1; }
+    const k = rx * ux + rz * uz; let ex = rx - ux * k, ey = -uy * k, ez = rz - uz * k; const l = M.len3(ex, ey, ez) || 1; ex /= l; ey /= l; ez /= l;
+    out.e1x = ex; out.e1y = ey; out.e1z = ez; out.ux = ux; out.uy = uy; out.uz = uz;
+    out.e2x = ey * uz - ez * uy; out.e2y = ez * ux - ex * uz; out.e2z = ex * uy - ey * ux;
+    return out;
+  };
+  // the unit direction of (yaw, pitch) in a frame; out = world vector
+  E.fdir = function (F, yaw, pitch, out) {
+    const cy = M.cos(yaw) * M.cos(pitch), sp = M.sin(pitch), sy = M.sin(yaw) * M.cos(pitch);
+    out.x = F.e1x * cy + F.ux * sp + F.e2x * sy; out.y = F.e1y * cy + F.uy * sp + F.e2y * sy; out.z = F.e1z * cy + F.uz * sp + F.e2z * sy; return out;
+  };
+  // a world vector in the frame: out = (along e1, along u, along e2)
+  E.floc = function (F, x, y, z, out) {
+    out.x = x * F.e1x + y * F.e1y + z * F.e1z; out.y = x * F.ux + y * F.uy + z * F.uz; out.z = x * F.e2x + y * F.e2y + z * F.e2z; return out;
+  };
+  // a claymore lying on a surface: its up is the pull's opposite, its blast / laser runs along the planting direction (the horizontal one, turned onto the surface)
+  const cu3 = { x: 0, y: 1, z: 0 };
+  E.clay_frame = function (S, c) {
+    down_at(S, c.pos.x, c.pos.y, c.pos.z, cg); local_up(W(), c.pos.x, c.pos.y, c.pos.z, -cg.x, -cg.y, -cg.z, cu3); const ux = cu3.x, uy = cu3.y, uz = cu3.z;
+    if (!c.d0) c.d0 = { x: c.dir.x, y: c.dir.y, z: c.dir.z };
+    let tx = c.d0.x, ty = c.d0.y, tz = c.d0.z; const k = tx * ux + ty * uy + tz * uz; tx -= ux * k; ty -= uy * k; tz -= uz * k;
+    let l = M.len3(tx, ty, tz);
+    if (l < 0.3) { tx = -c.pn.z * uy; ty = c.pn.z * ux - c.pn.x * uz; tz = c.pn.x * uy; l = M.len3(tx, ty, tz); }      // (the up lies along the planting direction: use the section's normal x up)
+    if (l < 1e-4) return;
+    c.nrm.x = ux; c.nrm.y = uy; c.nrm.z = uz; c.dir.x = tx / l; c.dir.y = ty / l; c.dir.z = tz / l;
+  };
+
+  /* ================= jetpacks (P86) =================
+   * Replaces the parachute (no air in space). Each team has K.JET.N charges (setting `jetpacks`, default 3) and an ON / OFF switch (key J, the HUD chip) that stays as set when the
+   * turn passes: an armed jetpack protects every worm of its team, on or off turn. Each tick, per worm that is in the air, the path it is on is predicted under the field
+   * (esc3: it stays in a weak field and recedes, or sits far from every surface, for longer than a moment, or leaves the box) and if it will be lost a charge engages: the
+   * worm thrusts toward the nearest body (a short-range controller: a speed that shrinks with the distance, so it arrives at a few m/s) until it touches. 0 charges: it is lost. */
+  const JK = K.JET = { N: 3, A: 30, V: 8, T: 14, GAIN: 6, PRED_H: 0.1, PRED_T: 7, CHECK: 3, T_REC: 1.2, T_STUCK: 3, FAR_T: 1.2, LAND_V: 2.5 };
+  E.jet_toggle = function (S, a) {
+    const j = S.eow && S.eow.jet && S.eow.jet[a.team]; if (!j) return;
+    j.on = !j.on; if (!j.on) for (const w of S.worms) if (w.team === a.team) w.eJet = 0;
+    SS.sim.emit(S, 'eowjetmode', { team: a.team, on: j.on ? 1 : 0, n: j.n });
+    SS.sim.log(S, 'Jetpacks ' + (j.on ? 'ARMED' : 'OFF') + ' (' + j.n + ' left).', j.on ? 0x9fd0ff : 0xffb27a);
+  };
+  const pv = { x: 0, y: 0, z: 0 };
+  // the worm's 3D velocity into v (the active worm lives in the section: vs / vy)
+  function vel3(S, w, v) {
+    if (SS.sim.ctl(S, w)) { const d = P.dir(S); v.x = w.vs * d.x; v.y = w.vy; v.z = w.vs * d.z; } else { v.x = w.vel.x; v.y = w.vel.y; v.z = w.vel.z; }
+    return v;
+  }
+  // will a worm at p with velocity v leave every well (or hover far from every surface) before it touches rock?
+  function escapes(S, w, p, v) {
+    const wd = W(), h = JK.PRED_H, a = C.G_WORM * K.WORM_G * SS.sim.gravity_k(S, w) * h;
+    let x = p.x, y = p.y, z = p.z, vx = v.x, vy = v.y, vz = v.z, e = 0, far = 0;
+    for (let t = 0; t < JK.PRED_T; t += h) {
+      field(S, x, y, z, fg); vx += fg.x * a; vy += fg.y * a; vz += fg.z * a;
+      x += vx * h; y += vy * h; z += vz * h;
+      if (wd.sample(x, y, z) > 0) return false;
+      if (x < -K.OUT_M || z < -K.OUT_M || x > wd.SX + K.OUT_M || z > wd.SZ + K.OUT_M || y > wd.SY + K.OUT_M || y < -0.8) return true;
+      e = esc3(S, x, y, z, vx, vy, vz, e, h, JK.T_REC, JK.T_STUCK); if (e < 0) return true;
+      far = surf_dist(S, x, y, z) > K.VOID_D - 2 ? far + h : 0; if (far > JK.FAR_T) return true;
+    }
+    return false;
+  }
+  E.jet_escapes = (S, w) => escapes(S, w, w.pos, vel3(S, w, pv));
+  // the nearest body to thrust toward (the active worm: in its section plane, by the radius the plane cuts)
+  function jet_target(S, w) {
+    const B = S.eow.bodies, act = SS.sim.ctl(S, w); let bi = -1, bd = 1e9;
+    if (act) {
+      const q = P.to_plane(S, w.pos);
+      for (let i = 0; i < B.length; i++) {
+        const bq = P.to_plane(S, B[i]), t = bq.t, R = B[i].R; if (Math.abs(t) > R * 0.85) continue;
+        const d = M.len2(bq.s - q.s, B[i].y - w.pos.y) - Math.sqrt(R * R - t * t); if (d < bd) { bd = d; bi = i; }
+      }
+    }
+    if (bi < 0) for (let i = 0; i < B.length; i++) { const d = M.len3(B[i].x - w.pos.x, B[i].y - w.pos.y, B[i].z - w.pos.z) - B[i].R; if (d < bd) { bd = d; bi = i; } }
+    return bi;
+  }
+  const jt = { x: 0, y: 0, z: 0 };
+  // one tick of a thrusting worm: steer toward the body, a speed that shrinks with the distance; false = done (it touched, or the time is up)
+  function jet_thrust(S, w, dt) {
+    const act = SS.sim.ctl(S, w), grounded = act ? !w.air : w.rest;
+    if (grounded || w.dead || w.drowning || w.swim || (act && S.rope)) { w.eJet = 0; return; }
+    const bi = jet_target(S, w); if (bi < 0) { w.eJet = 0; return; }
+    const b = S.eow.bodies[bi], d = P.dir(S); w.eJb = bi;
+    vel3(S, w, pv);
+    let dx = b.x - w.pos.x, dy = b.y - w.pos.y, dz = b.z - w.pos.z;
+    if (act) { const q = P.to_plane(S, w.pos), bq = P.to_plane(S, b); dx = (bq.s - q.s) * d.x; dz = (bq.s - q.s) * d.z; }
+    const L = M.len3(dx, dy, dz) || 1, dist = M.max(0, L - b.R), sp = M.clamp(1.5 + 1.2 * Math.sqrt(2 * dist), 2.5, JK.V);
+    let ax = (dx / L * sp - pv.x) * JK.GAIN, ay = (dy / L * sp - pv.y) * JK.GAIN, az = (dz / L * sp - pv.z) * JK.GAIN; const al = M.len3(ax, ay, az);
+    if (al > JK.A) { const k = JK.A / al; ax *= k; ay *= k; az *= k; }
+    if (act) { w.vs += (ax * d.x + az * d.z) * dt; w.vy += ay * dt; } else { w.vel.x += ax * dt; w.vel.y += ay * dt; w.vel.z += az * dt; }
+    const l2 = M.len3(ax, ay, az) || 1; w.eJd.x = ax / l2; w.eJd.y = ay / l2; w.eJd.z = az / l2;             // (render: the plume leaves opposite)
+    w.eJet -= dt; w.eJh -= dt;
+    if (w.eJh <= 0) { w.eJh = 0.5; SS.sim.emit(S, 'eowjet', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, n: S.eow.jet[w.team].n, phase: 1 }); }
+  }
+  function jet_tick(S, dt) {
+    const J = S.eow.jet; if (!J) return;
+    for (let t = 0; t < J.length; t++) if (SS.game.is_cpu(S, t)) J[t].on = J[t].n > 0;          // the CPU keeps it armed while it has charges (a deliberate jump is planned to land, so it never wastes one)
+    for (let i = 0; i < S.worms.length; i++) {
+      const w = S.worms[i]; if (w.dead || !w.eup) continue;
+      if (w.eJet > 0) { jet_thrust(S, w, dt); continue; }
+      const j = J[w.team]; if (!j || !j.on || j.n <= 0 || (S.tick + w.id) % JK.CHECK !== 0) continue;
+      const act = SS.sim.ctl(S, w);
+      if (w.drowning || w.swim || (act ? (!w.air || S.rope) : w.rest)) continue;
+      if (!escapes(S, w, w.pos, vel3(S, w, pv))) continue;
+      j.n--; w.eJet = JK.T; w.eJh = 0;
+      SS.sim.emit(S, 'eowjet', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, n: j.n, phase: 0 });
+      SS.sim.log(S, w.name + "'s jetpack kicks in (" + j.n + ' left).', 0x9fd0ff);
+      jet_thrust(S, w, dt);
+    }
+  }
+  E.hash = function (S, mix) {
+    const e = S.eow; if (!e) return;
+    if (e.jet) for (const j of e.jet) { mix(j.n); mix(j.on ? 1 : 0); }
+    for (const w of S.worms) { mix(w.eJet > 0 ? 1 : 0); if (w.dead && w.grave) { mix(w.grave.x); mix(w.grave.y); mix(w.grave.z); } }
+    for (const c of S.crates) if (c.eV) { mix(c.eV.x); mix(c.eV.y); mix(c.eV.z); }
+  };
+
+  /* ================= the walk's facing in the worm's own frame (P86) =================
+   * The sim's facing is the SCREEN side (aim, shots). The body is drawn along its own tangent t (clockwise: ts = u.y), so on the underside the screen side and the body's
+   * forward are opposite: the animation ran backwards there. look_face gives the draw facing: along a floor / ceiling (|ts| > 0.25) the screen side times sign(ts); on a wall,
+   * where the screen says nothing, the walking sense (eSense); in the air the last grounded one. prev = the last result (or 0). */
+  E.look_face = function (f, ts, eSense, flying, prev) {
+    if (flying && prev) return prev;
+    if (Math.abs(ts) > 0.25) return f * (ts >= 0 ? 1 : -1);
+    return eSense >= 0 ? 1 : -1;
+  };
+  // the aim angle in the worm's own frame (forward along fr * t, up u) for a screen aim: a = S.aim, f = the screen facing (sim), fr = the draw facing
+  E.look_aim = function (aim, f, fr, us, uy) {
+    const ts = uy, ty = -us, ax = f * M.cos(aim), ay = M.sin(aim);
+    return M.atan2(ax * us + ay * uy, fr * (ax * ts + ay * ty));
+  };
+
   // keep the plane-frame up (eu2) of a 3D worm in step with its world up (for the renderer and the next turn)
   function set_up3(S, b) {
     const d = P.dir(S); b.eu2.s = b.eup.x * d.x + b.eup.z * d.z; b.eu2.y = b.eup.y;

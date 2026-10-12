@@ -308,3 +308,7 @@ body.touch #winfo{bottom:118px} body.touch #teams{display:none} body.touch #wtip
 @media (max-width:1100px){#winfo .di{display:none}}
 body.touch #weapons:not(.closed){z-index:7}      /* P77: the open bag is above the pad (z 6): the pad's buttons sat over 3-4 of the 7 Core tiles on phone-size windows */
 body.touch #weapons .wgrid[data-m=mid]{--w:52px;--h:52px}body.touch #weapons .wgrid[data-m=big]{--w:60px;--h:60px}body.touch .wtab{padding:8px 12px}
+/* P85: edge indicators for off-screen events (ui/offscreen.js) */
+.edgeind{position:absolute;left:0;top:0;display:none;align-items:center;justify-content:center;width:44px;height:44px;border-radius:50%;background:rgba(20,24,30,.62);box-shadow:0 2px 8px rgba(0,0,0,.4);font-size:22px;line-height:1;pointer-events:none}
+.edgeind .ar{position:absolute;left:50%;top:50%;width:0;height:0;margin:-34px 0 0 -7px;border:7px solid transparent;border-bottom:12px solid rgba(255,255,255,.85);border-top:0;transform-origin:7px 34px}
+.edgeind b{font-weight:400}

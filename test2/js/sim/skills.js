@@ -74,6 +74,7 @@
     const hit = rng(S) < chance, tool = pick(S);
     const WP = SS.weapons;
     if (!hit || !WP.crate_room(S, true)) return;     // (P38 R3: the tool crates' own cap, the oldest landed one makes room)
+    if (S.eow) { if (SS.eow.crate_add(S, 'tool', null, tool)) sim().emit(S, 'banner', { title: 'Tool delivery', sub: 'A crate drifts in from the dark' }); return; }   // P86: random spot in space, no parachute
     for (let tries = 0; tries < 12; tries++) {
       const s = rr(S, -25, 25), gy = WP.ground_below(S, s, W().SY - 0.5), at = P.to_world(S, s, gy);
       if (gy < -1e8 || gy < sim().surface_at(S, at.x, at.z) + 0.3 || (W().dry && !sim().in_play(S, at.x, at.z))) continue;
@@ -96,7 +97,8 @@
       if (used['w' + k]) continue; used['w' + k] = 1; kinds.push({ kind: 'weapon', weapon: k });
     }
     let made = 0;
-    for (const e of kinds) {
+    if (S.eow) for (const e of kinds) { if (WPN.crate_room(S, e.kind === 'tool') && SS.eow.crate_add(S, e.kind, e.weapon || null, e.tool || null)) made++; }   // P86: space: at random spots, drifting
+    else for (const e of kinds) {
       if (!WPN.crate_room(S, e.kind === 'tool')) continue;                                        // (P38 R3: the caps; the oldest landed crate of the class makes room)
       for (let tries = 0; tries < 20; tries++) {
         const x = rr(S, 6, w.SX - 6), zr = rr(S, 6, w.SZ - 6), z = w.flat ? w.MZ : zr, top = M.max(w.top_at(x, z), w.SEA);
@@ -108,7 +110,7 @@
       }
     }
     sim().emit(S, 'overload', { wormId: a.id, n: made });
-    sim().emit(S, 'banner', { title: 'Crate overload!', sub: `${made} crates are falling all over the map` });
+    sim().emit(S, 'banner', { title: 'Crate overload!', sub: S.eow ? `${made} crates are adrift in space` : `${made} crates are falling all over the map` });
     sim().log(S, `${a.name} triggers a crate overload: ${made} crates drop around the map!`, 0xffd27a);
   };
 
