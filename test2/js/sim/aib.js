@@ -181,6 +181,17 @@
     pl.phase = 'move'; return true;
   }
 
+  /* P95: one straight leg through a cave toward the nearest foe by PATH (sim/aid.js nav.leg gives the waypoint). The section turns to the waypoint while the rotation is free,
+   * then the worm walks it (kind 4: moveWalk 'align' fixes goalS from the waypoint once the turn is done); false when the plane cannot be turned and the waypoint is off it. */
+  AB.nav_walk = function (S, pl, a, g) {
+    const rot = !SS.rotlock || SS.rotlock.allowed(S), cp = P.to_plane(S, { x: g.x, y: g.y, z: g.z }), ap = P.to_plane(S, a.pos);
+    if (!rot && Math.abs(cp.t) > 1.0) return false;
+    const dist = M.len3(g.x - a.pos.x, g.y - a.pos.y, g.z - a.pos.z);
+    pl.mv = { kind: 4, st: rot ? 'align' : 'go', why: 'nav', t0: S.time, tmax: M.clamp(3 + dist / K.WALK_V, 5, 14), crate: -1, goalS: cp.s, dir: cp.s >= ap.s ? 1 : -1, lastS: ap.s, stuckT: 0, jumps: 0, tChk: S.time, wx: g.x, wy: g.y, wz: g.z };
+    if (rot) sim().align_to_point(S, g.x, g.z);
+    pl.phase = 'move'; return true;
+  };
+
   // before the search of a turn: hazards, a health crate when hurt
   AB.prep = function (S, pl, a) {
     const ap = P.to_plane(S, a.pos);
@@ -418,6 +429,7 @@
     const m = pl.mv, ap = P.to_plane(S, a.pos);
     if (m.st === 'align') {
       if (S.thetaGoal != null) return false;
+      if (m.kind === 4) { m.goalS = P.to_plane(S, { x: m.wx, y: m.wy, z: m.wz }).s; m.st = 'go'; m.t0 = S.time; m.lastS = ap.s; m.tChk = S.time; return false; }       // (P95: the cave leg)
       const c = S.crates.find(q => q.id === m.crate); if (!c) return true;
       const cp = P.to_plane(S, c.pos);
       if (Math.abs(cp.t) > 0.9 || !walkable(S, ap.s, cp.s, a.pos.y)) { markBad(S, pl, m.crate); return true; }

@@ -99,7 +99,7 @@
     lamp = new T.PointLight(0xffd9a8, 0, 26, 1.6); scene.add(lamp);
     /* P65i: the night headlamp is a real spot (worn on the head, aimed ahead and a little down, inverse-square), not a point light hanging
      * next to the worm: the worm itself is outside the cone (lit by the moon, not blown out) and a pool of light lies on the ground ahead */
-    headSpot = new T.SpotLight(0xffd9a8, 0, 26, 0.62, 0.9, 2); scene.add(headSpot); scene.add(headSpot.target);
+    headSpot = new T.SpotLight(0xffd9a8, 0, 26, 0.66, 1.0, 2); scene.add(headSpot); scene.add(headSpot.target);
     // night sky: stars on the upper dome (procedural points; the glow sprite), shown at night (faintly at dusk)
     { const n = 1600, p = new Float32Array(n * 3), c = new Float32Array(n * 3);
       for (let i = 0; i < n; i++) { const u = Math.random() * 0.97 + 0.03, a = Math.random() * 6.283, r = Math.sqrt(1 - u * u), k = 0.55 + Math.random() * 0.45, warm = Math.random();
@@ -718,7 +718,8 @@
     SS.fx.env.wx = wind && wind.mean ? wind.mean.x : 0; SS.fx.env.wz = wind && wind.mean ? wind.mean.z : 0;
     SS.grass.frame(S, view.time, wind ? wind.mean : null, wind ? wind.whirls : null, S.weather ? S.weather.snowCover : 0);
     if (SS.clutterView) SS.clutterView.frame(S, view, wind ? wind.mean : null);
-    outlineMat.uniforms.uTime.value = view.time; outlineMat.uniforms.uAlpha.value = (0.55 + 0.45 * (1 - insp)) * (1 - edgeA) * (1 - insp);   // (P85: the overview draws its own yellow cut, render/seccut.js)
+    { const oc = outlineMat.uniforms.uColor.value, nt = view.tod === 'night', dk = view.tod === 'dusk'; oc.setHex(nt ? 0xa8c4ff : dk ? 0xffd08a : 0xfff0b0); }   // P97: the cut line takes the light of the hour (cool and dim at night, warm at dusk) instead of one cream at all times
+    outlineMat.uniforms.uTime.value = view.time; outlineMat.uniforms.uAlpha.value = (0.55 + 0.45 * (1 - insp)) * (1 - edgeA) * (1 - insp) * (view.tod === 'night' ? 0.6 : view.tod === 'dusk' ? 0.85 : 1);   // (P85: the overview draws its own yellow cut, render/seccut.js)
     outline.visible = edgeA < 0.999;
     if (water) water.material.uniforms.uTime.value = view.time;
 

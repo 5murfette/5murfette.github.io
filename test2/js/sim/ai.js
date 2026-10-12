@@ -221,10 +221,10 @@
      * fallback special; null = none), top (the best 40 candidates, sorted), wpns, props (barrels / mines near worms), fine (the fine grid pass), walked, moves (reposition
      * attempts), worm (id), turn (S.turnNo it was made in), prepped, regiven, noted, detour, fixed (rotation locked: foes0 keeps the unfiltered list), stage, scands
      * (special candidates), rk / rlist (robustness pass), doneT (time the plan finished, null), fired (what it fired: { wpn, v, target id } or null), grav, mv (the
-     * movement sub-plan, null), badCrates (crate ids given up on this turn), appr (1 once the CPU walked up to a foe for a close-range tool this turn), ret (the retreat direction of this turn, 0 = not chosen yet). */
+     * movement sub-plan, null), badCrates (crate ids given up on this turn), navs (P95: cave legs walked this turn), appr (1 once the CPU walked up to a foe for a close-range tool this turn), ret (the retreat direction of this turn, 0 = not chosen yet). */
     return { phase: 'think', t: S.time + K.THINK, diff, foes, aliens, fi: 0, cand: null, next: 0, best: null, top: [], walked: false, turn: S.turnNo, wpns, props: nearProps(S), moves: 0,
       worm: a.id, sbest: null, fbest: null, fine: false, prepped: 0, regiven: 0, noted: 0, detour: 0, fixed: false, foes0: null, stage: 0, scands: null, rk: 0, rlist: null, appr: 0, ret: 0,
-      doneT: null, fired: null, grav: null, mv: null, badCrates: [] };
+      doneT: null, fired: null, grav: null, mv: null, badCrates: [], navs: 0 };
   }
   /* a scored shot candidate (C: struct Cand { f32 v; Hit hit; i16 fi; u8 wpn; f32 aim; i8 facing; f32 pw; f32 rv (robust value, NaN = not computed yet); }) */
   const cand_make = (v, hit, fi, c) => ({ v, hit, fi, wpn: c.wpn, aim: c.aim, facing: c.facing, pw: c.pw, rv: null });
@@ -261,9 +261,14 @@
   function giveUp(S, pl, a, inp) {
     // the plane is turned to the last target tried: go back to the nearest one first (while turning is still allowed)
     if (pl.fi !== 0 && !pl.regiven && (!SS.rotlock || SS.rotlock.allowed(S))) { pl.regiven = 1; pl.fi = 0; pl.best = null; pl.top = []; alignAi(S, pl, 0, 'regive'); return; }
+    // P95: in a cave (rock between the worms, no sky weapons) walk one straight leg along the path through it toward the nearest foe, before the rope / zipline / crate fallbacks
+    if (SS.world.under && !SS.world.flat && SS.nav && SS.aib && pl.navs < 1 && !a.air && !S.rope) {
+      const g = SS.nav.leg(S, a);
+      if (g && g.rem > 3 && (pl.navs++, SS.aib.nav_walk(S, pl, a, g))) return;
+    }
     if (S.eow ? SS.eow.cpu_move(S, pl, a) : SS.aib && SS.aib.reposition(S, pl, a)) return;      // P68d: in the End of the World the hop planner (sim/eow.js)
     if (SS.aic && SS.aic.approach(S, pl, a, 0)) return;
-    if (!pl.walked) { pl.walked = true; pl.best = null; pl.top = []; pl.sbest = null; pl.phase = 'walk'; pl.t = S.time + K.WALK_T; }
+    if (!pl.walked && !pl.navs) { pl.walked = true; pl.best = null; pl.top = []; pl.sbest = null; pl.phase = 'walk'; pl.t = S.time + K.WALK_T; }
     else if (pl.fbest) { pl.sbest = pl.fbest; pl.fbest = null; chooseSpecial(S, pl); }
     else { inp.end_turn = true; pl.phase = 'done'; }
   }
@@ -447,7 +452,7 @@
     const cands = stage === 0 || !pl.scands ? (pl.scands = []) : pl.scands;
     if (stage === 0) {
     if (!own && dist < 1.3 && has('bat')) cands.push({ special: 'bat', v: M.min(tgt.hp, 30) + 20, aim: M.max(0.2, aim), facing });
-    if (!own && dist < (laserOn(a) ? 24 : 15) && clear && has('shotgun')) cands.push({ special: 'shotgun', v: M.min(tgt.hp, 50) * 0.9, aim, facing });
+    if (!own && dist < (laserOn(a) ? 24 : 15) && clear && has('shotgun') && !bodyInLine(S, ap.s, a.pos.y, tp.s, tgt.pos.y)) cands.push({ special: 'shotgun', v: M.min(tgt.hp, 50) * 0.9, aim, facing });
     for (const k of ['airstrike', 'tesla', 'moai']) if (has(k)) {
       const W = k === 'airstrike' ? (C.PROJ.missile.W) * 2.2 : k === 'moai' ? C.ARMS.MOAI.W * 1.6 : C.ARMS.TESLA.W;
       let v = score(S, { x: tgt.pos.x, y: tgt.pos.y - 0.3, z: tgt.pos.z }, W, null, k === 'airstrike' ? 30 * 2.2 : k === 'moai' ? 28 * 1.6 : 10) * 0.85;
@@ -459,7 +464,7 @@
     if (has('shotgun') && SS.alien) for (const o of S.worms) {
       if (o === a || o.dead || o.hp <= 0 || o.team !== a.team || !(o.hug != null && o.hug >= 0) || o.hp <= C.ARMS.SHOTGUN.DMG * 1.5) continue;
       const op = P.to_plane(S, o.pos), od = M.len2(op.s - ap.s, o.pos.y - a.pos.y);
-      if (od > (laserOn(a) ? 24 : 15) || Math.abs(op.t) > C.HALF || !clearLine(S, ap.s, a.pos.y, op.s, o.pos.y)) continue;
+      if (od > (laserOn(a) ? 24 : 15) || Math.abs(op.t) > C.HALF || !clearLine(S, ap.s, a.pos.y, op.s, o.pos.y) || bodyInLine(S, ap.s, a.pos.y, op.s, o.pos.y)) continue;
       const crate = S.crates.some(c => c.kind === 'health' && c.landed);
       cands.push({ special: 'shotgun', v: crate ? 30 : 14, aim: M.atan2(o.pos.y - a.pos.y, Math.abs(op.s - ap.s)), facing: op.s >= ap.s ? 1 : -1 });
     }
@@ -557,6 +562,14 @@
       const f = (q.s - ap.s) / M.nz(tp.s - ap.s, 1), yl = a.pos.y + (ty - a.pos.y) * f;
       if (Math.abs(o.pos.y - yl) < 1.6) return true;
     }
+    return false;
+  }
+  /* P95: a body (barrel, log, rock, crate ...) on a hitscan line: the shotgun's ray stops at the first one and only nudges it (the CPU fired it into the same log, turn after
+   * turn: 4 of 5 shotgun turns of a desert match; 14 % of its shots hit a worm). Same sampling as weapons.js shotgun(): 0.1 m steps from 0.7 m. */
+  function bodyInLine(S, s0, y0, s1, y1) {
+    if (!S.planeBodies || !S.planeBodies.length) return false;
+    const L = M.len2(s1 - s0, y1 - y0), n = Math.ceil(L / 0.1);
+    for (let i = 7; i < n - 3; i++) { const f = i / n; if (P.body_at2(S, s0 + (s1 - s0) * f, y0 + (y1 - y0) * f, true) >= 0) return true; }
     return false;
   }
   function clearLine(S, s0, y0, s1, y1) { const L = M.len2(s1 - s0, y1 - y0), n = Math.ceil(L / 0.2); for (let i = 2; i < n - 1; i++) { const f = i / n; if (P.solid2(S, s0 + (s1 - s0) * f, y0 + (y1 - y0) * f)) return false; } return true; }

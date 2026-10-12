@@ -110,8 +110,9 @@
     return true;
   }
   function retarget(S, w, sw) {
-    const line = w === S.active || !!W().flat;
-    const ok = line ? lineSearch(S, w, sw) : search(S, w, sw);
+    let line = w === S.active || !!W().flat;
+    let ok = line ? lineSearch(S, w, sw) : search(S, w, sw);
+    if (!ok && line) { ok = search(S, w, sw); if (ok) line = false; }       // P91: no shore along the section: a swimmer is not under control, so the search may leave the plane (the next turn re-centres it)
     sw.land = ok; sw.line = line ? 1 : 0;
     sw.rt = S.time + (ok ? K.RETARGET_T : K.RETARGET_T_LONG);
     if (ok) { sw.tx = sw.gx; sw.tz = sw.gz; } else { sw.tx = w.pos.x; sw.tz = w.pos.z; }
@@ -139,12 +140,35 @@
     w.swim = null; sim().emit(S, 'jacketend', { wormId: w.id, why: 'lost' });
     sim().drown(S, w);
   }
+  /* the worm leaves the water at the column (x, z) whose ground is at height t: the common end of a swim (climb-out, dry water, turn-start rescue) */
+  function exitAt(S, w, x, z, t, why) {
+    w.pos.x = x; w.pos.z = z; w.pos.y = t + w.foot + 0.02; w.swim = null;
+    w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0;
+    if (w === S.active) w.air = true; else w.rest = false;
+    sim().emit(S, 'swimout', { wormId: w.id }); sim().emit(S, 'jacketend', { wormId: w.id, why: why });
+    sim().log(S, `${w.name} climbs out and the life jacket deflates.`, 0xffa24a);
+  }
+  /* P91: haul a jacket swimmer out NOW (the turn was handed to it: a worm in the water cannot act). Returns true when it is on land. */
+  JK.haul = function (S, w) {
+    const sw = w.swim; if (!sw || !sw.jk) return false;
+    for (let tries = 0; tries < 2; tries++) {
+      retarget(S, w, sw); if (!sw.land) return false;
+      const surf2 = sim().surface_at(S, sw.gx, sw.gz), t = land(S, sw.gx, sw.gz, surf2 > -90 ? surf2 : sw.ys);
+      if (t > -1e8) { exitAt(S, w, sw.gx, sw.gz, t, 'turn'); return true; }
+    }
+    return false;
+  };
   /* one fixed step of a jacket swim (called from swimStep after it zeroed the velocity) */
   JK.step = function (S, w, dt) {
     const sw = w.swim, wd = W();
     if (w.hp <= 0) { lose(S, w); return; }
     const sdd = SS.game.final_drain(S);                    // the last stage of sudden death bills a floater too (no match stalls on one)
     if (sdd > 0) { sim().burn(S, w, sdd, dt, C.DS.SUDDEN_DEATH, C.HF.QUIET); if (w.hp <= 0) { lose(S, w); return; } }
+    // P91: the water is gone from under the swimmer (it receded, or the worm waded onto a bar): it stands on the ground it is over, no jacket swim on dry land
+    if (!wetAt(S, w.pos.x, w.pos.z) && !lavaAt(S, w.pos.x, w.pos.z)) {
+      const g = land(S, w.pos.x, w.pos.z, sw.ys);
+      if (g > -1e8 && w.pos.y - w.foot <= g + 0.4) { exitAt(S, w, w.pos.x, w.pos.z, g, 'dry'); return; }
+    }
     // the surface, smoothed (a wave must not shake the worm), and the float height with a slow bob
     const surf = sim().surface_at(S, w.pos.x, w.pos.z);
     if (surf > -90) sw.ys += (surf - sw.ys) * M.min(1, 4 * dt);
@@ -180,14 +204,7 @@
       if (bank && GL >= 0.9 && sw.stuck > 0.6) { sw.rt = S.time; sw.stuck = 0; }       // wedged on a submerged ledge far from the shore: look for another way (never a teleport)
       if ((bank && GL < 0.9) || GL < 0.3) {
         const surf2 = sim().surface_at(S, sw.gx, sw.gz), t = land(S, sw.gx, sw.gz, surf2 > -90 ? surf2 : sw.ys);
-        if (t > -1e8) {
-          w.pos.x = sw.gx; w.pos.z = sw.gz; w.pos.y = t + w.foot + 0.02; w.swim = null;
-          w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0;
-          if (w === S.active) w.air = true; else w.rest = false;
-          sim().emit(S, 'swimout', { wormId: w.id }); sim().emit(S, 'jacketend', { wormId: w.id, why: 'shore' });
-          sim().log(S, `${w.name} climbs out and the life jacket deflates.`, 0xffa24a);
-          return;
-        }
+        if (t > -1e8) { exitAt(S, w, sw.gx, sw.gz, t, 'shore'); return; }
         sw.rt = S.time;                                    // the shore column is gone: look again at once
       }
     } else if (cx || cz) {

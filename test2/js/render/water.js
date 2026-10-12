@@ -54,8 +54,12 @@
         vec4 R = uRing[i]; float age = uWTime - R.z;
         if (age < 0.0 || age > 9.0 || R.w <= 0.0) continue;
         vec2 d = p - R.xy; float r = length(d), x = r - age * 5.0;
+        if (x > 1.4 || x < -9.5) continue;
+        // P97: the front is not a perfect circle: its radius wanders with the angle (more as it travels) and its strength is patchy
+        float an = atan(d.y, d.x), sd = fract(R.z * 0.731) * 6.28, wob = (0.55 * sin(an * 3.0 + sd) + 0.35 * sin(an * 7.0 + sd * 2.3) + 0.2 * sin(an * 13.0 + sd * 3.1)) * (0.25 + min(age * 0.5, 1.0));
+        x += wob;
         if (x > 0.5 || x < -9.0) continue;
-        float env = R.w * exp(-age * 0.35) * exp(x * 0.35) / (1.0 + r * 0.15) * smoothstep(0.5, 0.0, x);
+        float env = R.w * (0.72 + 0.28 * sin(an * 5.0 + sd * 1.7 + 1.0)) * exp(-age * 0.35) * exp(x * 0.35) / (1.0 + r * 0.15) * smoothstep(0.5, 0.0, x);
         float s = cos(x * 2.4) * env;
         g.xy += d / max(r, 1e-3) * s;
         g.z = max(g.z, env * smoothstep(0.6, 1.0, sin(x * 2.4 + 1.57)) * smoothstep(-2.5, 0.0, x));

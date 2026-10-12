@@ -7,7 +7,7 @@
  *   handgun       foe within 17 m on a clear line: min(hp, 30) x 0.85       (two rounds)
  *   mortar        AI.predict at full power over a fan of angles: the bomblets (22 HP) within 3.2 m of the burst
  *   acid / gas    AI.predict over angles x powers: acid within 2.6 m of the flask (min(hp, 30)), gas within 3.6 m (18 per foe)
- *   boomerang     the harmonic flight model run forward 1.4 s over angles x powers: the first foe on the way (26 HP)
+ *   boomerang     P93: the real curved flight (WA.boom_acc) run forward over angles x powers: one bomblet (18 HP, 2.2 m) at the first thing it touches, so it also finds foes behind cover
  *   raven         five letters (18 HP) on the target when a clear 22 m launch line exists (the first 19 m are flown straight)
  * Deterministic: reads the state only; the aim noise comes from the AI's own stream (the gauss passed in). */
 (function (SS) {
@@ -27,23 +27,27 @@
     return v;
   };
   const clearLine = (S, s0, y0, s1, y1) => { const L = M.len2(s1 - s0, y1 - y0), n = Math.ceil(L / 0.25); for (let i = 2; i < n; i++) { const f = i / n; if (P.solid2(S, s0 + (s1 - s0) * f, y0 + (y1 - y0) * f)) return false; } return true; };
-  // the boomerang's flight (as sim/raven.js, terrain only): the first foe within reach in the first 1.4 s
+  // P93: the boomerang's flight run forward with the real force law (WA.boom_make / boom_acc, no wind): the first foe touched, or the terrain / body it hits,
+  // is the burst point (one cluster bomblet); a spent (END) flight or the thrower's own vicinity gives nothing. Returns { x, y, z } or null.
+  const bacc = { s: 0, y: 0 };
   function boomHit(S, a, aim, facing, pw) {
-    const K = A.BOOM, ap = P.to_plane(S, a.pos), v0 = C.WEAPONS.boomerang.vmax * M.max(C.WORM_DYN.MIN_POWER, pw), om = Math.PI / K.T, dt = 1 / 60;
+    const K = A.BOOM, ap = P.to_plane(S, a.pos), v0 = C.WEAPONS.boomerang.vmax * M.max(C.WORM_DYN.MIN_POWER, pw), dt = 1 / 60;
     const ds = facing * M.cos(aim), dy = M.sin(aim);
-    let s = ap.s + ds * 0.7, y = a.pos.y + dy * 0.7, vs = ds * v0, vy = dy * v0; const s0 = ap.s, y0 = y;
-    for (let t = 0; t < 1.4; t += dt) {
-      const f = M.smooth(M.clamp(t / K.T, 0, 1)), yt = y0 - K.LOW * f;
-      vs += (-om * om * (s - s0) - K.DRAG * vs) * dt; vy += (-om * om * (y - yt) - K.DRAG * vy) * dt; s += vs * dt; y += vy * dt;
-      if (P.solid2(S, s, y)) return null;
+    const b = WA.boom_make(K, ap.s + ds * 0.7, a.pos.y + dy * 0.7, ds * v0, dy * v0, facing);
+    for (; b.age < K.T * K.END; b.age += dt) {
+      WA.boom_acc(K, b, bacc); b.vs += bacc.s * dt; b.vy += bacc.y * dt;
+      const ns = b.s + b.vs * dt, ny = b.y + b.vy * dt, wp = P.to_world(S, ns, ny);
+      if (ny < SS.sim.surface_at(S, wp.x, wp.z) || ny < 0.3) return null;
+      if (P.solid2(S, ns, ny) || (S.planeBodies.length && P.body_at2(S, ns, ny, true) >= 0)) return wp;
       for (const o of S.worms) {
-        if (o.dead || o === a) continue;
-        const q = P.to_plane(S, o.pos); if (Math.abs(q.t) > C.WORM_R) continue;
-        if (M.len2(s - q.s, y - o.pos.y) < C.WORM_R + 0.2) return o;
+        if (o.dead || (o === a && b.age < K.ARM_OWN)) continue;
+        if (M.len3(o.pos.x - wp.x, o.pos.y - wp.y, o.pos.z - wp.z) < C.WORM_R + 0.18) return wp;
       }
+      b.s = ns; b.y = ny;
     }
     return null;
   }
+  WA.boom_hit = boomHit;                 // (tools/dev/gen/p93test.cjs)
   // how much the CPU values each weapon relative to its raw expected damage (limited-ammo specials, like the PoC's cluster / air strike
   // picks: two handgun rounds, a poison that keeps hurting, five letters, bomblets that scatter all weigh more than one blast)
   const RAVEN_K = 0.35;                    // letters that actually land on the target (measured, P38)
@@ -86,7 +90,7 @@
     if (on('gas') && can('gas')) { const g0 = cands.length; fan('gas', aimsA, [0.3, 0.45, 0.6, 0.8, 1], h => val(S, me, h.x, h.y + 0.5, h.z, 4.0, 26) * 0.9); if (cands.length > g0) cands[cands.length - 1].fb = 1; }     // (P38-R5: a poison is a fallback: it was never worth more than 18, the threshold of a special, so it was never thrown)
     if (on('basic') && can('boomerang')) {
       let best = null;
-      for (let aim = -0.1; aim <= 0.9; aim += 0.1) for (const pw of [0.35, 0.5, 0.65, 0.8, 1]) { const o = boomHit(S, a, aim, c.facing, pw); if (!o) continue; const v = (o.team === me ? -OWN_K : 1) * M.min(o.hp, A.BOOM.DMG) * 1.1; if (!best || v > best.v) best = { special: 'boomerang', v, aim, pw, facing: c.facing }; }
+      for (let aim = -0.3; aim <= 1.3; aim += 0.1) for (const pw of [0.35, 0.5, 0.65, 0.8, 1]) { const h = boomHit(S, a, aim, c.facing, pw); if (!h) continue; const v = val(S, me, h.x, h.y, h.z, 2.2, 20) * 1.1; if (!best || v > best.v) best = { special: 'boomerang', v, aim, pw, facing: c.facing }; }
       if (best) cands.push(best);
     }
     if (on('basic') && can('raven') && c.dist > 6) {

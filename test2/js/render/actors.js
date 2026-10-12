@@ -335,7 +335,7 @@
     if (SS.ordnance) { hookM = SS.ordnance.hook(); hookM.scale.setScalar(1.4); hookM.visible = false; scene.add(hookM); }
     hookLine = new T.Mesh(rope.geometry, rope.material); hookLine.visible = false; scene.add(hookLine);
     if (SS.travView) SS.travView.init(scene);                            // P37 W2: rope / parachute / zipline drawing
-    reticle = new T.Sprite(new T.SpriteMaterial({ map: tx.ring, color: 0xffffff, depthTest: false, transparent: true }));
+    reticle = new T.Sprite(new T.SpriteMaterial({ map: tx.reticle, color: 0xffffff, depthTest: false, transparent: true }));
     reticle.scale.set(0.55, 0.55, 1); reticle.renderOrder = 12; scene.add(reticle);
     for (let i = 0; i < 14; i++) {
       const s = new T.Sprite(new T.SpriteMaterial({ map: tx.glow, depthTest: false, transparent: true, blending: T.AdditiveBlending }));
@@ -812,7 +812,6 @@
       const ad = SS.sim.aim_dir(S), ap = P.to_plane(S, a.pos), qq = P.to_world(S, ap.s + ad.s * 2.4, a.pos.y + ad.y * 2.4);
       reticle.position.set(qq.x, qq.y, qq.z);
       if (SS.wornView && SS.wornView.laserHit()) { const lh = SS.wornView.laserHit(); reticle.position.set(lh.x, lh.y, lh.z); }   // P37 W4: the laser sight skill: the crosshair snaps to the first surface on the path
-      reticle.material.rotation = view.time * 1.5;
       reticle.material.color.set(S.weapon === 'rope' ? 0xbfe6ff : 0xffffff);
       if (S.charging) {
         const nd = Math.ceil(S.power * powerDots.length);

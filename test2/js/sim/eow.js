@@ -29,7 +29,7 @@
     VOID_D: 14, VOID_T: 2.2, OUT_M: 6,                            // lost: m from the nearest surface, for s; m outside the box
     SAFE: 24, BRAKE_A: 28, V_LAND: 3.2, BRAKE_L: 5, BRAKE_STEP: 0.35,   // magnetic landing: damage above SAFE m/s, deceleration m/s2, soft speed m/s, look-ahead m
     STEP_DOWN: 1.1, RING: [0.85, 1.6, 2.6], UP_BLEND: 0.3,       // walking: the suit follows a drop of this size; the surface normal probe radii, its smoothing
-    NUB_R: 1.1, HULL_HL: 16, HULL_WY: 4.4, HULL_WZ: 5.4, HULL_T: 1.0
+    REBAKE_PEN: 0.12, REBAKE_SPECK: 22, REBAKE_RETRY: 240, NUB_R: 1.1, HULL_HL: 16, HULL_WY: 4.4, HULL_WZ: 5.4, HULL_T: 1.0
   };
   const TAU = M.TAU;
   const lerp = M.lerp, clamp = M.clamp;
@@ -70,7 +70,7 @@
       const cut = [], bites = [], nCut = 1 + (rr(0, 1) < 0.4 ? 1 : 0);
       for (let q = 0; q < nCut; q++) { const n = sphere(); cut.push({ nx: n.x, ny: n.y, nz: n.z, off: Re * rr(0.45, 0.72) }); }
       for (let q = 0, nb = 2 + M.rng_int(rng, 2); q < nb; q++) { const n = sphere(), br = Re * rr(0.2, 0.34); bites.push({ x: x + n.x * Re * 0.92, y: y + n.y * Re * 0.7, z: z + n.z * Re * 0.92, r: br }); }
-      chunks.push({ x, y, z, rx, ry, rz, R: Re, cut, bites, seed: 11 + chunks.length * 37, lava: false, spikes: [] });
+      chunks.push({ id: chunks.length, x, y, z, rx, ry, rz, R: Re, cut, bites, seed: 11 + chunks.length * 37, lava: false, spikes: [] });
     }
     let nLava = 0;
     for (const c of chunks) if (nLava < 2 && M.len3(c.x - mx, c.y - K.CORE_Y, c.z - mz) < 29 * sc && c.R > 8.6) { c.lava = true; nLava++; }
@@ -89,7 +89,7 @@
       for (const o of debris) if (ok && M.len3(x - o.x, y - o.y, z - o.z) - o.R * (o.plate ? 1.9 : 1) - Rg < 2.5) ok = false;
       if (ok && hull && M.seg_dist(x, y, z, hull.A, hull.B) - Rg - 6.6 < 3) ok = false;
       if (!ok) continue;
-      debris.push({ x, y, z, R: Rd, plate, yaw: rr(0, TAU), seed: 101 + debris.length * 13 });
+      debris.push({ id: debris.length, x, y, z, R: Rd, plate, yaw: rr(0, TAU), seed: 101 + debris.length * 13 });
     }
     for (const c of chunks) B.push({ x: c.x, y: c.y, z: c.z, R: c.R, k: 1, kind: 0 });
     if (hull) for (const u of [-9 * sc, 0, 9 * sc]) B.push({ x: hull.x + hull.ax * u, y: hull.y, z: hull.z + hull.az * u, R: 6.5, k: 0.85, kind: 1 });
@@ -111,6 +111,46 @@
     const H = Wd.H;
     return [M.max(0, Math.floor(x0 / H)), M.min(Wd.NX - 1, Math.ceil(x1 / H)), M.max(1, Math.floor(y0 / H)), M.min(Wd.NY - 2, Math.ceil(y1 / H)), M.max(0, Math.floor(z0 / H)), M.min(Wd.NZ - 1, Math.ceil(z1 / H))];
   }
+  /* P94: who owns a solid voxel. Two bodies whose noisy skins / crystals touched in the lattice were ONE solid component with two bedrock nubs
+   * (7 of 20 seeds): the seam was a place the collapse check and the rigid-piece solver could not make sense of. The generator now records the owner of
+   * every voxel and, after all bodies are filled, cuts a clear gap wherever two bodies touch (separate()). Ids: chunk 1..8, debris 20.., hull 99, crystal 100 + chunk. */
+  const OWN_DEB = 20, OWN_HULL = 99, OWN_SPIKE = 100, GAP_V = 2;
+  let own = null;
+  const grp = v => v >= OWN_SPIKE ? v - OWN_SPIKE + 1 : v;                       // a crystal belongs to its chunk
+  const pri = v => v >= OWN_SPIKE ? 0 : v === OWN_HULL ? 3 : v >= OWN_DEB ? 1 : 2;   // the lower priority is the one cut back
+  let ovl = 0;
+  function mark_owner(o, id) {
+    if (Wd.d[o] > 0 && own[o] && grp(own[o]) !== grp(id)) ovl++;                   // the field was already solid there: an overlap voxel
+    own[o] = id;
+  }
+  function separate(pl) {
+    const D = Wd.d, Mt = Wd.mat, NX = Wd.NX, NY = Wd.NY, NZ = Wd.NZ, SXY = NX * NY, N = Wd.N, lo = new Int32Array(4096);
+    let cut = 0, passes = 0;
+    for (; passes < 6; passes++) {
+      let nlo = 0, found = 0;
+      for (let o = 0; o < N; o++) {
+        if (D[o] <= 0 || !own[o]) continue;
+        const a = own[o], i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
+        for (let q = 0; q < 3; q++) {                                              // +x, +y, +z neighbours (each pair once)
+          const n = q === 0 ? (i < NX - 1 ? o + 1 : -1) : q === 1 ? (j < NY - 1 ? o + NX : -1) : (k < NZ - 1 ? o + SXY : -1);
+          if (n < 0 || D[n] <= 0 || !own[n] || grp(own[n]) === grp(a)) continue;
+          found++;
+          const l = pri(a) < pri(own[n]) || (pri(a) === pri(own[n]) && grp(a) > grp(own[n])) ? o : n;
+          if (nlo < lo.length) lo[nlo++] = l;
+        }
+      }
+      if (!found) break;
+      for (let q = 0; q < nlo; q++) {                                              // cut the lower-priority body back GAP_V voxels round each contact voxel
+        const o = lo[q], g = grp(own[o]), i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
+        for (let dk = -GAP_V; dk <= GAP_V; dk++) for (let dj = -GAP_V; dj <= GAP_V; dj++) for (let di = -GAP_V; di <= GAP_V; di++) {
+          const ii = i + di, jj = j + dj, kk = k + dk; if (ii < 0 || jj < 1 || kk < 0 || ii >= NX || jj >= NY - 1 || kk >= NZ) continue;
+          const m = (kk * NY + jj) * NX + ii;
+          if (D[m] > 0 && own[m] && grp(own[m]) === g) { D[m] = -0.5; Mt[m] = MAT.AIR; own[m] = 0; cut++; }
+        }
+      }
+    }
+    pl.sep = { overlap: ovl, cut, passes, contacts: passes < 6 ? 0 : -1 };
+  }
   function fillChunk(c, core) {
     const H = Wd.H, NX = Wd.NX, NY = Wd.NY, D = Wd.d, Mt = Wd.mat, rmin = M.min(c.rx, M.min(c.ry, c.rz)), reach = M.max(c.rx, M.max(c.ry, c.rz)) + 3.5;
     const b = box(c.x - reach, c.y - reach, c.z - reach, c.x + reach, c.y + reach, c.z + reach);
@@ -123,7 +163,7 @@
       if (dv < -3) continue;
       if (dv > 3) dv = 3;
       const o = (k * NY + j) * NX + i;
-      if (dv > D[o]) { D[o] = dv; Mt[o] = dv > 0 ? layerAt(x, y, z, core) : MAT.AIR; }
+      if (dv > D[o]) { if (dv > 0) mark_owner(o, 1 + c.id); D[o] = dv; Mt[o] = dv > 0 ? layerAt(x, y, z, core) : MAT.AIR; }
     }
   }
   function fillDebris(d, core) {
@@ -139,7 +179,7 @@
       if (dv < -3) continue;
       if (dv > 3) dv = 3;
       const o = (k * NY + j) * NX + i;
-      if (dv > D[o]) { D[o] = dv; Mt[o] = dv > 0 ? (d.plate ? MAT.STEEL : layerAt(x, y, z, core)) : MAT.AIR; }
+      if (dv > D[o]) { if (dv > 0) mark_owner(o, OWN_DEB + d.id); D[o] = dv; Mt[o] = dv > 0 ? (d.plate ? MAT.STEEL : layerAt(x, y, z, core)) : MAT.AIR; }
     }
     const o = (Math.round(d.z / H) * NY + Math.round(d.y / H)) * NX + Math.round(d.x / H);   // its anchor: one bedrock voxel (collapse.js: only bedrock / steel hold)
     if (D[o] > 0.4) Mt[o] = d.plate ? MAT.STEEL : MAT.BEDROCK;
@@ -174,7 +214,7 @@
       if (dv < -3) continue;
       if (dv > 3) dv = 3;
       const o = (k * NY + j) * NX + i;
-      if (dv > D[o]) { D[o] = dv; Mt[o] = dv > 0 ? mat : MAT.AIR; }
+      if (dv > D[o]) { if (dv > 0) mark_owner(o, OWN_HULL); D[o] = dv; Mt[o] = dv > 0 ? mat : MAT.AIR; }
     }
   }
   const dAt = (x, y, z) => Wd.sample(x, y, z);
@@ -224,7 +264,7 @@
       if (dv < -1) continue;
       const o = (k * NY + j) * NX + i;
       if (Mt[o] === MAT.BEDROCK || Mt[o] === MAT.LAVA || Mt[o] === MAT.STEEL) continue;
-      if (dv > D[o]) { D[o] = M.min(dv, 1.5); if (dv > 0) Mt[o] = MAT.ICE; }
+      if (dv > D[o]) { D[o] = M.min(dv, 1.5); if (dv > 0) { Mt[o] = MAT.ICE; mark_owner(o, OWN_SPIKE + c.id); } }
     }
   }
   // the generator leaves a few single voxels (hull edges, noise): remove every solid component smaller than `min` voxels
@@ -293,7 +333,7 @@
     world.d.fill(-3); world.mat.fill(0); world.heat.fill(0);
     const pl = plan(settings, world.SX);
     world.features = { biome: 'eow', volcano: null, volcanoes: [], canals: [], lavaInit: null, pockets: [], vents: [], spires: [], bridges: [], iceShelf: false, lavaPresent: false, eow: pl };
-    pl.nubs = []; pl.pockets = [];
+    pl.nubs = []; pl.pockets = []; own = new Uint8Array(world.N); ovl = 0;
     return { settings, biome: 'eow', spec: null, stage: 0, k: 0, label: 'Shattering the planet', under: false, eow: true, plan: pl, rng: M.rng_make((seedS * 7919 + 13) >>> 0) };
   };
   E.gen_step = function (job) {
@@ -307,6 +347,7 @@
         job.stage = 3; job.label = 'Checking structural support'; return 0.85;
       }
       case 3: {
+        separate(pl);                                                          // P94: no two bodies touch
         if (SS.collapse) SS.collapse.remove_floating_all(w);
         specks(w, 40);
         heatVeins(pl, job.rng);
@@ -328,6 +369,47 @@
       out.h[k * n + i] = h;
     }
     return out;
+  };
+
+
+  /* P94: a rigid piece comes to rest. It is baked back into the field only when it (1) does not interpenetrate another rigid body and
+   * (2) after the stamp is ONE solid with an anchor (collapse.find_floating over the stamped box finds nothing loose). Otherwise the stamp is undone
+   * and the piece stays a sleeping rigid body: it never merges into another body or hangs loose in the field, so the next blast cannot find a loose
+   * seam to cut again (the endless "crumble"). Returns the voxels added, or -1 when declined. sim/bodies.js calls this instead of collapse.rebake in this world. */
+  E.rebake = function (S, b) {
+    const w = W(), g = b.grid, H = w.H, NX = w.NX, NY = w.NY, tp = { x: 0, y: 0, z: 0 }, to = { x: 0, y: 0, z: 0 };
+    for (const o of S.bodies) {                                                  // (1) a shell sphere of another body inside this one's
+      if (o === b || o.kind === 'ball') continue;
+      const dx = o.pos.x - b.pos.x, dy = o.pos.y - b.pos.y, dz = o.pos.z - b.pos.z, R = o.rb + b.rb;
+      if (dx * dx + dy * dy + dz * dz >= R * R) continue;
+      for (let i = 0; i < b.np; i++) {
+        M.q_rot(b.q, b.pts[i * 4], b.pts[i * 4 + 1], b.pts[i * 4 + 2], tp);
+        for (let k = 0; k < o.np; k++) {
+          M.q_rot(o.q, o.pts[k * 4], o.pts[k * 4 + 1], o.pts[k * 4 + 2], to);
+          const ex = o.pos.x + to.x - b.pos.x - tp.x, ey = o.pos.y + to.y - b.pos.y - tp.y, ez = o.pos.z + to.z - b.pos.z - tp.z, rr = b.pts[i * 4 + 3] + o.pts[k * 4 + 3] - K.REBAKE_PEN;
+          if (ex * ex + ey * ey + ez * ez < rr * rr) return -1;
+        }
+      }
+    }
+    const r = M.len3(g.nx, g.ny, g.nz) * H * 0.5 + 1;
+    const i0 = M.max(1, Math.floor((b.pos.x - r) / H)), i1 = M.min(w.NX - 2, Math.ceil((b.pos.x + r) / H));
+    const j0 = M.max(2, Math.floor((b.pos.y - r) / H)), j1 = M.min(w.NY - 2, Math.ceil((b.pos.y + r) / H));
+    const k0 = M.max(1, Math.floor((b.pos.z - r) / H)), k1 = M.min(w.NZ - 2, Math.ceil((b.pos.z + r) / H));
+    const nx = i1 - i0 + 1, ny = j1 - j0 + 1, nz = k1 - k0 + 1, sd = new Float32Array(nx * ny * nz), sm = new Uint8Array(nx * ny * nz), sh = new Float32Array(nx * ny * nz), sc = w.crack ? new Uint8Array(nx * ny * nz) : null;
+    let q = 0;
+    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++, q++) { const o = (k * NY + j) * NX + i; sd[q] = w.d[o]; sm[q] = w.mat[o]; sh[q] = w.heat[o]; if (sc) sc[q] = w.crack[o]; }
+    const added = SS.collapse.rebake(w, g, b.com0, b.pos, b.q);
+    const loose = SS.collapse.find_floating(w, { i0, i1, j0, j1, k0, k1 });
+    let big = 0; for (let c = 0; c < loose.length; c++) if (loose[c].length >= K.REBAKE_SPECK) big++;
+    if (!big) {                                                                   // (2) one anchored solid (a stamp leaves a few single loose voxels at the seam: wiped)
+      for (let c = 0; c < loose.length; c++) for (let m = 0; m < loose[c].length; m++) { const o = loose[c][m]; w.d[o] = -0.5; w.mat[o] = MAT.AIR; }
+      if (loose.length) w.mark(i0, j0, k0, i1, j1, k1);
+      return added;
+    }
+    q = 0;
+    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++, q++) { const o = (k * NY + j) * NX + i; w.d[o] = sd[q]; w.mat[o] = sm[q]; w.heat[o] = sh[q]; if (sc) w.crack[o] = sc[q]; }
+    w.mark(i0, j0, k0, i1, j1, k1);
+    return -1;
   };
 
   /* ================= state ================= */

@@ -1,15 +1,14 @@
 /* sim/raven.js — P37-W3: the boomerang and the mail raven (sub-module of sim/weaponsa.js; data: C.ARMS.BOOM / RAVEN).
  * Both fly in the section plane (s, y) like the other shells; portable, deterministic (S.wa.rng), state in S.wa.
  *
- * Boomerang (S.wa.boom[]): thrown at BOOM.V m/s x power along the aim; a harmonic pull toward the throw point (return
- * time T) with the altitude sagging by LOW m: it leaves, climbs, comes back to the thrower and passes lower than it left. Hits: the first worm
- * other than the thrower takes DMG + a push along the flight, then the boomerang drops; the thrower catches it on the
- * way back (no damage, no refund); terrain / props: it bounces (REST), a hard hit (> DENT_V m/s) dents the ground (R
- * DENT_R), a second hit or a stall makes it drop; it vanishes after resting 1.2 s, in water, off the map or after LIFE s.
+ * Boomerang (S.wa.boom[]): P93 flight = a harmonic orbit about an off-axis centre (see WA.boom_acc), lift GK, drag, a sink; it leaves on the aim vector, curls
+ * round and comes back LOWER and past the thrower (never homing). Any contact (terrain, prop / mine / barrel / bridge body, device, landed crate, a worm
+ * other than the thrower) blows it up like ONE cluster bomblet (C.PROJ.clusterlet W / dmg, the normal HE crater), and a worm hit head-on is punched along the
+ * flight. Past T x END s it is a spent piece of wood: it drops, thuds and vanishes (no blast). The thrower catches it near them (no damage, no refund); a contact within SAFE_R m of the thrower after ARM_OWN s is a dud (a thud, no blast), so a return pass never blasts its own thrower.
  * Mail raven (S.wa.ravens[], S.wa.letters[]): see RAVEN in sim/arsenala.js. Phases: fly (fast launch, then cruise with
  * probe-based path finding around / over terrain), orbit (circles ALT m above the target, drops N letters), leave, crash
  * (a launch into something above CRASH_V m/s: it bumps, falls, lies and blows up after CRASH_FUSE s).
- * C layout: struct Boom { f32 s, y, s0, y0, vs, vy, age, rest; i8 face; i16 owner; u8 dead, bounces; };
+ * C layout: struct Boom { f32 s, y, s0, y0, vs, vy, cs, cy, sk, bk, age, rest; i8 face; i16 owner; u8 dead, bounces; };
  *           struct Raven { f32 s, y, ang, v, ts, ty, age, oa, orbitT, dropT, bestD, stuckT, fuse, off, offT; u8 phase, dropped, rest; i16 owner; };
  *           struct Letter { f32 s, y, vs, vy, age, ph; i16 owner; }; */
 (function (SS) {
@@ -22,25 +21,56 @@
   const hyp3 = (a, b) => M.len3(a.x - b.x, a.y - b.y, a.z - b.z);
 
   /* ---------- the boomerang ---------- */
+  // P93: the flight is a harmonic orbit (a boomerang's banked, precessing circle seen in the section plane) about a centre CTR that is NOT the
+  // thrower: it sits KL x V / om from the throw point at KAP rad to the aim's lifting side (up for a throw to the right, mirrored with
+  // the facing). Thrown at V m/s along the aim it leaves on the aim vector, curls over, and comes back along a reflected arc that,
+  // because the lift (GK of g is carried by the wings, the rest pulls it down) and the drag bleed it, passes lower than the throw
+  // (about SINK m) and never homes in on the worm: it flies on past, round the corner into caves and under overhangs.
+  // WA.boom_acc is the one force law (the real flight and the CPU's forward run both call it).
+  WA.boom_make = function (K, s0, y0, vs, vy, face) {
+    const sp = M.len2(vs, vy), om = 2 * Math.PI / K.T, th = M.atan2(vy, vs), L = K.KL * sp / om, ac = th + (face >= 0 ? 1 : -1) * K.KAP;
+    return { s: s0, y: y0, vs, vy, cs: s0 + L * M.cos(ac), cy: y0 + L * M.sin(ac), sk: K.SINK * L, bk: K.BACK * L, age: 0, face: face >= 0 ? 1 : -1 };
+  };
+  WA.boom_acc = function (K, b, out) {
+    const om = 2 * Math.PI / K.T, f = M.smooth(M.clamp(b.age / (K.T * K.SINK_T), 0, 1)), cy = b.cy - b.sk * f, cs = b.cs - b.face * b.bk * f;
+    out.s = -om * om * (b.s - cs) - K.DRAG * b.vs;
+    out.y = -om * om * (b.y - cy) - K.DRAG * b.vy - C.G * K.GK;
+  };
+  const bacc = { s: 0, y: 0 };
   WA.mod_charge = function (S, key, a, ap, aim, speed) {
     if (key !== 'boomerang') return false;
-    const wa = S.wa;
-    wa.boom.push({ id: ++wa.n, s: ap.s + aim.s * 0.7, y: a.pos.y + aim.y * 0.7, s0: ap.s, y0: a.pos.y + aim.y * 0.7, vs: aim.s * speed, vy: aim.y * speed, face: a.facing >= 0 ? 1 : -1, owner: a.id, age: 0, rest: 0, dead: false, bounces: 0 });
+    const wa = S.wa, K = A.BOOM, face = a.facing >= 0 ? 1 : -1;
+    const b = WA.boom_make(K, ap.s + aim.s * 0.7, a.pos.y + aim.y * 0.7, aim.s * speed, aim.y * speed, face);
+    b.id = ++wa.n; b.owner = a.id; b.rest = 0; b.dead = false; b.bounces = 0; b.s0 = ap.s; b.y0 = a.pos.y;
+    wa.boom.push(b);
     sim().emit(S, 'boomthrow', { wormId: a.id});
     return true;
   };
   function endBoom(S, i, why) { const b = S.wa.boom[i]; S.wa.boom.splice(i, 1); sim().emit(S, 'boomend', { x: P.to_world(S, b.s, b.y).x, y: b.y, z: P.to_world(S, b.s, b.y).z, why }); }
+  // the blast of ONE cluster bomblet (C.PROJ.clusterlet: W, dmg); a worm hit head-on is also punched along the flight
+  function boomBlast(S, i, wp, hitWorm, dx, dy) {
+    const b = S.wa.boom[i], pd = C.PROJ.clusterlet, K = A.BOOM;
+    S.wa.boom.splice(i, 1);
+    sim().emit(S, 'boomhit', { wormId: hitWorm ? hitWorm.id : -1, x: wp.x, y: wp.y, z: wp.z });
+    if (hitWorm && !hitWorm.dead) { const v = pw(S, dx * K.PUSH, dy * K.PUSH + K.PUSH_UP); WPm().shove(S, hitWorm, v.x, v.y, v.z); }
+    sim().explode(S, wp, { W: pd.W, dmg: pd.dmg, name: 'a boomerang' }, b.owner);
+    S.lastBoom = S.time;
+  }
   function stepBoom(S, dt) {
-    const wa = S.wa, K = A.BOOM, w = W();
+    const wa = S.wa, K = A.BOOM, w = W(), wv = { x: 0, y: 0, z: 0 };
     for (let i = wa.boom.length - 1; i >= 0; i--) {
       const b = wa.boom[i]; b.age += dt;
       const owner = S.worms[b.owner];
       if (b.age > K.LIFE) { endBoom(S, i, 'life'); continue; }
       if (!b.dead) {
-        // the curved flight: a pull back toward the throw point (s0, y0) with return time T; the altitude sags by LOW
-        const om = Math.PI / K.T, f = M.smooth(M.clamp(b.age / K.T, 0, 1)), yt = b.y0 - K.LOW * f, dr = K.DRAG;
-        b.vs += (-om * om * (b.s - b.s0) - dr * b.vs) * dt; b.vy += (-om * om * (b.y - yt) - dr * b.vy) * dt;
-        if (b.age > K.T + 0.35) b.dead = true;                       // the flight is over: it just drops
+        WA.boom_acc(K, b, bacc);
+        b.vs += bacc.s * dt; b.vy += bacc.y * dt;
+        if (SS.weather) {                                              // light: the wind nudges it (in-plane part of the air velocity)
+          const wp0 = P.to_world(S, b.s, b.y); SS.weather.wind_at(S, wp0.x, b.y, wp0.z, wv);
+          const d = P.dir(S); b.vs += (wv.x * d.x + wv.z * d.z) / C.WIND_UNIT * C.WIND_ACC * K.WIND_K * dt;
+        }
+        if (Math.floor(b.age / K.WHOOSH) !== Math.floor((b.age - dt) / K.WHOOSH)) { const wq = P.to_world(S, b.s, b.y); sim().emit(S, 'boomwhoosh', { x: wq.x, y: b.y, z: wq.z, speed: M.len2(b.vs, b.vy) }); }   // audio: one whoosh per WHOOSH s, pitched by the speed
+        if (b.age > K.T * K.END) b.dead = true;                        // the flight is over: a spent piece of wood, it drops
       } else { b.vy -= C.G * dt; b.vs *= M.exp(-0.6 * dt); }
       const sp = M.len2(b.vs, b.vy), n = M.max(1, Math.ceil(sp * dt / 0.1)), hh = dt / n;
       let gone = false;
@@ -49,6 +79,7 @@
         if (ny < sim().surface_at(S, wp.x, wp.z) || ny < 0.3) { sim().emit(S, 'splash', { x: wp.x, y: sim().surface_at(S, wp.x, wp.z), z: wp.z, size: 0.5 }); endBoom(S, i, 'water'); gone = true; break; }
         if (wp.x < -30 || wp.z < -30 || wp.x > w.SX + 30 || wp.z > w.SZ + 30) { endBoom(S, i, 'oob'); gone = true; break; }
         if (!b.dead) {
+          const l = sp || 1, dx = b.vs / l, dy = b.vy / l;
           for (const o of S.worms) {
             if (o.dead || o.drowning) continue;
             const d = hyp3(o.pos, wp);
@@ -56,27 +87,28 @@
               if (b.age > K.ARM_OWN && d < K.CATCH_R) { sim().emit(S, 'boomcatch', { wormId: o.id}); sim().log(S, `${o.name} catches the boomerang.`, sim().team_rgb(S, o.team)); endBoom(S, i, 'caught'); gone = true; break; }
               continue;
             }
-            if (d < C.WORM_R + 0.18) {
-              const l = sp || 1, dx = b.vs / l, dy = b.vy / l;
-              S.hitDir = pw(S, dx, dy);
-              sim().emit(S, 'boomhit', { wormId: o.id, x: wp.x, y: wp.y, z: wp.z });
-              sim().hurt(S, o, K.DMG, C.DS.BOOMERANG);
-              if (!o.dead) { const v = pw(S, dx * K.PUSH, dy * K.PUSH + K.PUSH_UP); WPm().shove(S, o, v.x, v.y, v.z); }
-              b.dead = true; b.vs *= -0.2; b.vy = 2.5; S.lastBoom = S.time;
-              break;
-            }
+            if (d < C.WORM_R + 0.18) { S.hitDir = pw(S, dx, dy); boomBlast(S, i, wp, o, dx, dy); gone = true; break; }
           }
+          if (gone) break;
+          // devices and landed crates are objects too
+          for (const dv of S.devices) if (dv.hp > 0 && hyp3(dv.pos, wp) < K.OBJ_R) { boomBlast(S, i, wp, null, dx, dy); gone = true; break; }
+          if (gone) break;
+          for (const c of S.crates) if (c.landed && hyp3(c.pos, wp) < K.OBJ_R) { boomBlast(S, i, wp, null, dx, dy); gone = true; break; }
           if (gone) break;
         }
         const solid = P.solid2(S, ns, ny), bi = S.planeBodies.length ? P.body_at2(S, ns, ny, true) : -1;
         if (solid || bi >= 0) {
+          if (!b.dead) {
+            if (owner && !owner.dead && b.age > K.ARM_OWN && hyp3(owner.pos, wp) < K.SAFE_R) {         // back home: it fizzles next to its own thrower (a thud, no blast)
+              sim().emit(S, 'boombounce', { x: wp.x, y: wp.y, z: wp.z, speed: sp }); S.lastBoom = S.time; endBoom(S, i, 'dud'); gone = true; break;
+            }
+            boomBlast(S, i, wp, null, 0, 0); gone = true; break;                       // terrain, prop, crate, mine, barrel, bridge: it goes off
+          }
           const nn = bi >= 0 ? P.body_normal2(S, bi, ns, ny) : P.normal2(S, ns, ny), vn = b.vs * nn.s + b.vy * nn.y;
-          if (vn < 0) {
+          if (vn < 0) {                                                                 // a spent piece of wood: a thud, no blast
             const spd = M.len2(b.vs, b.vy);
-            b.vs -= (1 + K.REST) * vn * nn.s; b.vy -= (1 + K.REST) * vn * nn.y; b.vs *= 0.85; b.vy *= 0.85; b.bounces++;
+            b.vs -= (1 + K.REST) * vn * nn.s; b.vy -= (1 + K.REST) * vn * nn.y; b.vs *= 0.7; b.vy *= 0.7; b.bounces++;
             sim().emit(S, 'boombounce', { x: wp.x, y: wp.y, z: wp.z, speed: spd });
-            if (spd > K.DENT_V && solid && w.carve(wp.x, wp.y, wp.z, K.DENT_R) > 0) { WA.mark_edit(S, wp.x, wp.y, wp.z, K.DENT_R); WA.flush_edit(S); }
-            if (!b.dead && (b.bounces >= 2 || M.len2(b.vs, b.vy) < 4)) b.dead = true;
             S.lastBoom = S.time;
           }
           if (P.solid2(S, b.s + nn.s * 0.05, b.y + nn.y * 0.05) === false) { b.s += nn.s * 0.05; b.y += nn.y * 0.05; }

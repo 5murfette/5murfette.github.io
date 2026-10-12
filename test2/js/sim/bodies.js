@@ -424,6 +424,10 @@
       const b = S.bodies[i];
       if (b.held) { b.sleepT = 0; continue; }          // P37 W4: a body held by the gravity gun is moved by sim/gadgets.js (kinematic)
       if (b.asleep) {
+        if (S.eow && b.kind === 'chunk' && b.grid && S.tick % SS.eow.K.REBAKE_RETRY === b.id % SS.eow.K.REBAKE_RETRY && !w.outside(b.pos.x, b.pos.z)) {   // P94: a piece that was declined (it rests on another piece) is tried again: a pile bakes from the bottom up
+          const added = SS.eow.rebake(S, b);
+          if (added >= 0) { SS.sim.emit(S, 'rebake', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added }); S.bodies.splice(i, 1); continue; }
+        }
         // re-check support now and then: wake when the ground under it was blasted away
         if (S.tick % 30 === b.id % 30) {
           let touch = false;
@@ -455,9 +459,9 @@
         b.asleep = true; b.vel.x = b.vel.y = b.vel.z = 0; b.w.x = b.w.y = b.w.z = 0;
         b.seaY = SS.sim.surface_at ? SS.sim.surface_at(S, b.pos.x, b.pos.z) : -99;
         if (b.kind === 'chunk' && SS.collapse && b.grid && !w.outside(b.pos.x, b.pos.z)) {   // beyond the lattice (dry) it stays a body
-          const added = SS.collapse.rebake(w, b.grid, b.com0, b.pos, b.q);
-          SS.sim.emit(S, 'rebake', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added });
-          S.bodies.splice(i, 1);
+          const added = S.eow ? SS.eow.rebake(S, b) : SS.collapse.rebake(w, b.grid, b.com0, b.pos, b.q);   // P94: in space a piece that would merge into another body or hang loose stays a rigid body (-1)
+          if (added >= 0) { SS.sim.emit(S, 'rebake', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added }); S.bodies.splice(i, 1); }
+          else SS.sim.emit(S, 'bodysleep', { body: b.id });
         } else SS.sim.emit(S, 'bodysleep', { body: b.id });
       }
     }

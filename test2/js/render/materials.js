@@ -216,7 +216,7 @@
         void main(){
           float a = abs(vR.y);
           float core = (1.0 - smoothstep(0.0, 0.32, a)), glow = pow(1.0 - a, 2.2) * 0.35;
-          float pulse = 0.82 + 0.18 * sin(vR.x * 1.4 - uTime * 3.0);
+          float pulse = 0.92 + 0.08 * sin(vR.x * 1.4 - uTime * 2.0);
           gl_FragColor = vec4(uColor * (core * 1.25 + glow) * pulse * uAlpha, 1.0);
         }`
     });

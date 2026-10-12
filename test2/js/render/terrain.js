@@ -77,9 +77,13 @@
       vec2 d = p.xz - vec2(48.0);
       float r = length(d), hot = smoothstep(uPlayR - 0.3, uPlayR + 5.0, r);
       col = mix(col, col * vec3(1.1, 1.06, 0.9) + vec3(0.02, 0.015, 0.0), hot * 0.85);
-      float ring = (1.0 - smoothstep(0.1, 0.38, abs(r - uPlayR))) * step(0.42, fract(atan(d.y, d.x) * uPlayR / 1.6)) * smoothstep(0.4, 0.75, up);
-      col = mix(col, vec3(0.62, 0.16, 0.03), ring * 0.8);
-      emis += ring * vec3(0.5, 0.12, 0.02) * 0.85;
+      /* P97: the edge marker is a broken, wavering ember seam, not a ring of dashes (a perfect circle of equal dashes read as road paint):
+       * the radius wanders with the angle, the glow breaks at irregular intervals with soft ends and a wide soft edge */
+      float an = atan(d.y, d.x), wob = 0.55 * sin(an * 5.0 + 1.3) + 0.3 * sin(an * 13.0 + 4.1) + 0.2 * sin(an * 29.0 + 0.7);
+      float brk = smoothstep(0.25, 0.8, 0.5 + 0.5 * sin(an * uPlayR / 1.5 + 2.2 * sin(an * 7.0) + 1.7 * sin(an * 19.0 + 2.0)));
+      float ring = (1.0 - smoothstep(0.05, 0.65, abs(r - uPlayR - wob))) * brk * smoothstep(0.4, 0.75, up);
+      col = mix(col, vec3(0.5, 0.14, 0.035), ring * 0.4);
+      emis += ring * vec3(0.5, 0.12, 0.02) * 0.3;
       return col;
     }`;
   TR.HOT_GLSL = HOT;

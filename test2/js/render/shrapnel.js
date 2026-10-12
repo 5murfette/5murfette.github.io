@@ -16,7 +16,7 @@
   'use strict';
   const T = window.THREE;
   const SV = SS.shrapView = {};
-  const MAXQ = 2048, SHUTTER = 0.035, STREAK_MAX = 4, MIN_PX = 3.2, COOL = 0.9, EMBER_T = 1.6, EMBER_R = 0.06, TRAIL_T = 0.12, TRAIL_N = 8;
+  const MAXQ = 2048, SHUTTER = 0.035, STREAK_MAX = 4, MIN_PX = 3.2, COOL = 0.9, EMBER_T = 1.6, EMBER_R = 0.06, TRAIL_T = 0.12, TRAIL_N = 8, TRAIL_LEN = 6;
   let mesh = null, geo = null, pos, uvh, n = 0, embers = [], sparks = [], pxScale = 1000, now = 0;
   const trails = new Map();                       // fragment id -> { p: [[x, y, z, t]...], h, dead }
   const VS = /* glsl */`
@@ -93,13 +93,13 @@
   const wOf = (x, y, z) => Math.max(0.018, MIN_PX * 0.5 * Math.hypot(x - cam.x, y - cam.y, z - cam.z) / pxScale);   // half width (m)
   // one camera-facing quad from a (tail) to b (head); half width from each end's distance to the camera (a ribbon
   // reaching toward the camera stays >= MIN_PX at both ends); u = ua at a .. ub at b (shader: brightness u^1.6)
-  function ribbon(ax, ay, az, bx, by, bz, wk, h, ua, ub) {
+  function ribbon(ax, ay, az, bx, by, bz, wk, h, ua, ub, wta) {
     if (n >= MAXQ) return;
     const dx = bx - ax, dy = by - ay, dz = bz - az;
     const vx = (ax + bx) * 0.5 - cam.x, vy = (ay + by) * 0.5 - cam.y, vz = (az + bz) * 0.5 - cam.z;
     let sx = dy * vz - dz * vy, sy = dz * vx - dx * vz, sz = dx * vy - dy * vx; const sl = Math.hypot(sx, sy, sz);
     if (sl < 1e-9) return;
-    const wa = wk * wOf(ax, ay, az) / sl, wb = wk * wOf(bx, by, bz) / sl;
+    const wa = wk * (wta == null ? 1 : wta) * wOf(ax, ay, az) / sl, wb = wk * wOf(bx, by, bz) / sl;      // (P97: wta < 1 tapers the tail to a point: a constant-width hairline read as a drawn line)
     const o = n * 12, p = n * 16;
     pos[o] = ax - sx * wa; pos[o + 1] = ay - sy * wa; pos[o + 2] = az - sz * wa; pos[o + 3] = ax + sx * wa; pos[o + 4] = ay + sy * wa; pos[o + 5] = az + sz * wa;
     pos[o + 6] = bx - sx * wb; pos[o + 7] = by - sy * wb; pos[o + 8] = bz - sz * wb; pos[o + 9] = bx + sx * wb; pos[o + 10] = by + sy * wb; pos[o + 11] = bz + sz * wb;
@@ -132,7 +132,7 @@
       tr.h = h;
       const back = Math.min(sp * SHUTTER, STREAK_MAX, Math.hypot(f.x - f.ox, f.y - f.oy, f.z - f.oz));
       const ax = f.x - f.vx / sp * back, ay = f.y - f.vy / sp * back, az = f.z - f.vz / sp * back;
-      ribbon(ax, ay, az, f.x, f.y, f.z, 1, h, 0, 1);
+      ribbon(ax, ay, az, f.x, f.y, f.z, 1, h, 0, 1, 0.25);
     }
     // afterglow trails: each path segment fades with the age of its newer end; along the path the brightness tapers
     // from the head (u 1) back to the oldest point (u 0.45: the eye's persistence of the earlier part has decayed)
@@ -144,8 +144,8 @@
       for (let i = 0; i + 1 < P.length; i++) {
         const a = P[i], b = P[i + 1], k = Math.exp(-(now - b[3]) / TRAIL_T), ds = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
         const ua = 0.45 + 0.55 * (L > 0 ? s / L : 1); s += ds; const ub = 0.45 + 0.55 * (L > 0 ? s / L : 1);
-        if (k < 0.04) continue;
-        ribbon(a[0], a[1], a[2], b[0], b[1], b[2], 0.8, tr.h * k * 0.8, ua, ub);
+        if (k < 0.04 || L - s > TRAIL_LEN) continue;                       // (P97: only the last TRAIL_LEN m of the path glows: the whole flight path was a ruler line across the view)
+        ribbon(a[0], a[1], a[2], b[0], b[1], b[2], 0.8, tr.h * k * 0.8, ua, ub, 0.3);
       }
     }
     // ricochet sparks: ballistic, cooling (render-only)

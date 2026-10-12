@@ -453,6 +453,39 @@
     if (w.acidT != null && S.time - w.acidT < 0.4 && v.mesh && v.mesh.material && v.mesh.material.emissive) v.mesh.material.emissive.g += 0.12 * (0.6 + 0.4 * Math.sin(t * 25));
   };
 
+  /* ---------- the boomerang's swoosh: a camera-facing ribbon through its last positions (motion blur look), fading to the tail ---------- */
+  const BTN = 30, trails = new Map();
+  const TRAIL_FS = 'varying vec2 vUv; void main() { float a = (1.0 - vUv.y); a *= a * a; float e = exp(-vUv.x * vUv.x * 3.2); gl_FragColor = vec4(vec3(0.92, 0.96, 1.0), a * e * 0.3); }';
+  function makeTrail(b) {
+    const g = new T.BufferGeometry(), pos = new Float32Array(BTN * 2 * 3), uv = new Float32Array(BTN * 2 * 2), idx = new Uint16Array((BTN - 1) * 6);
+    for (let i = 0; i < BTN; i++) { uv.set([-1, i / (BTN - 1), 1, i / (BTN - 1)], i * 4); }
+    for (let i = 0; i < BTN - 1; i++) idx.set([i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2], i * 6);
+    g.setAttribute('position', new T.BufferAttribute(pos, 3).setUsage(T.DynamicDrawUsage)); g.setAttribute('uv', new T.BufferAttribute(uv, 2)); g.setIndex(new T.BufferAttribute(idx, 1));
+    const mat = new T.ShaderMaterial({ vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }', fragmentShader: TRAIL_FS, transparent: true, depthWrite: false, side: T.DoubleSide });
+    const mesh = new T.Mesh(g, mat); mesh.frustumCulled = false; mesh.renderOrder = 9; grp.add(mesh);
+    return { mesh, pts: [], still: 0 };
+  }
+  const tTan = new T.Vector3(), tView = new T.Vector3(), tSide = new T.Vector3();
+  function updateTrails(S, camera, list, live) {
+    const seen = new Set();
+    for (const b of list) {
+      let tr = trails.get(b); if (!tr) { tr = makeTrail(b); trails.set(b, tr); }
+      seen.add(b); const m = live.get(b); if (!m) continue;
+      tr.pts.unshift(m.position.x, m.position.y, m.position.z); if (tr.pts.length > BTN * 3) tr.pts.length = BTN * 3; tr.still = 0;
+    }
+    for (const [b, tr] of trails) {
+      if (!seen.has(b)) { if (tr.pts.length >= 6) { tr.pts.length -= 6; } else { grp.remove(tr.mesh); tr.mesh.geometry.dispose(); tr.mesh.material.dispose(); trails.delete(b); continue; } }
+      const n = tr.pts.length / 3, pa = tr.mesh.geometry.attributes.position.array;
+      for (let i = 0; i < BTN; i++) {
+        const k = M_clamp(i, 0, n - 1) * 3, k0 = M_clamp(i - 1, 0, n - 1) * 3, k1 = M_clamp(i + 1, 0, n - 1) * 3, q = tr.pts;
+        tTan.set(q[k0] - q[k1], q[k0 + 1] - q[k1 + 1], q[k0 + 2] - q[k1 + 2]); tView.set(camera.position.x - q[k], camera.position.y - q[k + 1], camera.position.z - q[k + 2]);
+        tSide.crossVectors(tTan, tView); const l = tSide.length(); if (l > 1e-6) tSide.multiplyScalar(0.15 * (1 - i / BTN) / l); else tSide.set(0, 0.2, 0);
+        pa[i * 6] = q[k] - tSide.x; pa[i * 6 + 1] = q[k + 1] - tSide.y; pa[i * 6 + 2] = q[k + 2] - tSide.z; pa[i * 6 + 3] = q[k] + tSide.x; pa[i * 6 + 4] = q[k + 1] + tSide.y; pa[i * 6 + 5] = q[k + 2] + tSide.z;
+      }
+      tr.mesh.geometry.attributes.position.needsUpdate = true; tr.mesh.visible = n >= 2;
+    }
+  }
+
   /* ---------- init / frame ---------- */
   WV.init = function (sc, textures) {
     scene = sc; tx = textures;
@@ -462,6 +495,7 @@
   WV.clear = function () {
     if (!scene) return;
     for (const k in live) { for (const o of live[k].values()) grp.remove(o); live[k].clear(); }
+    for (const tr of trails.values()) { grp.remove(tr.mesh); tr.mesh.geometry.dispose(); tr.mesh.material.dispose(); } trails.clear();
     cas.length = 0; trT.length = 0; mg.pos = null; mg.n = 0;
     if (jet) { jet.visible = false; jetLight.intensity = 0; } if (dropsIM) dropsIM.count = 0; if (gasIM) gasIM.geometry.instanceCount = 0; if (casIM) casIM.count = 0;
   };
@@ -477,8 +511,8 @@
       m.rotation.set(0, -S.theta, 0, 'YXZ'); m.userData.b.rotation.set(Math.PI / 2 - 0.5 * Math.sin(Math.PI * u) * sgn, b.dead ? (m.userData.b.rotation.y || 0) : b.age * 24 * sgn, 0);
       m.userData.b.scale.setScalar(1.6);
       m.visible = SS.view.shownAt(S, w, 3.5);
-      if (!b.dead && Math.random() < 0.3) SS.fx.spawn(SS.fx.KIND.SMOKE, m.position.x, m.position.y, m.position.z, { life: 0.4, s0: 0.05, s1: 0.2, a0: 0.12, c0: [0.8, 0.8, 0.8], drag: 1 });
     });
+    updateTrails(S, camera, wa ? wa.boom : [], live.boom);
     sync(live.raven, wa ? wa.ravens : [], () => ravenMesh(), (r, m) => {
       const w = P.to_world(S, r.s, r.y), u = m.userData, K = A.RAVEN;
       let z = 0, yaw = -S.theta, pitch = 0;

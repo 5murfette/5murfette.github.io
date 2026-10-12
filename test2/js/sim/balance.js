@@ -90,7 +90,7 @@
     R('mortar',       3, 20, 79, 0, 2, 38, 82, 8, 2, 0, 1, 0, 1, 0, 'cover (roof), distance'),
     R('minigun',      0, 112, 115, 0, 0, 0, 52, 76, 1, 0, 2, 0, 1, 0, 'cover; walls stop the rounds'),
     R('handgun',      4, 24, 26, 0, 7, 0, 18, 2, 1, 0, 2, 0, 1, 0, 'distance'),
-    R('boomerang',    3, 26, 26, 0, 8, 0, 20, 1, 2, 1, 1, 0, 1, 0, 'cover'),
+    R('boomerang',    3, 12, 23, 0, 19, 2.5, 20, 1, 2, 1, 1, 0, 1, 0, 'cover; curls round it'),
     R('raven',        1, 27, 78, 0, 3, 19, 999, 5, 1, 1, 1, 0, 1, 25, 'a shot downs the raven; roofs'),
     R('skip',         Infinity, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, '-')
   ];

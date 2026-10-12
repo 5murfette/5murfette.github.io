@@ -65,11 +65,11 @@
     MINIGUN: { DUR: 2.0, RATE: 38, SPIN: 0.45, RANGE: 26, SPREAD: 0.035, DMG: 2, PUSH: 5 * kL, CHIP: 0.3, SPLASH: 1.0, SPLASH_DMG: 1, GIB_HP: 0, MUZZLE: 0.9, BODY_W: Wr(10) },
     // Handgun: HITSCAN, 2 shots, explosive rounds (a small blast at the first thing hit)
     HANDGUN: { RANGE: 9, SHOTS: 2, DMG: 15, W: Wr(15), BLAST_DMG: 16, MUZZLE: 0.6 },
-    // Boomerang: thrown at V m/s x power along the aim. The curved flight of a real one (it banks round in a plane that
-    // precesses) seen in the section: a pull back toward the throw point in s and y (harmonic, return time T s) while the
-    // throw altitude sags by LOW m over the flight, so it leaves, climbs, comes back to the thrower and passes LOW m lower
-    // (the renderer draws the sideways bank; the sim stays in the section plane). DRAG 1/s thins the amplitude slightly.
-    BOOM: { V: 22, T: 2.8, LOW: 1.4, DRAG: 0.12, DMG: 26, PUSH: 300 * kL, PUSH_UP: 90 * kL, R: 0.5, LIFE: 9, ARM_OWN: 1.0, CATCH_R: 1.3, DENT_V: 10, DENT_R: 0.3, REST: 0.5, BANK: 2.6 },
+    // Boomerang (P93): thrown at vmax (17, x VK) m/s x power along the aim; a harmonic orbit (period T s) about a centre KL x speed / om from the throw point at KAP rad
+    // to the lifting side of the aim; the wings carry GK of gravity, DRAG 1/s bleeds it, the centre sinks SINK m over the flight so the return pass is
+    // lower; after T x END s it is spent and drops. Any contact blows up as one cluster bomblet (C.PROJ.clusterlet); a worm hit head-on is punched
+    // PUSH (+ PUSH_UP) along the flight. WIND_K: light, a nudge. OBJ_R: contact radius for devices / landed crates; CATCH_R: the thrower catches it.
+    BOOM: { T: 3.6, KL: 0.7, KAP: 0.5, DRAG: 0.05, GK: 0.3, SINK: 0.95, SINK_T: 0.5, BACK: 0.6, WHOOSH: 0.4, END: 0.85, WIND_K: 0.5, PUSH: 300 * kL, PUSH_UP: 90 * kL, R: 0.5, LIFE: 9, ARM_OWN: 1.0, CATCH_R: 1.3, SAFE_R: 3.2, OBJ_R: 0.6, REST: 0.5, BANK: 0.3 },
     // Mail raven: released at the aim, fast phase (V_FAST -> V_CRUISE, time constant TAU); striking something above
     // CRASH_V m/s crashes it (it drops and blows up after CRASH_FUSE s); else it flies (path-finding probes PROBE m ahead)
     // to ALT m above the target, circles it (R_ORBIT) and drops N letters (flutter, wind, contact fuse), then leaves
@@ -84,7 +84,7 @@
     mortar: { name: 'Mortar', kind: 'charge', fixed: 1, ammo: 3, key: 'N4', code: 'Numpad4', vmax: 20, payload: 1, crate: 1, wa: 1, info: 'Always full power; bursts into bomblets above the target (+ / -: burst height 1-5 m)' },
     minigun: { name: 'Minigun', kind: 'stream', ammo: 0, key: 'N5', code: 'Numpad5', retreat: 4, crate: 1, wa: 1, info: 'Six barrels, a hail of rounds that chew the ground and tear worms apart (aim ↑↓ while it spins)' },
     handgun: { name: 'Handgun', kind: 'hitscan', ammo: 4, key: 'N6', code: 'Numpad6', retreat: 3, crate: 1, wa: 1, info: 'Two explosive rounds at short range' },
-    boomerang: { name: 'Boomerang', kind: 'charge', ammo: 3, key: 'N7', code: 'Numpad7', vmax: 22, crate: 1, wa: 1, info: 'Flies out, curls and comes back lower; hits the first worm on the way' },
+    boomerang: { name: 'Boomerang', kind: 'charge', ammo: 3, key: 'N7', code: 'Numpad7', vmax: 17, crate: 1, wa: 1, info: 'Curls out on the aim and back LOWER, past you, into caves; explodes like one cluster bomblet on contact and punches a worm along its flight' },
     raven: { name: 'Mail Raven', kind: 'target', twostep: 1, ammo: 1, key: 'N8', code: 'Numpad8', retreat: 4, crate: 1, wa: 1, info: 'Click the target; the raven leaves along your aim, circles above it and drops five explosive letters' }
   };
   C.ARSENAL_A = NEW;

@@ -154,6 +154,17 @@
     gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.7, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = gr; g.fillRect(0, 0, 128, 128); return c;
   };
+  /* P97: the aim reticle: a fine open crosshair (four ticks round a gap, centre dot) with a dark under-stroke so it reads on sand and snow alike;
+   * not a donut ring (it does not spin either) */
+  X.reticleCanvas = function () {
+    const c = canvas(128, 128), g = c.getContext('2d'); g.lineCap = 'round';
+    const draw = (col, w) => {
+      g.strokeStyle = col; g.fillStyle = col; g.lineWidth = w;
+      for (let k = 0; k < 4; k++) { const a = k * M.TAU / 4, ca = Math.cos(a), sa = Math.sin(a); g.beginPath(); g.moveTo(64 + ca * 22, 64 + sa * 22); g.lineTo(64 + ca * 46, 64 + sa * 46); g.stroke(); }
+      g.beginPath(); g.arc(64, 64, 3.2, 0, M.TAU); g.fill();
+    };
+    draw('rgba(0,0,0,0.5)', 10); draw('rgba(255,255,255,1)', 4.5); return c;
+  };
   /* raindrop streak / snowflake sprites */
   X.streakCanvas = function () {
     const c = canvas(16, 128), g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 128);
@@ -237,6 +248,7 @@
     }
     out.glow = tex(X.glowCanvas(), false, false, 1);
     out.ring = tex(X.ringCanvas(), false, false, 1);
+    out.reticle = tex(X.reticleCanvas(), true, false, 1);
     out.streak = tex(X.streakCanvas(), false, false, 1);
     for (const k in out) if (out[k] && out[k].isTexture) out[k].userData.shared = true;      // (P38-R2: disposeTree of a crate / sprite must not free the shared maps: they would be re-uploaded)
     prog(1, 'Textures ready');

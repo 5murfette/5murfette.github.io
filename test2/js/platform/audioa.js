@@ -52,7 +52,8 @@
       case 'cough': if (!AU.voice('worm_cough', e.worm, 0.9, 0.5) && !AU.has('worm_cough')) S.cough(); break;
       case 'ouch': if (e.acid && !AU.voice('worm_ouch', e.worm, 1, 0.25) && !AU.has('worm_ouch')) { Y.voice(310 + rand() * 90, 0.2, [9, 15], [[650, 4], [1150, 5]], 0.24, 0, 210); Y.noise(0.15, 'highpass', 3500, 0.5, 0.1); } break;
       case 'boomthrow': smp('boomerang_whirr', 0.8, 1, S.whoosh); break;
-      case 'boomhit': smp('boomerang_hit', 1, 1, S.thwack); break;
+      case 'boomwhoosh': if (gate('bw', 120)) smp('boomerang_whirr', 0.35, 0.75 + e.speed / 40, S.whoosh); break;          // P93: the pitch follows the speed
+      case 'boomhit': if (e.wormId >= 0) smp('boomerang_hit', 1, 1, S.thwack); break;                                            // (a blast follows: the thwack is for a worm hit head-on)
       case 'boombounce': smp('boomerang_bounce', 0.7, 1, S.clack); break;
       case 'boomcatch': smp('boomerang_catch', 0.8, 1, S.pop); break;
       case 'ravenrelease': smp('raven_caw', 0.9, 1, S.caw); break;

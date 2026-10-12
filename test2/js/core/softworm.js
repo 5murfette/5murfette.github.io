@@ -34,6 +34,7 @@
  *                    double rad[N], len[N], cn[N];               // current radius (output, after the volume rule), segment rest lengths, contact flags
  *                    double act[N], ax[N], ay[N], tmx[N], tmy[N];  // muscle activation, per-node accumulators / scratch (kept in the struct: no allocation)
  *                    double fs, th, gw, cg, shock, thG, thE, acc;  // smoothed facing sign, frame angle, ground weight, contact weight, hit shock, ground / external frame angles, accumulator
+ *                    double sg, snx, sny;                          // P88: snap offset of the pin target (m) and the surface normal it acts along
  *                    double crash, lcool, svx, svy;               // P40: crash state 0..1 (steep + fast landing), landing cool-down (s), the sim worm's velocity (plane)
  *                    double hvx[8], hvy[8]; int hi, cprev;        // P40: ring of the last 8 centroid velocities (the approach velocity of a landing), its head, contacts of the last sub-step
  *                    double en, wz, pen, spd; int contacts;      // diagnostics: kinetic energy, angular velocity, max penetration, speed, nodes in contact
@@ -67,7 +68,7 @@
     D_NEI: 0.9, D_SKIP: 0.35,           // distance-constraint stiffness per pass (neighbour / skip-2)
     A_SHAPE: 0.055,                     // shape matching stiffness per pass at full tone (P40: stiffer, ~6 Hz; was 0.036 = ~5 visible wobbles)
     PIN_T: 0.16, PIN_N: 0.022, PIN_A: 0.55,  // centroid pin to the sim worm per pass: along the ground firm (the sim carries the walk), across it soft (the body may crumple); air: follows
-    KD: 0.14,                           // internal (non-rigid) velocity damping per sub-step (P40: was 0.05; about 1-2 visible wobbles after an impact)
+    KD: 0.18,                           // internal (non-rigid) velocity damping per sub-step (P88: 0.14 -> 0.18, less jelly in contact; P40: was 0.05; about 1-2 visible wobbles after an impact)
     KW_AIR: 4.0,                        // angular drag while airborne (1/s)
     KV_AIR: 0.15,                       // linear air drag (1/s)
     DENT_K: 0.0045, DENT_MAX: 0.2,      // bat dent depth (m) per m/s of the hit, max
@@ -92,6 +93,10 @@
     VMAX: 60, RMAX: 2.2,                // clamps: node speed; node distance from the sim worm before a reset
     PULL: 1.25,                         // rope / riser tension on the head (x g; gravity acts on it too)
     BUOY: 1.0, WDRAG: 7.0,              // water: buoyancy as a fraction of gravity (a worm floats), drag (1/s)
+    SNAP_GAP: 0.012, SNAP_MAX_GAP: 0.4, SNAP_RATE: 14,   // P88: grounded + calm: the pin target is lowered until the belly is SNAP_GAP m off the surface (at most SNAP_MAX_GAP m; integrator gain 1/s)
+    KC_REL: 24,                         // P88: damping (1/s) of the centroid velocity relative to the sim worm while grounded and calm
+    DEPEN: 0.03,                        // P88: a push out of a surface deeper than this (m) adds no velocity (a node that is put back on a new surface, a section turned under it, is not launched)
+    PUSH_MAX: 0.25,                     // P88: the most a node is pushed out of a surface per pass (m)
     VOL_MIN: 0.72, VOL_MAX: 1.45
   };
   const abs = Math.abs, min = M.min, max = M.max;
@@ -99,7 +104,7 @@
   SW.make = function () {
     const f = () => new Float64Array(N);
     return { px: f(), py: f(), vx: f(), vy: f(), gx: f(), gy: f(), r0: f(), rad: f(), len: f(), cn: f(), act: f(), ax: f(), ay: f(), tmx: f(), tmy: f(),
-      fs: 1, th: 0, gw: 0, cg: 0, shock: 0, crash: 0, lcool: 0, cprev: 0, svx: 0, svy: 0, hvx: new Float64Array(8), hvy: new Float64Array(8), hi: 0, thG: 0, thE: 0, acc: 0, wz: 0, en: 0, pen: 0, spd: 0, contacts: 0, init: 0, th0: null,
+      fs: 1, th: 0, gw: 0, cg: 0, sg: 0, snx: 0, sny: 1, shock: 0, crash: 0, lcool: 0, cprev: 0, svx: 0, svy: 0, hvx: new Float64Array(8), hvy: new Float64Array(8), hi: 0, thG: 0, thE: 0, acc: 0, wz: 0, en: 0, pen: 0, spd: 0, contacts: 0, init: 0, th0: null,
       in: { x: 0, y: 0, vx: 0, vy: 0, f: 1, ground: 1, thG: 0, extTh: 0, extW: 0, spin: 0, tone: 1, vref: 0, mu: K.MU, surf: -1e9, g: 9.81, hx: 0, hy: 0, px: 0, py: 0 } };
   };
   SW.set_goal = function (sw, i, gx, gy, r0, act) { sw.gx[i] = gx; sw.gy[i] = gy; sw.r0[i] = r0; sw.act[i] = act || 0; };
@@ -115,6 +120,12 @@
       sw.px[i] = x + GC.x * sw.fs * c - GC.y * s + ox * c - oy * s; sw.py[i] = y + GC.x * sw.fs * s + GC.y * c + ox * s + oy * c; sw.vx[i] = sw.vy[i] = 0; sw.rad[i] = sw.r0[i];
     }
     sw.shock = 0; sw.th = sw.thE = th; sw.thG = th; sw.gw = I.ground > 0.5 ? 1 : 0; sw.cg = 0; sw.acc = 0; sw.wz = 0; sw.init = 1; I.px = x; I.py = y;
+  };
+  /* P88: put the nodes onto the surface without giving them any velocity (a section that turned / moved under the body: the cross-section is a new one). Position-only contact passes. */
+  SW.relax = function (sw, env, passes) {
+    for (let p = 0; p < passes; p++) for (let i = 0; i < N; i++) { sw.tmx[i] = sw.px[i]; sw.tmy[i] = sw.py[i]; CN.x = 0; CN.y = 0; contact(sw, i, env, 0, 0, 0, SW.H); }
+    for (let i = 0; i < N; i++) { sw.tmx[i] = sw.px[i]; sw.tmy[i] = sw.py[i]; sw.vx[i] = sw.vy[i] = 0; }
+    sw.sg = 0;
   };
   SW.centroid = function (sw, out) { let cx = 0, cy = 0; for (let i = 0; i < N; i++) { cx += sw.px[i]; cy += sw.py[i]; } out.x = cx / N; out.y = cy / N; return out; };
 
@@ -198,7 +209,7 @@
   };
 
   /* ---------- the step ---------- */
-  const G2 = { x: 0, y: 0 }, CN = { x: 0, y: 0 };   // CN: sum of the contact normals of this sub-step
+  const G2 = { x: 0, y: 0 }, CN = { x: 0, y: 0 }, CG = { gap: 9, nx: 0, ny: 1 };   // CG: the node closest to the surface this pass (gap = distance - radius) and its surface normal   // CN: sum of the contact normals of this sub-step
   /* terrain contact for one node (position p, radius r): pushes it out, applies friction; returns the penetration (>0) or 0 */
   function contact(sw, i, env, mu, vrx, vry, h) {
     const x = sw.px[i], y = sw.py[i], r = sw.rad[i], d = env.sample(x, y);
@@ -207,12 +218,13 @@
     if (gl < 1e-3) { return 0; }
     const nx = -gx / gl, ny = -gy / gl, dist = -d * 2 * e / gl;                 // gl = |grad| * 2e  ->  distance = -d / |grad|
     const pen = r - dist;
+    if (dist - r < CG.gap) { CG.gap = dist - r; CG.nx = nx; CG.ny = ny; }
     if (pen > 0) { CN.x += nx; CN.y += ny; }
     if (pen < -K.SKIN) return 0;
     // sticky skin: inside the skin the node loses its velocity away from the surface (the slime holds the belly down)
     const ox = sw.px[i] - sw.tmx[i], oy = sw.py[i] - sw.tmy[i];                 // displacement of this sub-step (before the push)
     let px = x, py = y;
-    if (pen > 0) { px += nx * pen; py += ny * pen; }
+    if (pen > 0) { const pp = pen < K.PUSH_MAX ? pen : K.PUSH_MAX; px += nx * pp; py += ny * pp; if (pp > K.DEPEN) { const ex = pp - K.DEPEN; sw.tmx[i] += nx * ex; sw.tmy[i] += ny * ex; } }   // (the depth beyond DEPEN is a position fix only: it adds no velocity)   // (P88: a body buried by a prop / rubble is eased out, never thrown: it used to reach 10^7 energy)
     // PBD Coulomb friction: remove the tangential part of the displacement (relative to the crawl reference) up to mu * penetration
     const rx = ox - vrx * h, ry = oy - vry * h, dn = rx * nx + ry * ny, tx = rx - dn * nx, ty = ry - dn * ny, tl = M.len2(tx, ty);
     const lim = mu * (K.ACT_MU0 + (1 - K.ACT_MU0) * sw.act[i]) * (pen > 0 ? pen : 0);   // peristalsis: a contracted ring grips, a lengthening one slips
@@ -265,6 +277,10 @@
     const air = 1 - sw.gw;
     w1 *= M.exp(-K.KW_AIR * air * h);
     if (I.spin !== 0) w1 += (I.spin - w1) * min(1, 18 * h);
+    // P88: on the ground the whole body is tied to the sim worm by the soft pin (a spring on the centroid): left undamped it is a ball on a rubber band (the rigid
+    // translation keeps its momentum), which is the jelly bounce in place. The motion of the centroid relative to the sim worm is damped (calm bodies only: a crash /
+    // a hit keeps its designed rebound)
+    { const kc = K.KC_REL * sw.gw * (1 - sw.crash) * (1 - min(1, sw.shock * 2)) * h; if (kc > 0) { const f = 1 - M.exp(-kc), rx_ = (vcx - sw.svx) * f, ry_ = (vcy - sw.svy) * f; for (let i = 0; i < N; i++) { sw.vx[i] -= rx_; sw.vy[i] -= ry_; } vcx -= rx_; vcy -= ry_; } }
     const kd = 1 - K.KD * (0.5 + 0.5 * I.tone * (1 - K.SHOCK_SOFT * sw.shock)) * (1 - K.CR_KD * sw.crash) * kf, ka = M.exp(-K.KV_AIR * air * h);
     for (let i = 0; i < N; i++) {
       const rx = sw.px[i] - cx, ry = sw.py[i] - cy;
@@ -294,10 +310,10 @@
     sw.shock = max(0, sw.shock - K.SHOCK_DECAY * h);
     const tone = I.tone * (1 - K.SHOCK_SOFT * sw.shock) * (1 - K.AIR_SOFT * air) * (1 - K.CR_SOFT * sw.crash), ash = K.A_SHAPE * (0.25 + 0.75 * tone), pinT = ((K.PIN_T * gt + K.PIN_A * (1 - gt)) * (1 - K.SHOCK_PIN * sw.shock)) * (1 - sw.crash) + K.CR_PIN * sw.crash, pinN = (K.PIN_N * gt + K.PIN_A * (1 - gt)) * (1 - sw.crash) + K.CR_PIN_N * sw.crash, tcx = M.cos(sw.thG), tcy = M.sin(sw.thG);
     // the pin target of the centroid: the sim worm + the goal centroid offset carried by the frame
-    const tx = I.x + gcx * ct - gcy * st, ty = I.y + gcx * st + gcy * ct;
+    const tx = I.x + gcx * ct - gcy * st - sw.snx * sw.sg, ty = I.y + gcx * st + gcy * ct - sw.sny * sw.sg;
     const vrx = I.vref * K.VREF_K, vry = 0, mu = I.mu;
     let maxPen = 0, nc = 0; for (let i = 0; i < N; i++) sw.cn[i] = 0;
-    CN.x = 0; CN.y = 0;
+    CN.x = 0; CN.y = 0; CG.gap = 9;
     for (let it = 0; it < K.ITER; it++) {
       for (let i = 0; i < N - 1; i++) {                                             // neighbours: stretch / compress
         const dx = sw.px[i + 1] - sw.px[i], dy = sw.py[i + 1] - sw.py[i], l = M.len2(dx, dy) + 1e-9, l0 = M.len2((sw.gx[i + 1] - sw.gx[i]) * fs, sw.gy[i + 1] - sw.gy[i]);
@@ -318,6 +334,12 @@
       { const dx = tx - ccx, dy = ty - ccy, dt_ = dx * tcx + dy * tcy, dn_ = -dx * tcy + dy * tcx, a_ = dt_ * pinT, b_ = dn_ * pinN, ex = a_ * tcx - b_ * tcy, ey = a_ * tcy + b_ * tcx; for (let i = 0; i < N; i++) { sw.px[i] += ex; sw.py[i] += ey; } }
       for (let i = 0; i < N; i++) { const p = contact(sw, i, env, mu, vrx * sw.gw, vry, h); if (p > 0) { nc++; sw.cn[i] = 1; if (p > maxPen) maxPen = p; } }
     }
+    // P88: SNAP. The sim says the worm stands on the ground (its disc touches it), so the belly of the body touches it too. The disc of the sim is a coarse shape
+    // (on a 35 degree slope the body hovered 0.15-0.25 m: a worm "floating" above a slope, sliding down it with no contact). While grounded and calm the PIN TARGET is
+    // lowered along the surface normal by sg (m): an integrator on the gap of the closest node (it stops when the belly touches), so the pin and the contact agree and
+    // nothing fights (a direct push down against the pin made the body buzz at the frame rate)
+    if (I.ground > 0.5 && sw.gw > 0.5 && sw.crash < 0.2 && CG.gap < K.SNAP_MAX_GAP) { sw.sg = M.clamp(sw.sg + (CG.gap - K.SNAP_GAP) * K.SNAP_RATE * h, 0, K.SNAP_MAX_GAP); sw.snx = CG.nx; sw.sny = CG.ny; }
+    else sw.sg *= M.exp(-8 * h);
     // the body's own landing: the first contact after flight, fast along the surface normal (blast-launched worms bounce in the sim without a 'land' event)
     sw.lcool = max(0, sw.lcool - h);
     if (nc > 0 && sw.cprev === 0 && sw.lcool <= 0) {

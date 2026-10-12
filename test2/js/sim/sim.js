@@ -96,7 +96,7 @@
     if (S.wa) {                                                       // P37-W3: weapons A
       const wa = S.wa; mix(wa.rng.s % 100003); mix(wa.stream ? wa.stream.t : -1); mix(wa.spots.length); mix(wa.acid.length); SS.weaponsA.hash_ws(S, mix);
       for (const c of wa.clouds) { mix(c.x); mix(c.y); mix(c.z); mix(c.r); if (c.pf) mix(c.pf[c.pf.length - 6]); }
-      for (const b of wa.boom) { mix(b.s); mix(b.y); }
+      for (const b of wa.boom) { mix(b.s); mix(b.y); mix(b.vs); mix(b.vy); }
       for (const r of wa.ravens) { mix(r.s); mix(r.y); }
       for (const l of wa.letters) { mix(l.s); mix(l.y); }
       for (const w of S.worms) { mix(w.gas || 0); mix(w.stickT || 0); }
@@ -359,6 +359,7 @@
     if (SS.alien) SS.alien.populate(S, taken);                    // P37: face-hugger eggs (after the ship: the nest)
     if (flat && SS.collapse && SS.collapse.remove_floating_all(W()) > 0) W().mark_all();   // P72: 2D stamps (wall fragments, rubble, a cut footing) that hold on nothing are removed, nothing floats
     sim.unbury_worms(S, taken);                                          // P38 R1: lift a worm the hull / rubble stamps entombed (before the props use taken)
+    sim.spawn_audit(S, taken);                                           // P95: no worm starts on sand / lava / water that hurts at once
     } else if (SS.alien) SS.alien.populate(S, taken);                 // (P68c: in space only the alien state is made)
     if (SS.scatter) SS.scatter.populate(S, taken);
     SS.game.furnish_rooms(S);
@@ -404,6 +405,33 @@
   }
   sim.unbury_worms = unbury_worms;
 
+  /* P95: the spawn audit. A worm must never start where the environment hurts it at once: beyond the play circle of a dry world (hot sand, 1 HP / 5 s from the first second),
+   * in or beside lava, in water (the map's own pools). find_spot, the fort seats, the fall-back spot and the stamps' lift each guard some of these; this is the one place that
+   * checks the finished layout and moves a worm that is still on a hazard to the nearest clean spot find_spot gives (deterministic: the same RNG stream, taken = the others).
+   * Returns the number moved. C: bool spawn_hazard(Game*, Worm*); i32 spawn_audit(Game*, Vec3 taken[]). */
+  function spawn_hazard(S, o) {
+    const w = W(); if (w.under || S.eow) return false;
+    if (w.dry && sim.arena_r(o.pos.x, o.pos.z) > S.playR - 1) return true;
+    if (SS.lava && S.lava && SS.lava.depth_at(S, o.pos.x, o.pos.z) > 0.005) return true;
+    if (w.mat_at(o.pos.x, o.pos.y - o.foot - 0.2, o.pos.z) === MAT.LAVA) return true;
+    if (SS.water && S.water && SS.water.depth(S, o.pos.x, o.pos.z) > 0.3) return true;
+    return false;
+  }
+  sim.spawn_hazard = spawn_hazard;
+  function spawn_audit(S, taken) {
+    let moved = 0; const fortOn = !!SS.fort && SS.fort.is();
+    for (const o of S.worms) {
+      if (o.dead || !spawn_hazard(S, o)) continue;
+      const others = []; for (const p of S.worms) if (p !== o && !p.dead) others.push({ x: p.pos.x, y: p.pos.y, z: p.pos.z });
+      const fo = fortOn ? { team: o.team } : undefined, sp = sim.find_spot(S, 6, others, fo) || sim.find_spot(S, 3, others, fo);
+      if (!sp) continue;
+      o.pos.x = sp.x; o.pos.y = sp.y + 0.55; o.pos.z = sp.z; o.vel.x = o.vel.y = o.vel.z = 0; o.rest = false; moved++;
+      if (taken && taken[o.id]) taken[o.id] = { x: sp.x, y: sp.y, z: sp.z };
+    }
+    return moved;
+  }
+  sim.spawn_audit = spawn_audit;
+
   /* P38 R9: the wedge resolver (a safety net: the causes are fixed where they arise, see body3D). A worm that is airborne yet has not moved
    * vertically for WD.PIN_T s while its vertical speed says it falls is stuck inside rock (a blast threw it into a slot, the ground rose around it).
    * It is moved to the nearest spot (cube shells of PIN_STEP m out to PIN_R m, scan order x, y, z: deterministic) where its whole body is free,
@@ -421,6 +449,17 @@
     return null;
   }
   sim.wedge_free = wedge_free;
+  /* P88: a worm AT REST or walking inside solid ground (rubble / a collapse / a stamp landed on it, a hole closed over it): its centre and its head both deep in rock.
+   * rest / the ground checks only look below the feet, so it stayed there for good, and the soft body, buried in the rock's field, went wild. Same rule as the
+   * runaway-speed wedge: the nearest free spot (wedge_free), else it is crushed. Staggered (every 8th step per worm). */
+  function unentomb(S, o) {
+    if (S.eow || o.dead || o.drowning || o.swim || o.rope || ((S.tick + o.id * 5) & 7) !== 0) return;
+    const w = W(); if (!(w.sample(o.pos.x, o.pos.y, o.pos.z) > 0.3 && w.sample(o.pos.x, o.pos.y + 0.4, o.pos.z) > 0.3)) return;
+    const f = wedge_free(S, o);
+    if (!f) { log(S, `${o.name} is buried in the rock.`, 0xff9a9a); kill(S, o, 'crush'); return; }
+    o.pos.x = f.x; o.pos.y = f.y; o.pos.z = f.z; o.vel.x = o.vel.y = o.vel.z = 0; o.vs = 0; o.vy = 0; o.rest = false; o.slide = false; o.stillT = 0; o.air = true; o.flip = false; o.hop = false;
+    emit(S, 'unwedge', { wormId: o.id, x: f.x, y: f.y, z: f.z });
+  }
   function pin_step(S, o, y0, vyNow, dt) {
     if (Math.abs(o.pos.y - y0) < 1e-4 && Math.abs(vyNow) > 2) o.pinT += dt; else { o.pinT = 0; return false; }
     if (o.pinT < WD.PIN_T) return false;
@@ -488,6 +527,7 @@
     if (SS.weapons) SS.weapons.turn_start(S, first);              // P2: device lifetimes, supply drops
     if (SS.lab) SS.lab.turn_start(S, first);                      // P42: pressure clock, moon phase, underdog notice, meteors
     if (first) S.mapMinesUntil = S.time + C.ARMS.TRAPS.MAP_MINES_SEEN;   // the map's mines: seen by all, then they burrow
+    sim.ensure_control(S, w);                                     // P91: whatever happened before, the worm that starts a turn can act
     emit(S, 'turn', { wormId: w.id});
     if (!first) log(S, `${sim.team_name(S, w.team)} · ${w.name}'s turn. Section aligned with ${S.target.name}.`, sim.team_rgb(S, w.team));
   };
@@ -650,7 +690,7 @@
     const l = M.len2(ns, ny); return l < 1e-6 ? { s: 0, y: 1 } : { s: ns / l, y: ny / l };
   }
   // the worm disc overlaps another worm (walkWorm: then it may climb 18 px instead of 10)
-  const onWorm = (S, a, s, y) => { for (const b of S.planeBodies) if (b.worm >= 0 && b.worm !== a.id && M.len2(b.s - s, b.y - y) < 2 * C.WORM_R - 0.02) return b; return null; };
+  const onWorm = (S, a, s, y, m) => { for (const b of S.planeBodies) if (b.worm >= 0 && b.worm !== a.id && M.len2(b.s - s, b.y - y) < 2 * C.WORM_R - 0.02 + (m || 0)) return b; return null; };   // (m: P88 reach margin)
   // landing damage (PoC: head-on / glancing, both only on floors and slopes), the spring trap's minimum
   function landHurt(S, w, dmg) {
     if (w.springFall) { w.springFall = false; dmg = M.max(dmg, C.ARMS.SPRING.FALL_MIN); }
@@ -681,22 +721,41 @@
     }
     return null;
   }
+  // the nearest spot where the whole disc is free of the pinning prop (null: none within reach)
+  function pinFree(S, pin, s, y) {
+    const size = pin.kind === 0 ? pin.r : M.max(pin.hs, pin.hy), maxR = M.min(110 * PX, size * 2 + C.WORM_R);
+    for (let r = PX; r <= maxR + 1e-6; r += PX) for (const t of PIN_ANG) {
+      const ns = s + M.cos(t) * r, ny = y + M.sin(t) * r, wq = P.to_world(S, ns, ny);
+      if (ny - C.WORM_R < sim.surface_at(S, wq.x, wq.z) || P.overlap2(S, ns, ny) > 0) continue;
+      return { s: ns, y: ny };
+    }
+    return null;
+  }
+  function breakPin(S, pin) {
+    const b = SS.bodies.by_id(S, pin.body); SS.bodies.remove(S, b);
+    emit(S, 'propbreak', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop || 'rubble', why: 'pinned' });
+  }
+  /* P88: the worms that are NOT under control are pinned by a prop too (a crate landed on a resting worm: its body stayed inside the prop until its turn, and the
+   * soft body, buried in the prop's field, exploded). Same rule as the active worm: the nearest free spot, else the prop breaks. Worms in the plane band only (the
+   * only ones that have prop cross-sections); runs once per step before the active worm moves. */
+  function unpinOthers(S) {
+    if (S.eow) return;
+    for (let i = 0; i < S.worms.length; i++) {
+      const o = S.worms[i]; if (o.dead || o.drowning || o.swim || o.rope || sim.ctl(S, o)) continue;      // (a worm under control frees itself: recoverPinned)
+      const q = P.to_plane(S, o.pos); if (Math.abs(q.t) > C.WORM_R) continue;
+      const pin = pinningBody(S, q.s, o.pos.y); if (!pin) continue;
+      const f = pinFree(S, pin, q.s, o.pos.y);
+      if (!f) { breakPin(S, pin); continue; }
+      const wq = P.to_world(S, f.s, f.y), n = P.nrm(S);
+      o.pos.x = wq.x + n.x * q.t; o.pos.y = wq.y; o.pos.z = wq.z + n.z * q.t; o.vel.x = o.vel.y = o.vel.z = 0; o.rest = false; o.slide = false; o.stillT = 0;
+    }
+  }
   function recoverPinned(S, a, dt) {
     if (S.rope || S.hook || S.dig || a.drowning || a.swim || a.dead || !sim.ctl(S, a)) return;
     const s = P.to_plane(S, a.pos).s, y = a.pos.y, pin = pinningBody(S, s, y);
     if (pin) {
-      const size = pin.kind === 0 ? pin.r : M.max(pin.hs, pin.hy), maxR = M.min(110 * PX, size * 2 + C.WORM_R);
-      let found = null;
-      for (let r = PX; r <= maxR + 1e-6 && !found; r += PX) for (const t of PIN_ANG) {
-        const ns = s + M.cos(t) * r, ny = y + M.sin(t) * r, wq = P.to_world(S, ns, ny);
-        if (ny - C.WORM_R < sim.surface_at(S, wq.x, wq.z) || P.overlap2(S, ns, ny) > 0) continue;
-        found = { s: ns, y: ny }; break;
-      }
-      if (!found) {                                       // remove the obstruction rather than soft-lock the worm
-        const b = SS.bodies.by_id(S, pin.body); SS.bodies.remove(S, b);
-        emit(S, 'propbreak', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop || 'rubble', why: 'pinned' });
-        return;
-      }
+      const found = pinFree(S, pin, s, y);
+      if (!found) { breakPin(S, pin); return; }          // remove the obstruction rather than soft-lock the worm
       setActive2D(S, a, found.s, found.y);
       a.vs = a.vy = 0; a.flip = false; a.hop = false; a.slide = false;
       a.air = !P.grounded2(S, found.s, found.y); if (!a.air) landNow(S, a, 0);
@@ -724,7 +783,7 @@
       if (onIce) { a.iceV += (hs - a.iceV) * (1 - M.exp(-C.ICE.GRIP * dt)); hs = Math.abs(a.iceV) < 0.04 && !mv ? 0 : a.iceV; } else a.iceV = 0;
       if (SS.lab4 && S.lab && S.settings.labFlags) hs += SS.lab4.slip(S, a, s, y);   // P79 SLICK: a wet slope steeper than the friction lets go
       if (hs) {
-        const base = P.overlap2(S, s, y), ns = s + hs * dt, top = onWorm(S, a, s, y) ? WD.STEP_UP_WORM : WD.STEP_UP;
+        const base = P.overlap2(S, s, y), ns = s + hs * dt, top = onWorm(S, a, s, y) || onWorm(S, a, ns, y, WD.STACK_REACH) ? WD.STEP_UP_WORM : WD.STEP_UP;   // P88: a worm right ahead can be climbed too (on a slope the disc stopped 0.01 m short of 'on it')
         let moved = false;
         for (let l = 0; l <= top + 1e-6; l += 0.04) if (P.overlap2(S, ns, y + l) <= base) { s = ns; y += l; a.walking = true; moved = true; break; }
         if (!moved) a.iceV = 0;                                                  // slid into something
@@ -764,9 +823,8 @@
         // landing on another worm's head (PoC resolveWormContacts): it is shoved aside, the lander stops on top
         const lower = n.y > 0.5 ? onWorm(S, a, ns, ny - 0.1) : null;
         if (lower && imp >= WD.HEAD_SHOVE_V && !(S.worms[lower.worm].shoveT > S.time)) {
-          const o = S.worms[lower.worm], d = P.dir(S), dir = Math.abs(o.s - ns) > 0.06 ? Math.sign(lower.s - ns) : a.facing, v = M.clamp(imp * WD.SHOVE_K, WD.SHOVE_MIN, WD.SHOVE_MAX);
-          o.rest = false; o.vel.x += d.x * dir * v; o.vel.z += d.z * dir * v; o.vel.y = M.max(o.vel.y, WD.SHOVE_UP); o.slide = true; o.shoveT = S.time + WD.SHOVE_COOL;
-          if (o.rope) o.rope = null;
+          const o = S.worms[lower.worm], d = P.dir(S), dir = Math.abs(o.s - ns) > 0.06 ? Math.sign(lower.s - ns) : a.facing;
+          shoveWorm(S, o, d.x * dir, d.z * dir, imp);
           landNow(S, a, imp); a.vs *= 0.25; a.squash = S.time; break;
         }
         if (imp > WD.FALL_SAFE && n.y > 0.2) {                                // a hard landing on a floor or slope
@@ -1144,6 +1202,26 @@
     const t = w.top[k * w.NX + i];
     return t >= surf - 0.4 && t <= surf + WD.SWIM_CLIMB ? t : -1e9;
   }
+  /* P91: the turn-start guarantee. The worm that gets the turn must be able to act. The rotation skips swimmers, but a whole team in the water
+   * (or a lone survivor) still hands the turn to one; and a stale swim state on dry ground (the water went away under a jacket swimmer) blocks every input
+   * (controlActive, weapons, jumps all refuse a swimmer). Only states that really block control are touched, so a normal turn changes nothing. Each recovery is
+   * counted (S.recov, never hashed) and emitted ('recover' { wormId, why }) so it cannot hide a real bug. */
+  function recovered(S, w, why) { S.recov = (S.recov | 0) + 1; emit(S, 'recover', { wormId: w.id, why: why }); log(S, `${w.name} is back on its feet (${why}).`, 0xffa24a); }
+  sim.ensure_control = function (S, w) {
+    if (!w || w.dead || S.eow) return;
+    if (!w.swim && !w.air && !w.drowning && (w.flip || w.hop)) { w.flip = false; w.hop = false; recovered(S, w, 'stale jump flags'); }     // (weapon_ready refuses a worm in a flip)
+    if (w.swim) {
+      const sw = w.swim, surf = sim.surface_at(S, w.pos.x, w.pos.z);
+      if (SS.water && S.water && !(SS.water.depth(S, w.pos.x, w.pos.z) > 0.004) && !(SS.lava && S.lava && SS.lava.depth_at(S, w.pos.x, w.pos.z) > 0.01)) {   // no water under it: a stale swim
+        w.swim = null; w.vel.x = w.vel.y = w.vel.z = 0; w.vs = w.vy = 0; w.air = true; w.rest = false; recovered(S, w, 'stale swim'); return;
+      }
+      if (sw.jk) { if (SS.jacket.haul(S, w)) recovered(S, w, 'hauled ashore'); return; }
+      if (sw.land) {
+        const t = landAt(S, sw.tx, sw.tz, surf);
+        if (t > -1e8) { w.pos.x = sw.tx; w.pos.z = sw.tz; w.pos.y = t + w.foot + 0.02; w.swim = null; w.vel.x = w.vel.y = w.vel.z = 0; w.vs = w.vy = 0; w.air = true; w.rest = false; emit(S, 'swimout', { wormId: w.id }); recovered(S, w, 'hauled ashore'); }
+      }
+    }
+  };
   function swimStart(S, w) {
     if (w.dead || w.drowning || w.swim) return;
     if (w.hp <= 0) { drown(S, w); return; }
@@ -1296,6 +1374,76 @@
     b.vel.x -= vn * n.x; b.vel.z -= vn * n.z;
   }
   sim.plane_lock = planeLock;
+  /* ---------- P88 worm-worm contact (3D bodies): a worm is a solid ball of WORM_R for every other worm ----------
+   * The ACTIVE worm already met the others as discs in its plane (planeBodies: it climbs over a worm, stands on it, lands on its head). The worms that are not
+   * under control (body3D) used to ignore each other completely: a worm that stood on another when its turn ended fell THROUGH it, and worms that bunched up
+   * overlapped for good. Now every worm obeys the same ball contact: it lands on / rolls off / rests on a head (contact normal.y >= STACK_NY), is pushed out of a
+   * flank, and resting worms that overlap side by side slide apart (gently, never into rock, never off their footing). Presentation (the fold under the weight, the
+   * feet on the back) reads sim.worm_under(S, w): the worm a worm stands on. No state of its own: pure geometry over the worm positions, so it is the same on every peer.
+   * (EOW has its own body step: p86's eow.js may call these.) */
+  function wormUnder(S, b) {
+    if (S.eow || b.dead || b.drowning || b.swim) return null;
+    const R2 = 2 * C.WORM_R;
+    for (let i = 0; i < S.worms.length; i++) {
+      const o = S.worms[i]; if (o === b || o.dead || o.drowning || o.swim) continue;
+      const dx = b.pos.x - o.pos.x, dy = b.pos.y - o.pos.y, dz = b.pos.z - o.pos.z, d = M.len3(dx, dy, dz);
+      if (dy > 0.3 && d > 1e-6 && dy / d >= WD.STACK_NY && Math.abs(d - R2) <= WD.STACK_GAP) return o;
+    }
+    return null;
+  }
+  sim.worm_under = wormUnder;
+  // the contact of a point (the body centre) with the worm balls: fills nv (unit normal away from the worm) and returns that worm, or null
+  function wormHit(S, b, x, y, z, nv) {
+    const R2 = 2 * C.WORM_R;
+    for (let i = 0; i < S.worms.length; i++) {
+      const o = S.worms[i]; if (o === b || o.dead || o.drowning || o.swim) continue;
+      const dx = x - o.pos.x, dy = y - o.pos.y, dz = z - o.pos.z, d = M.len3(dx, dy, dz);
+      if (d >= R2) continue;
+      if (d < 1e-6) { nv.x = 0; nv.y = 1; nv.z = 0; } else { nv.x = dx / d; nv.y = dy / d; nv.z = dz / d; }
+      return o;
+    }
+    return null;
+  }
+  // PoC resolveWormContacts: a hard landing on a head shoves the lower worm aside (dir = the horizontal direction in the world)
+  function shoveWorm(S, o, dx, dz, imp) {
+    if (o.shoveT > S.time) return;
+    const v = M.clamp(imp * WD.SHOVE_K, WD.SHOVE_MIN, WD.SHOVE_MAX);
+    o.rest = false; o.vel.x += dx * v; o.vel.z += dz * v; o.vel.y = M.max(o.vel.y, WD.SHOVE_UP); o.slide = true; o.shoveT = S.time + WD.SHOVE_COOL;
+    if (o.rope) o.rope = null;
+  }
+  // resting worms that overlap side by side slide apart (b is moved; the other, if it is a resting worm too, moves by the same amount in its own turn)
+  function wormSeparate(S, b, dt) {
+    const w = W(), R2 = 2 * C.WORM_R;
+    for (let i = 0; i < S.worms.length; i++) {
+      const o = S.worms[i]; if (o === b || o.dead || o.drowning || o.swim) continue;
+      const dx = b.pos.x - o.pos.x, dy = b.pos.y - o.pos.y, dz = b.pos.z - o.pos.z, hh = M.len2(dx, dz);
+      if (M.len3(dx, dy, dz) >= WD.SEP_D || Math.abs(dy) >= C.WORM_R) continue;
+      let ux, uz; if (hh > 1e-3) { ux = dx / hh; uz = dz / hh; } else { const a = b.id * 2.399963; ux = M.cos(a); uz = M.sin(a); }
+      const need = Math.sqrt(M.max(0, R2 * R2 - dy * dy)) - hh, share = o.rest && o !== S.active ? 0.5 : 1, m = M.min(WD.SEP_V * dt, need * share + 0.002);
+      const nx = b.pos.x + ux * m, nz = b.pos.z + uz * m; let y = b.pos.y;
+      for (let k = 0; k < 4 && w.sample(nx, y - b.foot, nz) > 0; k++) y += 0.03;                // a rising slope: follow it a little
+      if (w.sample(nx, y - b.foot, nz) > 0 || blocked3(nx, y, nz) || !(w.sample(nx, y - b.foot - 0.06, nz) > 0)) continue;   // rock in the way, or no footing there: stay
+      b.pos.x = nx; b.pos.y = y; b.pos.z = nz;
+    }
+  }
+  // b meets worm o with the contact normal nv (away from o): leaves, rolls off, or rests on its head. True = b is at rest (the substep loop ends).
+  function wormLand(S, b, o, nv, vn, nx, ny, nz) {
+    const w = W(), R2 = 2 * C.WORM_R;
+    if (vn >= 0) { b.pos.x = nx; b.pos.y = ny; b.pos.z = nz; return false; }              // moving apart already
+    const px = o.pos.x + nv.x * R2, py = o.pos.y + nv.y * R2, pz = o.pos.z + nv.z * R2;    // pushed out to touching (unless that is rock)
+    if (!(w.sample(px, py - b.foot, pz) > 0) && !blocked3(px, py, pz)) { b.pos.x = px; b.pos.y = py; b.pos.z = pz; }
+    const imp = -vn;
+    if (nv.y >= WD.STACK_NY) {                                                             // on the head: a hard landing shoves the lower worm, then stops dead (no damage: PoC)
+      if (imp >= WD.HEAD_SHOVE_V) { const hh = M.len2(nv.x, nv.z); shoveWorm(S, o, hh > 1e-3 ? -nv.x / hh : 1, hh > 1e-3 ? -nv.z / hh : 0, imp); }
+      if (imp > 3) emit(S, 'land', { wormId: b.id, x: b.pos.x, y: b.pos.y - b.foot, z: b.pos.z, speed: imp, mat: w.mat_at(o.pos.x, o.pos.y - o.foot - 0.2, o.pos.z) });
+      b.vel.x = b.vel.y = b.vel.z = 0; b.rest = true; b.slide = false; b.stillT = 0; b.squash = S.time;
+      return true;
+    }
+    // a flank / the shoulder: no bounce, the tangential velocity is kept (it rolls off the ball and lands beside it)
+    const tx = b.vel.x - vn * nv.x, ty = b.vel.y - vn * nv.y, tz = b.vel.z - vn * nv.z;
+    b.vel.x = tx * WD.FRIC; b.vel.y = ty * WD.FRIC; b.vel.z = tz * WD.FRIC; b.slide = true;
+    return false;
+  }
   function body3D(S, b, dt) {
     if (S.eow) return SS.eow.body3d(S, b, dt);                     // P68c
     const w = W(), foot = b.foot;
@@ -1316,7 +1464,11 @@
       return;
     }
     if (b.rope && hangOnRope(S, b, dt)) return;
-    if (b.rest) { if (w.sample(b.pos.x, b.pos.y - foot - 0.06, b.pos.z) > 0 || Math.abs(deckFloor(S, b.pos.x, b.pos.y - foot, b.pos.z) - (b.pos.y - foot)) < 0.08) return; b.rest = false; }
+    if (b.rest) {
+      if (w.sample(b.pos.x, b.pos.y - foot - 0.06, b.pos.z) > 0 || Math.abs(deckFloor(S, b.pos.x, b.pos.y - foot, b.pos.z) - (b.pos.y - foot)) < 0.08) { if (b !== S.active) wormSeparate(S, b, dt); return; }
+      if (wormUnder(S, b)) return;                                             // P88: standing on another worm
+      b.rest = false;
+    }
     // PoC dynamics in 3D (worm gravity, head-on / glancing landings, dizziness, skids with bounce 0.3 / friction 0.72)
     const sp0 = M.len3(b.vel.x, b.vel.y, b.vel.z), y0 = b.pos.y;
     if (sp0 > WD.V_MAX) { const k = WD.V_MAX / sp0; b.vel.x *= k; b.vel.y *= k; b.vel.z *= k; }   // P38 R9: terminal velocity
@@ -1339,9 +1491,11 @@
         if (w.sample(nx, ny - foot, nz) > 0) w.normal(nx, ny - foot, nz, nv); else w.normal(nx, ny, nz, nv);
         hit = true;
       }
-      if (!hit) { b.pos.x = nx; b.pos.y = ny; b.pos.z = nz; continue; }
+      const wo = hit ? null : wormHit(S, b, nx, ny, nz, nv);                    // P88: another worm's ball
+      if (!hit && !wo) { b.pos.x = nx; b.pos.y = ny; b.pos.z = nz; continue; }
       touched = true;
       const vn = b.vel.x * nv.x + b.vel.y * nv.y + b.vel.z * nv.z;
+      if (wo) { if (wormLand(S, b, wo, nv, vn, nx, ny, nz)) break; continue; }
       if (vn >= 0) { b.pos.x = nx; b.pos.z = nz; continue; }
       const imp = -vn, sp = M.len3(b.vel.x, b.vel.y, b.vel.z), tx = b.vel.x - vn * nv.x, ty = b.vel.y - vn * nv.y, tz = b.vel.z - vn * nv.z;
       const along = M.len3(tx, ty, tz) / M.max(1e-6, sp);
@@ -1589,6 +1743,7 @@
       const q = P.to_plane(S, o.pos); if (Math.abs(q.t) > C.WORM_R) continue;
       P.pb_add(S.planeBodies, 0, q.s, o.pos.y, 0, 0, C.WORM_R, -1, -1, -1, -1, o.id, false);
     }
+    unpinOthers(S);                                               // P88: a prop on a worm that is not under control
     if (S.phase === 'play' && a && !a.dead && !a.swim) controlActive(S, a, dt, inp, false);
     else if (S.phase === 'attack' && S.retreatT > 0 && a && !a.dead && !a.swim && !S.dig) controlActive(S, a, dt, SS.game.is_cpu(S, a.team) ? (SS.ai && SS.ai.retreat ? SS.ai.retreat(S, a, NOINPUT) : NOINPUT) : inp, true);
     SS.game.step(S, dt);
@@ -1610,6 +1765,8 @@
     if (SS.lava && !S.eow) SS.lava.step(S, dt);                    // (P68c: the magma pockets stay put in space)
     if (SS.alien) SS.alien.step(S, dt);                           // P37: eggs, face huggers, the alien, acid
     for (const w of S.worms) {
+      if (w.dead) continue;
+      unentomb(S, w);                                             // P88: buried at rest
       if (w.dead) continue;
       if (w.drowning) { sinkStep(S, w, dt); continue; }
       if (w.swim) { swimStep(S, w, dt); continue; }

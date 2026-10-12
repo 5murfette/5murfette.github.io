@@ -72,6 +72,10 @@
       BOUNCE: 0.3, FRIC: 0.72,                  // integrateBody(w, dt, 0.3, 0.72) per contact
       FIRM_NY: 0.34, SOFT_NY: 0.55, SOFT_V: 3.5, STILL_V: 1.29, STILL_T: 0.45,   // land / soft landing / still rest
       READY_V: 0.77,                            // weaponReady L4342: speed < 12 px/s
+      // P88 worm-worm contact: a worm is a solid ball of WORM_R for every other worm (stand on / walk over / roll off); STACK_NY = the smallest contact normal.y that still
+      // holds a worm on another's head (the head is a ball: past ~32 degrees off the top it rolls off), STACK_GAP = how far (m) from touching a worm still counts as
+      // resting on it, SEP_D / SEP_V = resting worms closer than SEP_D (m, side by side) slide apart at SEP_V m/s (never into rock, never off their footing)
+      STACK_NY: 0.85, STACK_REACH: 0.06, STACK_GAP: 0.08, SEP_D: 0.84, SEP_V: 1.5,
       HEAD_SHOVE_V: 11.3, SHOVE_K: 0.28, SHOVE_MIN: 2.6, SHOVE_MAX: 6.4, SHOVE_UP: 2.25, SHOVE_COOL: 0.45,   // L3611-3634
       DROWN_T: 2.2, DROWN_V: 1.67,              // drown L3534 / L3559: sinks 26 px/s for 2.2 s
       // P33 (user 2026-10-08, over the PoC's instant drowning): a worm in the water floats struggling SWIM_FLOAT_T s,
@@ -243,7 +247,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p90-vents',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p91-soak-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
