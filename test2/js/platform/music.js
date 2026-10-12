@@ -14,8 +14,14 @@
   const MU = SS.music = {};
   const HALF_PI = Math.PI / 2, clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const XFADE = 2.5, OVERLAP = 2.0, KEY = 'burrowBrawl3d.musicVol', DIR = 'assets/music/';
-  const BIOMES = ['temperate', 'alpine', 'canyon', 'desert', 'volcanic'];
+  const BIOMES = ['temperate', 'alpine', 'canyon', 'desert', 'volcanic', 'eow'];
   MU.BIOMES = BIOMES;
+  // cues that have an intense stem in sync with the base (P83b: the other bases are single-layer ambient loops)
+  MU.INTENSE = { volcanic: true };
+  /* P83b: per-cue mix trim of the ambient bases (-6 dB: file -20 LUFS -> about -26 LUFS, a bed under the SFX at -17 / -18 LUFS;
+   * the menu, volcanic, sudden death, tension and stingers keep the old level) */
+  MU.AMBIENT_TRIM = 0.5;
+  MU.trim_of = cue => (/^mus_(temperate|alpine|canyon|desert|caves|eow)_base$/.test(cue || '') ? MU.AMBIENT_TRIM : 1);
   MU.TENSION_S = 5;
 
   /* ---------- pure logic ---------- */
@@ -48,8 +54,9 @@
     if (st.over) return { base: null, intense: null, tension: false };
     const tension = st.turn_left > 0 && st.turn_left <= MU.TENSION_S;
     if (st.sudden) return { base: 'mus_suddendeath', intense: 'mus_suddendeath_intense', tension };
-    const b = BIOMES.indexOf(st.biome) >= 0 ? st.biome : 'temperate';
-    return { base: 'mus_' + b + '_base', intense: 'mus_' + b + '_intense', tension };
+    let b = BIOMES.indexOf(st.biome) >= 0 ? st.biome : 'temperate';
+    if (st.under && b !== 'eow') b = 'caves';                          // P83b: a cave system has its own ambient loop
+    return { base: 'mus_' + b + '_base', intense: MU.INTENSE[b] ? 'mus_' + b + '_intense' : null, tension };
   };
   // the wanted intensity 0..1: calm 0, a projectile in flight 0.85, the last seconds of a turn 0.7, sudden death at least 0.55
   MU.intensity_for = function (st) {
@@ -142,7 +149,7 @@
     d.x = MU.step_to(d.x, d.want, dt, XFADE);
     if (d.dead) { d.want = 0; d.x = 0; return; }
     if (!d.gens.length && d.want > 0 && gestured()) new_gen(d, 1);
-    const n = d.gens.length, lg = MU.layer_gains(d.files.length > 1 ? intensity : 0), dg = MU.eq_in(d.x) * master;
+    const n = d.gens.length, lg = MU.layer_gains(d.files.length > 1 ? intensity : 0), dg = MU.eq_in(d.x) * master * MU.trim_of(d.cue);
     for (let k = 0; k < n; k++) {
       const g = d.gens[k], nxt = k + 1 < n ? d.gens[k + 1] : null, e0 = g.els[0];
       for (const el of g.els) play_el(el);
@@ -166,7 +173,7 @@
   function state_of(S) {
     if (!S) return { match: false };
     const tl = S.settings && S.settings.turnTime > 0 && S.phase === 'play' ? S.turnT : 0;
-    return { match: true, biome: S.biome, phase: S.phase, sudden: !!S.sudden, turn_left: tl, proj: S.proj ? S.proj.length : 0, over: S.phase === 'over' };
+    return { match: true, biome: S.biome, under: !!(SS.world && SS.world.under), phase: S.phase, sudden: !!S.sudden, turn_left: tl, proj: S.proj ? S.proj.length : 0, over: S.phase === 'over' };
   }
   function ensure_cue(cue) {
     let cur = null;

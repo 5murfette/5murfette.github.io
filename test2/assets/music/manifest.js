@@ -13,17 +13,17 @@
 (function (SS) {
   'use strict';
   SS.MUSIC_FILES = SS.MUSIC_FILES || {};
+  /* P83b: temperate / desert / alpine / canyon / caves / eow bases are the P81 slow-ambient loops (docs/notes/P83b.md); they have no
+   * intense stem (the old stems were another key and length, so they are not listed); volcanic + menu are the approved P42 files. */
   /* BEGIN music (generated: ACE-Step 1.5 via gfx-factory, loops cut by tools/dev/gen/musicloop.py; picks in HANDOFF P42b) */
   SS.MUSIC_FILES.mus_alpine_base = ['mus_alpine_base.m4a', 'mus_alpine_base.opus'];
-  SS.MUSIC_FILES.mus_alpine_intense = ['mus_alpine_intense.m4a', 'mus_alpine_intense.opus'];
+  SS.MUSIC_FILES.mus_caves_base = ['mus_caves_base.m4a', 'mus_caves_base.opus'];
   SS.MUSIC_FILES.mus_canyon_base = ['mus_canyon_base.m4a', 'mus_canyon_base.opus'];
-  SS.MUSIC_FILES.mus_canyon_intense = ['mus_canyon_intense.m4a', 'mus_canyon_intense.opus'];
   SS.MUSIC_FILES.mus_desert_base = ['mus_desert_base.m4a', 'mus_desert_base.opus'];
-  SS.MUSIC_FILES.mus_desert_intense = ['mus_desert_intense.m4a', 'mus_desert_intense.opus'];
+  SS.MUSIC_FILES.mus_eow_base = ['mus_eow_base.m4a', 'mus_eow_base.opus'];
   SS.MUSIC_FILES.mus_menu = ['mus_menu.m4a', 'mus_menu.opus'];
   SS.MUSIC_FILES.mus_suddendeath = ['mus_suddendeath.m4a', 'mus_suddendeath.opus'];
   SS.MUSIC_FILES.mus_temperate_base = ['mus_temperate_base.m4a', 'mus_temperate_base.opus'];
-  SS.MUSIC_FILES.mus_temperate_intense = ['mus_temperate_intense.m4a', 'mus_temperate_intense.opus'];
   SS.MUSIC_FILES.mus_tension = ['mus_tension.m4a', 'mus_tension.opus'];
   SS.MUSIC_FILES.mus_volcanic_base = ['mus_volcanic_base.m4a', 'mus_volcanic_base.opus'];
   SS.MUSIC_FILES.mus_volcanic_intense = ['mus_volcanic_intense.m4a', 'mus_volcanic_intense.opus'];
