@@ -62,6 +62,7 @@
     const U = mat.userData.uniforms, n = SS.plane.nrm(S);
     U.uTime.value = time; U.uO.value.set(S.O.x, 0, S.O.z); U.uN.value.set(n.x, 0, n.z); U.uBack.value = SS.terrain.uniforms.uBack.value;
     if (wind) U.uWind.value.set(wind.x, 0, wind.z);
+    if (SS.fx && SS.fx.blastField) SS.fx.blastField(U.uBlast.value);          // P71: the blast impulse field (flattened, then springing back)
     if (whirls) for (let i = 0; i < 4; i++) {
       const w = whirls[i];
       if (w) { U.uWhirl.value[i].set(w.x, w.z, w.r, w.s); U.uWhirlB.value[i].set(w.rc0 * 1.5 + SS.CFG.WIND.WHIRL.BURST_V * w.bt, w.st === 2 ? w.bst : 0, w.rc0 + 1.5 + 0.8 * w.bt, 0); }

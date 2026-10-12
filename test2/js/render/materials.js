@@ -120,13 +120,13 @@
     const m = new T.MeshStandardMaterial({ roughness: 0.85, side: T.DoubleSide });
     const U = m.userData.uniforms = {
       uTime: { value: 0 }, tNoise: { value: tx.noise }, tSurf: { value: null }, uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHalf: { value: C.HALF }, uBack: { value: C.HALF },
-      uWind: { value: new T.Vector3(1, 0, 0) }, uWhirl: { value: [new T.Vector4(), new T.Vector4(), new T.Vector4(), new T.Vector4()] }, uWhirlB: { value: [new T.Vector4(), new T.Vector4(), new T.Vector4(), new T.Vector4()] },
+      uWind: { value: new T.Vector3(1, 0, 0) }, uWhirl: { value: [new T.Vector4(), new T.Vector4(), new T.Vector4(), new T.Vector4()] }, uWhirlB: { value: [new T.Vector4(), new T.Vector4(), new T.Vector4(), new T.Vector4()] }, uBlast: { value: [new T.Vector4(0, 0, 1, -1), new T.Vector4(0, 0, 1, -1), new T.Vector4(0, 0, 1, -1), new T.Vector4(0, 0, 1, -1)] },
       uBase: { value: new T.Color(0.09, 0.22, 0.05) }, uTip: { value: new T.Color(0.55, 0.78, 0.25) }, uDryTip: { value: new T.Color(0.78, 0.66, 0.36) }, uSnow: { value: 0 }, uAcid: { value: Array.from({ length: 8 }, () => new T.Vector4(0, 0, 0, 0)) }
     };
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U);
       sh.vertexShader = /* glsl */`
-        uniform float uTime, uHalf, uBack, uSnow; uniform sampler2D tNoise, tSurf; uniform vec3 uO, uN, uWind; uniform vec4 uWhirl[4], uWhirlB[4]; uniform vec4 uAcid[8];
+        uniform float uTime, uHalf, uBack, uSnow; uniform sampler2D tNoise, tSurf; uniform vec3 uO, uN, uWind; uniform vec4 uWhirl[4], uWhirlB[4], uBlast[4]; uniform vec4 uAcid[8];
         varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid; varying float vGust; varying float vPatch;
       ` + sh.vertexShader
         .replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
@@ -146,6 +146,16 @@
             vec4 wb = uWhirlB[i];                                              // the outgoing gust ring of a disbanding whirl (ring radius, amplitude)
             if (wb.y > 0.0) { float g = exp(-pow((d - wb.x) / wb.z, 2.0)) * wb.y; w += r / d * g * 0.1; }
           }
+          // P71: the blast wave (x, z, radius, age): the shock reaches a blade after d / 55 s, flattens it outward at once, holds ~1 s, then it springs back with a small overshoot over ~6 s
+          float bflat = 0.0;
+          for (int i = 0; i < 4; i++) {
+            vec4 b = uBlast[i]; if (b.w < 0.0) continue;
+            vec2 r = ip.xz - b.xy; float d = length(r) + 1e-3, arr = b.w - d / 55.0; if (arr <= 0.0) continue;
+            float amp = 1.0 - smoothstep(0.3 * b.z, b.z, d);
+            float env = smoothstep(0.0, 0.07, arr) * (1.0 - smoothstep(0.9, 6.5, arr)) * (1.0 + 0.22 * sin(arr * 8.0) * exp(-arr * 0.7));
+            float f = amp * max(env, 0.0);
+            w += r / d * f * 1.1; bflat = max(bflat, f);
+          }
           // P61: travelling gust waves along the wind direction (a slow broad front modulated by a noise), the blades lean and flutter in them
           float wsp = length(uWind.xz), wk = clamp(wsp * 0.22, 0.0, 1.6);
           vec2 wdir = uWind.xz / max(wsp, 1e-3);
@@ -160,7 +170,7 @@
           for (int i = 0; i < 8; i++) { vec4 a = uAcid[i]; if (a.w <= 0.0) continue; float d = length(ip.xz - a.xy) / max(a.z, 0.05); ac = max(ac, a.w * (1.0 - smoothstep(0.75, 1.45, d))); }
           vAcid = ac;
           transformed *= keep;
-          transformed.y *= (1.0 - uSnow * 0.6) * (1.0 - 0.75 * ac);
+          transformed.y *= (1.0 - uSnow * 0.6) * (1.0 - 0.75 * ac) * (1.0 - 0.55 * clamp(bflat, 0.0, 1.0));
           transformed.z += ac * vH * 0.25;
           vTint = vec3(1.0);
           #ifdef USE_INSTANCING_COLOR
@@ -192,7 +202,7 @@
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           totalEmissiveRadiance += vSurf.a * vec3(3.0, 1.0, 0.2) * smoothstep(0.3, 1.0, vH) * (0.7 + 0.3 * sin(uTime * 13.0 + vH * 9.0));`);
     };
-    m.customProgramCacheKey = () => 'grass5';
+    m.customProgramCacheKey = () => 'grass6';
     return m;
   };
 

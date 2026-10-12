@@ -442,10 +442,18 @@
       const rag = 0.82 + 0.18 * Math.sin(i * 12.9898 + k * 78.233) * Math.sin(k * 4.1 + i * 2.3), an = Math.atan2(k - ck, i - ci);
       const ray = 0.62 + 0.38 * Math.sin(an * 7.0 + x * 3.7) * Math.sin(an * 3.0 - z * 2.9 + 1.0) + 0.12 * Math.sin(an * 17.0 + x), rim = 1 + 0.5 * Math.exp(-Math.pow((d - 0.62) / 0.16, 2));   // blast rays and a burnt rim around the crater edge
       const f = Math.min(1, Math.min(1, (1 - d) * 1.8 * Math.max(0.35, ray)) * rim) * a * rag;
-      if (fresh > 0) { const fv = Math.round(255 * Math.min(1, fresh * Math.pow(1 - d, 0.55) * (0.85 + 0.15 * rag))); if (fv > freshMap[k * n + i]) { freshMap[k * n + i] = fv; scorchY[(k * n + i) * 2] = y == null ? 0 : yq; scorchY[(k * n + i) * 2 + 1] = y == null ? 0 : hq; } }
+      if (fresh > 0) { freshLive = true; const fv = Math.round(255 * Math.min(1, fresh * Math.pow(1 - d, 0.55) * (0.85 + 0.15 * rag))); if (fv > freshMap[k * n + i]) { freshMap[k * n + i] = fv; scorchY[(k * n + i) * 2] = y == null ? 0 : yq; scorchY[(k * n + i) * 2 + 1] = y == null ? 0 : hq; } }
       const v = Math.round(255 * f); if (v > scorchMap[k * n + i]) { scorchMap[k * n + i] = v; scorchY[(k * n + i) * 2] = y == null ? 0 : yq; scorchY[(k * n + i) * 2 + 1] = y == null ? 0 : hq; }
     }
     scorchDirty = true;
+  };
+  /* P71: freshly dug ground dries back to the normal soil colour over ~40 s (the fresh channel loses 3 / 255 every 0.5 s; the soot stays) */
+  let freshAcc = 0, freshLive = false;
+  V.dryFresh = function (dt) {
+    if (!freshMap || !freshLive) return;
+    freshAcc += dt; if (freshAcc < 0.5) return; freshAcc = 0;
+    let any = false; for (let q = 0; q < freshMap.length; q++) { const v = freshMap[q]; if (v) { freshMap[q] = v > 3 ? v - 3 : 0; any = true; } }
+    freshLive = any; scorchDirty = true;
   };
   function applyScorch() {
     const e = scyTex.image.data; e.fill(0); scyTex.needsUpdate = true;      // (also with no scorch map: a new world must clear the previous one's soot / fresh-ground texels on the GPU)
@@ -595,7 +603,7 @@
         case 'kill': if (e.worm) { deathId = e.worm.id; deathT = view.time; } break;
         case 'hurt': if (e.worm && !e.dot) { hurtId = e.worm.id; hurtT = view.time; } break;   // the camera follows the damage (interest)
         case 'explode': if (SS.bodyView && SS.bodyView.noteBlast) SS.bodyView.noteBlast(e);
-          SS.fx.env.tod = view.tod; SS.fx.env.under = !!(SS.world.under || SS.world.eow); SS.fx.env.vac = !!SS.world.eow; SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
+          SS.fx.env.S = S; SS.fx.env.tod = view.tod; SS.fx.env.under = !!(SS.world.under || SS.world.eow); SS.fx.env.vac = !!SS.world.eow; SS.fx.env.rain = S.weather ? Math.min(1, S.weather.rain || 0) : 0; SS.fx.env.snow = S.weather ? Math.min(1, S.weather.snow || 0) : 0; SS.fx.explosion(e, focusDist(e)); break;
         case 'splash': SS.fx.splash(e.x, e.y, e.z, e.size); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'waterblast': SS.fx.waterBlast(e); if (SS.waterView) SS.waterView.onEvent(e); break;
         case 'lavaplop': SS.fx.lava(e.x, e.y, e.z, Math.min(1.4, 0.35 + (e.speed || 0) * 0.06)); break;
@@ -657,6 +665,7 @@
     if (SS.clutterView) SS.clutterView.S = S;
     SS.terrain.update(renderer, S, dtU, Q.remeshMs);
     if (W.version !== view.heightFor && view.time - view.heightT > 0.4) { buildHeights(); view.heightT = view.time; }
+    V.dryFresh(dtU);
     if (S.veg && (S.veg.surfVer !== view.surfVer || scorchDirty)) uploadSurface(S);
     // the section also follows world edits that do not mark it dirty (collapse, rebake), at most ~3 times a second
     // (also whenever the plane moved without a dirty flag: the drawn section must always be the one the terrain is cut at)
