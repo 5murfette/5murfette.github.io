@@ -193,7 +193,7 @@
     }, 0.15),
     dynamite: () => {
       const bk = bakedTumble('proj_dynamite', 0.1);
-      if (bk) { const sp = spark(0.03); sp.position.set(0.012, 0.155, 0.01); bk.userData.spin.add(sp); return bk; }
+      if (bk) { const sp = spark(0.03); sp.position.set(0.053, 0.178, 0.056); bk.userData.spin.add(sp); return bk; }
       const g = tumbleOf(s => {
         for (const [x, z] of [[-0.045, 0], [0.045, 0], [0, 0.04]]) { const st = mesh(new T.CylinderGeometry(0.036, 0.036, 0.3, 12), MAT.red, x, 0, z); s.add(st); }
         for (const y of [-0.08, 0.08]) s.add(mesh(new T.CylinderGeometry(0.088, 0.088, 0.04, 16), MAT.tape, 0, y, 0.01));
