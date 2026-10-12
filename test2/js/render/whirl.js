@@ -284,13 +284,16 @@
     shared.uQ.value = q;
     funnel.userData.minQ = 0.5;
   };
+  const held = [null, null, null, null];                    // P70: the whirl object in each uniform slot (MAXW)
   const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   /* per frame: pack the sim whirls into the uniform slots */
   WV.frame = function (S, wind, we, biome, ctx) {
     const t0 = performance.now(), wl = (wind && wind.whirls) || [], K = SS.CFG.WIND.WHIRL, N1 = SS.world.NX;
     nW = 0;
+    for (let i = 0; i < MAXW; i++) if (held[i] && wl.indexOf(held[i]) < 0) held[i] = null;                // P70: a whirl keeps its slot (its stroke seeds) while it lives, whichever whirls died before it
+    for (let q = 0; q < wl.length; q++) if (held.indexOf(wl[q]) < 0) { const f = held.indexOf(null); if (f >= 0) held[f] = wl[q]; }
     for (let i = 0; i < MAXW; i++) {
-      const w = wl[i], A = shared.uWA.value[i], B = shared.uWB.value[i], Cc = shared.uWC.value[i], D = shared.uWD.value[i], E = shared.uWE.value[i], F = shared.uWF.value[i];
+      const w = held[i], A = shared.uWA.value[i], B = shared.uWB.value[i], Cc = shared.uWC.value[i], D = shared.uWD.value[i], E = shared.uWE.value[i], F = shared.uWF.value[i];
       const bf = w ? Math.min(1.1, w.bst / (K.BURST_K * w.vmax)) : 0;
       if (!w || !(w.env > 0.01 || bf > 0.03)) { A.w = 0; F.y = 0; continue; }
       nW = i + 1;
@@ -298,8 +301,8 @@
       D.set(w.lx, w.lz, w.sa, w.age); E.set(w.px, w.pz, w.ph2, w.grow); F.set(w.st === 2 ? w.bt : 0, bf, w.st, w.rc0);
       const ci = Math.min(N1 - 1, Math.max(0, Math.round(w.x * 2))), ck = Math.min(N1 - 1, Math.max(0, Math.round(w.z * 2)));
       const snowy = we && we.snowD && we.snowD[ck * N1 + ci] > 0.02, ashy = we && we.ashD && we.ashD[ck * N1 + ci] > 0.02;
-      const dk = DUST[biome] || DUST.temperate, dc = snowy ? [0.92, 0.94, 0.98] : ashy ? [0.3, 0.29, 0.28] : [dk[0] * 0.85, dk[1] * 0.82, dk[2] * 0.8];
-      Cc.set(dc[0], dc[1], dc[2], snowy || ashy ? 0 : LEAVES[biome] || 0);
+      const dk = DUST[biome] || DUST.temperate;
+      if (snowy) Cc.set(0.92, 0.94, 0.98, 0); else if (ashy) Cc.set(0.3, 0.29, 0.28, 0); else Cc.set(dk[0] * 0.85, dk[1] * 0.82, dk[2] * 0.8, LEAVES[biome] || 0);
     }
     const on = nW > 0, hq = shared.uQ.value >= funnel.userData.minQ;
     strokes.visible = on; strokes.geometry.instanceCount = nW * (wn);

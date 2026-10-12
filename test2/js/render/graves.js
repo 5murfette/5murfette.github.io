@@ -218,5 +218,5 @@
     }
   };
   const SHARED = () => [STONE, DARK, SOIL, MOSS, STEM].concat(GRASS);
-  GV.dispose = function (grp) { const sh = SHARED(); grp.traverse(o => { if (o.isMesh && o.geometry && o.geometry.userData.own) o.geometry.dispose(); if (!o.isMesh || !o.material) return; for (const m of [].concat(o.material)) if (!sh.includes(m)) { if (m.map && !m.map.userData.shared) m.map.dispose(); m.dispose(); } }); };   // (the stone has a material ARRAY: face + sides)
+  GV.dispose = function (grp) { const sh = SHARED(); grp.traverse(o => { if (o.isMesh && o.geometry && o.geometry.userData.own) o.geometry.dispose(); if (!o.isMesh || !o.material) return; for (const m of [].concat(o.material)) if (!sh.includes(m) && !(m.userData && m.userData.shared)) { if (m.map && !m.map.userData.shared) m.map.dispose(); m.dispose(); } }); };   // (the stone has a material ARRAY: face + sides)
 })(window.SS = window.SS || {});

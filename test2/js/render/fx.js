@@ -531,7 +531,11 @@
     const W = SS.world, x = P.x[i], y = P.y[i], z = P.z[i], r = P.s0[i] * 0.4;
     if (W.sample(x, y - r, z) <= 0) return;
     let hx = px, hy = py, hz = pz;
-    if (W.sample(px, py - r, pz) > 0) { hx = x; hz = z; hy = W.top_at(x, z) + r + 0.01; }                      // born inside the ground: stand on the column top
+    if (W.sample(px, py - r, pz) > 0) {                                                                         // born inside the ground: stand on the nearest air above it (P70: not the column top, a cave roof is above)
+      hx = x; hz = z; hy = y;
+      for (let q = 0; q < 50 && W.sample(hx, hy - r, hz) > 0; q++) hy += 0.12;
+      if (W.sample(hx, hy - r, hz) > 0) hy = W.top_at(x, z) + r + 0.01;
+    }
     W.normal(x, y - r, z, cn);
     P.x[i] = hx; P.y[i] = hy; P.z[i] = hz;
     const vx = P.vx[i], vy = P.vy[i], vz = P.vz[i], vn = vx * cn.x + vy * cn.y + vz * cn.z;

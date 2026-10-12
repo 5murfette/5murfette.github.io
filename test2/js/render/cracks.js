@@ -18,7 +18,11 @@
   CV.frame = function (S) {
     const U = SS.terrain && SS.terrain.uniforms; if (!U || !U.tCrack) return;
     const W = SS.world, CK = W.crack;
-    if (!CK) { if (U.uCrackOn.value) { U.uCrackOn.value = 0; U.tCrack.value = CV.dummy(); ver = -1; } return; }
+    if (!CK) {
+      if (U.uCrackOn.value) { U.uCrackOn.value = 0; U.tCrack.value = CV.dummy(); ver = -1; }
+      if (tex) { tex.dispose(); tex.image.data = null; tex = null; dimKey = ''; }          // P70: a match without the flag: free the GPU copy and let go of the previous match's field
+      return;
+    }
     const key = W.NX + 'x' + W.NY + 'x' + W.NZ;
     if (!tex || key !== dimKey) {                      // a new map size: a new texture object (three allocates 3D storage once)
       if (tex) tex.dispose();

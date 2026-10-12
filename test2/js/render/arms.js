@@ -187,7 +187,7 @@
     if (!propMats) {
       propMats = [new T.MeshBasicMaterial({ color: 0x15140f, transparent: true, opacity: 0.13, depthWrite: false, side: T.DoubleSide }),
         new T.MeshBasicMaterial({ color: 0x23211b, transparent: true, opacity: 0.13, depthWrite: false, side: T.DoubleSide })];
-      for (const m of propMats) if (SS.section) SS.section.exempt(m, 'air-strike plane propeller (P69)');
+      for (const m of propMats) { m.userData.shared = true; if (SS.section) SS.section.exempt(m, 'air-strike plane propeller (P69)'); }   // (P70: shared by every plane: SS.mat.disposeTree of a finished strike must not free them)
     }
     const g = new T.Group();
     const disc = new T.Mesh(new T.RingGeometry(PROP.SPIN * 0.9, PROP.R, 40), propMats[0]); disc.renderOrder = 8; g.add(disc);             // after the sea (water.js 6, outline 7): transparent sorting by render order first

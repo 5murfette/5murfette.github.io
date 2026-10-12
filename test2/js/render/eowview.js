@@ -656,7 +656,7 @@
     fill.color.setHex(0x331a10); fill.intensity = 0; fill.position.set(-sd[0] * 60, 18, -sd[2] * 60);
     sun.position.set(view.camT.x + sd[0] * 80, view.camT.y + sd[1] * 80, view.camT.z + sd[2] * 80); sun.target.position.copy(view.camT);
     U.uSunDir.value.set(sd[0], sd[1], sd[2]).normalize();
-    ctx.scene.fog.color.setHex(LOOK.haze); ctx.scene.fog.density = LOOK.fog; view.haze = ctx.scene.fog.color.clone(); view.fogBase = LOOK.fog; U.uHaze.value.copy(ctx.scene.fog.color);
+    ctx.scene.fog.color.setHex(LOOK.haze); ctx.scene.fog.density = LOOK.fog; if (view.haze && view.haze.isColor) view.haze.copy(ctx.scene.fog.color); else view.haze = ctx.scene.fog.color.clone(); view.fogBase = LOOK.fog; U.uHaze.value.copy(ctx.scene.fog.color);
     ctx.renderer.toneMappingExposure = LOOK.exp;
     if (SS.lens && SS.lens.grade && ctx.Q.grade && lastGrade !== S.tick >> 6) { lastGrade = S.tick >> 6; SS.lens.grade(GRADE); SS.lens.sun(null, [0, 0, 0], 0); }
     SS.terrain.capEow(true);

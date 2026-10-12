@@ -114,6 +114,7 @@
   const track = new Map(); let stepBudget = 0;
   SP.steps = function (S, dt) {
     const W = SS.world; dt = Math.min(dt, 0.1); stepBudget = Math.min(5, stepBudget + dt * 5);
+    if (track.size > S.worms.length) for (const id of Array.from(track.keys())) { let on = false; for (const w of S.worms) if (w.id === id && !w.dead) on = true; if (!on) track.delete(id); }   // (P70: a worm removed without 'dead', a replay restore, left its entry)
     for (const w of S.worms) {
       if (w.dead) { track.delete(w.id); continue; }
       let tr = track.get(w.id); const x = w.pos.x, z = w.pos.z;
