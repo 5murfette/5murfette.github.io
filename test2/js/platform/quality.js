@@ -114,14 +114,24 @@
     return 0;
   };
 
+  const touch = () => ('ontouchstart' in window) || ((window.navigator || {}).maxTouchPoints || 0) > 1;
+  // a phone: touch first and a small screen (a tablet or a touch laptop is not one)
+  Q.is_phone = () => touch() && Math.min(screen.width || 1920, screen.height || 1080) < 820;
   Q.detect = function () {
     const nav = window.navigator || {};
-    const touch = ('ontouchstart' in window) || (nav.maxTouchPoints || 0) > 1;
-    const small = Math.min(screen.width || 1920, screen.height || 1080) < 820;
     const mem = nav.deviceMemory || 8, cores = nav.hardwareConcurrency || 8;
-    if ((touch && small) || mem <= 3 || cores <= 2) return 'low';
-    if (touch || mem <= 4 || cores <= 4) return 'medium';
+    if (Q.is_phone() || mem <= 3 || cores <= 2) return 'low';
+    if (touch() || mem <= 4 || cores <= 4) return 'medium';
     return 'high';
+  };
+  /* the frame-rate cap (setting fps: 'auto' | '30' | '60' | 'max'): the shortest interval between two rendered frames
+   * in ms, 0 = every display frame. Auto: 30 fps on a phone (a turn-based game reads well at 30, the GPU and the
+   * battery do half the work; a 120 Hz phone would otherwise draw 120), the display's own rate elsewhere. */
+  Q.capMs = 0;
+  Q.set_frame_rate = function (choice) {
+    const fps = choice === '30' ? 30 : choice === '60' ? 60 : choice === 'max' ? 0 : Q.is_phone() ? 30 : 0;
+    Q.capMs = fps ? 1000 / fps : 0;
+    return Q.capMs;
   };
   /* 'auto' | 'low' | 'medium' | 'high' -> preset object */
   Q.resolve = function (name) {

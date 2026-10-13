@@ -1034,7 +1034,68 @@
     }
   };
 
-  /* 2D cross-sections on the collision plane (worms and projectiles collide with them, plane.js) */
+  /* ---------- 2D cross-sections on the collision plane (worms and projectiles collide with them, plane.js) ----------
+   * Each body is cut where it is drawn: a ball is a disc, a tree log a capsule per wood segment, a fallen bridge piece
+   * a capsule per member (a deck: one per lane of its collision spheres), any other body (crate, barrel, boulder,
+   * chunk ...) the smallest box around its collision spheres near the plane, turned to the plane's axis or to one of
+   * the body's own axes (a crate on its corner is a turned box, not the larger box around it). */
+  const SEC = [];                                       // (s, y, r) of the collision spheres near the plane (scratch)
+  function rod(S, PB, b, la, lb, r) {
+    M.q_rot(b.q, la.x, la.y, la.z, tp);
+    M.q_rot(b.q, lb.x, lb.y, lb.z, tn);
+    const wa = { x: b.pos.x + tp.x, y: b.pos.y + tp.y, z: b.pos.z + tp.z },
+      wb = { x: b.pos.x + tn.x, y: b.pos.y + tn.y, z: b.pos.z + tn.z };
+    SS.plane.pb_rod(S, PB, wa, wb, r, 0, b.id, -1, -1, -1);
+  }
+  function struct_rods(S, PB, b) {
+    for (const m of b.members) {
+      const r = SS.struct.member_r(m);
+      if (m.kind !== 3) {
+        rod(S, PB, b, m.a, m.b, r);
+        continue;
+      }
+      // a deck panel: its lanes run along the member, side by side across the bridge (horizontal, body space)
+      const ex = m.b.x - m.a.x, ez = m.b.z - m.a.z, el = M.nz(M.len2(ex, ez), 1), lx = -ez / el, lz = ex / el;
+      for (const ln of C.STRUCT.DECK_LANES)
+        rod(S, PB, b, { x: m.a.x + lx * ln, y: m.a.y, z: m.a.z + lz * ln }, { x: m.b.x + lx * ln, y: m.b.y, z: m.b.z + lz * ln }, r);
+    }
+  }
+  // candidate box axes: the plane's s axis, then the body's x, y, z axes as seen in the plane (skipped when one points
+  // across the plane); another axis replaces the plane's only for a box at least TURN_GAIN smaller
+  const TURN_GAIN = 0.97;
+  function section_box(PB, b, d) {
+    const n = SEC.length / 3;
+    let best = 1e18, bs = 0, by = 0, bhs = 0, bhy = 0, bax = 1, bay = 0;
+    for (let c = 0; c < 4; c++) {
+      let ax = 1, ay = 0;
+      if (c > 0) {
+        M.q_rot(b.q, c === 1 ? 1 : 0, c === 2 ? 1 : 0, c === 3 ? 1 : 0, tr);
+        const us = tr.x * d.x + tr.z * d.z, l = M.len2(us, tr.y);
+        if (l < 0.2) continue;
+        ax = us / l;
+        ay = tr.y / l;
+      }
+      let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+      for (let i = 0; i < n; i++) {
+        const s = SEC[i * 3], y = SEC[i * 3 + 1], r = SEC[i * 3 + 2], u = s * ax + y * ay, v = y * ax - s * ay;
+        u0 = M.min(u0, u - r);
+        u1 = M.max(u1, u + r);
+        v0 = M.min(v0, v - r);
+        v1 = M.max(v1, v + r);
+      }
+      const area = (u1 - u0) * (v1 - v0);
+      if (c > 0 && area >= best * TURN_GAIN) continue;
+      const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+      best = area;
+      bs = cu * ax - cv * ay;
+      by = cu * ay + cv * ax;
+      bhs = (u1 - u0) / 2;
+      bhy = (v1 - v0) / 2;
+      bax = ax;
+      bay = ay;
+    }
+    SS.plane.pb_box(PB, bs, by, bhs, bhy, bax, bay, b.id);
+  }
   B.plane_sections = function (S) {
     const PB = S.planeBodies;
     PB.length = 0;
@@ -1046,21 +1107,26 @@
       if (b.kind === 'ball') {
         const r2 = b.r * b.r - t * t;
         if (r2 > 0.01)
-          P.pb_add(PB, 0, (b.pos.x - ox) * d.x + (b.pos.z - oz) * d.z, b.pos.y, 0, 0, Math.sqrt(r2), b.id, -1, -1, -1, -1, false);
+          P.pb_add(PB, P.PB.DISC, (b.pos.x - ox) * d.x + (b.pos.z - oz) * d.z, b.pos.y, 0, 0, Math.sqrt(r2), b.id, -1, -1, -1, -1, false);
         continue;
       }
-      let s0 = 1e9, s1 = -1e9, y0 = 1e9, y1 = -1e9;
+      if (b.log) {
+        // the drawn wood, as on a standing tree (twigs below the solid radius let shots through)
+        for (const g of b.log.segs)
+          if (g.r0 >= C.TREES.SOLID_R) rod(S, PB, b, g.a, g.b, (g.r0 + g.r1) / 2);
+        continue;
+      }
+      if (b.members) {
+        struct_rods(S, PB, b);
+        continue;
+      }
+      SEC.length = 0;
       for (let i = 0; i < b.np; i++) {
         M.q_rot(b.q, b.pts[i * 4], b.pts[i * 4 + 1], b.pts[i * 4 + 2], tp);
         const px = b.pos.x + tp.x, pz = b.pos.z + tp.z, r = b.pts[i * 4 + 3], tt = (px - ox) * n.x + (pz - oz) * n.z;
-        if (Math.abs(tt) > r + 0.35) continue;
-        const s = (px - ox) * d.x + (pz - oz) * d.z, y = b.pos.y + tp.y;
-        s0 = M.min(s0, s - r);
-        s1 = M.max(s1, s + r);
-        y0 = M.min(y0, y - r);
-        y1 = M.max(y1, y + r);
+        if (Math.abs(tt) <= r + 0.35) SEC.push((px - ox) * d.x + (pz - oz) * d.z, b.pos.y + tp.y, r);
       }
-      if (s1 > s0) P.pb_add(PB, 1, (s0 + s1) / 2, (y0 + y1) / 2, (s1 - s0) / 2, (y1 - y0) / 2, 0, b.id, -1, -1, -1, -1, false);
+      if (SEC.length) section_box(PB, b, d);
     }
   };
   /* impulse J (N s) along the world direction dir (normalised here), e.g. a grenade bouncing off */

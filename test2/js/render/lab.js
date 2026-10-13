@@ -2,9 +2,8 @@
  * State-driven: every frame the markers follow S.lab.met[] (id, t0, t, x, y, z): a pulsing red warning ring on the
  * ground that tightens as the impact nears, and a glowing streak (an elongated cone, additive) falling from 55 m up
  * along a slanted line. P79 (batch 4): the lightning tell (S.lab.b4.zap[]: a pulsing blue-white ring and a flickering
- * corona with jittering spark lines at the chosen point), the quake shake (camera, via SS.fx.addShake) and the small
- * event cues (dust, sounds of existing ids only). API: init(scene, textures), clear(), frame(S, view, camera, dt),
- * onEvent(S, e). */
+ * corona with jittering spark lines at the chosen point) and the small event cues (dust, sounds of existing ids only).
+ * API: init(scene, textures), clear(), frame(S, view, camera, dt), onEvent(S, e). */
 (function (SS) {
   'use strict';
   const T = window.THREE;
@@ -161,12 +160,6 @@
         });
         zaps.delete(id);
       }
-    // the quake: a low tremor during the warning, a hard shake while it lasts
-    if (L && SS.fx && SS.fx.addShake) {
-      const warn = L.qT >= 0 && S.time < L.qT, shaking = L.qT < 0 && S.time >= 0 && S.time < L.qEnd;
-      const goal = shaking ? 0.5 * Math.min(1, (L.qEnd - S.time) / 0.8 + 0.2) : warn ? 0.08 + 0.1 * (1 - (L.qT - S.time) / K.WARN) : 0;
-      if (goal > 0 && SS.fx.shake() < goal) SS.fx.addShake(goal - SS.fx.shake());
-    }
   }
   LV.frame = function (S, view) {
     if (!root) return;
@@ -216,15 +209,7 @@
         fx.spark(e.x, e.y + 0.6, e.z);
       }
     }
-    else if (e.type === 'labquake') {
-      snd(e, 'rock_collapse', 0.7, 0.55);
-      if (fx && fx.addShake) fx.addShake(0.1);
-    }
-    else if (e.type === 'labquakehit') {
-      snd(e, 'rock_collapse', 1, 0.7);
-      if (fx && fx.dust)
-        for (let i = -3; i <= 3; i++) fx.dust(e.x + e.dx * e.len * i / 7, e.y + 0.1, e.z + e.dz * e.len * i / 7, 3, 1.3, 0x8a7a66);
-    } else if (e.type === 'labslide') {
+    else if (e.type === 'labslide') {
       if (fx && fx.dust) fx.dust(e.x, e.y + 0.05, e.z, 3, 0.7, 0x6a4a2c);
       snd(e, 'body_hit', 0.25, 0.7);
     }

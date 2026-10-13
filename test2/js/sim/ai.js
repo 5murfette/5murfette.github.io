@@ -217,17 +217,13 @@
         }
         // (= P.body_at2(S, ns, ny, true): the first non-worm body that holds the point)
         let hb = null;
-        for (let bi = 0; bi < NB.length; bi++) {
-          const b = NB[bi], bs = ns - b.s, by = ny - b.y;
-          if (b.kind === 0 ? bs * bs + by * by < b.r * b.r : Math.abs(bs) < b.hs && Math.abs(by) < b.hy) {
-            hb = b;
-            break;
-          }
-        }
-        const solid2 = w.sample(wp.x, ny, wp.z) > 0, solid = solid2 || (hb !== null && !hb.ice);          // ice is handled above
+        for (let bi = 0; bi < NB.length && !hb; bi++)
+          if (P.pb_inside(NB[bi], ns, ny)) hb = NB[bi];
+        // (ice is handled above; a body turns the shell off its own face, as in sim.js stepProjectiles)
+        const body = hb !== null && !hb.ice, solid2 = w.sample(wp.x, ny, wp.z) > 0, solid = solid2 || body;
         if (solid) {
           if (imp) return { x: wp.x, y: ny, z: wp.z, t, wet };
-          const nn = P.normal2(S, ns, ny), vn = vs * nn.s + vy * nn.y;
+          const nn = body ? P.pb_normal(hb, ns, ny) : P.normal2(S, ns, ny), vn = vs * nn.s + vy * nn.y;
           if (firstD > 1e8) firstD = M.len2(ns - ap.s, ny - a.pos.y);
           if (vn < 0) {                                          // (= sim.js stepProjectiles: sand / snow / ash are soft, ice is slick)
             const mat = solid2 ? w.mat_at(wp.x, wp.y, wp.z) : 0,

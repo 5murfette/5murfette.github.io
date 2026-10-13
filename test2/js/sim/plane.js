@@ -27,34 +27,105 @@
   };
 
   /* ---------- solid bodies on the plane: S.planeBodies = [PlaneBody] (2D cross-sections) ----------
-   * kind 0 = disc radius r centred at (s,y); kind 1 = box half extents (hs, hy). Rebuilt each step by sim.
-   * C: struct PlaneBody { f32 s, y, hs, hy, r; u8 kind, ice; i32 body (the rigid body's id, -1), tree, seg (tree id /
-   * segment), struct (bridge id), i16 worm (worm id: a worm's disc, -1) } */
-  P.pb_add = (PB, kind, s, y, hs, hy, r, body, tree, seg, st, worm, ice) => {
-    if (PB.length >= SS.CFG.LIMITS.PLANE_BODIES) return;
-    PB.push({ s, y, kind, hs, hy, r, body, tree, seg, struct: st, worm, ice });
+   * Rebuilt each step by sim. Every shape is centred at (s, y) and has a unit axis (ax, ay) in the plane:
+   *   DISC     radius r (a worm, a ball);
+   *   BOX      half extents hs along the axis and hy across it (axis (1, 0): a box aligned with the plane);
+   *   CAPSULE  the segment (s, y) +- hs (ax, ay), radius r (a trunk, a branch, a log, a girder: a round rod cut along
+   *            its length).
+   * A shape covers only what is drawn: a slanted rod is a slanted capsule, never the box around it.
+   * C: struct PlaneBody { f32 s, y, hs, hy, r, ax, ay; u8 kind, ice; i32 body (the rigid body's id, -1), tree, seg
+   * (tree id / segment), struct (bridge id), i16 worm (worm id: a worm's disc, -1) } */
+  const PB = P.PB = { DISC: 0, BOX: 1, CAPSULE: 2 };
+  function pb_push(L, kind, s, y, hs, hy, r, ax, ay, body, tree, seg, st, worm, ice) {
+    if (L.length >= SS.CFG.LIMITS.PLANE_BODIES) return;
+    L.push({ s, y, kind, hs, hy, r, ax, ay, body, tree, seg, struct: st, worm, ice });
+  }
+  // a disc (kind DISC) or a box aligned with the plane (kind BOX)
+  P.pb_add = (L, kind, s, y, hs, hy, r, body, tree, seg, st, worm, ice) =>
+    pb_push(L, kind, s, y, hs, hy, r, 1, 0, body, tree, seg, st, worm, ice);
+  // a box turned to the unit axis (ax, ay)
+  P.pb_box = (L, s, y, hs, hy, ax, ay, body) => pb_push(L, PB.BOX, s, y, hs, hy, 0, ax, ay, body, -1, -1, -1, -1, false);
+  // a capsule along (s0, y0) .. (s1, y1)
+  P.pb_capsule = (L, s0, y0, s1, y1, r, body, tree, seg, st) => {
+    const ds = s1 - s0, dy = y1 - y0, l = M.len2(ds, dy), ax = l > 1e-6 ? ds / l : 1, ay = l > 1e-6 ? dy / l : 0;
+    pb_push(L, PB.CAPSULE, (s0 + s1) / 2, (y0 + y1) / 2, l / 2, 0, r, ax, ay, body, tree, seg, st, -1, false);
   };
-  P.body_at2 = (S, s, y, noWorms) => {                     // noWorms: skip the worm discs (projectiles test worms apart)
-    const B = S.planeBodies;
-    for (let i = 0; i < B.length; i++) {
-      const b = B[i], ds = s - b.s, dy = y - b.y;
-      if (noWorms && b.worm >= 0) continue;
-      if (b.kind === 0) {
-        if (ds * ds + dy * dy < b.r * b.r) return i;
-      }
-      else if (Math.abs(ds) < b.hs && Math.abs(dy) < b.hy) return i;
+  /* the cut of a rod (world segment a..b) by the plane, as a capsule: the part of the rod that reaches the plane. A
+   * round rod (w = 0) has radius r: the cut's half width is the chord at the middle of that part. A flat-sided beam
+   * (w > 0: half width w across, half height r) keeps r. A rod that crosses the plane at an angle cuts an ellipse, so
+   * the capsule is no longer than that (2 w / sin(angle)). Nothing when the rod misses the plane. */
+  P.pb_rod = (S, L, a, b, r, w, body, tree, seg, st) => {
+    const n = P.nrm(S), d = P.dir(S), ox = S.O.x, oz = S.O.z, ext = w > 0 ? w : r;
+    const ta = (a.x - ox) * n.x + (a.z - oz) * n.z, tb = (b.x - ox) * n.x + (b.z - oz) * n.z;
+    let u0 = 0, u1 = 1;
+    if (Math.abs(ta - tb) < 1e-4) {
+      if (Math.abs(ta) >= ext) return;
     }
-    return -1;
+    else {
+      const ua = (ta - ext) / (ta - tb), ub = (ta + ext) / (ta - tb);
+      u0 = M.max(0, M.min(ua, ub));
+      u1 = M.min(1, M.max(ua, ub));
+      if (u1 <= u0) return;
+    }
+    const tm = M.min(Math.abs(ta + (tb - ta) * (u0 + u1) / 2), ext * 0.95), hw = w > 0 ? r : Math.sqrt(r * r - tm * tm);
+    const xa = a.x + (b.x - a.x) * u0, za = a.z + (b.z - a.z) * u0, xb = a.x + (b.x - a.x) * u1, zb = a.z + (b.z - a.z) * u1;
+    const sa = (xa - ox) * d.x + (za - oz) * d.z, sb = (xb - ox) * d.x + (zb - oz) * d.z;
+    const ya = a.y + (b.y - a.y) * u0, yb = a.y + (b.y - a.y) * u1;
+    const cs = (sa + sb) / 2, cy = (ya + yb) / 2, l = M.len2(sb - sa, yb - ya);
+    const sinA = Math.abs(tb - ta) / M.nz(M.len3(b.x - a.x, b.y - a.y, b.z - a.z), 1);
+    const h = sinA > 1e-4 ? M.min(l / 2, M.max(0, ext / sinA - hw)) : l / 2, k = l > 1e-6 ? h / l : 0;
+    P.pb_capsule(L, cs - (sb - sa) * k, cy - (yb - ya) * k, cs + (sb - sa) * k, cy + (yb - ya) * k, hw, body, tree, seg, st);
   };
-  P.body_normal2 = (S, i, s, y) => {
-    const b = S.planeBodies[i], ds = s - b.s, dy = y - b.y;
-    if (b.kind === 0) {
+  // (s, y) inside plane body b
+  P.pb_inside = (b, s, y) => {
+    const ds = s - b.s, dy = y - b.y;
+    if (b.kind === PB.DISC) return ds * ds + dy * dy < b.r * b.r;
+    const ls = ds * b.ax + dy * b.ay;
+    if (b.kind === PB.BOX) return Math.abs(ls) < b.hs && Math.abs(dy * b.ax - ds * b.ay) < b.hy;
+    const u = M.clamp(ls, -b.hs, b.hs), es = ds - u * b.ax, ey = dy - u * b.ay;
+    return es * es + ey * ey < b.r * b.r;
+  };
+  // the outward normal at (s, y) (a point inside: the way out of the nearest face)
+  P.pb_normal = (b, s, y) => {
+    const ds = s - b.s, dy = y - b.y;
+    if (b.kind === PB.DISC) {
       const l = M.nz(M.len2(ds, dy), 1);
       return { s: ds / l, y: dy / l };
     }
-    const px = b.hs - Math.abs(ds), py = b.hy - Math.abs(dy);
-    return px < py ? { s: Math.sign(ds) || 1, y: 0 } : { s: 0, y: Math.sign(dy) || 1 };
+    const ls = ds * b.ax + dy * b.ay;
+    if (b.kind === PB.BOX) {
+      const lv = dy * b.ax - ds * b.ay;
+      if (b.hs - Math.abs(ls) < b.hy - Math.abs(lv)) {
+        const g = Math.sign(ls) || 1;
+        return { s: g * b.ax, y: g * b.ay };
+      }
+      const g = Math.sign(lv) || 1;
+      return { s: -g * b.ay, y: g * b.ax };
+    }
+    const u = M.clamp(ls, -b.hs, b.hs), es = ds - u * b.ax, ey = dy - u * b.ay, l = M.len2(es, ey);
+    return l > 1e-6 ? { s: es / l, y: ey / l } : { s: -b.ay, y: b.ax };
   };
+  // how deep (s, y) is inside b (m; < 0 outside: minus the distance, exact for discs and capsules)
+  P.pb_depth = (b, s, y) => {
+    const ds = s - b.s, dy = y - b.y;
+    if (b.kind === PB.DISC) return b.r - M.len2(ds, dy);
+    const ls = ds * b.ax + dy * b.ay;
+    if (b.kind === PB.BOX) return M.min(b.hs - Math.abs(ls), b.hy - Math.abs(dy * b.ax - ds * b.ay));
+    const u = M.clamp(ls, -b.hs, b.hs);
+    return b.r - M.len2(ds - u * b.ax, dy - u * b.ay);
+  };
+  // the largest half extent of b (a size for search radii and culling)
+  P.pb_size = b => b.kind === PB.DISC ? b.r : b.kind === PB.BOX ? M.max(b.hs, b.hy) : b.hs + b.r;
+  P.body_at2 = (S, s, y, noWorms) => {                     // noWorms: skip the worm discs (projectiles test worms apart)
+    const B = S.planeBodies;
+    for (let i = 0; i < B.length; i++) {
+      const b = B[i];
+      if (noWorms && b.worm >= 0) continue;
+      if (P.pb_inside(b, s, y)) return i;
+    }
+    return -1;
+  };
+  P.body_normal2 = (S, i, s, y) => P.pb_normal(S.planeBodies[i], s, y);
 
   // Worm collision disc: 12 rim points + centre.
   const CP = [];
@@ -66,6 +137,14 @@
   P.overlap2 = (S, s, y) => {
     let c = 0;
     for (let i = 0; i < CP.length; i += 2)
+      if (P.blocked2(S, s + CP[i], y + CP[i + 1])) c++;
+    return c;
+  };
+  // the bottom of the disc (its three rim points within 30 degrees of straight down: 240, 270, 300): what the worm can
+  // stand on (a contact further up its flank is too steep to hold it)
+  P.under2 = (S, s, y) => {
+    let c = 0;
+    for (let i = 16; i < 22; i += 2)
       if (P.blocked2(S, s + CP[i], y + CP[i + 1])) c++;
     return c;
   };

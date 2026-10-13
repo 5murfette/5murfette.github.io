@@ -157,15 +157,25 @@
   I.attachTouch = function (canvas) {
     const pad = document.getElementById('touch');
     if (!pad) return;
+    // the phone layout (assets/hud.css body.phone): a touch screen whose short side is a phone's, held either way
+    // (body.portrait when it stands upright); re-checked on every resize and turn of the device
+    const layout = () => {
+      const b = document.body, touch = b.classList.contains('touch');
+      b.classList.toggle('phone', touch && Math.min(innerWidth, innerHeight) <= 560);
+      b.classList.toggle('portrait', innerHeight > innerWidth);
+    };
     const on = () => {
       if (!document.body.classList.contains('touch')) {
         document.body.classList.add('touch');
         const w = document.getElementById('weapons');
         if (w) w.classList.add('closed');
+        layout();
       }
     };
     if (window.matchMedia && matchMedia('(pointer: coarse)').matches) on();
     addEventListener('touchstart', on, { passive: true });
+    addEventListener('resize', layout);
+    layout();
     for (const btn of pad.querySelectorAll('button[data-k]')) {
       const k = btn.dataset.k;
       const down = e => {

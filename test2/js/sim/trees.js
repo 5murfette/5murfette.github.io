@@ -18,13 +18,13 @@
  * of the stem up to STEM_LOW) destroys the stump and the roots ('treeshatter'); a crater beside the tree leaves it
  * standing (roots exposed) unless less than ROOT_HOLD of its root plate (ROOT_R_K x crown, ROOT_D deep) has ground
  * left ('uproot': the whole tree falls), and a tree STANDS on the ground under its trunk (P118a, Q-27: foot_ok): when a
- * blast, a collapse, a dig, lava, acid, a quake ... takes that ground (any edit: W.mark -> veg dirty rect -> on_edit)
+ * blast, a collapse, a dig, lava, acid ... takes that ground (any edit: W.mark -> veg dirty rect -> on_edit)
  * the whole tree falls ('uproot'), a stump and a crown that survived a break included: no tree hangs in the air by its
  * roots. Fire: heat accumulates from burning grass around the root, fireballs (veg.ignite), lava at the root and
  * burning neighbours; a tree ignites at IGNITE + IGNITE_GREEN (1 - dry); burning consumes leaves (LEAF_BURN_T) and
  * chars the wood (BURN_T), drops embers on the grass under the crown, lights props and neighbours, burns worms near the
  * trunk or inside the crown; water at the root puts it out. Burnt trees (char 1) stay as charred snags.
- * Plane: standing trunk / branch segments crossing slice zero are solid boxes on the gameplay plane.
+ * Plane: standing trunk / branch segments crossing slice zero are solid capsules on the gameplay plane.
  *
  * C layout: struct Seg { i32 p; vec3 a, b; f32 r0, r1; u8 kind, on; };
  *   struct Leaf { vec3 c; f32 r, f; i32 s; };
@@ -53,6 +53,16 @@
     return t.seg.length - 1;
   }
   function leaf(t, s, x, y, z, r) { t.leaf.push({ x, y, z, r, f: 1, s }); }
+  /* 2D: the tree projected onto the section plane z (every node; the segments share their end points). The 2D camera
+   * looks along z, so the tree keeps the outline it is drawn with, and the wood a shot or a worm meets on the plane is
+   * the wood on screen (a limb grown toward the camera is the short stub the camera saw anyway). */
+  function flat_in_plane(t, z) {
+    for (const g of t.seg) {
+      g.a.z = z;
+      g.b.z = z;
+    }
+    for (const l of t.leaf) l.z = z;
+  }
   function grow(rg, sp, x, y, z, laSea, flat) {
     const R = () => M.rng_next(rg), P = K.SPEC[SPN[sp]];
     const t = {
@@ -127,6 +137,7 @@
       branch(trunk[P.nT - 1], 1 + (R() < 0.6 ? 1 : 0), 0.4, 1.0, 0.8, 1.4, 0.55, null);
       branch(trunk[P.nT], 1 + (R() < 0.5 ? 1 : 0), 0.5, 1.1, 0.6, 1.1, 0.6, null);
     }
+    if (flat) flat_in_plane(t, z);
     let cr = 0.8, top = tp.y;
     for (const l of t.leaf) {
       cr = M.max(cr, M.len2(l.x - x, l.z - z) + l.r);
@@ -343,7 +354,7 @@
    * through the foot kept the trunk in mid-air (6 of 13 sampled 2D matches). The footing is the trunk axis column plus
    * a small root plate: FOOT_D under the base the axis AND FOOT_MIN of 8 probes on a ring of the trunk base radius +
    * FOOT_PLATE must be solid. The same rule serves every caller (a blast right after its crater, collapse, dig / drill
-   * / foam, lava, acid, a quake / crack break ... all end in W.mark, which the veg dirty rect hands to on_edit): no
+   * / foam, lava, acid, a crack break ... all end in W.mark, which the veg dirty rect hands to on_edit): no
    * per-cause special cases. A crater whose edge stops beside the trunk leaves the footing alone, so the tree stands
    * with exposed roots (the T1 design); one that takes the footing drops it. */
   const foot_ok = t => {
@@ -632,10 +643,10 @@
   /* one fire tick (C.FIRE_TICK) — called by veg.js after the grass tick */
   TR.tick = function (S, TK) {
     if (!S.trees || !S.trees.length) return;
-    const st = S.veg, w = W(), n = st ? st.n : 0, H = w.H, lv = S.lava;
+    const st = S.veg, w = W(), H = w.H, lv = S.lava;
     for (const t of S.trees) {
       if (!t.alive) continue;
-      const rc = M.clamp(Math.round(t.z / H), 0, n - 1) * n + M.clamp(Math.round(t.x / H), 0, n - 1);
+      const rc = SS.veg.cell(S, t.x, t.z);
       if (t.burn >= 0) {
         if (S.water && S.water.h[rc] > 0.05) {
           t.burn = -1;
@@ -669,12 +680,13 @@
       t.heat = M.max(0, t.heat - K.COOL * TK);
       // burning grass around the root
       if (st && st.nAct) {
-        const i0 = Math.round(t.x / H), k0 = Math.round(t.z / H);
+        const n = st.n, i0 = Math.round(t.x / H), k0 = Math.round(t.z / H);
         for (let dk = -3; dk <= 3; dk++)
           for (let di = -3; di <= 3; di++) {
-            const q = (k0 + dk) * n + i0 + di;
-            if (q < 0 || q >= n * n || st.burnT[q] <= 0) continue;
-            t.heat += K.GRASS_HEAT * st.burnI[q] * TK;
+            const i = i0 + di, k = k0 + dk;
+            if (i < 0 || k < 0 || i >= n || k >= w.NZ) continue;
+            const q = k * n + i;
+            if (st.burnT[q] > 0) t.heat += K.GRASS_HEAT * st.burnI[q] * TK;
           }
       }
       if (lv && lv.h[rc] > 0.02 && lv.T[rc] > 0.3) t.heat = M.max(t.heat, t.thr);
@@ -696,37 +708,16 @@
   };
 
   /* ---------- gameplay plane: standing wood crossing slice zero ---------- */
+  // every trunk / branch segment that crosses the plane is a capsule along the wood (plane.js pb_rod)
   TR.plane_sections = function (S) {
     if (!S.trees || !S.trees.length) return;
-    const P = SS.plane, n = P.nrm(S), d = P.dir(S), ox = S.O.x, oz = S.O.z, PB = S.planeBodies;
+    const P = SS.plane, n = P.nrm(S), ox = S.O.x, oz = S.O.z, PB = S.planeBodies;
     for (const t of S.trees) {
       if (!t.alive) continue;
       if (Math.abs((t.x - ox) * n.x + (t.z - oz) * n.z) > t.crown + 0.3) continue;
       for (let i = 0; i < t.seg.length; i++) {
         const g = t.seg[i];
-        if (!g.on || g.r0 < K.SOLID_R) continue;
-        const ta = (g.a.x - ox) * n.x + (g.a.z - oz) * n.z, tb = (g.b.x - ox) * n.x + (g.b.z - oz) * n.z, r = M.max(g.r0, g.r1);
-        let u0, u1;
-        if (Math.abs(ta - tb) < 1e-4) {
-          if (Math.abs(ta) >= r) continue;
-          u0 = 0;
-          u1 = 1;
-        }
-        else {
-          const a = (ta - r) / (ta - tb), b = (ta + r) / (ta - tb);
-          u0 = M.max(0, M.min(a, b));
-          u1 = M.min(1, M.max(a, b));
-          if (u1 <= u0) continue;
-        }
-        const pa = v(g.a.x + (g.b.x - g.a.x) * u0, g.a.y + (g.b.y - g.a.y) * u0, g.a.z + (g.b.z - g.a.z) * u0);
-        const pb = v(g.a.x + (g.b.x - g.a.x) * u1, g.a.y + (g.b.y - g.a.y) * u1, g.a.z + (g.b.z - g.a.z) * u1);
-        const sa = (pa.x - ox) * d.x + (pa.z - oz) * d.z, sb = (pb.x - ox) * d.x + (pb.z - oz) * d.z;
-        const tm = M.min(Math.abs(ta + (tb - ta) * (u0 + u1) / 2), r * 0.95), hw = Math.sqrt(r * r - tm * tm);
-        const s0 = M.min(sa, sb) - hw,
-          s1 = M.max(sa, sb) + hw,
-          y0 = M.min(pa.y, pb.y) - (i ? r * 0.5 : 0),
-          y1 = M.max(pa.y, pb.y) + r * 0.5;
-        P.pb_add(PB, 1, (s0 + s1) / 2, (y0 + y1) / 2, (s1 - s0) / 2, (y1 - y0) / 2, 0, -1, t.id, i, -1, -1, false);
+        if (g.on && g.r0 >= K.SOLID_R) P.pb_rod(S, PB, g.a, g.b, (g.r0 + g.r1) / 2, 0, -1, t.id, i, -1);
       }
     }
   };

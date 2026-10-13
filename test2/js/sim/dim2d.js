@@ -18,8 +18,9 @@
  *     does not touch the slab is deleted, so no renderer / lava / spawn code ever sees it. finish() then lays the
  *     fumaroles of a volcanic map ON the slab.
  *   - spawn code (trees, props, worms, crates, bodies) already draws z through W.zpick (= the plane), so nothing of it
- * is off the slab. C mapping: bool world.flat; i32 world.kz; void dim_crop(World*, Job*), void dim_flatten(World*, i0,
- *   j0, i1, j1), void dim_constrain(Game*); every loop is over fixed arrays.
+ *     is off the slab; a tree is grown as in 3D and projected onto the plane (trees.js flat_in_plane: the camera's
+ *     outline is the wood that blocks). C mapping: bool world.flat; i32 world.kz; void dim_crop(World*, Job*), void
+ *   dim_flatten(World*, i0, j0, i1, j1), void dim_constrain(Game*); every loop is over fixed arrays.
  * API: is(settings), on(S), crop(W, job), flatten(W, i0, j0, i1, j1), constrain(S), z0(W). */
 (function (SS) {
   'use strict';

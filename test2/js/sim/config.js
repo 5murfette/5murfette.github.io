@@ -335,7 +335,7 @@
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
     // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change
     // (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
-    BUILD: 'p119a-fix-m',
+    BUILD: 'p120-mobile-m',
     // first: the team that starts (0..3 or 'random' = PoC; the menu default)
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,
       collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off',
@@ -347,7 +347,7 @@
       rotLock: true, dim: '3d', fort: false, labFlags: 0, jackets: 3, jacketOn: true, jetpacks: 3, mineFuse: 'default', teamBlood: false,
       toolCrates: 'normal', crateW: 5, crateH: 5, crateT: 5,
       dTrees: 'medium', dRocks: 'medium', dBarrels: 'medium', dProps: 'medium', dCrates: 'medium', dMines: 'medium', dBunkers: 'medium',
-      dTown: 'medium', dEggs: 'medium' },
+      dTown: 'medium', dEggs: 'medium', fps: 'auto' },
 
     WIND_UNIT: 12, WIND_ACC: 230 * 9.81 / 520,   // PoC WIND_ACC 230 px/s2 per wind unit (12 m/s) on the projectile scale
     WIND_GAIN: 0.55,        // projectile drag coupling to the wind component in the plane (1/s)
@@ -412,7 +412,8 @@
       WIDTH: 2.0, PANEL: 2.4, DEPTH_MIN: 1.2, DEPTH_MAX: 2.0, DECK_LIFT: 0.12,   // m: deck width, panel, truss depth
       GRID: 2.5, PLACE_R: 40, MAX_PER_MAP: 2, SEPARATE: 22,   // search grid / radius about the centre, bridges, spacing
       CUT_L: 0.18,          // m: contact-charge efficiency falls as exp(-standoff / CUT_L)
-      DECK_R: 0.6           // m: a deck panel is holed only by a charge this close
+      DECK_R: 0.6,          // m: a deck panel is holed only by a charge this close
+      DECK_LANES: [-0.6, 0, 0.6]   // m: a fallen deck panel's rows of collision spheres across the bridge
     },
     /* Sea / pool ice (Step I, sim/ice.js; research §8 "Ice (I)"): Stefan growth, Gold bearing capacity, blasts */
     ICE: {
@@ -828,12 +829,14 @@
     WORMS: 16, PROJ: 512, PENDING: 256, FLAMES: 512, DEVICES: 64, HOLES: 16, STRIKES: 16, BULLETS: 64, ZAPS: 16, MOAIS: 16, FX: 256,
     PLANE_BODIES: 512, EVENTS: 4096, LOG: 7, LAB_METEORS: 8, WHIRLS: 4, WHIRL_RESP: 4
   };
-  /* P42 Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic */
+  /* P42 Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic. Bit 8192 is unused:
+   * ALL leaves it out, so a stored mask that has it set loads without it. */
   SS.CFG.LAB = {
     FLAG: {
       BANK: 1, UNDERDOG: 2, GUSTS: 4, METEORS: 8, CLOCK: 16, MOON: 32, PERKS: 64, STREAK: 128, LONGSHOT: 256, FATIGUE: 512, CRACKS: 1024,
-      LIGHTNING: 2048, SLICK: 4096, QUAKE: 8192, RECOIL: 16384, SCAVENGE: 32768
-    }, ALL: 65535,
+      LIGHTNING: 2048, SLICK: 4096, RECOIL: 16384, SCAVENGE: 32768
+    },
+    ALL: 65535 & ~8192,
     BANK_K: 0.2, BANK_MAX: 3, BANK_SPEED: 2,
     UNDER_RATIO: 0.5, UNDER_K: 1.35,
     GUST_T0: 6, GUST_T1: 12, GUST_DIR: 0.9, GUST_V0: -4, GUST_V1: 5, GUST_MAX: 11,
@@ -846,7 +849,7 @@
     STREAK_K: 0.1, STREAK_MAX: 4,
     LONG_M: 25, LONG2_M: 40, LONG_K: 1.25, LONG2_K: 1.5,
     FAT_M: 25, FAT_RAD: 0.1, FAT_STEP: 2,
-    /* Batch 4 (P79, sim/lab4.js): LIGHTNING, SLICK, QUAKE, RECOIL, SCAVENGE. Units: m, s, m/s, N s, kg (game scale). */
+    /* Batch 4 (sim/lab4.js): LIGHTNING, SLICK, RECOIL, SCAVENGE. Units: m, s, m/s, N s, kg (game scale). */
     L4: {
       /* LIGHTNING: in a thunderstorm a leader comes down at a point P; it attaches to the highest grounded conductor
        * within REACH of P
@@ -860,13 +863,6 @@
        * mu_eff) m/s (max SLIDE_MAX); mud slows the walk by WALK_K x wet and absorbs FALL_K x wet of a landing's
        * damage. */
       SNOW_K: 0.6, MU_K: 0.55, SLIDE_K: 4, SLIDE_MAX: 3.5, WALK_K: 0.3, FALL_K: 0.5, SLICK_PUSH: 0.9,
-      /* QUAKE: every EVERY-th turn: a tremor warns for WARN s, then shakes for DUR s. Seismic load = (1 + A_K) x
-       * gravity in the structural
-       * load check of SPOTS windows around the action (the most dissected ground of 12 samples each), and a fault line
-       * FAULT_LEN long gains FAULT_DMG crack damage (FAULT_W half width, FAULT_DEPTH deep). Loose props (boulders,
-       * barrels, mines) jump by PROP_V m/s. */
-      EVERY: 5, WARN: 1.8, DUR: 2.5, A_K: 0.6, SPOTS: 3, QK_GAP: 0.15, SAMPLES: 12, REACH: 28, WIN: 11, FAULT_LEN: 16, FAULT_W: 0.8,
-      FAULT_DMG: 160, FAULT_DEPTH: 6, PROP_V: 0.9, PROP_R: 22,
       /* RECOIL: dv = m x v_exit x k / WORM_KG (a bazooka's back-blast, a shotgun's kick) along the plane, opposite the
        * aim; the worm then slides with
        * Coulomb friction (deceleration mu_eff x RC_G): dry soil 0.9 m, mud 1.9 m, bare ice 12 m for a full bazooka. */
@@ -923,7 +919,8 @@
     lava: ['off', 'on'], skill: ['easy', 'normal', 'hard'],
     time: ['day', 'dusk', 'night'], shape: ['islands', 'hills', 'caverns', 'canyon'], mapSize: ['normal', 'large'],
     placement: ['random', 'user'], toolCrates: ['off', 'low', 'normal', 'high'], dim: ['3d', '2d'],
-    ctl: ['human', 'cpu'], art: ['painted', 'procedural'], slice: ['thin', 'thick', 'full'], biome: SS.CFG.BIOMES.map(b => b.id),
+    ctl: ['human', 'cpu'], art: ['painted', 'procedural'], slice: ['thin', 'thick', 'full'], fps: ['30', '60', 'max'],
+    biome: SS.CFG.BIOMES.map(b => b.id),
     density: SS.CFG.DENSITY.LEVELS };
   SS.CFG.setting_enc = (key, v) => {
     const L = SS.CFG.SETTING_ENUMS[key];
@@ -937,9 +934,9 @@
   };
   /* ---------- the settings schema: one row per setting, the single source of every list of setting keys ----------
    * [key, kind, range, flags, extra]. kind: 'int' (range [lo, hi]), 'bool', 'enum' (range: its list in SETTING_ENUMS,
-   * or the list itself; extra: the words besides it, 'auto' / 'random'), 'mask' (an int of bit flags, range [0, hi]),
-   * 'any' (a mixed form that its module reads itself: a number or a word). The default is C.SETTINGS[key] (the
-   * look-only rows the menu adds have none here). flags:
+   * or the list itself; extra: the words besides it, 'auto' / 'random'), 'mask' (an int of bit flags, range [0, m]: m
+   * holds the valid bits, a reader keeps v & m), 'any' (a mixed form that its module reads itself: a number or a word).
+   * The default is C.SETTINGS[key] (the look-only rows the menu adds have none here). flags:
    *   HASH  mixed into sim.hash in the order of these rows (never reorder or insert before the last HASH row)
    *   NET   a host sends it to its guests; a guest takes exactly these from the host's start message
    *   LOOK  presentation only (the sim never reads it): every player keeps their own
@@ -1004,7 +1001,8 @@
     ['ghostAuto', 'bool', null, SF.LOOK],
     ['idle', 'bool', null, SF.LOOK],
     ['cine', 'bool', null, SF.LOOK],
-    ['anticCam', 'bool', null, SF.LOOK]
+    ['anticCam', 'bool', null, SF.LOOK],
+    ['fps', 'enum', 'fps', SF.LOOK, ['auto']]
   ];
   // the keys of the rows with this flag, in row order
   SS.CFG.setting_keys = flag => SS.CFG.SETTING_SCHEMA.filter(r => (r[3] & flag) !== 0).map(r => r[0]);
@@ -1149,8 +1147,6 @@
     LABMETEORHIT: 'labmeteorhit',
     LABPERK: 'labperk',
     LABPERKOFFER: 'labperkoffer',
-    LABQUAKE: 'labquake',
-    LABQUAKEHIT: 'labquakehit',
     LABRECOIL: 'labrecoil',
     LABSCAV: 'labscav',
     LABSLIDE: 'labslide',

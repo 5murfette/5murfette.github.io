@@ -416,17 +416,35 @@
       jetEl.classList.add('on');
     }
   }
-  /* P42: the Lab badge: the active experimental mechanics (sim/lab.js) */
-  let labEl = null, labTxt = '';
+  /* the Lab badge: the active experimental mechanics (sim/lab.js). The full list shows for LAB_SHOW ms when the
+   * mechanics appear or change (the match start) and after a tap or click on it; the rest of the time it is a small
+   * chip (LAB and the count), so it never stands over the play view for a whole match. */
+  const LAB_SHOW = 6000;
+  let labEl = null, labFlags = -1, labOpenAt = -1e9, labShown = null;
   function labBadge(S) {
-    if (!labEl) labEl = $('labbadge');
-    if (!labEl) return;
-    const txt = SS.lab ? SS.lab.badge(S) : '';
-    if (txt !== labTxt) {
-      labTxt = txt;
-      labEl.textContent = txt ? 'Lab: ' + txt : '';
-      labEl.style.display = txt ? 'block' : 'none';
+    if (!labEl) {
+      labEl = $('labbadge');
+      if (!labEl) return;
+      labEl.addEventListener('click', () => {
+        labOpenAt = performance.now();
+      });
     }
+    // (the text carries live values: fatigue, streaks, meteors; only a change of the mechanics themselves opens it
+    // again)
+    const txt = SS.lab ? SS.lab.badge(S) : '', fl = SS.lab ? SS.lab.flags(S) : 0, now = performance.now();
+    if (fl !== labFlags) {
+      labFlags = fl;
+      labOpenAt = now;
+    }
+    let n = 0;
+    for (let f = fl; f; f &= f - 1) n++;
+    const open = txt && now - labOpenAt < LAB_SHOW, show = !txt ? '' : open ? 'Lab: ' + txt : 'LAB ' + n;
+    if (show === labShown) return;
+    labShown = show;
+    labEl.style.display = txt ? 'block' : 'none';
+    labEl.classList.toggle('chip', !open);
+    labEl.textContent = show;
+    labEl.title = txt ? 'Lab: ' + txt : '';
   }
   /* P47: the parasite line under a worm's label: a face hugger on, or the infection with the countdown to the next hit
    * (red when that hit kills) */

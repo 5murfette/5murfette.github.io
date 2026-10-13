@@ -73,7 +73,12 @@
       const l = Math.hypot(dx, dy) || 1;
       dx /= l;
       dy /= l;
-      const k = Math.min(m / (Math.abs(dx) || 1e-6), (m * (H > 90 ? 0.88 : 1)) / (Math.abs(dy) || 1e-6));
+      // the box the arrows sit on (NDC): inside the screen border; on a phone also below the top strip and above the
+      // touch controls and the weapon line (assets/hud.css body.phone: upright, the strip has two rows and the weapon
+      // line sits above the small button row)
+      const cl = document.body.classList, phone = cl.contains('phone'), up = cl.contains('portrait'), my = m * (H > 90 ? 0.88 : 1);
+      const top = phone ? 1 - 2 * (up ? 84 : 64) / H : my, bot = phone ? 1 - 2 * (up ? 210 : 140) / H : my;
+      const k = Math.min(m / (Math.abs(dx) || 1e-6), (dy > 0 ? top : bot) / (Math.abs(dy) || 1e-6));
       const px = (dx * k + 1) / 2 * W, py = (1 - dy * k) / 2 * H, q = el(n++);
       t.x = px; t.y = py;
       q.style.display = 'flex'; q.style.transform = `translate(${px.toFixed(1)}px,${py.toFixed(1)}px) translate(-50%,-50%)`;

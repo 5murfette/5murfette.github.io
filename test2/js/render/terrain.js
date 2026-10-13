@@ -3,9 +3,8 @@
  *     under a per-frame time budget (slab chunks first);
  *   - each chunk geometry is drawn by up to 4 meshes: the section SLAB behind "slice zero" (clipped to
  *     -uBack <= t <= 0 in the fragment shader, opaque, casts shadows; nothing in front of slice zero is drawn,
- *     so the collision section is never hidden), and the surrounding CONTEXT (far side t < -uBack: depth
- *     pre-pass + single-layer blend, so it can be fairly opaque without self-overlap mess; near side t > 0:
- *     faint, inspection only);
+ *     so the collision section is never hidden), and the surrounding CONTEXT (far side t < -uBack: opaque,
+ *     receding into the haze with its distance; near side t > 0: faint, inspection only);
  *   - the slab's cut face is a CAP plane at t = 0 (slice zero, exactly the collision section and its
  *     outline) that samples a 3D density+material texture of the world (strata, topsoil, glowing lava where
  *     the cut crosses a pocket);
@@ -60,7 +59,7 @@
    * that state this frame. */
   let capOv = false, holoMat = null;
   const XR = { uK: { value: 0 }, uCF: { value: new T.Color(0.35, 0.65, 1.0) }, uCB: { value: new T.Color(1.0, 0.72, 0.3) } };
-  let scene, tx, Q, chunks = [], volTex, volData, slabMat, slabDepth, ctxPre, ctxFar, ctxNear, bodyMats = null, cap, capMat;
+  let scene, tx, Q, chunks = [], volTex, volData, slabMat, slabDepth, ctxFar, ctxNear, bodyMats = null, cap, capMat;
   const U = {};               // shared uniforms
   TR.uniforms = U;
 
@@ -1029,16 +1028,15 @@
   }
   function terrainMaterial(mode, body) {
     const opts = { roughness: 0.92, metalness: 0, side: mode === 0 ? T.DoubleSide : T.FrontSide };
-    if (mode === 1 || mode === 3) Object.assign(opts, { transparent: true, depthWrite: false });
-    if (mode === 2) Object.assign(opts, { colorWrite: false });
+    if (mode === 3) Object.assign(opts, { transparent: true, depthWrite: false });
     const m = new T.MeshStandardMaterial(opts);
-    if (mode !== 2) ENVMATS.push(m);
+    ENVMATS.push(m);
     m.userData.sectionMargin = 0;                         // P46: the terrain's front limit is slice zero itself (render/section.js)
     if (mode === 0) m.shadowSide = T.DoubleSide;
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, U, EOWU);
       // P101: dry ground has nothing to reflect: the env sampler is compiled out of this variant
-      if (!envOn && mode !== 2) sh.fragmentShader = '#undef USE_ENVMAP\n' + sh.fragmentShader;
+      if (!envOn) sh.fragmentShader = '#undef USE_ENVMAP\n' + sh.fragmentShader;
       if (mode === 0 && !body) Object.assign(sh.uniforms, { tVol: { value: volTex }, uVolSize: { value: VOLSIZE } });
       const slab = mode === 0 && !body;                 // P113: the 2D slab's ground relief (render/slab2d.js)
       if (slab) Object.assign(sh.uniforms, SS.slab2d.U);
@@ -1054,16 +1052,6 @@
         : mode === 3 ? 'if (tD < 0.0) discard;' : 'if (tD > -uBack) discard;'
       ) +
         (body ? '' : ' if (uLatR.z > 0.0 && distance(vW.xz, uLatR.xy) > uLatR.z) discard;');
-      if (mode === 2) {
-        /* P38-R4: the far context's depth pre-pass writes depth only: the clip tests and nothing else (it ran the full
-         * terrain
-         * shader + the PBR lighting for nothing: colorWrite is off). The vertex shader is the same as the colour pass's
-         * (same depth). */
-        sh.fragmentShader = 'uniform vec3 uO, uN, uLatR; uniform float uBack; varying vec3 vW;\nvoid main() {\n float tD = dot(vW - uO, uN);\n '
-          + clip
-          + '\n gl_FragColor = vec4(0.0);\n}';
-        return;
-      }
       sh.fragmentShader = (slab ? '#define S2 1\n' + SS.slab2d.GLSL : '')
         + COMMON
         + (mode === 0 && !body ? SURF_AO : '')
@@ -1092,8 +1080,7 @@
           diffuseColor.rgb = col;
           ${mode === 1 || mode === 3 ? /* glsl */`
             float ad = ${mode === 1 ? '-tD - uBack' : 'tD'};
-            float a = ${mode === 1 ? 'mix(uAlpha * mix(0.96, 0.42, smoothstep(0.0, 46.0, ad)), 1.0, uCtxSolid)' : 'uAlpha * 0.26 * exp(-ad / 12.0) * smoothstep(7.0, 22.0, distance(vW, cameraPosition))'};
-            diffuseColor.a = a;
+            ${mode === 3 ? 'diffuseColor.a = uAlpha * 0.26 * exp(-ad / 12.0) * smoothstep(7.0, 22.0, distance(vW, cameraPosition));' : ''}
             diffuseColor.rgb = mix(col, uHaze, ${mode === 1 ? 'CTX_HAZE(ad)' : '(0.12 + 0.4 * smoothstep(0.0, 50.0, ad))'});` : ''}
         `)
           .replace('#include <roughnessmap_fragment>', /* glsl */`#include <roughnessmap_fragment>
@@ -1120,7 +1107,7 @@
       + mode
       + (body ? 'b' : '')
       + (U.uDetail.value > 0.5 ? 'd' : '')
-      + (envOn || mode === 2 ? '' : 'n');
+      + (envOn ? '' : 'n');
     return m;
   }
   /* shadow pass for the slab: same clip */
@@ -2164,7 +2151,6 @@
     SS.slab2d.init(tx.noise);
     slabMat = terrainMaterial(0);
     ctxFar = terrainMaterial(1);
-    ctxPre = terrainMaterial(2);
     ctxNear = terrainMaterial(3);
     bodyMats = {
       slab: terrainMaterial(0, true),
@@ -2311,14 +2297,12 @@
       slab.castShadow = true;
       slab.receiveShadow = true;
       slab.customDepthMaterial = slabDepth;
-      const pre = new T.Mesh(g, ctxPre);
-      pre.renderOrder = 4;
       const far = new T.Mesh(g, ctxFar);
       far.renderOrder = 5;
       const near = new T.Mesh(g, ctxNear);
       near.renderOrder = 7;
-      c = chunks[ci] = { meshes: [slab, pre, far, near], slab, pre, far, near, geo: g };
-      scene.add(slab, pre, far, near);
+      c = chunks[ci] = { meshes: [slab, far, near], slab, far, near, geo: g };
+      scene.add(slab, far, near);
       // the x-ray mesh of the cave overview (shares the geometry, drawn only there)
       if (SS.world.under) {
         const holo = new T.Mesh(g, holoMat || (holoMat = xrayMaterial()));
@@ -2468,15 +2452,26 @@
     return farRange;
   }
   TR.capMesh = () => cap;                                  // (tools: hide the section face)
-  function slabHits(box, S, n0) {
-    if (!box) return false;
-    let lo = 1e9, hi = -1e9;
+  // the range of t (signed distance from slice zero) a chunk box spans: its four vertical edges
+  const TB = { lo: 0, hi: 0 };
+  function tRange(box, S, n0) {
+    TB.lo = 1e9;
+    TB.hi = -1e9;
     for (let q = 0; q < 4; q++) {
       const x = q & 1 ? box.max.x : box.min.x, z = q & 2 ? box.max.z : box.min.z, t = (x - S.O.x) * n0.x + (z - S.O.z) * n0.z;
-      lo = Math.min(lo, t); hi = Math.max(hi, t);
+      TB.lo = Math.min(TB.lo, t);
+      TB.hi = Math.max(TB.hi, t);
     }
-    return ovr || ((lo <= 0.5 || SS.section.frontOn) && hi >= -U.uBack.value - 0.5);
+    return TB;
   }
+  function slabHits(box, S, n0) {
+    if (!box) return false;
+    const r = tRange(box, S, n0);
+    return ovr || ((r.lo <= 0.5 || SS.section.frontOn) && r.hi >= -U.uBack.value - 0.5);
+  }
+  // the far context is the part behind the slab (t < -uBack, the context shaders clip the rest): a chunk wholly in
+  // front of it has none, its depth pre-pass and blend meshes stay off
+  const hasBehind = (box, S, n0) => !!box && tRange(box, S, n0).lo < -U.uBack.value + 0.5;
   /* per frame visual uniforms */
   TR.frame = function (S, view, ctxA, inspect) {
     U.uTime.value = view.time;
@@ -2526,10 +2521,10 @@
     // far context only exists beyond the slab
     // P113: a 2D slab has 0.5 m of lattice behind the visible band: no far context (it showed as a floating ribbon
     // behind the ragged back edge)
-    const far = ctxA > 0.004 && U.uBack.value < 200 && !SS.slab2d.on();
+    const far = ctxA > 0.004 && U.uBack.value < 200 && !SS.slab2d.on(), n0 = SS.plane.nrm(S);
     for (const c of chunks)
       if (c) {
-        c.pre.visible = c.far.visible = far;
+        c.far.visible = far && hasBehind(c.box, S, n0);
         // (no front half in a cave world's overview: the section rule stays on and the tunnels in front show as the
         // x-ray, c.holo)
         c.near.visible = false;
@@ -2588,7 +2583,6 @@
   TR.capN = capN;                                // debug/tests
   TR.ctxMaterial = () => ctxFar;
   TR.slabDepthMaterial = () => slabDepth;
-  TR.ctxPreMaterial = () => ctxPre;
   TR.ctxNearMaterial = () => ctxNear;
   TR.bodyMaterials = () => bodyMats;     // {slab, far, pre, near}: chunk-body variants (need a 'tpos' attribute)
   // (render/bodies.js: the same near ghost of a falling rock piece: off in the solid overview)

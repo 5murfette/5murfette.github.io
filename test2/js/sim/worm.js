@@ -284,18 +284,17 @@
     for (const b of S.planeBodies) {
       const rb = b.body >= 0 ? SS.bodies.by_id(S, b.body) : null;
       if (!rb || !rb.asleep) continue;
-      const inside = (ps, py) => b.kind === 0 ? M.len2(ps - b.s, py - b.y) < b.r : Math.abs(ps - b.s) < b.hs && Math.abs(py - b.y) < b.hy;
-      if (inside(s, y)) return b;
+      if (P.pb_inside(b, s, y)) return b;
       for (let k = 0; k < 12; k++) {
         const t = k / 12 * Math.PI * 2;
-        if (inside(s + M.cos(t) * (C.WORM_R - PX), y + M.sin(t) * (C.WORM_R - PX))) return b;
+        if (P.pb_inside(b, s + M.cos(t) * (C.WORM_R - PX), y + M.sin(t) * (C.WORM_R - PX))) return b;
       }
     }
     return null;
   }
   // the nearest spot where the whole disc is free of the pinning prop (null: none within reach)
   function pinFree(S, pin, s, y, radial) {
-    const size = pin.kind === 0 ? pin.r : M.max(pin.hs, pin.hy), maxR = M.min(110 * PX, size * 2 + C.WORM_R);
+    const size = P.pb_size(pin), maxR = M.min(110 * PX, size * 2 + C.WORM_R);
     // (radial: away from the prop's centre, so a worm on a boulder's shoulder slides off instead of being lifted
     // straight up and dropped back in)
     const angs = radial ? [M.atan2(y - pin.y, s - pin.s)].concat(PIN_ANG) : PIN_ANG;
@@ -474,14 +473,21 @@
           }
         if (!moved) a.iceV = 0;                                                  // slid into something
       }
+      // following the ground down: the feet probes, the bottom of the disc meeting something (a prop's rounded top), or
+      // another worm's ball anywhere on the disc (a worm climbs over a worm). Anything else the disc would sink into
+      // stops the step down but is no footing (a trunk's bulge on its flank): the worm is not snapped and slides off
       let snapped = P.grounded2(S, s, y);
-      if (!snapped)
-        for (let l = 0.04; l <= WD.STEP_DOWN + 1e-6; l += 0.04)
-          if (P.grounded2(S, s, y - l) || P.overlap2(S, s, y - l) > P.overlap2(S, s, y)) {
-            y -= l - (P.overlap2(S, s, y - l) > P.overlap2(S, s, y) ? 0.04 : 0);
-            snapped = true;
+      if (!snapped) {
+        const u0 = P.under2(S, s, y), o0 = P.overlap2(S, s, y);
+        for (let l = 0.04; l <= WD.STEP_DOWN + 1e-6; l += 0.04) {
+          const g = P.grounded2(S, s, y - l), u = P.under2(S, s, y - l) > u0, into = u || P.overlap2(S, s, y - l) > o0;
+          if (g || into) {
+            snapped = g || u || !!onWorm(S, a, s, y - l, WD.STACK_REACH);
+            y -= into ? l - 0.04 : l;
             break;
           }
+        }
+      }
       wq = P.to_world(S, s, y); lf = lavaFloor(S, wq.x, wq.z, a);
       const onLava = lf > -1e8 && a.pos.y - a.foot <= lf + 0.08;
       if (onLava) {

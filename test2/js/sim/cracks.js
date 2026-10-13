@@ -70,8 +70,7 @@
   /* ---------- state ---------- */
   CR.on = S => !!S.crk && !!SS.world.crack;
   CR.init = function (S) {
-    // (P79: QUAKE needs the damage field)
-    const W = SS.world, fl = ((S.settings.labFlags | 0) & C.LAB.ALL) & (LAB_BIT | C.LAB.FLAG.QUAKE);
+    const W = SS.world, fl = (S.settings.labFlags | 0) & C.LAB.ALL & LAB_BIT;
     if (!fl) {
       W.crack = null;
       S.crk = null;

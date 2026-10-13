@@ -94,10 +94,12 @@
 
   /* Resumable reset (drives the loading progress bar): world generation, then subsystems, then actors. */
   // the settings a game runs with: the defaults under the given ones, the seed as an i32 (every seed mix is Math.imul /
-  // u32 wrap-around, identical in C; ?seed= and net settings are unbounded), space never sliced and without forts
+  // u32 wrap-around, identical in C; ?seed= and net settings are unbounded), the Lab mask limited to the defined flags
+  // (whatever path the settings came by: URL, menu, a host's start message), space never sliced and without forts
   function normalizeSettings(given) {
     const st = Object.assign({}, C.SETTINGS, given);
     if (typeof st.seed !== 'number' || st.seed !== (st.seed | 0)) st.seed = st.seed | 0;
+    st.labFlags = (st.labFlags | 0) & C.LAB.ALL;
     // (space: floating chunks with their own layout)
     if (st.biome === 'eow') {
       st.dim = '3d';

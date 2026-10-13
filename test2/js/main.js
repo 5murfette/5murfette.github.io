@@ -148,7 +148,7 @@
    * the other replays the inputs in order and waits for the next one. false = waiting. */
   let netGame = false, pendingAlign = 0, pendingStart = null, pendingResync = null;
   // presentation settings stay the guest's own across a resync
-  const PRES = ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine', 'anticCam', 'quality'];
+  const PRES = C.setting_keys(C.SF.LOOK);
   function applyResync(d) {
     const NT = SS.net, mine = {};
     for (const k of PRES)
@@ -301,6 +301,7 @@
       if (SS.view.setGhostAuto) SS.view.setGhostAuto(settings.ghostAuto !== false);
       if (SS.cine) SS.cine.setEnabled(settings.cine !== false);
       if (SS.anticCam) SS.anticCam.setEnabled(settings.anticCam !== false);
+      SS.quality.set_frame_rate(settings.fps);
       let t0 = performance.now();
       const job = SS.sim.begin_reset(S, settings);
       let p = 0, ts = performance.now();
@@ -371,7 +372,7 @@
     for (
       const k of [
         'biome', 'weather', 'lava', 'wind', 'quality', 'slice', 'ghost', 'under', 'cpu', 'skill', 'placement', 'time', 'art', 'shape',
-        'first', 'volcanoes', 'mapSize', 'dim'
+        'first', 'volcanoes', 'mapSize', 'dim', 'fps'
       ]
     )
       if (params.has(k)) s[k] = params.get(k);
@@ -689,6 +690,9 @@
       // the next frame is requested first: an exception in one frame is logged (console.error, the tests see it) but
       // never stops the loop (D6: a RangeError in the section builder used to freeze the game for good)
       requestAnimationFrame(frame);
+      // the frame-rate cap (Display > Frame rate): a display frame that comes too soon is skipped whole; the next one
+      // steps the sim for all the time since the last drawn frame (2 ms of slack for the display's timing jitter)
+      if (SS.quality.capMs > 0 && now - last < SS.quality.capMs - 2) return;
       const rawMs = now - last, dt = Math.min(0.1, Math.max(0, rawMs / 1000));
       last = now;
       try {

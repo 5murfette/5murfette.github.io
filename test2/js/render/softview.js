@@ -37,11 +37,7 @@
     t: 0,
     sink: 0,
     nb: 0,
-    bs: [],
-    bY: [],
-    bK: [],
-    bA: [],
-    bB: [],
+    b: [],
     nw: 0,
     ws: [],
     wy: [],
@@ -52,8 +48,7 @@
     const S = E.S, nx = -E.s, nz = E.c;
     let d = SS.world.sample(S.O.x + s * E.c + E.t * nx, y, S.O.z + s * E.s + E.t * nz) - E.sink;
     for (let i = 0; i < E.nb; i++) {                       // a prop / trunk cross-section: a signed field (m * 0.7) like the terrain's
-      const ds = s - E.bs[i], dy = y - E.bY[i];
-      const f = E.bK[i] === 0 ? (E.bA[i] - M.len2(ds, dy)) * 0.7 : Math.min(E.bA[i] - Math.abs(ds), E.bB[i] - Math.abs(dy)) * 0.7;
+      const f = SS.plane.pb_depth(E.b[i], s, y) * 0.7;
       if (f > d) d = f;
     }
     // P88: the back of the worm below (its live nodes)
@@ -70,14 +65,9 @@
     for (let i = 0; i < B.length && E.nb < 8; i++) {
       const b = B[i];
       if (b.worm >= 0) continue;
-      const rr = b.kind === 0 ? b.r : Math.max(b.hs, b.hy);
+      const rr = SS.plane.pb_size(b);
       if (Math.abs(b.s - s0) > rr + 2 || Math.abs(b.y - y0) > rr + 2) continue;
-      const k = E.nb++;
-      E.bs[k] = b.s;
-      E.bY[k] = b.y;
-      E.bK[k] = b.kind;
-      E.bA[k] = b.kind === 0 ? b.r : b.hs;
-      E.bB[k] = b.kind === 0 ? 0 : b.hy;
+      E.b[E.nb++] = b;
     }
   }
 

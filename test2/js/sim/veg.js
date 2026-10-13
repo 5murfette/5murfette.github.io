@@ -155,7 +155,7 @@
     const r = rf * K.HEAT_K, H = w.H, n = st.n;
     if (SS.trees) SS.trees.heat_burst(S, c, r);
     const i0 = M.max(0, Math.floor((c.x - r) / H)), i1 = M.min(n - 1, Math.ceil((c.x + r) / H));
-    const k0 = M.max(0, Math.floor((c.z - r) / H)), k1 = M.min(n - 1, Math.ceil((c.z + r) / H));
+    const k0 = M.max(0, Math.floor((c.z - r) / H)), k1 = M.min(w.NZ - 1, Math.ceil((c.z + r) / H));
     let lit = 0;
     for (let k = k0; k <= k1; k++)
       for (let i = i0; i <= i1; i++) {
@@ -182,7 +182,7 @@
     const st = S.veg, w = W();
     if (!st) return 0;
     const H = w.H, n = st.n, i0 = M.max(0, Math.floor((x - r) / H)), i1 = M.min(n - 1, Math.ceil((x + r) / H));
-    const k0 = M.max(0, Math.floor((z - r) / H)), k1 = M.min(n - 1, Math.ceil((z + r) / H));
+    const k0 = M.max(0, Math.floor((z - r) / H)), k1 = M.min(w.NZ - 1, Math.ceil((z + r) / H));
     let lit = 0;
     for (let k = k0; k <= k1; k++)
       for (let i = i0; i <= i1; i++) {
@@ -200,7 +200,7 @@
     if (!st) return;
     const R = K.STRIP_R * M.cbrt(Wkg), H = w.H, n = st.n;
     const i0 = M.max(0, Math.floor((c.x - R) / H)), i1 = M.min(n - 1, Math.ceil((c.x + R) / H));
-    const k0 = M.max(0, Math.floor((c.z - R) / H)), k1 = M.min(n - 1, Math.ceil((c.z + R) / H));
+    const k0 = M.max(0, Math.floor((c.z - R) / H)), k1 = M.min(w.NZ - 1, Math.ceil((c.z + R) / H));
     for (let k = k0; k <= k1; k++)
       for (let i = i0; i <= i1; i++) {
         const q = k * n + i, d = M.len3(i * H - c.x, k * H - c.z, (st.top0[q] - c.y) * 0.7);
@@ -219,7 +219,7 @@
   function ejecta(S, st, w, c, R) {
     const H = w.H, n = st.n;
     let i0 = M.max(0, Math.floor((c.x - R) / H)), i1 = M.min(n - 1, Math.ceil((c.x + R) / H));
-    let k0 = M.max(0, Math.floor((c.z - R) / H)), k1 = M.min(n - 1, Math.ceil((c.z + R) / H));
+    let k0 = M.max(0, Math.floor((c.z - R) / H)), k1 = M.min(w.NZ - 1, Math.ceil((c.z + R) / H));
     let nC = 0;
     for (let k = k0; k <= k1; k++)
       for (let i = i0; i <= i1; i++) {
@@ -229,7 +229,7 @@
     if (nC < 2) return;
     const Rc = Math.sqrt(nC / Math.PI) * H, t0 = K.EJECTA_K * M.pow(Rc, 0.74), Re = K.EJECTA_R * Rc;
     i0 = M.max(0, Math.floor((c.x - Re) / H)); i1 = M.min(n - 1, Math.ceil((c.x + Re) / H));
-    k0 = M.max(0, Math.floor((c.z - Re) / H)); k1 = M.min(n - 1, Math.ceil((c.z + Re) / H));
+    k0 = M.max(0, Math.floor((c.z - Re) / H)); k1 = M.min(w.NZ - 1, Math.ceil((c.z + Re) / H));
     for (let k = k0; k <= k1; k++)
       for (let i = i0; i <= i1; i++) {
         const q = k * n + i, r = M.len2(i * H - c.x, k * H - c.z);
@@ -288,7 +288,7 @@
   };
 
   function tick(S, st) {
-    const w = W(), n = st.n, H = w.H, TK = C.FIRE_TICK, top = w.top, surf = st.surf;
+    const w = W(), n = st.n, nz = w.NZ, H = w.H, TK = C.FIRE_TICK, top = w.top, surf = st.surf;
     const wind = (S.wind && S.wind.mean) || ZERO, rain = S.weather ? (S.weather.rain || 0) : 0;
     const damp = S.weather ? M.max(rain, S.weather.wet || 0) : 0;                 // soaked fuel spreads like rain
     const douse = rain > K.RAIN_OUT ? 6 * (rain - 0.4) : 0;
@@ -304,7 +304,7 @@
         for (let di = -1; di <= 1; di++) {
           if (!di && !dk) continue;
           const ii = i + di, kk = k + dk;
-          if (ii < 0 || kk < 0 || ii >= n || kk >= n) continue;
+          if (ii < 0 || kk < 0 || ii >= n || kk >= nz) continue;
           const q = kk * n + ii;
           if (st.burnT[q] > 0 || st.fuel[q] < 0.05 || surf[q * 4 + 2] > 128) continue;
           const dist = (di && dk ? 1.4142 : 1) * H, ux = di * H / dist, uz = dk * H / dist;
@@ -343,14 +343,14 @@
     // burning props and oil rings light the grass under them; flames light props standing in them
     for (const b of S.bodies) {
       if (!b.prop) continue;
-      const q = M.clamp(Math.round(b.pos.z / H), 0, n - 1) * n + M.clamp(Math.round(b.pos.x / H), 0, n - 1);
+      const q = VG.cell(S, b.pos.x, b.pos.z);
       const onGround = b.pos.y - top[q] < b.rb + 0.4;
       if (b.burn >= 0 && onGround) igniteCell(S, st, q, 0.8);
       else if (st.burnT[q] > 0 && onGround && SS.scatter && SS.scatter.ignite) SS.scatter.ignite(S, b);
     }
     for (const f of S.flames) {
       const r = f.r * 0.8, i0 = M.max(0, Math.floor((f.x - r) / H)), i1 = M.min(n - 1, Math.ceil((f.x + r) / H));
-      const k0 = M.max(0, Math.floor((f.z - r) / H)), k1 = M.min(n - 1, Math.ceil((f.z + r) / H));
+      const k0 = M.max(0, Math.floor((f.z - r) / H)), k1 = M.min(nz - 1, Math.ceil((f.z + r) / H));
       for (let k = k0; k <= k1; k++)
         for (let i = i0; i <= i1; i++)
           if (M.len2(i * H - f.x, k * H - f.z) < r && Math.abs(top[k * n + i] - f.y) < 1) igniteCell(S, st, k * n + i, 0.9);
@@ -359,7 +359,7 @@
     const lv = S.lava;
     if (lv && st.tick % 5 === 0 && lv.i1 >= lv.i0) {
       let ch = false;
-      for (let k = M.max(2, lv.k0 - 1); k <= M.min(n - 3, lv.k1 + 1); k++)
+      for (let k = M.max(2, lv.k0 - 1); k <= M.min(nz - 3, lv.k1 + 1); k++)
         for (let i = M.max(2, lv.i0 - 1); i <= M.min(n - 3, lv.i1 + 1); i++) {
           const c = k * n + i;
           if (!(lv.h[c] > 0.02 && lv.T[c] > 0.3)) continue;
@@ -395,7 +395,7 @@
 
   VG.cell = function (S, x, z) {
     const st = S.veg, w = W();
-    return M.clamp(Math.round(z / w.H), 0, st.n - 1) * st.n + M.clamp(Math.round(x / w.H), 0, st.n - 1);
+    return M.clamp(Math.round(z / w.H), 0, w.NZ - 1) * st.n + M.clamp(Math.round(x / w.H), 0, st.n - 1);
   };
   /* flame intensity (0..1) at a point near the ground (the worm's centre): max over the 3x3 columns around it */
   VG.fire_at = function (S, x, y, z) {
@@ -406,7 +406,7 @@
     for (let dk = -1; dk <= 1; dk++)
       for (let di = -1; di <= 1; di++) {
         const ii = i + di, kk = k + dk;
-        if (ii < 0 || kk < 0 || ii >= n || kk >= n) continue;
+        if (ii < 0 || kk < 0 || ii >= n || kk >= w.NZ) continue;
         const q = kk * n + ii;
         if (st.burnT[q] <= 0) continue;
         const h = y - w.top[q];

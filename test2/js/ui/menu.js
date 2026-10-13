@@ -65,6 +65,7 @@
     toolCrates: [['off', 'Off'], ['low', 'Few'], ['normal', 'Normal'], ['high', 'Many']],
     jackets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => [String(n), String(n)]),
     slice: [['thin', 'Thin'], ['thick', 'Thick'], ['full', 'Full']],
+    fps: [['auto', 'Auto'], ['30', '30'], ['60', '60'], ['max', 'Max']],
     // P46: the front of the section as a ghost image (render/section.js)
     ghost: [['0', 'Off'], ['15', '15 %'], ['30', '30 %'], ['50', '50 %'], ['75', '75 %'], ['100', '100 %']]
   };
@@ -152,6 +153,13 @@
       b: true,
       d: true,
       h: 'the camera moves in on a worm\'s face while it plays an idle antic or winces from a hit, then goes back (never while you aim or move)'
+    },
+    {
+      k: 'fps',
+      t: 'Frame rate',
+      o: OPTS.fps,
+      w: 'seg',
+      h: 'frames per second; Auto = 30 on a phone (half the battery), the screen\'s own rate elsewhere'
     }
   ];
   const FIELD = [
@@ -239,11 +247,6 @@
       d: 'Rain and snow make loose ground (soil, sand, ash, scree) slippery: a worm on a steep wet slope slides downhill, walking through mud is up to 30 % slower, and a fall into mud hurts up to 50 % less. The ground dries out again over a few turns. Needs rain, a storm or snow.'
     },
     {
-      id: 'QUAKE',
-      t: 'Earthquake',
-      d: 'Every fifth turn the ground rumbles for two seconds, then shakes: a fault line opens near the action, weak ledges, overhangs and thin necks give way (the Cracks load check with extra seismic weight, turns Cracks on), loose barrels and boulders jump. Needs Collapse on for the rockfall.'
-    },
-    {
       id: 'RECOIL',
       t: 'Recoil',
       d: 'Heavy shots push the shooter back: a bazooka\'s back-blast, a shotgun, a sniper rifle, a hurled boulder. Dry ground holds you, but ice and mud barely do: you slide, and a ledge edge or the sea behind you becomes a danger. The CPU steps away from edges before it fires.'
@@ -283,7 +286,8 @@
     o.ghost = intIn(o.ghost, 0, 100, intIn(def.ghost, 0, 100, 0));       // P46: front ghost opacity, percent (0 = off)
     o.jackets = intIn(o.jackets, 0, 9, intIn(def.jackets, 0, 9, 3));       // P89: life jackets per team (sim/gear.js)
     o.jetpacks = intIn(o.jetpacks, 0, 9, intIn(def.jetpacks, 0, 9, 3));    // P86: EOW jetpack charges per team (sim/eow.js)
-    o.labFlags = intIn(o.labFlags, 0, C.LAB.ALL, 0);                  // P42: the Lab's mechanics (bit mask, 0 = off)
+    // the Lab's mechanics (bit mask, 0 = off); a stored mask keeps its valid bits when a mechanic was retired
+    o.labFlags = intIn(o.labFlags, 0, 65535, 0) & C.LAB.ALL;
     o.seed = intIn(o.seed, 0, 99999999, intIn(def.seed, 0, 99999999, 7));
     const dctl = Array.isArray(def.ctl) ? def.ctl : ['human', 'cpu', 'cpu', 'cpu'];
     const ctl = Array.isArray(o.ctl) ? o.ctl.slice(0, 4) : (o.ctl == null ? null : dctl.slice());
@@ -702,6 +706,8 @@
       if (SS.cine) SS.cine.setEnabled(cur.cine !== false);
     } : r.k === 'anticCam' ? () => {
       if (SS.anticCam) SS.anticCam.setEnabled(cur.anticCam !== false);
+    } : r.k === 'fps' ? () => {
+      if (SS.quality) SS.quality.set_frame_rate(cur.fps);
     } : r.k === 'idle' ? () => {
       if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false;
       if (SS.idleView) SS.idleView.enabled = cur.idle !== false;

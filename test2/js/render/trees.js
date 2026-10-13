@@ -5,7 +5,8 @@
  * per tier (spruce). Live state goes through a small float texture (one row per tree, texelFetch in the vertex
  * shader): texel 0..31 = segment on/off, 32..46 = leaf fraction left per cluster, 47 = tree (alive, char, fire
  * intensity, sway phase). Broken parts collapse to a point, stripped crowns lose cards and shrink, the wind bends
- * trees from the root (h^2), charred wood darkens and glows in its cracks while burning, leaves wilt and glow.
+ * trees from the root (h^2) and only while it blows, charred wood darkens and glows in its cracks while burning,
+ * leaves wilt and glow.
  * Clipping follows the terrain: nothing in front of slice zero in play (inspection ghosts it), the slab is solid,
  * the context behind it fades with the terrain's context alpha (screen-door dither: no sorting). Shadows use a
  * matching depth material. Fire: flame billboards on burning crowns / trunks (SS.bodyView pool) and an instanced
@@ -72,13 +73,26 @@
       vRoot = leaf ? 0.0 : step(0.55, seed) * step(seed, 0.65);                           // T3: root tubes (seed 0.6)
       if (leaf) p = aCen + (p - aCen) * (0.55 + 0.45 * sqrt(clamp(f, 0.0, 1.0)));
       float h = floor(aInfo.w * 64.0) / 63.0;         // height fraction above the root (0..1), packed in aInfo.w
-      float g = 0.65 + 0.35 * sin(uTime * 0.83 + tr.a * 6.28) * sin(uTime * 0.31 + tr.a * 3.7);
-      vec2 sw = (uWind.xz * 0.014 * g * h * h + vec2(sin(uTime * 1.25 + tr.a * 9.0), cos(uTime * 1.05 + tr.a * 7.0)) * 0.03 * h * h) * (1.0 + 1.2 * uPalm);
-      p.xz += sw * (1.0 - 0.75 * tr.g);
+      // The wind moves a tree only while it blows (uWind: the gusted wind at 10 m, m/s; calm air leaves it still).
+      // gust: a slow envelope (0..1) that travels downwind across the map (neighbours move together), so the sway comes
+      // and goes; the whole tree leans downwind (drag ~ u^2) and sways about that lean with a 3.7 s period, both
+      // bending it from the root (h^2); a palm trunk is more flexible, a charred one stiffer.
+      float u = min(length(uWind.xz), 18.0);
+      vec2 wd = u > 0.01 ? normalize(uWind.xz) : vec2(0.0);
+      vec3 dc = p - aCen;
+      float tau = uTime - dot(rt.xy, wd) / max(u, 2.0);
+      float gust = smoothstep(0.15, 0.85, 0.5 + 0.3 * sin(0.41 * tau + tr.a * 2.0) + 0.2 * sin(0.17 * tau + tr.a * 5.0));
+      vec2 osc = wd * sin(uTime * 1.7 + tr.a * 9.0) + vec2(-wd.y, wd.x) * (0.5 * sin(uTime * 1.3 + tr.a * 7.0));
+      p.xz += (wd * (u * u * 0.0017) + osc * (u * 0.005 * gust)) * ((1.0 + 0.6 * uPalm) * h * h * (1.0 - 0.75 * tr.g));
       if (leaf) {
-        // a frond flutters at its tip (P116)
-        float fk = uPalm > 0.5 ? 0.02 + 0.2 * length(p - aCen) * (0.35 + length(uWind.xz) * 0.09) : 0.022 * (0.4 + length(uWind.xz) * 0.12);
-        p += vec3(sin(uTime * 4.7 + p.y * 2.7 + seed * 30.0), uPalm * 0.7 * sin(uTime * 2.3 + seed * 17.0 + p.x), cos(uTime * 4.1 + p.x * 2.9)) * fk;
+        if (uPalm > 0.5) {
+          // a frond bends as one piece about the crown (d^2): it streams downwind and bobs slowly with the gusts
+          float k = dot(dc, dc), bob = sin(uTime * 2.1 + seed * 40.0) * u * 0.0006 * k * (0.3 + 0.7 * gust);
+          p.xz += wd * (u * u * 0.00022 * k + 0.4 * bob);
+          p.y += bob;
+        } else
+          // a leaf card flickers a little in the wind
+          p.xz += vec2(sin(uTime * 2.6 + seed * 30.0), cos(uTime * 2.2 + seed * 23.0)) * (0.0035 * u * (0.3 + 0.7 * gust));
       }
       return keep > 0.5 ? p : vec3(0.0);
     #endif

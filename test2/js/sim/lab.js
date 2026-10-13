@@ -58,11 +58,8 @@
   const rng = S => M.rng_next(S.lab.rng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
 
-  // (P79: a quake needs the crack system)
-  LB.flags = S => {
-    const f = (S.settings.labFlags | 0) & F.ALL;
-    return (f & F.FLAG.QUAKE) ? (f | F.FLAG.CRACKS) : f;
-  };
+  // the active mechanics: the settings' bit mask limited to the defined flags (C.LAB.ALL)
+  LB.flags = S => (S.settings.labFlags | 0) & F.ALL;
   LB.on = (S, bit) => (LB.flags(S) & bit) !== 0;
   LB.lab_make = S => ({ rng: M.rng_make(((Math.imul(S.settings.seed | 0, 48271) + 0x1ab5) >>> 0) || 1), gustT: 0, met: [], metN: 0,
     moon: false, bankN: 0, bankK: 1, evTick: -1, underAnn: -1,
@@ -350,7 +347,7 @@
       sim.log(S, `${sim.team_name(S, S.active.team)} are the underdogs: +${Math.round((F.UNDER_K - 1) * 100)} % blast damage.`, 0xffc08a);
     }
     if ((fl & F.FLAG.METEORS) && !first && S.turnNo % F.MET_EVERY === 0 && S.phase !== PHASE.PLACE) spawn_meteors(S);
-    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.turn_start(S, first);        // P79: lightning, quake, scavenge
+    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.turn_start(S, first);        // lightning, scavenge
   };
 
   function spawn_meteors(S) {
@@ -374,7 +371,7 @@
     const fl = LB.flags(S);
     if (!fl || !S.lab || S.phase === PHASE.OVER) return;
     const L = S.lab;
-    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.step(S, dt);                    // P79: lightning strikes, slick slopes, the quake
+    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.step(S, dt);                    // lightning strikes, slick slopes, recoil
     if ((fl & F.FLAG.FATIGUE) && S.phase === PHASE.PLAY && S.active && !S.active.dead) {
       const a = S.active;
       if (L.lid !== a.id) {
@@ -415,7 +412,7 @@
   const NAMES = [
     ['BANK', 'Bank'], ['UNDERDOG', 'Underdog'], ['GUSTS', 'Gusts'], ['METEORS', 'Meteors'], ['CLOCK', 'Clock'], ['MOON', 'Moon'],
     ['PERKS', 'Perks'], ['STREAK', 'Streak'], ['LONGSHOT', 'Long shot'], ['FATIGUE', 'Fatigue'], ['CRACKS', 'Cracks'],
-    ['LIGHTNING', 'Lightning'], ['SLICK', 'Slick'], ['QUAKE', 'Quake'], ['RECOIL', 'Recoil'], ['SCAVENGE', 'Scavenge']
+    ['LIGHTNING', 'Lightning'], ['SLICK', 'Slick'], ['RECOIL', 'Recoil'], ['SCAVENGE', 'Scavenge']
   ];
   LB.badge = function (S) {
     const fl = LB.flags(S);

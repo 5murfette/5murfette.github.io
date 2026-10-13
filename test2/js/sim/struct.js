@@ -14,11 +14,11 @@
  * top node remain; the bridge fails at a panel where BOTH sides fail, or when an abutment loses its ground; the span
  * hangs on pinned bearings, so a failed span comes down: it is released as rigid bodies (one per piece between failed
  * panels; SS.bodies 'struct', spheres along its members), with the blast's momentum.
- * Gameplay plane: members crossing slice zero are solid (S.planeBodies: boxes for flat members, discs along steep
- * ones). Events 'steelcut' {x, y, z, kind}, 'bridgefall' {id, pieces}.
+ * Gameplay plane: members crossing slice zero are solid (S.planeBodies: a capsule along each member, plane.js pb_rod;
+ * the deck a box). Events 'steelcut' {x, y, z, kind}, 'bridgefall' {id, pieces}.
  * C layout: struct Node { vec3 p; u8 anchor; }; struct Mem { i32 a, b; u8 kind, on; f32 w, h, A, mass, dmg; };
  *   struct Struct { i32 id, n; Node nodes[]; Mem mem[]; u8 look; u32 ver; };  API: populate(S, taken), blast(S, c, W),
- *   plane_sections(S), on_edit(S) (abutment check), stats(S). */
+ *   plane_sections(S), on_edit(S) (abutment check), member_r(m) (a fallen member's radius), stats(S). */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.STRUCT;
@@ -298,6 +298,8 @@
         return false;
     return true;
   }
+  // the radius of a fallen member's collision spheres (a deck panel: each of its DECK_LANES rows)
+  ST.member_r = m => m.kind === 3 ? 0.12 : M.max(0.08, m.h / 2);
   // a piece (members of panels [i0, i1]) -> one rigid body: spheres along the members, body-space member list (render)
   function release(S, st, i0, i1, kick) {
     const ms = st.mem.filter(m => m.on && (m.kind === 2 ? m.i >= i0 && m.i <= i1 + 1 : Math.floor(m.i) >= i0 && Math.floor(m.i) <= i1));
@@ -315,8 +317,8 @@
     let Ix = 0, Iy = 0, Iz = 0;
     for (const m of ms) {
       const a = st.nodes[m.a], b = st.nodes[m.b], Lm = len(a, b);
-      const r = m.kind === 3 ? 0.12 : M.max(0.08, m.h / 2);
-      const lanes = m.kind === 3 ? [-0.6, 0, 0.6] : [0];
+      const r = ST.member_r(m);
+      const lanes = m.kind === 3 ? K.DECK_LANES : [0];
       const step = m.kind === 3 ? 0.6 : M.max(0.25, r * 1.6), k = M.max(1, Math.ceil(Lm / step));
       for (const ln of lanes)
         for (let q = 0; q <= k; q++) {
@@ -459,31 +461,8 @@
           deckSection(PB, st, m, a, b, n, d, ox, oz);
           continue;
         }
-        const ta = (a.x - ox) * n.x + (a.z - oz) * n.z, tb = (b.x - ox) * n.x + (b.z - oz) * n.z;
-        const half = m.kind === 3 ? m.w / 2 : m.w / 2 + 0.02, rad = m.kind === 3 ? 0.06 : m.h / 2;
-        // the deck plate is wide across the bridge: its extent on the plane depends on the crossing angle
-        const ext = m.kind === 3 ? half * Math.abs(st.ux * n.x + st.uz * n.z) + 0.05 : half;
-        if (M.min(ta, tb) > ext || M.max(ta, tb) < -ext) continue;
-        // clip the member to the slab |t| <= ext
-        let u0 = 0, u1 = 1;
-        if (Math.abs(tb - ta) > 1e-6) {
-          const ua = (-ext - ta) / (tb - ta), ub = (ext - ta) / (tb - ta);
-          u0 = M.max(0, M.min(ua, ub));
-          u1 = M.min(1, M.max(ua, ub));
-        }
-        if (u1 < u0) continue;
-        const sA = (a.x + (b.x - a.x) * u0 - ox) * d.x + (a.z + (b.z - a.z) * u0 - oz) * d.z, yA = a.y + (b.y - a.y) * u0;
-        const sB = (a.x + (b.x - a.x) * u1 - ox) * d.x + (a.z + (b.z - a.z) * u1 - oz) * d.z, yB = a.y + (b.y - a.y) * u1;
-        const ls = Math.abs(sB - sA), ly = Math.abs(yB - yA);
-        if (ly <= 0.25 * ls + 0.05)
-          P.pb_add(PB, 1, (sA + sB) / 2, (yA + yB) / 2, ls / 2 + rad * 0.5, rad + ly / 2, 0, -1, -1, -1, st.id, -1, false);
-        else {
-          const k = M.max(1, Math.ceil(M.len2(ls, ly) / M.max(0.1, rad)));
-          for (let q = 0; q <= k; q++) {
-            const t = q / k;
-            P.pb_add(PB, 0, sA + (sB - sA) * t, yA + (yB - yA) * t, 0, 0, rad + 0.02, -1, -1, -1, st.id, -1, false);
-          }
-        }
+        // a girder / post / diagonal: a flat-sided beam w wide across, h high
+        P.pb_rod(S, PB, a, b, m.h / 2, m.w / 2 + 0.02, -1, -1, -1, st.id);
       }
     }
   };

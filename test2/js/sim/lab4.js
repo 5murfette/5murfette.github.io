@@ -14,17 +14,13 @@
  *              snow): mu_eff = mu (1 - 0.55 wet).
  *              A worm on a slope steeper than mu_eff slides; mud slows the walk and soaks up a fall. It dries by the
  *              weather model (about 5 min).
- *   QUAKE      terrain:  every 5th turn a tremor (warning, then shaking): the structural load check of the crack system
- *              runs with 1.6 x gravity in
- *              windows around the most dissected ground near the action, a fault line gains crack damage, loose props
- *              jump. Implies CRACKS.
  *   RECOIL     weapons:  a heavy shot pushes the shooter back: dv = m v_exit k / WORM_KG, minus the static friction of
  *              the ground under it. Ice and mud
  *              barely hold; a ledge edge or the sea behind the worm becomes a risk (the CPU steps away from such an
  *              edge first).
  *   SCAVENGE   loot:     a worm's grave leaves one random item of its team's stock as a supply crate (at the next turn
  *              start).
- * C layout: struct Lab4 { u32 rng; f32 zapQ[2]; Zap zap[4]; i32 zapN; f32 qT, qEnd; i32 qN, qLeft, qBroke; u16 scav;
+ * C layout: struct Lab4 { u32 rng; f32 zapQ[2]; Zap zap[4]; i32 zapN; u16 scav;
  * f32 slipT[16]; i32 slipTurn; };
  *           struct Zap { i32 id; f32 t0, t, x, y, z; u8 kind; i32 tid; };   one worm field: f32 rv (recoil slide speed
  *           along the section, 0 unless RECOIL is on);  kinds: 0 ground 1 tree 2 worm 3 steel bridge 4 mine 5 barrel 6
@@ -38,7 +34,7 @@
   const PHASE = C.PHASE;
   const EV = C.EV;
   const L4 = SS.lab4 = {};
-  const B4 = FL.LIGHTNING | FL.SLICK | FL.QUAKE | FL.RECOIL | FL.SCAVENGE;
+  const B4 = FL.LIGHTNING | FL.SLICK | FL.RECOIL | FL.SCAVENGE;
   L4.MASK = B4;
   const W = () => SS.world;
   const flags = S => (S.lab && S.settings ? ((S.settings.labFlags | 0) & B4) : 0);
@@ -56,11 +52,6 @@
       zapQ: [],
       zap: [],
       zapN: 0,
-      qT: -1,
-      qEnd: -1,
-      qN: 0,
-      qLeft: 0,
-      qBroke: 0,
       scav: 0,
       slipT: slip,
       slipTurn: -1
@@ -364,130 +355,6 @@
     }
   }
 
-  /* ---------- QUAKE ---------- */
-  function quake_start(S) {
-    const L = S.lab.b4, O = S.O || { x: W().MX, z: W().MZ };
-    L.qT = S.time + K.WARN;
-    L.qEnd = L.qT + K.DUR;
-    L.qN++;
-    L.qLeft = K.SPOTS;
-    L.qBroke = 0;
-    SS.sim.emit(S, EV.LABQUAKE, { x: O.x, z: O.z, warn: K.WARN, dur: K.DUR });
-    SS.sim.emit(S, EV.BANNER, { title: 'Earthquake', sub: 'The ground is about to shake' });
-    SS.sim.log(S, 'The ground rumbles: an earthquake is coming.', 0xd8b080);
-  }
-  const RX = [-4, 4, 0, 0], RZ = [0, 0, -4, 4];
-  function relief(x, z) {
-    const wd = W();
-    let hi = -1e9, lo = 1e9;
-    for (let k = 0; k < 4; k++) {
-      const h = wd.topHeight(x + RX[k], z + RZ[k]);
-      if (h > hi) hi = h;
-      if (h < lo) lo = h;
-    }
-    return hi - lo;
-  }
-  /* crack damage along a vertical fault trace (a segment in x / z, FAULT_LEN long, FAULT_W half width, FAULT_DEPTH deep
-   * below the surface) */
-  function fault(S, cx, cz, ang) {
-    const wd = W(), CK = wd.crack, H = wd.H, dx = M.cos(ang), dz = M.sin(ang), hl = K.FAULT_LEN / 2;
-    const ax = cx - dx * hl, az = cz - dz * hl, bx = cx + dx * hl, bz = cz + dz * hl, w = K.FAULT_W;
-    const i0 = M.max(1, Math.floor((M.min(ax, bx) - w) / H)), i1 = M.min(wd.NX - 2, Math.ceil((M.max(ax, bx) + w) / H));
-    const k0 = M.max(1, Math.floor((M.min(az, bz) - w) / H)), k1 = M.min(wd.NZ - 2, Math.ceil((M.max(az, bz) + w) / H));
-    let jlo = wd.NY, jhi = 0, n = 0;
-    for (let k = k0; k <= k1; k++)
-      for (let i = i0; i <= i1; i++) {
-        const x = i * H,
-          z = k * H,
-          u = M.clamp(((x - ax) * dx + (z - az) * dz) / K.FAULT_LEN, 0, 1),
-          d = M.len2(x - (ax + dx * K.FAULT_LEN * u), z - (az + dz * K.FAULT_LEN * u));
-        if (d > w) continue;
-        const jt = M.min(wd.NY - 2, Math.floor(wd.topHeight(x, z) / H)), add = Math.round(K.FAULT_DMG * (1 - d / w));
-        for (let j = jt; j >= M.max(1, jt - Math.ceil(K.FAULT_DEPTH / H)); j--) {
-          const o = (k * wd.NY + j) * wd.NX + i;
-          if (wd.d[o] <= 0) continue;
-          CK[o] = M.min(255, CK[o] + add);
-          n++;
-          if (j < jlo) jlo = j;
-          if (j > jhi) jhi = j;
-        }
-      }
-    if (n) wd.mark(i0, jlo, k0, i1, jhi, k1);
-    return n;
-  }
-  /* one shaken window: the fault line through (bx, bz) at angle ang gains crack damage, the structural check runs with
-   * the seismic weight, what is cut off falls */
-  L4.quake_spot = function (S, bx, bz, ang) {
-    const wd = W(), H = wd.H, CR = SS.cracks, crk = !!(CR && S.crk && wd.crack), G0 = C.CRACK.G, cy = wd.topHeight(bx, bz);
-    let broke = 0;
-    // P106 (2D): the fault is a vertical sheet; a trace running ALONG the section plane painted a 16 m x 6 m flat brown
-    // fill over the cut face (user: "brown coloring that spreads, with an egg-hatching sound"). In the slab the trace
-    // must cross the plane (a thin crack line): the angle is pulled to +-0.3 rad of the plane's normal.
-    if (wd.flat) ang = M.PI * 0.5 + (ang - M.PI * 0.5) * 0.2;
-    if (crk) fault(S, bx, bz, ang);
-    const box = { i0: M.max(1, Math.floor((bx - K.WIN) / H)), j0: M.max(1, Math.floor((cy - 10) / H)),
-      k0: M.max(1, Math.floor((bz - K.WIN) / H)),
-      i1: M.min(wd.NX - 2, Math.ceil((bx + K.WIN) / H)), j1: M.min(wd.NY - 2, Math.ceil((cy + 6) / H)),
-      k1: M.min(wd.NZ - 2, Math.ceil((bz + K.WIN) / H)) };
-    const c = { x: bx, y: cy, z: bz };
-    if (S.settings.collapse) {
-      if (crk) {
-        // the seismic load: shaking adds A_K g to the weight of every voxel
-        C.CRACK.G = G0 * (1 + K.A_K);
-        broke = CR.settle(S, c, box);
-        C.CRACK.G = G0;
-      }
-      SS.collapse_hook(S, box);
-    }
-    // (2D: every slice carries the plane's damage)
-    if (crk) {
-      if (wd.flat && SS.dim2d) SS.dim2d.flatten(wd, box.i0, box.j0, box.i1, box.j1);
-      wd.mark(box.i0, box.j0, box.k0, box.i1, box.j1, box.k1);
-      CR.bump(wd);
-    }
-    SS.sim.emit(S, EV.LABQUAKEHIT, { x: bx, y: cy, z: bz, dx: M.cos(ang), dz: M.sin(ang), len: K.FAULT_LEN });
-    return broke;
-  };
-  /* one window per step, QK_GAP s apart (the load check of a window costs up to ~30 ms: no single long step) */
-  function quake_hit(S) {
-    const L = S.lab.b4, wd = W(), O = S.O || { x: wd.MX, z: wd.MZ };
-    let bx = O.x, bz = O.z, br = -1;
-    for (let n = 0; n < K.SAMPLES; n++) {
-      const a = rnd(S) * M.TAU,
-        r = K.REACH * Math.sqrt(rnd(S)),
-        x = M.clamp(O.x + M.cos(a) * r, 8, wd.SX - 8),
-        z = M.clamp(O.z + M.sin(a) * r, 8, wd.SZ - 8);
-      if (wd.topHeight(x, z) <= wd.SEA + 0.3) continue;
-      const rl = relief(x, z);
-      if (rl > br) {
-        br = rl;
-        bx = x;
-        bz = z;
-      }
-    }
-    L.qBroke += L4.quake_spot(S, bx, bz, rnd(S) * M.PI);
-    S.sectionDirty = true;
-    if (--L.qLeft > 0) {
-      L.qT = S.time + K.QK_GAP;
-      return;
-    }
-    L.qT = -1;
-    for (const b of S.bodies) {                                                       // loose props jump
-      if (!b.prop || M.len2(b.pos.x - O.x, b.pos.z - O.z) > K.PROP_R) continue;
-      const u = rnd(S) * M.TAU, J = (b.invM > 0 ? 1 / b.invM : 0) * K.PROP_V;
-      if (J > 0) SS.bodies.nudge(S, b, { x: M.cos(u) * 0.5, y: 1, z: M.sin(u) * 0.5 }, J);
-    }
-    SS.sim.log(
-      S,
-      L.qBroke ? `The quake shakes the ground loose (${L.qBroke} weak spots give way).` : 'The quake rattles the ground.',
-      0xd8b080
-    );
-  }
-  function quake_step(S) {
-    const L = S.lab.b4;
-    if (L.qT >= 0 && S.time >= L.qT && S.phase !== PHASE.OVER) quake_hit(S);
-  }
-
   /* ---------- RECOIL ---------- */
   /* the kick: dv = m v_exit k / WORM_KG along the plane, opposite the horizontal part of the aim. A worm on the ground
    * then slides with Coulomb friction
@@ -621,7 +488,6 @@
     const fl = flags(S);
     if (!fl || !S.lab.b4) return;
     if (fl & FL.LIGHTNING) lightning_turn(S, first);
-    if ((fl & FL.QUAKE) && !first && S.turnNo % K.EVERY === 0 && S.phase !== PHASE.PLACE) quake_start(S);
     if (fl & FL.SCAVENGE) scavenge(S);
   };
   L4.step = function (S, dt) {
@@ -629,7 +495,6 @@
     if (!fl || !S.lab.b4 || S.phase === PHASE.OVER) return;
     if (fl & FL.LIGHTNING) lightning_step(S);
     if (fl & FL.SLICK) slick_step(S, dt);
-    if (fl & FL.QUAKE) quake_step(S);
     if (fl & FL.RECOIL) recoil_step(S, dt);
   };
   L4.hash = function (S, mix) {
@@ -639,10 +504,6 @@
     mix(fl);
     mix(L.rng.s % 100003);
     mix(L.zapN);
-    mix(L.qT);
-    mix(L.qEnd);
-    mix(L.qN);
-    mix(L.qLeft);
     mix(L.scav);
     mix(L.zapQ.length);
     for (const t of L.zapQ) mix(t);
@@ -664,7 +525,6 @@
       const w = L4.wet(S);
       return w >= 0.05 ? ' (wet ' + Math.round(w * 100) + '%)' : ' (dry)';
     }
-    if (name === 'QUAKE') return L.qT >= 0 ? ' (!)' : ' (in ' + (K.EVERY - (S.turnNo % K.EVERY)) + ')';
     return '';
   };
 })(window.SS = window.SS || {});
