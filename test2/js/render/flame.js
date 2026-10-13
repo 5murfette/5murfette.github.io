@@ -174,12 +174,12 @@
    * cool through orange to soot-brown, a rising afterburn lick, embers. fade < 1 for a small / wet one. */
   FL.fireball = function (x, y, z, Rf, W3, k) {
     k = k == null ? 1 : k; const qn = Math.max(0.4, Q ? Q.particles : 1);
-    puff(x, y + 0.05, z, 0, 0.6, 0, Rf * 1.25, 0.22 + 0.1 * W3, 3300, 2, 1.0);                          // the white-hot core flash
+    puff(x, y + 0.05, z, 0, 0.6, 0, Rf * 1.25, 0.22 + 0.1 * W3, 2700, 2, 1.0);                          // the white-hot core flash
     const n = Math.round((14 + 16 * W3) * qn * k);
     for (let i = 0; i < n; i++) {                                                                       // lobes thrown out and up, braked by the air
       const a = rnd(0, 6.283), u = rnd(-0.15, 1), r = Math.sqrt(1 - u * u), sp = rnd(2.5, 7.5) * (0.6 + 0.5 * W3);
       puff(x + Math.cos(a) * r * Rf * 0.2, y + 0.1 + Math.max(0, u) * Rf * 0.2, z + Math.sin(a) * r * Rf * 0.2, Math.cos(a) * r * sp, u * sp * 0.9 + 1.2, Math.sin(a) * r * sp,
-        Rf * rnd(0.55, 1.15), rnd(0.6, 1.3) * (0.8 + 0.3 * W3), rnd(2300, 3000), 3.0, rnd(1.0, 1.8));
+        Rf * rnd(0.55, 1.15), rnd(0.6, 1.3) * (0.8 + 0.3 * W3), rnd(2100, 2800), 3.0, rnd(1.0, 1.8));
     }
     for (let i = 0; i < Math.round(5 * W3 * qn * k); i++) {                                              // afterburn: tall licks rising from the crater
       const a = rnd(0, 6.283), rr = rnd(0, Rf * 0.6);
@@ -243,17 +243,22 @@
       float ph = vB.x, sd = vB.y, kind = vB.z, I = vB.w;
       float tm = uTime;
       vec3 col; float dens, alpha;
-      if (kind > 0.5 && kind < 1.5) {                           // ---- fireball puff: rolling turbulent lobe, hot core -> soot edge
+      if (kind > 0.5 && kind < 1.5) {                           // ---- fireball puff: a rolling, billowing lobe: warped billows inside billows, churning hot pockets, soot-dark folds and rim (P118d, Q-13)
         float r = length(vUv); if (r > 1.0) discard;
-        vec2 q = vUv * 2.5 + vec2(sd * 23.0, -ph * 2.6 + sd * 7.0);
-        vec2 w = vec2(vn(q * 0.6 + 4.1), vn(q * 0.6 + 8.7)) - 0.5;
-        float n = 0.6 * vn(q + w * 2.4) + 0.4 * vn(q * 2.1 + w * 3.0 + 3.7);
-        float edge = 1.0 - smoothstep(0.1 + 0.6 * n, 1.0 - 0.6 * ph, r);
+        float rs = fract(sd * 3.1) > 0.5 ? 1.0 : -1.0, rot = ph * (2.0 + 1.6 * fract(sd * 7.0)) * rs;                  // the lobe rolls about its own axis (a vortex ring seen side on) while it swells
+        float cr = cos(rot), sr = sin(rot); vec2 uv = vec2(cr * vUv.x - sr * vUv.y, sr * vUv.x + cr * vUv.y);
+        vec2 q = uv * 2.2 + vec2(sd * 23.0, -ph * 1.7 + sd * 7.0);
+        vec2 w1 = vec2(vn(q * 0.7 + 4.1), vn(q * 0.7 + 8.7)) - 0.5;
+        vec2 w2 = vec2(vn(q * 1.6 + w1 * 2.5 + 1.3), vn(q * 1.6 + w1 * 2.5 + 5.9)) - 0.5;                              // a second warp: billows inside billows
+        float n = 0.55 * vn(q + w1 * 2.6) + 0.3 * vn(q * 2.3 + w2 * 2.8 + 3.7) + 0.15 * vn(q * 5.1 + w2 * 3.0 + 9.2);
+        float ridge = 1.0 - abs(2.0 * vn(q * 1.9 + w1 * 2.0 + 6.0) - 1.0);                                              // dark folds between the billows
+        float rimN = r + 0.34 * (n - 0.5) + 0.12 * (ridge - 0.5);
+        float edge = 1.0 - smoothstep(0.62, 1.0 - 0.45 * ph, rimN);
         if (edge < 0.012) discard;
         float cool = mix(1.0, 0.27, smoothstep(0.0, 0.85, ph));
-        float K = I * 1000.0 * cool * (0.55 + 0.5 * (1.0 - r) + 0.5 * (n - 0.5));
-        float soot = smoothstep(0.35, 0.95, 0.9 * n + ph * 0.75 - (1.0 - r) * 0.45);
-        col = emis(K) * (1.0 - 0.92 * soot);
+        float K = I * 920.0 * cool * (0.5 + 0.55 * (1.0 - r * r) + 0.75 * (n - 0.5) + 0.25 * (ridge - 0.5));
+        float soot = smoothstep(0.25, 0.9, 0.45 * r + 0.5 * (1.0 - n) + 0.4 * (1.0 - ridge) + ph * 0.75 + 0.5 * smoothstep(0.6, 1.0, rimN) - 0.55);          // smoke inside the flame: a dark rim, the cool pockets and the folds, more with age
+        col = emis(K) * (1.0 - 0.93 * soot);
         float fade = 1.0 - smoothstep(0.32, 0.92, ph);
         dens = edge * fade; alpha = min(1.0, dens * (0.5 + 0.45 * soot));
       } else {                                                  // ---- tongue / jet

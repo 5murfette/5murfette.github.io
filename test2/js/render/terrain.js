@@ -30,10 +30,14 @@
   // C1: the cut face's 3D noise and pinned-coordinate offset (τ = s + uS0, see the cap shader); MORPH_CELL = the world
   // cell size (m) of the texture-offset grid: a face point that moves ~one cell while the section turns has fully
   // changed its texture (at s = 20 m a 7° turn; under the worm never)
-  const CAPU = { uUnder: { value: 0 }, uCapDet: { value: 1 }, tN3: { value: null }, uS0: { value: 0 }, uCapK: { value: new T.Vector4(1, 1, 1, 1) }, uEow: { value: 0 } };   // uCapK: night / dusk grade of the cut face: rgb tint x brightness, w = saturation
+  const CAPU = { uUnder: { value: 0 }, uCapDet: { value: 1 }, uCapDbg: { value: 0 }, uCapFill: { value: new T.Vector4(0, 0, 0, 0) }, uCapGrade: { value: new T.Vector4(1, 1, 1, 1) }, uCapFlash: { value: 0 }, uStrata: { value: 0.6 }, uConcQ: { value: 1 }, tN3: { value: null }, uS0: { value: 0 }, uCapK: { value: new T.Vector4(1, 1, 1, 1) }, uEow: { value: 0 } };   // uCapK: night / dusk grade of the cut face: rgb tint x brightness, w = saturation
   const MORPH_CELL = 2.5;
   let capPivot = null;
   let farData = null, farKey = '', farRange = null;
+  // P118c: the overview (V) is the whole map, solid. ovr = that state is on this frame (not in caves: their overview keeps the cut face, see TR.frame),
+  // backUser = the player's slice-view setting (TR.setBack), which the overview overrides with OV_BACK and restores afterwards
+  let ovr = false, backUser = null;
+  const OV_BACK = 250;
   let scene, tx, Q, chunks = [], volTex, volData, slabMat, slabDepth, ctxPre, ctxFar, ctxNear, bodyMats = null, cap, capMat;
   const U = {};               // shared uniforms
   TR.uniforms = U;
@@ -170,6 +174,91 @@
       return c;
     }
 `;
+  /* P118b: integer hashes of a 2D cell (pcg-style, the same on every GPU: no sin() hash): hc3 = three values in 0..1, hc1 = one */
+  const HASH_GLSL = /* glsl */`
+    uvec2 hqc(vec2 p){
+      uvec2 q = uvec2(ivec2(floor(p)) + 32768);
+      q = q * 1664525u + 1013904223u; q.x += q.y * 1664525u; q.y += q.x * 1664525u; q ^= q >> 16u;
+      q.x += q.y * 1664525u; q.y += q.x * 1664525u; q ^= q >> 16u; return q;
+    }
+    vec3 hc3(vec2 p){ uvec2 q = hqc(p); return vec3(float(q.x & 0xffffu), float(q.x >> 16u), float(q.y & 0xffffu)) * (1.0 / 65536.0); }
+    float hc1(vec2 p){ return float(hqc(p).y >> 8u) * (1.0 / 16777216.0); }
+  `;
+  /* P118b (QA1 Q-01): weathered cast concrete as a SURFACE (outside walls, the inside of bunkers and forts, slabs, roads), the xc material weight of the terrain shader.
+   * Walls: board-formed (boards 0.15 m with their own tint and wood grain, butt joints, fins in the seams), tie holes on a 0.6 m grid (a few plugged with pale mortar,
+   * some with a rust run below), cold joints every 1.25 m, bug holes, vertical wet streaks, a damp dark foot. Tops and soffits: formed or broom-finished sheets, panel joints
+   * every 2.4 m, hairline cracks, dirt patches. Returns the albedo; rel = a height (m) for the lit normal (grooves, tie cones, grain: it fades with the pixel footprint fw). */
+  const CONC_SURF = /* glsl */`
+    vec3 concSurf(vec3 p, vec3 nW, float up, float fw, out float rel){
+      rel = 0.0;
+      bool hz = abs(nW.y) > 0.62;
+      vec2 tq = hz ? p.xz : (abs(nW.x) > abs(nW.z) ? p.zy : p.xy);
+      float mot = texture(tNoise, p.xz * 0.35 + p.y * 0.2).g, mot2 = texture(tNoise, tq * vec2(0.8, 0.45) + 0.3).r, mot3 = texture(tNoise, tq * 2.3 + 0.7).g;
+      float kF = 1.0 - smoothstep(0.003, 0.012, fw), kM = 1.0 - smoothstep(0.012, 0.05, fw);
+      vec3 c = vec3(0.27, 0.265, 0.25) * (0.8 + 0.3 * mot) * (0.9 + 0.2 * mot2) * (0.94 + 0.12 * mot3);
+      float agg = texture(tNoise, tq * 9.0 + 0.2).b, agg2 = texture(tNoise, tq * 23.0 + 0.5).b;
+      c *= 1.0 + (agg - 0.5) * 0.26 * (0.4 + 0.6 * kM) + (agg2 - 0.5) * 0.16 * kF;
+      float aa = max(fw, 0.0015);
+      if (!hz) {
+        // boards: 0.15 m high, planks 2.4 m long with staggered butt joints; per plank tint and a stretched grain
+        const float BH = 0.15, BL = 2.4;
+        float by = tq.y / BH, bi = floor(by), bf = fract(by);
+        float bx = tq.x / BL + hc1(vec2(bi, 7.0)), pj = floor(bx);
+        vec3 hp = hc3(vec2(pj, bi));
+        float grain = texture(tNoise, vec2(tq.x * 0.55 + hp.x * 13.0, tq.y * 5.5 + hp.y * 9.0)).g, grain2 = texture(tNoise, vec2(tq.x * 1.6 + hp.z * 7.0, tq.y * 21.0)).b;
+        c *= (0.93 + 0.14 * hp.y) * (1.0 + (grain - 0.5) * 0.3 * kM + (grain2 - 0.5) * 0.2 * kF);
+        float gd = min(bf, 1.0 - bf) * BH;
+        float groove = 1.0 - smoothstep(0.0012, 0.0045, gd), fin = 1.0 - smoothstep(0.004, 0.016, bf * BH);
+        c *= 1.0 - (0.2 * groove + 0.09 * fin) * mix(0.6, 1.0, kF);
+        float jx = min(fract(bx), 1.0 - fract(bx)) * BL, bj = 1.0 - smoothstep(0.002, 0.006, jx);
+        c *= 1.0 - 0.22 * bj * kM;
+        rel += (-0.0015 * groove + 0.0008 * (grain - 0.5) + 0.0006 * (hp.y - 0.5) - 0.001 * bj) * kM;
+        // cold joints between the pours (every 1.25 m), a thin dark seam with a pale lip
+        float yl = tq.y / 1.25, lf = fract(yl), jd = min(lf, 1.0 - lf) * 1.25;
+        float cj = 1.0 - smoothstep(0.003, 0.011, jd);
+        c *= 1.0 - 0.3 * cj; rel -= 0.0012 * cj * kM;
+        // tie holes: 0.6 m grid, a dark cone, some plugged with pale mortar, some with a rust run
+        vec2 tc = (tq + vec2(0.3, 0.075)) / 0.6, tid = floor(tc);
+        vec3 ht = hc3(tid + 41.0);
+        float hd = length((fract(tc) - 0.5) * 0.6), hr = 0.013;
+        float hole = 1.0 - smoothstep(hr * 0.75, hr, hd), ring = (1.0 - smoothstep(hr, hr * 2.2, hd)) * (1.0 - hole);
+        float plug = step(0.78, ht.x);
+        c = mix(c, c * 0.18, hole * (1.0 - plug) * mix(0.55, 1.0, kF));
+        c = mix(c, vec3(0.34, 0.33, 0.3) * (0.9 + 0.2 * ht.y), hole * plug);
+        c *= 1.0 - 0.16 * ring * (1.0 - plug);
+        rel += -0.006 * hole * (1.0 - plug) * kM;
+        float runx = (fract(tc.x) - 0.5) * 0.6, runy = (fract(tc.y) - 0.5) * 0.6;
+        float run = (1.0 - smoothstep(0.003, 0.009 + 0.01 * ht.z, abs(runx))) * step(runy, 0.0) * (1.0 - smoothstep(0.0, 0.1 + 0.25 * ht.y, -runy)) * step(ht.x, 0.3);
+        c = mix(c, c * vec3(0.72, 0.55, 0.42), run * 0.7);
+        // bug holes and pinholes of the formed face
+        vec2 bq = tq / 0.045, bid = floor(bq); vec3 hb = hc3(bid + 3.0);
+        float bd = length((fract(bq) - vec2(0.2 + 0.6 * hb.x, 0.2 + 0.6 * hb.y)) * 0.045), br = 0.0016 + 0.0042 * hb.z * hb.z;
+        float bug = (1.0 - smoothstep(br * 0.7, br, bd)) * step(0.85, hb.z * 0.5 + hb.x * 0.5 + 0.25) * kF;
+        c = mix(c, c * 0.35, bug); rel -= 0.0008 * bug;
+        // rain streaks down from the top edges and from the joints, a damp darker lower part
+        float sx = tq.x * 0.9 + 0.3 * sin(tq.y * 0.5), st = smoothstep(0.55, 0.85, texture(tNoise, vec2(sx, tq.y * 0.035)).g) * smoothstep(0.35, 0.65, texture(tNoise, vec2(tq.x * 0.11, 0.55)).r);
+        float st2 = smoothstep(0.8, 0.96, texture(tNoise, vec2(tq.x * 1.7 + 0.2, tq.y * 0.05)).b) * smoothstep(0.45, 0.75, texture(tNoise, vec2(tq.x * 0.17, 0.9)).r);
+        c *= 1.0 - 0.3 * st * (1.0 - smoothstep(-0.3, 0.6, up)) - 0.07 * st2;
+        c = mix(c, c * vec3(0.9, 0.98, 0.9), st * 0.35);
+      } else {
+        // tops, floors and soffits: sheets with joints every 2.4 m, a fine broom / trowel micro-texture, hairline cracks, dirt patches
+        float ax = 1.2 - abs(fract(tq.x / 2.4) - 0.5) * 2.4, ad = 1.2 - abs(fract(tq.y / 2.4 + 0.37) - 0.5) * 2.4;
+        float jt = 1.0 - smoothstep(0.003, 0.012, min(ax, ad));
+        float broom = texture(tNoise, vec2(tq.x * 1.4, tq.y * 31.0)).g;
+        c *= 1.0 + (broom - 0.5) * 0.18 * kM;
+        rel += 0.0005 * (broom - 0.5) * kM - 0.0015 * jt * kM;
+        #ifndef S2
+        c *= 1.0 - 0.34 * jt;
+        float cr = texture(tNoise, tq * vec2(0.55, 0.9) + 0.6).g;
+        float crk = (1.0 - smoothstep(0.0, 0.012 + 0.6 * aa, abs(cr - 0.5))) * smoothstep(0.35, 0.6, texture(tNoise, tq * 0.21).b);
+        c *= 1.0 - 0.5 * crk;
+        float dirt = smoothstep(0.5, 0.85, texture(tNoise, tq * vec2(0.13, 0.35) + 0.2).g);
+        c *= 1.0 - 0.26 * dirt;
+        #endif
+      }
+      return c;
+    }
+  `;
   const PLATE_GLSL = /* glsl */`
     uniform vec4 uPlA[24]; uniform vec4 uPlB[24]; uniform vec4 uPlC[24]; uniform int uNPl;
     int plateIdx(vec3 P) {
@@ -257,8 +346,10 @@
       return 1.0 - uCloudSh.w * smoothstep(0.62 - 0.26 * uCloudSh.z, 0.8 - 0.26 * uCloudSh.z, n);
     }
 
+    ${HASH_GLSL}
     ${TUFF_GLSL}
-    uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze, uBeach;
+    ${CONC_SURF}
+    uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze, uBeach, uConcNight;
     uniform float uEow;
     ${EOW_GLSL}
     // the landscape behind the slab (mode 1, ad = m beyond its back face): the old ghost haze while it fades
@@ -567,15 +658,15 @@
       // ASSET: tex_concrete (docs/ASSET_PROMPTS.md: textures/concrete_*.png, board-formed; this procedural look is the stand-in)
       // P29d bunker concrete: weathered grey cast concrete, horizontal board-formwork lines (0.3 m lifts), fine
       // aggregate speckle, darker rain-streaked stains running down from edges and a damp darker foot
+      float cRel = 0.0, kcR = 0.0;
       if (xc > 0.02) {
-        float lift = 1.0 - smoothstep(0.012, 0.03, abs(fract(vT.y / 0.3) - 0.5) - 0.47);
-        float agg = texture(tNoise, vT.xz * 6.3 + vT.y * 5.1).r, mot = texture(tNoise, vT.xz * 0.35 + vT.y * 0.2).g;
-        float streak = smoothstep(0.55, 0.9, texture(tNoise, vec2(dot(vT.xz, vec2(0.83, 0.56)) * 1.7, vT.y * 0.08)).b);
-        vec3 conc = vec3(0.245, 0.24, 0.225) * (0.82 + 0.3 * mot) * (0.93 + 0.12 * agg);   // weathered grey (albedo ~0.24: in this sun 0.4 read near-white)
-        conc *= 1.0 - 0.13 * lift - 0.22 * streak * (1.0 - smoothstep(-0.3, 0.6, up));
         float kj = 1.0;
-        if (uVolc > 0.5) { bool hz = abs(nW.y) > 0.62; vec2 tq = hz ? vT.xz : (abs(nW.x) > abs(nW.z) ? vT.zy : vT.xy); conc = tuffMasonry(tq, hz, up, kj); }
-        else if (uBeach > 0.5) { bool hz = abs(nW.y) > 0.62; vec2 tq = hz ? vT.xz : (abs(nW.x) > abs(nW.z) ? vT.zy : vT.xy); conc = pow(graniteMasonry(tq, hz, up, kj), vec3(2.2)); }
+        bool hzc = abs(nW.y) > 0.62;
+        vec2 tqc = hzc ? vT.xz : (abs(nW.x) > abs(nW.z) ? vT.zy : vT.xy);
+        vec3 conc;
+        if (uVolc > 0.5) conc = tuffMasonry(tqc, hzc, up, kj);
+        else if (uBeach > 0.5) conc = pow(graniteMasonry(tqc, hzc, up, kj), vec3(2.2));
+        else conc = concSurf(vT, nW, up, fw, cRel) * mix(vec3(1.0), vec3(1.1, 0.99, 0.84), uConcNight);       // (at night the moon's blue is taken out of grey concrete a little: the cut face is graded the same way, capPost)
         #ifdef S2
         if (uSlab.x > 0.5 && up > 0.75) {
           // P113 fort / ruin floors seen from above: cast panels with joints, rain stains, hairline cracks and moss creeping in from the back edge (the deck used to be one flat grey extrusion)
@@ -588,7 +679,7 @@
           conc = mix(conc, vec3(0.13, 0.17, 0.07) * (0.7 + 0.6 * texture(tNoise, vW.xz * 2.3).g), 0.7 * mo * smoothstep(0.3, 1.0, s2d));
         }
         #endif
-        float kc = smoothstep(0.2, 0.55, xc);
+        float kc = smoothstep(0.2, 0.55, xc); kcR = kc;
         col = mix(col, conc, kc); rough = mix(rough, uVolc > 0.5 ? 0.97 : 0.9, kc); RA *= 1.0 - kc * 0.7; GD *= 1.0 - kc; emis *= 1.0 - kc;
       }
       if (xs + xf > 0.02) {
@@ -618,7 +709,7 @@
         }
       }
       if (uEow > 0.5 && xs + xc > 0.02) eoHull(vT, nW, xs, xc, col, rough, emis, RA, GD);   // P68d: the wrecked hull (render/eowview.js)
-      float sv; relief = reliefH(vT, RA, fw, sv); glintD = GD;
+      float sv; relief = reliefH(vT, RA, fw, sv) + cRel * kcR; glintD = GD;
       #ifdef S2
       if (s2w > 0.0) {
         // P113 sand: wind ripples across the dune (crests run along the depth, wobbling with a noise), pale crests, darker troughs
@@ -784,6 +875,278 @@
     return m;
   }
 
+  /* P118b (QA1 Q-01: concrete was one flat beige / royal-blue fill): reinforced concrete cut through, the cap's material 15 (bunkers, forts, ruin walls and slabs).
+   * Everything is a function of the pinned face coordinates pu = (tau, y), of the density field (the distance d0 to the nearest surface and its gradient in the face plane, from dens()) and of
+   * the pixel footprint fw (every layer fades out before it aliases: the noise has no mip maps, and the stones that fade out leave their average):
+   *   paste     cement paste with per-pour tint, 1 m blotches and a sand speckle;
+   *   aggregate three layers of Voronoi-packed stones (cobbles 5-9 cm, 4-5 cm stones, 2 cm chips; limestone, granite, basalt, buff sandstone, quartz): rounded polygons separated by thin paste;
+   *   pours     horizontal cold joints every 1.25 m (a dark seam with a pale laitance lip), efflorescence drips under some of them;
+   *   rebar     two mats parallel to every surface at 85 mm cover, bars every 0.2 m (rows at fixed heights on walls, columns on slabs): steel disc, rust ring, rust halo in the paste,
+   *             rust runs below some bars (the cover is what the cut outline's own line leaves visible at the game zoom); behind a 0.26 m granite block facing on the beach pillboxes;
+   *   cracks    hairline cracks that start at a surface and run inward, wiggling and thinning (lanes along the surface), the wide ones with a leached pale edge; spalled patches, air voids;
+   *   weather   a darker 3 cm skin along every surface, wet streaks below the ground line above, a damp green foot where the wall stands in the ground, rain darkening.
+   * Returns the albedo; gCapWet = the share that shines. The surface concrete (the walls and floors seen in the bunkers) is CONC_SURF, further up. */
+  const CONC_CUT = /* glsl */`
+    // Voronoi-packed aggregate: the stone of the nearest feature point, a rounded polygon (radius rr cells, cut by the bisectors with its neighbours, a hair of paste between);
+    // cov = the stone, sc = its colour, rim = 1 at its edge
+    float stoneVor(vec2 p, float cell, float rr, float fillP, float seed, float aa, out vec3 sc, out float rim){
+      vec2 q = p / cell, id = floor(q), f = fract(q);
+      float d1 = 9.0, d2 = 9.0; vec3 ch = vec3(0.0);
+      vec2 sg = vec2(f.x < 0.5 ? -1.0 : 1.0, f.y < 0.5 ? -1.0 : 1.0);                       // the four cells round the pixel's quadrant (not all nine: the nearest points are there)
+      for (int k = 0; k < 4; k++) {
+        vec2 o = vec2(float(k & 1), float(k >> 1)) * sg; vec3 h = hc3(id + o + seed);
+        vec2 r = o + 0.12 + 0.76 * h.xy - f; float d = dot(r, r);
+        if (d < d1) { d2 = d1; d1 = d; ch = h; } else if (d < d2) d2 = d;
+      }
+      float e1 = sqrt(d1), e2 = sqrt(d2);
+      float R = rr * (0.62 + 0.76 * ch.z) * (ch.x < fillP ? 1.0 : 0.0);
+      float w = aa / cell, gap = 0.5 * (e2 - e1) - 0.035;                                  // distance to the bisector, minus the paste line
+      float m = min(R - e1, gap), cov = smoothstep(-w, w, m);
+      rim = (1.0 - smoothstep(0.0, 0.07, m)) * cov;
+      float kk = fract(ch.y * 5.17 + ch.z * 3.3);
+      vec3 c0 = kk < 0.34 ? vec3(0.37, 0.365, 0.35) : kk < 0.58 ? vec3(0.27, 0.265, 0.26) : kk < 0.70 ? vec3(0.15, 0.15, 0.155) : kk < 0.84 ? vec3(0.37, 0.34, 0.29) : kk < 0.94 ? vec3(0.34, 0.3, 0.28) : vec3(0.5, 0.49, 0.46);
+      sc = c0 * (0.82 + 0.36 * fract(ch.x * 9.1 + ch.z * 4.7));
+      return cov;
+    }
+    // a wiggling line at lane coordinate x (width w): used for cracks and drips
+    float lineD(float x, float c, float w, float aa){ return 1.0 - smoothstep(max(w, aa) * 0.5, max(w, aa) * 0.5 + aa, abs(x - c)); }
+    vec3 concCut(vec2 pu, float dd, out vec3 em, out float wetK){
+      em = vec3(0.0); wetK = 0.0;
+      float fw = max(max(length(cGx), length(cGy)), 1e-4), aa = 0.8 * fw;
+      vec2 dW2 = vec2(uN.z, -uN.x); vec3 dw3 = vec3(dW2.x, 0.0, dW2.y);
+      // the surface: distance d0 (m) to the nearest surface and its inward gradient gr in the face plane (gl = how much of the surface's normal lies in the plane)
+      float d0 = dens(vW); const float EX = 0.1;
+      vec2 gr = vec2(dens(vW + dw3 * EX) - dens(vW - dw3 * EX), dens(vW + vec3(0.0, EX, 0.0)) - dens(vW - vec3(0.0, EX, 0.0))) / (2.0 * EX);
+      float gl = length(gr);
+      d0 = clamp(d0, 0.0, 1.5);
+      // ---- paste: per-pour tint, blotches, speckle
+      float lift = floor((pu.y + 0.04 * sin(pu.x * 0.7)) / 1.25);
+      vec3 lh = hc3(vec2(lift, 3.0));
+      float m1 = texture(tNoise, pu * 0.23 + vec2(0.3, 0.7)).g, m2 = texture(tNoise, pu * vec2(0.9, 0.35) + 0.4).r, m3 = texture(tNoise, pu * 2.1 + 0.1).g;
+      vec3 paste = vec3(0.335, 0.33, 0.315) * mix(vec3(0.95, 0.96, 1.0), vec3(1.04, 1.02, 0.97), lh.x) * (0.94 + 0.12 * lh.y);
+      vec3 col = paste * (0.88 + 0.24 * m1) * (0.95 + 0.1 * m2) * (0.94 + 0.12 * m3);
+      float kFine = 1.0 - smoothstep(0.0016, 0.0045, fw);
+      if (kFine > 0.0) col *= 1.0 + (texture(tNoise, pu * 17.0).b - 0.5) * 0.2 * kFine + (texture(tNoise, pu * 41.0 + 0.3).b - 0.5) * 0.12 * (1.0 - smoothstep(0.0007, 0.002, fw));       // (the fetches only where a pixel is small enough to show them)
+      // ---- aggregate
+      vec3 sc = vec3(0.4), sc2 = vec3(0.4); float rim = 0.0, rim2 = 0.0;
+      float kA = smoothstep(0.55, 1.3, 0.055 * 0.3 / max(aa, 1e-4)), kB = smoothstep(0.55, 1.3, 0.026 * 0.3 / max(aa, 1e-4));
+      float cA = 0.0, cB = 0.0, cC = 0.0, rimC = 0.0; vec3 scC = vec3(0.3);
+      float kC = smoothstep(0.55, 1.3, 0.13 * 0.3 / max(aa, 1e-4));
+      if (kC > 0.0) cC = stoneVor(vec2(pu.x * 0.6 - pu.y * 0.8, pu.y * 0.6 + pu.x * 0.8) + 3.0, 0.13, 0.44, 0.34, 9.0, aa, scC, rimC) * kC;
+      if (kA > 0.0) cA = stoneVor(pu, 0.055, 0.42, 0.8, 1.0, aa, sc, rim) * kA * (1.0 - cC);
+      if (kB > 0.45 && uConcQ > 0.5) cB = stoneVor(vec2(pu.x * 0.8 + pu.y * 0.6, pu.y * 0.8 - pu.x * 0.6) + 7.0, 0.026, 0.42, 0.7, 5.0, aa, sc2, rim2) * kB * (1.0 - cA);
+      float gr1 = fw < 0.006 ? 0.88 + 0.24 * texture(tNoise, pu * 23.0).b : 1.0, gc = fw < 0.01 ? 0.9 + 0.2 * texture(tNoise, pu * 11.0).b : 1.0;
+      col = mix(col, mix(paste * 0.9, scC, 0.75) * gc * (1.0 - 0.22 * rimC), cC);
+      col = mix(col, mix(paste * 0.9, sc, 0.75) * gr1 * (1.0 - 0.2 * rim), cA);
+      col = mix(col, mix(paste * 0.9, sc2, 0.7) * gr1 * (1.0 - 0.2 * rim2), cB);
+      col += (1.0 - kA) * 0.28 * (vec3(0.25, 0.245, 0.23) - paste) + (1.0 - kB) * 0.16 * (vec3(0.25, 0.245, 0.23) - paste);   // (the average of the stones that faded out)
+      // ---- cold joints between the pours, with drips of efflorescence below some of them
+      {
+        float yl = pu.y + 0.015 * sin(pu.x * 1.9 + lift) + 0.01 * (m1 - 0.5), lf = fract(yl / 1.25), jd = min(lf, 1.0 - lf) * 1.25;
+        float seam = lineD(jd, 0.0, 0.008, aa), lip = (1.0 - smoothstep(0.0, 0.05, abs(lf * 1.25 - 0.045))) * 0.5;
+        col *= 1.0 - 0.38 * seam;
+        col = mix(col, col * vec3(1.08, 1.08, 1.06), lip * (1.0 - seam));
+        float below = fract(yl / 1.25) * 1.25;                                            // metres above the last joint
+        vec3 hj = hc3(vec2(lift, 11.0)); float lane = floor(pu.x / 0.3), hl = hc1(vec2(lane, lift * 3.0 + 1.0));
+        float dx = fract(pu.x / 0.3) * 0.3 - 0.3 * (0.2 + 0.6 * hl), dripL = 0.08 + 0.5 * hl * hl;
+        float drip = lineD(dx + 0.012 * sin(below * 11.0 + hl * 9.0), 0.0, 0.012 + 0.012 * hl, aa) * step(hl, 0.45 * hj.x + 0.1) * (1.0 - smoothstep(0.0, dripL, 1.25 - below)) * step(1.25 - below, dripL);
+        col = mix(col, vec3(0.5, 0.49, 0.45), drip * 0.5);
+      }
+      // ---- rebar: two mats parallel to every surface at 85 mm cover (what the cut outline's own line leaves visible at the game zoom). On a wall (the surface mostly vertical in the face) the bars sit in rows at fixed heights, on a slab in
+      // columns at fixed positions; the centre is where the row / column meets the iso-line d = cover (the linearised density field), so it is the same for every pixel of a bar
+      float faceT = uBeach > 0.5 ? 0.26 : 0.0;                                          // (the granite facing of a beach pillbox: the bars sit behind it)
+      float barVis = smoothstep(0.2, 0.5, gl) * (1.0 - smoothstep(0.38 + faceT, 0.54 + faceT, d0));
+      if (barVis > 0.0) {
+        float COVER = 0.085 + faceT; const float PIT = 0.2, RB = 0.0125;
+        bool vert = abs(gr.x) > abs(gr.y);
+        vec2 cen; float rowId;
+        if (vert) { float yk = (floor(pu.y / PIT) + 0.5) * PIT; cen = vec2(pu.x + (COVER - d0 - gr.y * (yk - pu.y)) / gr.x, yk); rowId = floor(pu.y / PIT); }
+        else { float xk = (floor(pu.x / PIT) + 0.5) * PIT; cen = vec2(xk, pu.y + (COVER - d0 - gr.x * (xk - pu.x)) / gr.y); rowId = floor(pu.x / PIT) + 977.0; }
+        float bd = length(pu - cen);
+        vec3 hb = hc3(vec2(rowId, 1.0));
+        float rust = 0.25 + 0.75 * hb.x * hb.x;
+        float rr = RB * (0.9 + 0.2 * hb.y), vis = clamp(rr / max(0.7 * aa, 1e-4), 0.0, 1.0);
+        float rw = rr + 0.0035 * (0.5 + rust);
+        float bar = (1.0 - smoothstep(rr - aa, rr + aa, bd)) * vis, ring = (1.0 - smoothstep(rw - aa, rw + aa, bd)) * vis;
+        float halo = (1.0 - smoothstep(rr, rr * 4.4 + 0.016 * rust, bd)) * mix(1.0, vis, 0.6);
+        col = mix(col, col * vec3(0.84, 0.62, 0.45), halo * (0.35 + 0.6 * rust) * barVis);
+        float hlt = 1.0 - smoothstep(0.0, rr * 1.2, length(pu - cen - vec2(-0.35, 0.35) * rr));
+        vec3 steel = vec3(0.05, 0.055, 0.065) + vec3(0.12, 0.125, 0.14) * hlt;
+        col = mix(col, vec3(0.30, 0.115, 0.04) * (0.8 + 0.5 * hb.z), ring * barVis * (0.55 + 0.45 * rust));
+        col = mix(col, steel, bar * barVis);
+        if (vert && hb.z < 0.3) {                                                         // a rust run below the bar
+          float runL = 0.12 + 0.55 * hb.y, below = cen.y - pu.y;
+          float rn = (1.0 - smoothstep(0.0, runL, below)) * step(0.0, below) * step(0.01, bd);
+          col = mix(col, col * vec3(0.78, 0.6, 0.46), rn * lineD(pu.x - cen.x, 0.0, 0.016 + 0.02 * hb.x, aa) * 0.7 * barVis);
+        }
+      }
+      // ---- hairline cracks from the surface inward: lanes along the surface (a grid in the dominant axis), each with a crack by chance
+      float crk = 0.0, leach = 0.0;
+      if (d0 < 0.8 && gl > 0.3) {
+        bool vert = abs(gr.x) > abs(gr.y);
+        float tc = vert ? pu.y : pu.x, LW = 0.42;
+        float lane = floor(tc / LW), fl = tc / LW - lane;
+        vec3 hc = hc3(vec2(lane, vert ? 21.0 : 23.0));
+        float L = 0.1 + 0.65 * hc.y * hc.y;
+        if (hc.x < 0.3) {
+          float wig = (texture(tNoise, vec2(d0 * 2.3 + hc.z * 9.0, lane * 0.071)).g - 0.5) * 0.09 + (texture(tNoise, vec2(d0 * 9.0 + hc.z * 5.0, lane * 0.13)).b - 0.5) * 0.02;
+          float tcc = (0.2 + 0.6 * hc.z) * LW + wig;
+          float wdt = (0.0009 + 0.005 * hc.y * hc.y * hc.y) * (1.0 - smoothstep(0.0, L, d0));
+          float taper = 1.0 - smoothstep(L * 0.6, L, d0);
+          float ln = lineD(fl * LW, tcc, wdt, aa * 0.8) * taper;
+          crk = ln;
+          leach = lineD(fl * LW, tcc, wdt + 0.012, aa) * taper * step(0.006, wdt) * (1.0 - ln);
+        }
+      }
+      col = mix(col, col * 1.1 + vec3(0.03), leach * 0.35);
+      col = mix(col, vec3(0.05, 0.048, 0.045), crk * 0.7);
+      // ---- spalled patches next to a surface (the skin is gone: the rough dark core shows, rust on the bars) and air voids
+      {
+        float sp = d0 < 0.1 ? smoothstep(0.76, 0.86, texture(tNoise, pu * 3.4 + 0.37).b) * (1.0 - smoothstep(0.03, 0.1, d0)) : 0.0;
+        col = mix(col, col * vec3(0.58, 0.52, 0.47), sp * 0.8);
+        float kV = 1.0 - smoothstep(0.003, 0.009, fw);
+        if (kV > 0.0) {
+          vec2 vq = pu / 0.017, vid = floor(vq); vec3 hv = hc3(vid + 61.0);
+          float vd = length((fract(vq) - 0.2 - 0.6 * hv.xy) * 0.017), vr = 0.0012 + 0.0035 * hv.z * hv.z;
+          float vo = (1.0 - smoothstep(vr * 0.7, vr, vd)) * step(0.86, hv.x * 0.3 + hv.z * 0.7 + 0.15) * kV;
+          col = mix(col, col * vec3(0.38, 0.37, 0.36), vo);
+        }
+      }
+      // ---- the beach pillboxes are faced with granite blocks (render: graniteMasonry on the outside and inside): a 0.26 m facing of block cross-sections, a mortar bed behind it, a concrete core
+      if (uBeach > 0.5) {
+        float fac = 1.0 - smoothstep(0.23, 0.29, d0);
+        if (fac > 0.0) {
+          bool vv = abs(gr.x) > abs(gr.y);
+          float tcb = vv ? pu.y : pu.x, rowH = vv ? 0.55 : 1.3, row = floor(tcb / rowH), fr = tcb / rowH - row;
+          vec3 hg = hc3(vec2(row, vv ? 5.0 : 6.0));
+          vec3 gran = pow(mix(vec3(0.40, 0.31, 0.26), vec3(0.54, 0.43, 0.36), hg.x) * (0.9 + 0.2 * hg.y), vec3(2.2));
+          gran *= 0.88 + 0.24 * texture(tNoise, pu * 11.0 + hg.xy).b;
+          gran = mix(gran, pow(vec3(0.62, 0.52, 0.48), vec3(2.2)), smoothstep(0.8, 0.92, texture(tNoise, pu * 29.0).b) * 0.5);
+          float jn = min(fr, 1.0 - fr) * rowH, mortar = 1.0 - smoothstep(0.006, 0.016 + aa, jn);
+          gran = mix(gran, vec3(0.22, 0.2, 0.18), mortar * 0.8);
+          col = mix(col, gran, fac);
+          col *= 1.0 - 0.45 * (1.0 - smoothstep(0.0, 0.012 + aa, abs(d0 - 0.26)));
+        }
+      }
+      // ---- skin and wet streaks
+      col *= mix(0.8, 1.0, smoothstep(0.0, 0.035, d0));
+      {
+        float sx = pu.x * 2.3 + 0.37 * sin(pu.y * 0.8 + pu.x * 0.3), sk = texture(tNoise, vec2(sx, 0.13)).g, ln = texture(tNoise, vec2(sx * 0.6 + 0.2, pu.y * 0.09)).b, sp2 = smoothstep(0.35, 0.7, texture(tNoise, vec2(pu.x * 0.08, 0.77)).r);
+        float depthK = smoothstep(3.0, 0.2, dd);
+        float st = smoothstep(0.76, 0.9, sk) * smoothstep(0.25, 0.75, ln + 0.4 * depthK - 0.15) * depthK * sp2;
+        col *= 1.0 - 0.32 * st; col = mix(col, col * vec3(0.9, 0.97, 0.9), st * 0.4);
+        wetK = st * 0.4;
+      }
+      // the foot: where the concrete stands in the ground (another material within a metre below) it is damp, darker and a little green
+      {
+        float damp = 0.0; ivec3 vmx = ivec3(uVolSize) - 1;
+        for (int k = 1; k <= 2; k++) {
+          vec2 tv = texelFetch(tVol, clamp(ivec3(floor((vW + vec3(0.0, -0.4 * float(k), 0.0)) / 0.5 + 0.5)), ivec3(0), vmx), 0).rg;
+          if (tv.r > 0.0 && (int(tv.g + 0.5) & 31) != 15) { damp = 1.0 - 0.4 * float(k - 1); break; }
+        }
+        float dn = 0.6 + 0.4 * texture(tNoise, pu * vec2(1.7, 0.5) + 0.2).g;
+        col = mix(col, col * vec3(0.7, 0.74, 0.66), damp * dn * 0.7);
+      }
+      col *= 1.0 - 0.3 * uWet;
+      wetK = max(wetK, uWet * 0.6);
+      return col;
+    }
+  `;
+
+  /* P118b (QA1 Q-14: the canyon cut face was a smooth red-orange gradient): sedimentary strata of the cut face, a function of the stratigraphic height zb (world y plus the slow
+   * regional warp) so the same bed continues across the map. Three nested sequences of beds (formations about 2.6 m, beds 0.9 m, thin beds 0.23 m; every boundary shifted by its
+   * own hash, so thicknesses run from 5 cm to 3 m) give the colour: each formation and bed picks a hue from a palette (brick red, red-orange, orange-tan, salmon, buff, purple-brown,
+   * grey-green silt; uStrata = how much of the pale / exotic end a map shows: canyon most), a thin bed a lightness. Bedding planes are dark lines, a hard bed (resistant ledge) is
+   * paler with a bright lip and throws a shadow on the soft bed under it; soft beds are darker and pitted (honeycomb weathering). Inside a bed: laminae along the bed, cross-bedding
+   * (dipping laminae truncated by the bed's own planes) in the thick ones, a pebble lens in a few thin beds; across the beds: desert-varnish streaks and open vertical joints.
+   * Everything fades out with the pixel footprint fw. */
+  const STRATA_CUT = /* glsl */`
+    float bedOf(float z, float T, float seed, out float lo, out float hi){
+      float i0 = floor(z / T), b0 = (i0 + 0.8 * (hc1(vec2(i0, seed)) - 0.5)) * T;
+      bool up = z >= b0; float i = up ? i0 : i0 - 1.0;
+      lo = up ? b0 : (i0 - 1.0 + 0.8 * (hc1(vec2(i0 - 1.0, seed)) - 0.5)) * T;
+      hi = up ? (i0 + 1.0 + 0.8 * (hc1(vec2(i0 + 1.0, seed)) - 0.5)) * T : b0;
+      return i;
+    }
+    vec3 strataPal(float h, float variety){
+      h = pow(h, 1.0 + 0.7 * (1.0 - variety));
+      if (h < 0.10) return vec3(0.13, 0.055, 0.045);
+      if (h < 0.24) return vec3(0.34, 0.085, 0.045);
+      if (h < 0.52) return mix(vec3(0.54, 0.15, 0.05), vec3(0.62, 0.2, 0.065), (h - 0.24) / 0.28);
+      if (h < 0.68) return vec3(0.68, 0.3, 0.11);
+      if (h < 0.78) return vec3(0.66, 0.33, 0.22);
+      if (h < 0.89) return vec3(0.74, 0.56, 0.36);
+      if (h < 0.94) return vec3(0.28, 0.12, 0.11);
+      return vec3(0.30, 0.31, 0.26);
+    }
+    // a formation (2-4 m): cliff-forming (hard) units are red / orange / salmon / buff, slope-forming (soft) units dark brown, purple-brown, dull red, grey-green silt
+    vec3 formationCol(float h, float hard, float variety){
+      if (hard > 0.5) {
+        h = pow(h, 1.0 + 0.6 * (1.0 - variety));
+        if (h < 0.22) return vec3(0.40, 0.095, 0.05);
+        if (h < 0.62) return mix(vec3(0.60, 0.17, 0.06), vec3(0.74, 0.27, 0.085), (h - 0.22) / 0.4);
+        if (h < 0.80) return vec3(0.78, 0.38, 0.13);
+        if (h < 0.90) return vec3(0.76, 0.42, 0.29);
+        return vec3(0.84, 0.66, 0.43);
+      }
+      if (h < 0.34) return vec3(0.15, 0.058, 0.045);
+      if (h < 0.62) return vec3(0.29, 0.1, 0.065);
+      if (h < 0.84) return vec3(0.23, 0.105, 0.1);
+      return mix(vec3(0.29, 0.105, 0.07), vec3(0.30, 0.31, 0.26), variety);
+    }
+    vec3 sandStrata(vec2 pu, float zb, float fw, float variety){
+      float aa = max(fw, 0.004);
+      float loF, hiF, loB, hiB, loC, hiC;
+      float iF = bedOf(zb, 2.0, 3.0, loF, hiF), iB = bedOf(zb, 0.6, 7.0, loB, hiB), iC = bedOf(zb, 0.16, 11.0, loC, hiC);
+      vec3 hF = hc3(vec2(iF, 3.1)), hFa = hc3(vec2(iF + 1.0, 3.1)), hB = hc3(vec2(iB, 7.3)), hC = hc3(vec2(iC, 11.7)), hX = hc3(vec2(iB, 29.0)), hA = hc3(vec2(iB + 1.0, 7.3));
+      float hardF = step(0.38, hF.y), hardFa = step(0.38, hFa.y);
+      vec3 col = mix(formationCol(hF.x, hardF, variety), strataPal(hB.x, variety), 0.2) * (0.76 + 0.48 * hB.z) * (0.86 + 0.28 * hC.x) * mix(vec3(0.94, 0.95, 1.0), vec3(1.05, 1.03, 0.97), hC.y);
+      float hard = smoothstep(0.45, 0.7, hB.y), hardAbove = smoothstep(0.45, 0.7, hA.y);
+      col *= mix(0.92, 1.1, hard);
+      float eUB = hiB - zb, eDB = zb - loB, eUC = hiC - zb, eDC = zb - loC, eUF = hiF - zb, eDF = zb - loF;
+      // bedding planes, the lip of a hard bed, the shadow it throws on the soft bed below; the same at the formation scale, stronger
+      col *= 1.0 - 0.5 * (1.0 - smoothstep(0.0, 0.025 + aa, min(eUF, eDF))) - 0.27 * (1.0 - smoothstep(0.0, 0.014 + aa, min(eUB, eDB))) - 0.11 * (1.0 - smoothstep(0.0, 0.009 + aa, min(eUC, eDC)));
+      col *= 1.0 + 0.16 * hard * (1.0 - smoothstep(0.0, 0.05, eUB)) - 0.4 * hardAbove * (1.0 - smoothstep(0.0, 0.25, eUB)) * (1.0 - 0.6 * hard);
+      col *= 1.0 + 0.2 * hardF * (1.0 - smoothstep(0.0, 0.07, eUF)) - 0.45 * hardFa * (1.0 - hardF) * (1.0 - smoothstep(0.0, 0.45, eUF));
+      // laminae along the bed, wavering
+      float kL = 1.0 - smoothstep(0.012, 0.05, fw), kG = 1.0 - smoothstep(0.003, 0.012, fw);
+      float lw = (texture(tNoise, vec2(pu.x * 0.03, zb * 0.4)).g - 0.5) * 2.2;
+      float lam = texture(tNoise, vec2(pu.x * 0.045 + hB.z * 13.0, zb * 14.0 + lw)).g - 0.5, lam2 = texture(tNoise, vec2(pu.x * 0.11, zb * 33.0 + lw * 2.0)).b - 0.5;
+      col *= 1.0 + (0.22 * lam * mix(1.2, 0.7, hard) + 0.12 * lam2) * kL;
+      // cross-bedding in the thick beds: a set of laminae dipping across the bed (the coordinate along the dip drives a stretched noise), cut off by the bed's own planes
+      float thick = hiB - loB, xb = step(0.55, hX.x) * smoothstep(0.4, 0.7, thick);
+      if (xb > 0.0 && kL > 0.0) {
+        float dip = (hX.y - 0.5) * 0.9, zl = zb + dip * (pu.x - hX.z * 60.0) + 0.04 * lw + 0.012 * (pu.x - hX.z * 60.0) * (pu.x - hX.z * 60.0) * sign(dip) * 0.05;
+        float xl = texture(tNoise, vec2(zl * 5.5, hX.z * 3.0)).r - 0.5, xl2 = texture(tNoise, vec2(zl * 21.0, hX.z * 5.0 + 0.3)).g - 0.5;
+        col *= 1.0 + (0.24 * xl + 0.2 * xl2) * xb * kL;
+      }
+      // pebble lens in a few thin beds
+      if (hC.z > 0.93 && fw < 0.02) {
+        vec3 sc; float rim; float cv = stoneVor(pu, 0.055, 0.42, 0.9, 5.0, aa, sc, rim);
+        vec3 pc = col * (0.6 + 0.9 * hc3(vec2(floor(pu.x / 0.055), floor(pu.y / 0.055))).x);
+        col = mix(col, pc * (1.0 - 0.25 * rim), cv * (1.0 - smoothstep(0.012, 0.02, fw)));
+      }
+      // soft beds: honeycomb pits (weathered hollows with a pale lip), in a few beds only
+      float kP = (1.0 - hard) * step(0.78, hB.z) * (1.0 - smoothstep(0.008, 0.03, fw));
+      if (kP > 0.0) {
+        vec3 sc; float rim; float cv = stoneVor(vec2(pu.x, zb) + 3.0, 0.12, 0.36, 0.55, 17.0, aa, sc, rim);
+        col *= 1.0 - (0.3 * cv - 0.12 * rim * cv) * kP;
+      }
+      // grains
+      col *= 1.0 + (texture(tNoise, pu * 13.0 + 0.2).b - 0.5) * 0.12 * kG;
+      // desert varnish: dark soft streaks running down from the ledges (broken up along their length), and open vertical joints (a few, not through every bed)
+      float vlen = smoothstep(0.4, 0.62, texture(tNoise, vec2(pu.x * 0.5 + 0.3, zb * 0.13)).g);
+      float vs = smoothstep(0.64, 0.86, texture(tNoise, vec2(pu.x * 0.5, zb * 0.04)).g) * smoothstep(0.35, 0.6, texture(tNoise, vec2(pu.x * 0.06, 0.3)).r) * vlen;
+      col = mix(col, col * vec3(0.62, 0.52, 0.47), vs * 0.5);
+      float LW = 2.3, lane = floor(pu.x / LW); vec3 hJ = hc3(vec2(lane, 41.0));
+      float jx = pu.x - (lane + 0.2 + 0.6 * hJ.y) * LW + 0.03 * (hC.z - 0.5) + 0.02 * sin(zb * 3.1 + hJ.z * 9.0);
+      float jseg = smoothstep(0.35, 0.55, texture(tNoise, vec2(lane * 0.37 + 0.2, zb * 0.09)).g);
+      col *= 1.0 - 0.42 * (1.0 - smoothstep(0.0, 0.012 + aa, abs(jx) - 0.003 - 0.012 * hJ.z)) * step(hJ.x, 0.3) * jseg;
+      { float lm = dot(col, vec3(0.2126, 0.7152, 0.0722)); col *= pow(max(lm, 1e-4) / 0.3, 0.42); }                      // (more tonal separation between the beds, the hue kept)
+      return col;
+    }
+  `;
+
   /* The cut face: a plane at t = 0 (slice zero) coloured from the 3D world texture.
    * Material weights come from the lattice points around a noise-jittered position: a quadratic B-spline over 27
    * points (C1, so a voxel staircase becomes a smooth curve) or, on Low, trilinear over 8 (C0: corners at every
@@ -799,13 +1162,15 @@
       sh.vertexShader = 'uniform vec3 uO, uN; varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vW -= uN * dot(vW - uO, uN);');
       sh.fragmentShader = /* glsl */`
         uniform highp sampler3D tVol; uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tCover; uniform highp sampler2D tLavaS;
-        uniform vec3 uVolSize, uO, uN, uGrassTint; uniform float uTime, uSea, uHalf, uVolc; uniform vec3 uMatTint[12];
+        uniform vec3 uVolSize, uO, uN, uGrassTint; uniform float uTime, uSea, uHalf, uVolc, uWet, uBeach; uniform vec3 uMatTint[12];
         uniform highp sampler2D tFar; uniform vec4 uFar; uniform vec2 uLat; uniform vec3 uLatR;   // D5 far strip: u0, du, n, on; lattice size; D6 disc
-        uniform highp sampler3D tN3; uniform float uS0; uniform float uNL, uSL; uniform float uEow; uniform float uUnder, uCapDet;
+        uniform highp sampler3D tN3; uniform float uS0; uniform float uNL, uSL; uniform float uEow; uniform float uUnder, uCapDet, uCapDbg;
+        uniform vec4 uCapFill, uCapGrade; uniform float uCapFlash, uStrata, uConcQ;
         varying vec3 vW;
         ${CRACK_GLSL}
         ${FOAM_GLSL}
         ${PLATE_GLSL}
+        ${HASH_GLSL}
         ${TUFF_GLSL}
         ${EOW_GLSL}
         // C1 (user: the face must not SCROLL while the section turns; each spot morphs into another random part of the
@@ -955,23 +1320,62 @@
           if (soilM) col *= mix(0.62, 1.0, smoothstep(0.0, 0.4, dd));
           return col;
         }
+        ${CONC_CUT}
+        ${STRATA_CUT}
+        /* P118b (QA1 Q-02: night and storm turned the board black): the cut face takes its light AFTER the scene's lighting. uCapFill = a sky / moonlight fill on the section
+         * (colour x strength): a soft floor under the lit colour, sqrt(L^2 + lift^2), lift = k x albedo^0.45 in the hue of the material, so the dark materials (soil, basalt) are
+         * lifted most, the bright ones (sand, concrete) hardly at all, and every material keeps its rank (the eye is dark-adapted: night contrast is compressed, not gone);
+         * a lightning flash lights it too (uCapFlash, from the weather); uCapGrade = the colour grade of the board (rgb gain, w = saturation): the moon's blue light is taken out
+         * of it, so concrete is grey and sand pale, not royal blue */
+        vec3 capPost(vec3 L, vec3 alb){
+          if (uCapFill.w <= 0.0 && uCapFlash <= 0.0 && uCapGrade.w > 0.999) return L;                     // (daylight: nothing to do)
+          float la = dot(alb, vec3(0.2126, 0.7152, 0.0722));
+          vec3 hue = mix(vec3(1.0), clamp(alb / max(la, 1e-3), 0.3, 2.5), 0.55);
+          float kd = 1.0 - 0.85 * smoothstep(0.10, 0.36, la);
+          vec3 lift = uCapFill.rgb * hue * (uCapFill.w * (1.0 - uEow) * pow(la * 5.0 + 0.02, 0.4) * kd);       // (space has no sky to fill the shadows: End of the World keeps its own lights)
+          L = sqrt(L * L + lift * lift) + alb * vec3(0.8, 0.86, 1.0) * (0.3 * uCapFlash);
+          float l = dot(L, vec3(0.2126, 0.7152, 0.0722));
+          return mix(vec3(l), L, uCapGrade.w) * uCapGrade.rgb;
+        }
         vec3 capCol(int mat, vec2 pu, vec3 strata, float dd, vec4 sf, float heat, out vec3 em){
           em = vec3(0.0);
           if (uEow > 0.5 && (mat == 13 || mat == 15)) return eoCap(pu, vW, em);   // P68d: the wrecked hull's cut (render/eowview.js)
           // P7: girder steel (13): the beam's cut, a painted plate with a dark web line; foam (14): bubbly pale cells
-          if (mat == 13) { int pi = uNPl > 0 ? plateIdx(vW) : -1; if (pi >= 0) return plateCut(pi, vW); float web = 1.0 - smoothstep(0.03, 0.06, abs(fract(pu.y * 1.6) - 0.5)); return vec3(0.47, 0.24, 0.12) * (1.0 - 0.45 * web) * (0.9 + 0.2 * texture(tNoise, pu * 0.5).r); }
+          if (mat == 13) {
+            int pi = uNPl > 0 ? plateIdx(vW) : -1; if (pi >= 0) return plateCut(pi, vW);
+            // P118b: a solid steel girder cut through (a placed girder, the hull of a wreck): bright ground steel with fine machining marks and a faint temper tint, the painted skin
+            // (orange-brown, 2 cm) along every surface with chips and a rust bloom where the paint is gone, a dark scale line under the skin; semi-gloss
+            float sd = clamp(dens(vW), 0.0, 1.5);
+            float ms = max(max(length(cGx), length(cGy)), 1e-4), kS = 1.0 - smoothstep(0.004, 0.02, ms);
+            float mk = texture(tNoise, vec2(pu.x * 0.35, pu.y * 41.0)).g, mk2 = texture(tNoise, vec2(pu.x * 1.1 + 0.3, pu.y * 83.0)).b, cl = texture(tNoise, pu * 0.7 + 0.2).a;
+            vec3 stl = vec3(0.25, 0.265, 0.29) * (0.82 + 0.36 * cl) * (1.0 + (mk - 0.5) * 0.3 * kS + (mk2 - 0.5) * 0.18 * kS);
+            stl *= mix(vec3(1.0), vec3(1.04, 0.99, 0.93), smoothstep(0.4, 0.7, texture(tNoise, pu * 0.31 + 0.6).r));
+            float skin = 1.0 - smoothstep(0.014, 0.026, sd), chip = smoothstep(0.62, 0.8, texture(tNoise, pu * 4.3 + 0.1).g) * skin;
+            vec3 paint = vec3(0.47, 0.24, 0.12) * (0.88 + 0.24 * texture(tNoise, pu * 1.9).r);
+            vec3 rustc = vec3(0.26, 0.12, 0.06) * (0.8 + 0.5 * texture(tNoise, pu * 9.0).b);
+            vec3 c = mix(stl, mix(paint, rustc, chip), skin);
+            c *= 1.0 - 0.35 * (1.0 - smoothstep(0.0, 0.01 + ms, abs(sd - 0.03))) * step(0.0, sd - 0.026);
+            gCapWet = max(gCapWet, 0.55 * (1.0 - skin));
+            return c;
+          }
           if (mat == 14) { em = vec3(0.2, 0.21, 0.225); return foamLook(pu, 0.2, 1.0); }        // P37 W4: white honeycomb cut (a field of hexagonal cells looking into the block)
           // P31 obsidian cut: black glass, curved conchoidal fracture lines, a faint grey flow banding
           if (mat == 16) { float cf = texture(tNoise, pu * 0.8).r, rip = 0.5 + 0.5 * sin(cf * 30.0); float band = texture(tNoise, vec2(pu.x * 0.15, pu.y * 2.2)).g;
             return vec3(0.03, 0.028, 0.034) * (0.8 + 0.4 * rip) + vec3(0.025) * smoothstep(0.62, 0.8, band); }
           // P29d concrete cut: grey matrix, coarse aggregate stones, rebar cut ends every 0.2 m (rust-brown dots)
           if (mat == 15) {
-            float ag = texture(tNoise, pu * 3.7 + vec2(0.13, 0.71)).r * 0.6 + texture(tNoise, pu * 9.1 + 0.3).g * 0.4, ag2 = texture(tNoise, pu * 1.1).b;
-            vec3 c = vec3(0.36, 0.355, 0.335) * (0.9 + 0.14 * ag2);
-            c = mix(c, vec3(0.43, 0.41, 0.39) * (0.85 + 0.3 * ag), smoothstep(0.62, 0.72, ag) * 0.45);   // aggregate stones (two scales: no tiling)
-            if (uVolc > 0.5) { float kj; c = tuffMasonry(pu, false, 0.0, kj) * 1.3 * (0.85 + 0.3 * ag); }        // P65i: a cut through a ruin wall shows the dark stone courses
-            float rb = 1.0 - smoothstep(0.012, 0.022, length(fract(pu / 0.2) - 0.5));
-            return mix(c, vec3(0.32, 0.17, 0.09), rb * 0.9);
+            if (uVolc > 0.5) {                                                                               // P65i: a cut through a ruin wall shows the dark stone courses
+              float ag = texture(tNoise, pu * 3.7 + vec2(0.13, 0.71)).r * 0.6 + texture(tNoise, pu * 9.1 + 0.3).g * 0.4, kj;
+              vec3 c = tuffMasonry(pu, false, 0.0, kj) * 1.3 * (0.85 + 0.3 * ag);
+              float rb = 1.0 - smoothstep(0.012, 0.022, length(fract(pu / 0.2) - 0.5));
+              return mix(c, vec3(0.32, 0.17, 0.09), rb * 0.9);
+            }
+            float cwet; vec3 cc = concCut(pu, dd, em, cwet); gCapWet = max(gCapWet, cwet);
+            return cc;
+          }
+          if (mat == 5 && uVolc > 0.5) {                                                                      // P118b: sandstone on the volcanic island is the ruins' brick (no canyon strata there): dressed tuff courses like the walls' concrete
+            float kjb; float agb = texture(tNoise, pu * 3.7 + vec2(0.13, 0.71)).r * 0.6 + texture(tNoise, pu * 9.1 + 0.3).g * 0.4;
+            return tuffMasonry(pu, false, 0.0, kjb) * 1.6 * (0.85 + 0.3 * agb);
           }
           int L = mat - 1;
           vec3 own = texM(pu, vec2(0.16), float(L), vec2(1.0)) * uMatTint[L];
@@ -991,7 +1395,7 @@
             // ash / tephra: dark grey cinders, a few dull red scoria grains (muted like the surface)
             col = mix(own, vec3(dot(own, vec3(0.299, 0.587, 0.114))) * vec3(0.9, 0.93, 1.0), 0.65) * 0.75;
           } else if (mat == 1 || mat == 2 || mat == 5 || mat == 12) {
-            vec3 tint = mat == 5 ? vec3(1.12, 0.78, 0.62) : mat == 1 ? vec3(0.5) : vec3(1.0);
+            vec3 tint = mat == 5 ? vec3(0.94, 0.83, 0.76) : mat == 1 ? vec3(0.5) : mat == 2 ? mix(vec3(0.79, 0.62, 0.485), vec3(0.98, 0.79, 0.62), uUnder) : vec3(1.0);
             col = mix(strata * tint, own, mat == 12 ? 0.75 : 0.35);
           } else if (mat == 9) {
             // Lava sealed in rock is an incandescent liquid (no crust): yellow-white core with slow, low-contrast
@@ -1148,7 +1552,9 @@
           float nb = n3(vW * vec3(0.21, 0.09, 0.21)).b, nz = n3(vW * vec3(0.05, 0.02, 0.05)).g;
           float warp = (n3(vW * vec3(0.012, 0.0, 0.012) + vec3(0.0, 0.37, 0.0)).a - 0.5) * 3.5 + (nz - 0.5) * 0.6;
           vec2 pu = vec2(tau, vW.y);
-          vec3 strata = texM(vec2(tau, vW.y + warp), vec2(0.11, 0.085), 14.0, vec2(1.0, 0.0)) * mix(vec3(0.92), vec3(1.08), nb);
+          // P118b: the sedimentary strata (sandStrata) are only built where a rock-like material is drawn
+          bool needStrata = m1 == 1 || m1 == 2 || m1 == 5 || m1 == 8 || m1 == 10 || m1 == 12 || (w2 > 0.0 && (m2 == 1 || m2 == 2 || m2 == 5 || m2 == 8 || m2 == 10 || m2 == 12));
+          vec3 strata = needStrata ? sandStrata(pu, vW.y + warp, max(length(cGx), length(cGy)), uStrata) * mix(vec3(0.94), vec3(1.06), nb) * 0.7 : vec3(0.3);
           float dd = depthB + (nb - 0.5) * 0.25;
           vec4 sf = outL || deepR ? vec4(0.0) : texture(tSurf, (vW.xz * 2.0 + 0.5) / uNL);
           vec3 e1, e2;
@@ -1178,6 +1584,8 @@
           if (uCrackOn > 0.5) { vec4 ckn = n3(vW * 2.3); float ckm = crackMask(vW, ckn.r, ckn.g); col = mix(col, vec3(0.03, 0.026, 0.022), ckm * 0.92); }   // P66b: cracks cut by the section
           diffuseColor.rgb = col;
         `)
+        .replace('#include <opaque_fragment>', 'outgoingLight = capPost(outgoingLight, diffuseColor.rgb);\n#include <opaque_fragment>')
+        .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n if (uCapDbg > 0.5) gl_FragColor = uCapDbg > 1.5 ? vec4(float(m1) / 255.0, float(m2) / 255.0, tb, 1.0) : vec4(1.0, 0.0, 1.0, 1.0);')   // tools (tools/dev/p118bshot.cjs): 1 = the cut face magenta (a mask), 2 = material ids (m1, m2, blend) as raw colour
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = mix(roughnessFactor, 0.28, gCapWet);')   // P76: wet seepage / crystals shine
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += cEmis;')
         // the cut face is an open section (nothing is drawn in front of it): light it from the sun's side of the
@@ -1201,7 +1609,7 @@
       uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHaze: { value: new T.Color(0xf3d2b0) }, uCaveAmb: { value: new T.Color(0, 0, 0) },
       uGrassTint: { value: new T.Color(1, 1, 1) }, uDryTint: { value: new T.Color(1, 1, 1) }, uSunDir: { value: new T.Vector3(0, 1, 0) },
       uHalf: { value: C.HALF }, uBack: { value: C.HALF }, uAlpha: { value: 0 }, uTime: { value: 0 }, uSea: { value: W.SEA }, uBeach: { value: 0 }, uWaterTex: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
-      uCaustic: { value: 1 }, uCloudSh: { value: new T.Vector4(0, 0, 0, 0) }, uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
+      uConcNight: { value: 0 }, uCaustic: { value: 1 }, uCloudSh: { value: new T.Vector4(0, 0, 0, 0) }, uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
       uVent: { value: Array.from({ length: 8 }, () => new T.Vector4()) }, uNVent: { value: 0 }, uVentHot: { value: 0 },   // P90: fumarole craters in the terrain shader (render/vents.js)
       uNL: { value: W.NX }, uSL: { value: W.SX },
       uLatR: { value: new T.Vector3(48, 48, 0) },   // D6: dry worlds' lattice disc (x, z, r; r 0 = off, set per frame)
@@ -1228,6 +1636,7 @@
     FAR.tFar.value.minFilter = FAR.tFar.value.magFilter = T.NearestFilter; FAR.tFar.value.needsUpdate = true;
     FAR.uFar.value = new T.Vector4(0, 1, FAR_N, 0); FAR.uLat.value = new T.Vector2(W.SX, W.SZ);
     CAPU.tN3.value = tx.noise3;
+    CAPU.uConcQ.value = Q.name === 'low' ? 0 : 1;                  // P118b: the low quality skips the medium aggregate layer of the concrete cut
     capMat = capMaterial();
     capN.value = new T.Vector3(0, 0, 1);
     cap = new T.Mesh(new T.PlaneGeometry(1, 1), capMat); cap.frustumCulled = false; scene.add(cap);   // no shadows: open section
@@ -1415,7 +1824,7 @@
       const x = q & 1 ? box.max.x : box.min.x, z = q & 2 ? box.max.z : box.min.z, t = (x - S.O.x) * n0.x + (z - S.O.z) * n0.z;
       lo = Math.min(lo, t); hi = Math.max(hi, t);
     }
-    return (lo <= 0.5 || SS.section.frontOn) && hi >= -U.uBack.value - 0.5;
+    return ovr || ((lo <= 0.5 || SS.section.frontOn) && hi >= -U.uBack.value - 0.5);
   }
   /* per frame visual uniforms */
   TR.frame = function (S, view, ctxA, inspect) {
@@ -1430,17 +1839,42 @@
     { const pl = S.plates || [], n = Math.min(24, pl.length);   // P37 W4: the girder plates (shader: frame / sheets / bolts in plate-local coordinates)
       for (let i = 0; i < n; i++) { const p = pl[i]; U.uPlA.value[i].set(p.cx, p.cy, p.cz, p.hl); U.uPlB.value[i].set(p.ux, p.uy, p.uz, p.ht); U.uPlC.value[i].set(p.nx, 0, p.nz, p.hd); }
       U.uNPl.value = n; }
-    // far context only exists beyond the slab; near context (in front of slice zero) only while inspecting
+    // P118c: the overview (hold V, P85) shows the WHOLE map, solid ("the entire 3D map visible with a clear yellow cut"). The opaque slab meshes only existed for
+    // the chunks that touch the band behind slice zero: every chunk in FRONT of the plane was drawn by the 26 % near ghost alone (a veil over the sea, and where it
+    // overlapped a straddling chunk's solid slab it z-fought into a dot grid: Q-OV6). So while inspecting (not in caves, whose overview is the cut face seen through
+    // the dark rock) every chunk draws its solid slab, the slice view is 'full' (grass, clutter and the lava slab everywhere, no far-context copy of the back half),
+    // the ghost is off, and the cut face (the cap quad at slice zero, Q-OV3: a dark strata wedge on the beach, a grey band on temperate) is not drawn
+    const under = !!SS.world.under, ov = inspect > 0.05 && !under;
+    if (backUser === null) backUser = U.uBack.value;
+    if (ov !== ovr) { ovr = ov; U.uBack.value = ov ? Math.max(backUser, OV_BACK) : backUser; }
+    // far context only exists beyond the slab
     const far = ctxA > 0.004 && U.uBack.value < 200 && !SS.slab2d.on();      // P113: a 2D slab has 0.5 m of lattice behind the visible band: no far context (it showed as a floating ribbon behind the ragged back edge)
-    for (const c of chunks) if (c) { c.pre.visible = c.far.visible = far; c.near.visible = inspect > 0.05 && Q.nearCtx; }
+    for (const c of chunks) if (c) {
+      c.pre.visible = c.far.visible = far;
+      c.near.visible = under && inspect > 0.05 && Q.nearCtx;                 // (caves: the faint front half stays, the cut face is what the overview shows there)
+      if (ov) c.slab.visible = true;
+    }
+    if (cap) cap.visible = !ov;
   };
   TR.stats = () => ({ chunks: chunks.filter(Boolean).length, tris: chunks.reduce((s, c) => s + (c ? c.tris : 0), 0), slabChunks: chunks.filter(c => c && c.slab.visible).length });
   /* how far behind slice zero the slab stays solid (m); >= 200 = everything behind */
-  TR.setBack = function (m) { U.uBack.value = m; };
+  TR.setBack = function (m) { backUser = m; U.uBack.value = ovr ? Math.max(m, OV_BACK) : m; };
+  TR.back = () => (backUser === null ? U.uBack.value : backUser);          // P118c: the PLAYER's slice view (m), also while the overview draws everything (uBack 250): what 'on the section' means for the worms (render/view.js inSlab)
   TR.vol = () => volTex;                     // 3D density + material texture (render/water.js: the aquarium face skips rock)
   TR.slabMaterial = () => slabMat;
   TR.cloudShadow = function (dx, dz, cover, k) { U.uCloudSh.value.set(dx, dz, cover, k); };
   TR.capLook = function (r, g, b, sat) { CAPU.uCapK.value.set(r, g, b, sat); };
+  /* P118b: the cut face's night / storm look from the time of day (view.js applyLook): tod = 'day' | 'dusk' | 'night', storm = 1 under a cloud deck. A sky / moonlight fill on the
+   * section, the blue taken out of the board, a little less colour; capFlash(k) = the lightning flash (view.js, once per frame) */
+  TR.capTod = function (tod, storm, biome) {
+    const F = CAPU.uCapFill.value, G = CAPU.uCapGrade.value, K = CAPU.uCapK.value;
+    U.uConcNight.value = tod === 'night' ? 1 : 0;
+    CAPU.uStrata.value = biome === 'canyon' ? 1 : biome === 'desert' ? 0.62 : 0.5;           // how much of the pale / exotic end of the strata palette a map shows
+    if (tod === 'night') { K.set(1, 1, 1, 1); F.set(0.62, 0.7, 0.9, (0.05 + 0.02 * (storm || 0)) * (biome === 'volcanic' ? 0.6 : 1)); G.set(0.93, 0.865, 0.76, 0.45); }
+    else if (tod === 'dusk') { K.set(1, 0.97, 0.93, 1); F.set(0.6, 0.55, 0.62, 0.012 + 0.03 * (storm || 0)); G.set(1, 1, 1, 1); }
+    else { K.set(1, 1, 1, 1); F.set(0.6, 0.65, 0.8, 0.03 * (storm || 0)); G.set(1, 1, 1, 1); }
+  };
+  TR.capFlash = function (k) { CAPU.uCapFlash.value = k > 0.001 ? k : 0; };
   TR.capEow = function (v) { CAPU.uEow.value = v ? 1 : 0; };               // P68c: End of the World (render/eowview.js)
   TR.capU = CAPU;                                // (tools: the cut face uniforms, e.g. uCapDet 0 = no cut-face detail: tools/dev/ablate.cjs)
   TR.capN = capN;                                // debug/tests
@@ -1449,5 +1883,5 @@
   TR.ctxPreMaterial = () => ctxPre;
   TR.ctxNearMaterial = () => ctxNear;
   TR.bodyMaterials = () => bodyMats;     // {slab, far, pre, near}: chunk-body variants (need a 'tpos' attribute)
-  TR.nearCtx = () => !!Q.nearCtx;
+  TR.nearCtx = () => !!Q.nearCtx && !ovr;                  // (render/bodies.js: the same near ghost of a falling rock piece: off in the solid overview)
 })(window.SS = window.SS || {});

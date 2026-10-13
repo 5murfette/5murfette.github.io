@@ -21,12 +21,12 @@
   const P = { x: new Float32Array(MAX), y: new Float32Array(MAX), z: new Float32Array(MAX), vx: new Float32Array(MAX), vy: new Float32Array(MAX), vz: new Float32Array(MAX),
     age: new Float32Array(MAX), life: new Float32Array(MAX), s0: new Float32Array(MAX), s1: new Float32Array(MAX), rot: new Float32Array(MAX), spin: new Float32Array(MAX),
     kind: new Uint8Array(MAX), seed: new Float32Array(MAX), c0: new Float32Array(MAX * 3), c1: new Float32Array(MAX * 3), a0: new Float32Array(MAX), drag: new Float32Array(MAX),
-    grav: new Float32Array(MAX), buoy: new Float32Array(MAX), hug: new Float32Array(MAX), y0: new Float32Array(MAX), ang: new Float32Array(MAX), trf: new Float32Array(MAX), trl: new Float32Array(MAX) };   // trf / trl: a chunk that drags a thin dust trail (interval s, timer); hug: > 0 = a ground-hugging dust that follows the terrain at that height; y0: where it was born (wind shear grows with height); ang: how angular a chunk is (0 clod .. 1 broken rock)
+    grav: new Float32Array(MAX), buoy: new Float32Array(MAX), fld: new Float32Array(MAX), hug: new Float32Array(MAX), y0: new Float32Array(MAX), ang: new Float32Array(MAX), trf: new Float32Array(MAX), trl: new Float32Array(MAX) };   // trf / trl: a chunk that drags a thin dust trail (interval s, timer); hug: > 0 = a ground-hugging dust that follows the terrain at that height; y0: where it was born (wind shear grows with height); ang: how angular a chunk is (0 clod .. 1 broken rock)
   const KEYS = Object.keys(P);
   let n = 0, scene = null, flash = null, flashK = 9, flashT = 9, glowT = 9, glowI = 0, shake = 0, add = null, alp = null;
-  const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9, K_SHELL = 10, K_DROP = 11, K_DOME = 12, K_GGLOW = 13;   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
+  const K_FIRE = 0, K_SPARK = 1, K_SMOKE = 2, K_DUST = 3, K_STEAM = 4, K_LAVA = 5, K_CHUNK = 6, K_FLASH = 7, K_RING = 8, K_RINGG = 9, K_SHELL = 10, K_DROP = 11, K_DOME = 12, K_GGLOW = 13, K_CONF = 14, K_GLINT = 15;   // K_CONF (P118d): a confetti flake (alpha, tumbles); K_GLINT: a coloured firework streak (additive, colour from c0 -> c1)   // K_FLASH: the blast's white flash (additive, 4 rays); K_RING: a camera-facing shock ring; K_RINGG: a ring lying on the ground (a dust / foam shock front)
   // K_CHUNK: a solid rock / clod / ice shard (alpha pass, bounces on the ground)
-  const ADDITIVE = k => k === K_FIRE || k === K_SPARK || k === K_LAVA || (k >= K_FLASH && k !== K_DROP);   // K_DROP (P87): a water droplet streak, alpha-blended
+  const ADDITIVE = k => k === K_FIRE || k === K_SPARK || k === K_LAVA || (k >= K_FLASH && k !== K_DROP && k !== K_CONF);   // K_DROP (P87): a water droplet streak, alpha-blended
   const own = { tHeight: { value: null }, uSoft: { value: 0 }, uCliff: { value: 1 }, uSeaY: { value: -99 }, uSun: { value: new T.Vector3(-0.4, 0.7, 0.6) }, uSunC: { value: new T.Color(1, 0.95, 0.85) }, uGlow: { value: new T.Vector4(0, 0, 0, 0) }, uGlowC: { value: new T.Color(1, 0.45, 0.12) }, uSky: { value: new T.Color(0.55, 0.6, 0.7) }, uGnd: { value: new T.Color(0.3, 0.27, 0.24) }, uTime: { value: 0 } };
 
   const VS = /* glsl */`
@@ -38,7 +38,7 @@
     void main(){
       vUv = position.xy * 2.0; vA = iA; vC = iC; vAl = iAl; vP = iPos.xyz; vW = vec4(iPos.xyz, iPos.w);
       vec3 R = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]), U = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
-      if (iA.z > 0.5 && iA.z < 1.5) {                                                  // P71 spark: a streak from the tail (where it was ~50 ms ago) to the head, bright at the head
+      if ((iA.z > 0.5 && iA.z < 1.5) || iA.z > 14.5) {                                 // P71 spark (and the P118d firework glint): a streak from the tail (where it was ~50 ms ago) to the head, bright at the head
         vec3 hv = (viewMatrix * vec4(iPos.xyz, 1.0)).xyz, vv = (viewMatrix * vec4(iV, 0.0)).xyz;
         float sp = length(iV), lt = max(min(sp * 0.05, 0.9), iPos.w * 0.5);
         vec3 tl = hv - vv * (lt / max(sp, 1e-3)), sg = hv - tl; float sl = length(sg);
@@ -83,7 +83,20 @@
       float ph = vA.y, kind = vA.z, sd = vA.w;
       vec3 q = vec3(vUv * 1.6, sd * 17.0 + ph * 1.3);
       float nz = fbm(q + vec3(0.0, -ph * 1.5, 0.0));
-      if (kind > 11.5) {                                   // P108 flash dome (12): an incandescent ball, a hemisphere where it meets the ground; ground glow (13): the light the flash throws on the terrain around it
+      if (kind > 14.5) {                                   // P118d firework glint (15): a coloured streak with a bright head and a fading tail
+        float ax = clamp(vUv.x * 0.5 + 0.5, 0.0, 1.0);
+        float a = exp(-vUv.y * vUv.y * 4.5) * (0.1 + 0.9 * ax * ax) * (1.0 - smoothstep(0.9, 1.0, ax));
+        a = max(a, exp(-pow((1.0 - ax) * 7.0, 2.0)) * exp(-vUv.y * vUv.y * 3.0));
+        gl_FragColor = vec4(vC * a * vAl, 1.0);
+      } else if (kind > 13.5) {                            // P118d confetti (14): a thin flake that tumbles: it turns edge-on twice per flip and catches the sun when it is square to the eye
+        float fl = ph * (16.0 + 12.0 * fract(sd * 3.7)) + sd * 6.2831, cf = cos(fl), f = abs(cf);
+        vec2 qf = vec2(vUv.x * 1.55 / max(f, 0.12), vUv.y);                          // a flake is about 1 : 1.8
+        float m = (1.0 - smoothstep(0.78, 0.92, abs(qf.x))) * (1.0 - smoothstep(0.84, 1.0, abs(qf.y)));
+        if (m < 0.02) discard;
+        float lit = 0.6 + 0.4 * f + 0.3 * pow(f, 8.0) * step(0.0, cf);
+        vec3 ambf = mix(uGnd, uSky, 0.55);
+        gl_FragColor = vec4(vC * (ambf * 0.6 + uSunC * 0.6 * lit + 0.16 + 0.1 * lit) * 1.3, m * vAl);                 // (+ a floor: at night the flakes still read, as party confetti does under the lamps)
+      } else if (kind > 11.5) {                            // P108 flash dome (12): an incandescent ball, a hemisphere where it meets the ground; ground glow (13): the light the flash throws on the terrain around it
         vec3 ro = cameraPosition, rd = normalize(vW.xyz - ro), cc = vP; float Rs = vW.w * 0.5;
         vec3 oc = ro - cc; float bb2 = dot(oc, rd), d2 = bb2 * bb2 - (dot(oc, oc) - Rs * Rs);
         if (d2 <= 0.0) discard;
@@ -91,19 +104,20 @@
         if (t1 <= t0) discard;
         if (kind < 12.5) {
           float mf = -1.0, gh = 0.0, cov = 0.0;                                                          // P108: a crisp lumpy shell (threshold of the noise), hottest where it touches the ground
+          float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;      // P118d (Q-08): the 10 samples are jittered per pixel: no stair-step contours (the polygonal edge of the ember lump)
           for (int k = 0; k < 10; k++) {
-            float tt = mix(t0, t1, (float(k) + 0.5) / 10.0); vec3 p = ro + rd * tt; vec3 dp = p - cc; float tu = fbm(p * (3.2 / Rs) + vec3(sd * 17.0, ph * 1.5, 0.0));
+            float tt = mix(t0, t1, (float(k) + 0.5 + 0.8 * jit) / 10.0); vec3 p = ro + rd * tt; vec3 dp = p - cc; float tu = fbm(p * (3.2 / Rs) + vec3(sd * 17.0, ph * 1.5, 0.0));
             float hh = p.y - ptop(p.xz);
             float rr = length(vec3(dp.x, max(dp.y, 0.0) * 1.5 + min(dp.y, 0.0), dp.z)) / Rs;           // flattened: it spreads over the ground
             float f = (1.0 - rr) + 0.55 * (tu - 0.5) * (1.0 - 0.4 * rr);
             f *= smoothstep(-0.04, 0.05, hh);                                                          // the terrain clips it
             if (f > mf) { mf = f; gh = exp(-max(hh, 0.0) / (0.22 * Rs)); }
           }
-          cov = smoothstep(0.0, 0.07, mf); if (cov < 0.02) discard;
+          cov = smoothstep(0.0, 0.07 + 0.42 * smoothstep(0.15, 0.85, ph), mf); if (cov < 0.02) discard;      // P118d: the edge softens as the ball cools
           float Tt = clamp(mf * 1.5 + 0.45 * gh * smoothstep(0.0, 0.3, mf), 0.0, 1.0) * (1.0 - 0.8 * smoothstep(0.3, 1.0, ph));
           vec3 cE = vec3(0.12, 0.035, 0.015), cR = vec3(0.75, 0.2, 0.04), cO = vec3(1.0, 0.55, 0.12), cY = vec3(1.0, 0.93, 0.65);
           vec3 col = Tt < 0.3 ? mix(cE, cR, Tt / 0.3) : Tt < 0.62 ? mix(cR, cO, (Tt - 0.3) / 0.32) : mix(cO, cY, min(1.0, (Tt - 0.62) / 0.3));
-          col = pow(col, vec3(1.7)) * 1.35 * cov * smoothstep(1.0, 0.8, ph) / max(1.0 - ph, 0.05);       // (the pipeline multiplies by 1 - ph: cancelled; colours stay saturated, no HDR blow-out)
+          col = pow(col, vec3(1.7)) * 1.35 * cov * (1.0 - smoothstep(0.4, 0.85, ph)) / max(1.0 - ph, 0.05);       // (the pipeline multiplies by 1 - ph: cancelled; colours stay saturated, no HDR blow-out); P118d: the ember phase is gone by 85 % of the life: it never lingers as a dark red lump
           vec4 cp = projectionMatrix * viewMatrix * vec4(ro + rd * mix(t0, t1, 0.25), 1.0); gl_FragDepth = clamp(cp.z / cp.w * 0.5 + 0.5, 0.0, 1.0);
           gl_FragColor = vec4(col * vAl, 1.0);
         } else {
@@ -224,7 +238,7 @@
     else n++;
     P.x[i] = x; P.y[i] = y; P.z[i] = z; P.vx[i] = o.vx || 0; P.vy[i] = o.vy || 0; P.vz[i] = o.vz || 0;
     P.age[i] = 0; P.life[i] = o.life || 1; P.s0[i] = o.s0 || 0.5; P.s1[i] = o.s1 || 1; P.rot[i] = rnd(0, 6.283); P.spin[i] = rnd(-0.6, 0.6);
-    P.kind[i] = kind; P.seed[i] = Math.random() * 100; P.a0[i] = o.a0 == null ? 1 : o.a0; P.drag[i] = o.drag || 0; P.grav[i] = o.grav || 0; P.buoy[i] = o.buoy || 0; P.hug[i] = o.hug || 0; P.y0[i] = y; P.ang[i] = o.ang || 0; P.trf[i] = o.trail || 0; P.trl[i] = o.trail || 0;
+    P.kind[i] = kind; P.seed[i] = Math.random() * 100; P.a0[i] = o.a0 == null ? 1 : o.a0; P.drag[i] = o.drag || 0; P.grav[i] = o.grav || 0; P.buoy[i] = o.buoy || 0; P.fld[i] = o.fld || 0; P.hug[i] = o.hug || 0; P.y0[i] = y; P.ang[i] = o.ang || 0; P.trf[i] = o.trail || 0; P.trl[i] = o.trail || 0;
     if (o.spin != null) P.spin[i] = o.spin;
     const c0 = o.c0 || [1, 1, 1], c1 = o.c1 || c0;
     P.c0[i * 3] = c0[0]; P.c0[i * 3 + 1] = c0[1]; P.c0[i * 3 + 2] = c0[2]; P.c1[i * 3] = c1[0]; P.c1[i * 3 + 1] = c1[1]; P.c1[i * 3 + 2] = c1[2];
@@ -496,8 +510,8 @@
       } });
     }
     // burning bits (the casing's hot fragments are drawn by render/shrapnel.js): sparks; hard ground (rock, concrete, steel) and metal props strike more
-    const metal = isBarrel || isCar ? 1 : 0, nsp = cnt((he ? 9 : 10) * (0.6 + 0.9 * Math.max(hard, metal) * Math.max(hard, metal)) * (1 + 0.5 * W3));
-    for (let i = 0; i < nsp; i++) { const d = sphereDir(), sp = rnd(5, 13) * (0.8 + 0.5 * Math.max(hard, metal)); spawn(K_SPARK, e.x, e.y + 0.1, e.z, { vx: d[0] * sp, vy: Math.abs(d[1]) * sp + 2, vz: d[2] * sp, life: rnd(0.4, 1.0), s0: 0.14, s1: 0.07, c0: [rnd(2200, 2900), 1100, 0], grav: 9.8, drag: 0.6 }); }
+    const metal = isBarrel || isCar ? 1 : 0, nsp = cnt((he ? 9 : 22) * (0.6 + 0.9 * Math.max(hard, metal) * Math.max(hard, metal)) * (1 + 0.5 * W3));      // P118d (Q-13): a fireball throws many more burning streaks than a detonation
+    for (let i = 0; i < nsp; i++) { const d = sphereDir(), sp = rnd(5, 13) * (he ? 1 : 1.3) * (0.8 + 0.5 * Math.max(hard, metal)); spawn(K_SPARK, e.x, e.y + 0.1, e.z, { vx: d[0] * sp, vy: Math.abs(d[1]) * sp + 2, vz: d[2] * sp, life: rnd(0.4, 1.0), s0: 0.14, s1: 0.07, c0: [rnd(2200, 2900), 1100, 0], grav: 9.8, drag: 0.6 }); }
     // light: warm for fire, whiter on steel / concrete (sparks), cool over ice / snow; a weak daylight flash is hidden by the sun, at dusk / night it lights the land
     const lt = env.tod === 'night' ? 1.5 : env.tod === 'dusk' ? 1.2 : 1;
     if (he) flash.color.setRGB(1, 0.93 + 0.05 * mf.cold, 0.76 + 0.2 * hard * hard + 0.2 * mf.cold); else flash.color.setRGB(1 + 0 * mf.cold, 0.66 + 0.2 * hard * hard + 0.12 * mf.cold, 0.32 + 0.4 * hard * hard + 0.4 * mf.cold);
@@ -509,8 +523,15 @@
     shake = Math.min(huge ? 1.25 : 1.0, shake + (amp < 0.02 ? 0 : amp * (huge ? 1.3 : 1)));       // P71: capped lower (a holy grenade's 1.6 swung the camera by ~1 m)
     if (SS.view && SS.view.scorch && hit && !env.under) SS.view.scorch(e.x, e.z, 0.6 + 0.55 * e.R, Math.min(1, 0.55 + 0.25 * W3) * mf.scorch * (1 - 0.7 * rain), e.y, Math.min(1, 0.35 + 0.7 * mf.loft) * (1 - 0.5 * rain));
   };
+  /* P118d: in vacuum nothing billows. A "puff of dust" (a landing, a collapse, a bullet strike) is a few dark specks that fly out and fall on the local gravity of the pieces (render/eowview.js
+   * sets FX.field; view.js sets FX.env.vac every frame); a spark or a chip uses the field instead of -y. */
+  function vacSpecks(x, y, z, n, size, c) {
+    for (let i = 0, k = Math.min(10, Math.max(2, Math.round(n * 1.5 * QN))); i < k; i++)
+      spawn(K_CHUNK, x + rnd(-0.15, 0.15), y + 0.05, z + rnd(-0.1, 0.1), { vx: rnd(-1.4, 1.4), vy: rnd(0.3, 2.4), vz: rnd(-0.6, 0.6), fld: 1, life: rnd(1.3, 2.4), s0: Math.max(0.03, size * rnd(0.06, 0.14)), s1: 0.05, c0: c.map(v => Math.min(1, v * rnd(0.7, 1.0))), a0: 1, ang: 0.8, spin: rnd(-4, 4) });
+  }
   FX.dust = function (x, y, z, cnt, size, col) {
     const c = hex(col == null ? 0xb8a080 : col);
+    if (FX.env.vac) { vacSpecks(x, y, z, cnt, size, c); return; }
     for (let i = 0; i < cnt; i++) {
       const a = rnd(0, 6.283), sp = rnd(0.6, 1.8);
       spawn(K_DUST, x, y + 0.05, z, { vx: Math.cos(a) * sp, vy: rnd(0.2, 0.9), vz: Math.sin(a) * sp, life: rnd(0.8, 1.5), s0: size * 0.4, s1: size * rnd(1, 1.6), a0: 0.5, c0: c, c1: c.map(v => v * 1.08 + 0.04), drag: 2.5 });
@@ -520,7 +541,7 @@
   FX.chips = function (x, y, z, col, n, sp, size) {
     for (let i = 0; i < n; i++) {
       const a = rnd(0, 6.283), v = rnd(0.4, 1) * sp, sh = rnd(0.6, 1.1);
-      spawn(K_CHUNK, x + rnd(-0.2, 0.2), y + rnd(0, 0.3), z + rnd(-0.1, 0.1), { vx: Math.cos(a) * v, vy: rnd(0.5, 1) * sp * 0.9 + 1.5, vz: Math.sin(a) * v * 0.5, grav: 17, drag: 0.1, life: rnd(1.2, 2.2),
+      spawn(K_CHUNK, x + rnd(-0.2, 0.2), y + rnd(0, 0.3), z + rnd(-0.1, 0.1), { vx: Math.cos(a) * v, vy: rnd(0.5, 1) * sp * 0.9 + 1.5, vz: Math.sin(a) * v * 0.5, fld: FX.env.vac ? 1 : 0, grav: FX.env.vac ? 0 : 17, drag: 0.1, life: rnd(1.2, 2.2),
         s0: (size || 0.1) * rnd(0.6, 1.3), s1: (size || 0.1) * rnd(0.6, 1.3), c0: col.map(c => Math.min(1, c * sh)), a0: 1 });
     }
   };
@@ -532,6 +553,7 @@
     const k = f.amt * (1 - 0.7 * FX.env.rain), n = Math.round(cnt * k);
     if (n < 1) return;
     const c = f.dust.map(v => Math.min(1, v * 1.05 + 0.03));
+    if (FX.env.vac) { vacSpecks(x, y, z, n * 0.6, size, c); return; }
     for (let i = 0; i < n; i++) {
       const a = rnd(0, 6.283), sp = rnd(0.6, 1.8);
       spawn(K_DUST, x, y + 0.05, z, { vx: Math.cos(a) * sp, vy: rnd(0.2, 0.9) * f.lift, vz: Math.sin(a) * sp, life: rnd(0.8, 1.5), s0: size * 0.4, s1: size * rnd(1, 1.6) * f.puff, a0: 0.5, c0: c, c1: c.map(v => v * 1.08 + 0.04), drag: 2.5 });
@@ -617,7 +639,8 @@
   FX.trail = function (x, y, z) {
     if (FX.env.vac) return;                                                  // P68d: no smoke in vacuum
                                   // a rocket's exhaust: a white-grey smoke ribbon that swells, thins and drifts with the wind; a hot lick at the nozzle; now and then a spark
-    spawn(K_SMOKE, x, y, z, { vx: rnd(-0.25, 0.25), vy: rnd(0.15, 0.55), vz: rnd(-0.25, 0.25), life: rnd(1.2, 2.1), s0: 0.14, s1: rnd(0.9, 1.3), a0: 0.5, c0: [0.78, 0.76, 0.72], c1: [0.88, 0.88, 0.9], drag: 1.0, buoy: 0.12 });
+    if (SS.trailView && SS.trailView.smoke) SS.trailView.smoke(x, y, z);                  // P118d (Q-17): the smoke is one continuous ribbon (render/trails.js), not a puff per frame
+    else spawn(K_SMOKE, x, y, z, { vx: rnd(-0.25, 0.25), vy: rnd(0.15, 0.55), vz: rnd(-0.25, 0.25), life: rnd(1.2, 2.1), s0: 0.14, s1: rnd(0.9, 1.3), a0: 0.5, c0: [0.78, 0.76, 0.72], c1: [0.88, 0.88, 0.9], drag: 1.0, buoy: 0.12 });
     spawn(K_FIRE, x, y, z, { life: 0.1, s0: 0.34, s1: 0.12, c0: [2800, 1500, 0] });
     if (Math.random() < 0.3 * QN) spawn(K_SPARK, x, y, z, { vx: rnd(-1.5, 1.5), vy: rnd(-1, 1.5), vz: rnd(-1.5, 1.5), life: rnd(0.2, 0.45), s0: 0.07, s1: 0.03, c0: [2500, 1300, 0], grav: 6, drag: 0.5 });
   };
@@ -628,19 +651,19 @@
     const W = SS.world; let m = mat;
     if (m == null) m = W && W.mat_at ? W.mat_at(x - nx * 0.15, y - ny * 0.15, z - nz * 0.15) : 0;
     const f = MFX[m] || MFX[SS.CFG.MAT.ROCK], dry = 1 - 0.7 * FX.env.rain, cnt = v => Math.max(0, Math.round(v * QN));
-    const nd = cnt(2 * f.amt * k * dry + Math.random());
+    const vac = FX.env.vac, nd = vac ? 0 : cnt(2 * f.amt * k * dry + Math.random());
     const col = f.dust.map(v => Math.min(1, v * 1.05 + 0.03));
     for (let i = 0; i < nd; i++) spawn(K_DUST, x + nx * 0.05, y + ny * 0.05, z + nz * 0.05, { vx: nx * rnd(0.6, 1.6) + rnd(-0.5, 0.5), vy: ny * rnd(0.6, 1.6) + rnd(0.2, 0.9) * f.lift, vz: nz * rnd(0.6, 1.6) + rnd(-0.5, 0.5), drag: 3, life: rnd(0.5, 1.0), s0: 0.1 * k, s1: rnd(0.3, 0.5) * k * f.puff, c0: col, c1: col.map(v => v * 1.08 + 0.04), a0: 0.5 });
     const nc = cnt((1 + 3 * f.chunks) * k * 0.7);
     for (let i = 0; i < nc; i++) { const sh = rnd(0.55, 1.1), sp = rnd(2, 5), c = f.chunk.map(v => Math.min(1, v * sh)), sz = rnd(0.025, 0.055) * (0.6 + 0.4 * k);
-      spawn(K_CHUNK, x, y, z, { vx: nx * sp + rnd(-1.5, 1.5), vy: ny * sp + rnd(0.8, 3), vz: nz * sp + rnd(-1.5, 1.5), grav: 15, drag: 0.2, life: rnd(0.6, 1.1), s0: sz, s1: sz, c0: c, a0: 1 }); }
+      spawn(K_CHUNK, x, y, z, { vx: nx * sp + rnd(-1.5, 1.5), vy: ny * sp + rnd(0.8, 3), vz: nz * sp + rnd(-1.5, 1.5), fld: vac ? 1 : 0, grav: vac ? 0 : 15, drag: 0.2, life: vac ? rnd(1.2, 2.0) : rnd(0.6, 1.1), s0: sz, s1: sz, c0: c, a0: 1 }); }
     if (f.hard > 0.55) for (let i = 0, ns = cnt((3 + 5 * f.hard) * k); i < ns; i++) { const sp = rnd(2, 6) * (0.7 + 0.5 * f.hard);
-      spawn(K_SPARK, x + nx * 0.03, y + ny * 0.03, z + nz * 0.03, { vx: nx * sp * 0.7 + rnd(-2, 2), vy: ny * sp * 0.7 + rnd(0, 2.5), vz: nz * sp * 0.7 + rnd(-2, 2), life: rnd(0.15, 0.4), s0: 0.07, s1: 0.03, c0: [rnd(2400, 3200), 1300, 0], grav: 9.8, drag: 0.5 }); }
+      spawn(K_SPARK, x + nx * 0.03, y + ny * 0.03, z + nz * 0.03, { vx: nx * sp * 0.7 + rnd(-2, 2), vy: ny * sp * 0.7 + rnd(0, 2.5), vz: nz * sp * 0.7 + rnd(-2, 2), life: rnd(0.15, 0.4), s0: 0.07, s1: 0.03, c0: [rnd(2400, 3200), 1300, 0], fld: vac ? 1 : 0, grav: vac ? 0 : 9.8, drag: vac ? 0 : 0.5 }); }
     if (f.hard > 0.55 && k > 0.5) spawn(K_FLASH, x + nx * 0.05, y + ny * 0.05, z + nz * 0.05, { life: 0.04, s0: 0.1 * k, s1: 0.3 * k, c0: [3, 2.4, 1.4], c1: [1, 0.5, 0.2], a0: 0.9 });
-    if (f.cold > 0.3) spawn(K_STEAM, x, y, z, { vy: rnd(0.3, 0.9), life: rnd(0.5, 0.9), s0: 0.12 * k, s1: 0.4 * k, a0: 0.4, c0: [0.96, 0.98, 1], drag: 2 });
+    if (f.cold > 0.3 && !vac) spawn(K_STEAM, x, y, z, { vy: rnd(0.3, 0.9), life: rnd(0.5, 0.9), s0: 0.12 * k, s1: 0.4 * k, a0: 0.4, c0: [0.96, 0.98, 1], drag: 2 });
   };
   FX.spark = function (x, y, z) {
-    for (let i = 0; i < 8; i++) { const d = sphereDir(), sp = rnd(1.5, 4); spawn(K_SPARK, x, y, z, { vx: d[0] * sp, vy: Math.abs(d[1]) * sp, vz: d[2] * sp, life: rnd(0.2, 0.4), s0: 0.1, s1: 0.04, c0: [2400, 1200, 0], grav: 9.8 }); }
+    for (let i = 0; i < 8; i++) { const d = sphereDir(), sp = rnd(1.5, 4), v = FX.env.vac; spawn(K_SPARK, x, y, z, { vx: d[0] * sp, vy: (v ? d[1] : Math.abs(d[1])) * sp, vz: d[2] * sp, life: rnd(0.2, 0.4), s0: 0.1, s1: 0.04, c0: [2400, 1200, 0], fld: v ? 1 : 0, grav: v ? 0 : 9.8 }); }
   };
   FX.bubble = function (x, y, z) { spawn(K_STEAM, x + rnd(-0.1, 0.1), y, z + rnd(-0.1, 0.1), { vy: rnd(0.6, 1.2), life: rnd(0.4, 0.8), s0: 0.06, s1: 0.1, a0: 0.5, c0: [0.85, 0.95, 1] }); };
   /* molten lava thrown up (projectile entry, blast splash, pocket breach): glowing blobs that arc and dim, dark fume */
@@ -696,6 +719,9 @@
   FX.shake = () => shake;
   FX.addShake = v => { shake = Math.min(1.2, shake + v); };           // P38 A5: small kicks (a bat hit, a bazooka shot)
   let nAdd = 0, nAlp = 0;
+  const fv = { x: 0, y: 0, z: 0 }, celeb = { S: null };
+  FX.field = null;                                                    // P118d: (x, y, z, out) -> out = the acceleration in m/s2 at a point (set by render/eowview.js in the End of the World); particles spawned with fld = 1 follow it
+  FX.qn = () => QN;                                                   // the quality's share of the optional effect layers (counts scale with it)
   FX.update = function (dt) {
     own.uTime.value += dt; own.uSeaY.value = SS.world && SS.world.SEA != null && !SS.world.under ? SS.world.SEA : -99;
     for (let q = blasts.length - 1; q >= 0; q--) if ((blasts[q].t += dt) > 9) blasts.splice(q, 1);
@@ -714,7 +740,17 @@
         P.vx[i] += (FX.env.wx * 0.9 * sh - P.vx[i]) * wk; P.vz[i] += (FX.env.wz * 0.9 * sh - P.vz[i]) * wk; }
       const px = P.x[i], py = P.y[i], pz = P.z[i];
       P.vx[i] *= dr; P.vz[i] *= dr; P.vy[i] = P.vy[i] * dr + (P.buoy[i] - P.grav[i]) * dt;
+      if (kk === K_CONF) {                                                   // P118d: a flake flutters (a side to side sway), drifts with the wind and stays within the section's front margin (render/section.js would cut it)
+        const a = P.age[i] * 5.5 + P.seed[i], wk2 = 1 - Math.exp(-0.45 * dt);
+        P.vx[i] += Math.sin(a) * 1.5 * dt + ((FX.env.wx || 0) * 0.9 - P.vx[i]) * wk2; P.vz[i] += Math.cos(a * 0.8) * 0.5 * dt + ((FX.env.wz || 0) * 0.9 - P.vz[i]) * wk2;
+        if (celeb.S) { const S3 = celeb.S, N3 = SS.plane.nrm(S3), t3 = (P.x[i] - S3.O.x) * N3.x + (P.z[i] - S3.O.z) * N3.z; if (t3 > 0.35) { P.x[i] -= N3.x * (t3 - 0.35); P.z[i] -= N3.z * (t3 - 0.35); } }
+      }
+      if (P.fld[i] > 0 && FX.field) { FX.field(px, py, pz, fv); const fk = P.fld[i] * dt; P.vx[i] += fv.x * fk; P.vy[i] += fv.y * fk; P.vz[i] += fv.z * fk; }     // P118d: vacuum (End of the World): the summed gravity field of the pieces instead of -y
       P.x[i] += P.vx[i] * dt; P.y[i] += P.vy[i] * dt; P.z[i] += P.vz[i] * dt; P.rot[i] += P.spin[i] * dt;
+      if (P.fld[i] > 0 && P.age[i] > 0.04 && SS.world && SS.world.sample && SS.world.sample(P.x[i], P.y[i], P.z[i]) > 0) {     // it reaches the rock: a spark goes out, a chunk or a glowing fragment lies still (the chunk fades, the fragment cools in place)
+        if (kk === K_SPARK) P.age[i] = P.life[i];
+        else { P.vx[i] = P.vy[i] = P.vz[i] = 0; P.fld[i] = 0; P.spin[i] = 0; if (kk === K_CHUNK && P.life[i] - P.age[i] > 1.3) P.life[i] = P.age[i] + 1.3; }
+      }
       if (P.hug[i] > 0 && SS.world && SS.world.top_at) {                 // a dust skirt hugs the ground: climbs the rim, pours down a slope (a dense dust cloud is a gravity current), thickens as it ages
         const W = SS.world, x = P.x[i], z = P.z[i], gx = (W.top_at(x + 0.6, z) - W.top_at(x - 0.6, z)) / 1.2, gz = (W.top_at(x, z + 0.6) - W.top_at(x, z - 0.6)) / 1.2;
         P.vx[i] -= gx * 5 * dt; P.vz[i] -= gz * 5 * dt;
@@ -739,12 +775,12 @@
       const f = P.age[k] / P.life[k], sz = P.s0[k] + (P.s1[k] - P.s0[k]) * (1 - (1 - f) * (1 - f));
       const ip = s.iPos.array, ia = s.iA.array, ic = s.iC.array;
       ip[q * 4] = P.x[k]; ip[q * 4 + 1] = P.y[k]; ip[q * 4 + 2] = P.z[k]; ip[q * 4 + 3] = sz;
-      if (P.kind[k] === K_SPARK || P.kind[k] === K_DROP) { const iv = s.iV.array; iv[q * 3] = P.vx[k]; iv[q * 3 + 1] = P.vy[k]; iv[q * 3 + 2] = P.vz[k]; }
+      if (P.kind[k] === K_SPARK || P.kind[k] === K_DROP || P.kind[k] === K_GLINT) { const iv = s.iV.array; iv[q * 3] = P.vx[k]; iv[q * 3 + 1] = P.vy[k]; iv[q * 3 + 2] = P.vz[k]; }
       ia[q * 4] = P.rot[k]; ia[q * 4 + 1] = f; ia[q * 4 + 2] = P.kind[k] + (P.kind[k] === K_CHUNK ? 0.4 * P.ang[k] : 0); ia[q * 4 + 3] = P.seed[k];
       if (hot && P.kind[k] >= K_FLASH) for (let c = 0; c < 3; c++) ic[q * 3 + c] = P.c0[k * 3 + c] + (P.c1[k * 3 + c] - P.c0[k * 3 + c]) * f;
       else if (hot) { ic[q * 3] = P.c0[k * 3]; ic[q * 3 + 1] = P.c0[k * 3 + 1]; ic[q * 3 + 2] = 0; }
       else for (let c = 0; c < 3; c++) ic[q * 3 + c] = P.c0[k * 3 + c] + (P.c1[k * 3 + c] - P.c0[k * 3 + c]) * f;
-      s.iAl.array[q] = P.a0[k] * (hot ? (1 - f) : P.kind[k] === K_CHUNK ? Math.min(1, f * 20) * Math.min(1, (1 - f) * 6) : P.kind[k] === K_DROP ? Math.min(1, f * 30) * Math.min(1, (1 - f) * 8) : Math.min(1, f * 6) * (1 - f) * (1 - f));
+      s.iAl.array[q] = P.a0[k] * (hot ? (1 - f) : P.kind[k] === K_CHUNK || P.kind[k] === K_CONF ? Math.min(1, f * 20) * Math.min(1, (1 - f) * 6) : P.kind[k] === K_DROP ? Math.min(1, f * 30) * Math.min(1, (1 - f) * 8) : Math.min(1, f * 6) * (1 - f) * (1 - f));
     }
     for (const [s, c] of [[add, nAdd], [alp, nAlp]]) {
       s.g.instanceCount = c; s.mesh.visible = c > 0;
@@ -754,6 +790,55 @@
     glowT += dt; own.uGlow.value.w = glowI * Math.exp(-glowT * 3.2) * (glowT < 2 ? 1 : 0);
     shake = Math.max(0, shake - dt * 2.2);
   };
+  /* P118d (Q-25): the win celebration. render/cine.js tick() starts it once when the match is over; presentation only (Math.random is fine). Confetti cannons at the surviving winners
+   * (the team's colours, a pale tint, white, gold) and a few firework shells that burst a few metres above them, on a timeline of view seconds; it stops spawning as soon as the
+   * player skips (cine.celebrating()). Everything stays in the section plane's picture (the confetti is held in the plane's front margin, the bursts are drawn in the plane).
+   * Contexts: in the End of the World there is no air (flakes would neither fall slowly nor flutter): no confetti, the bursts are free spherical shells (no drag, no gravity);
+   * in a cave there is no sky: confetti only; elsewhere both. Night and dusk: the bursts light the land (the shared point light). */
+  FX.celebrate = function (S, team) {
+    if (!S || team == null || team < 0 || !flash) return;
+    celeb.S = S;
+    const rgb = hex(SS.sim.team_rgb(S, team)), W = SS.world, vac = !!(W && W.eow), cave = !!(W && W.under), cin = SS.cine, tod = SS.view && SS.view.state && SS.view.state.tod || FX.env.tod;      // (view.tod, not FX.env.tod: that is only refreshed by a blast)
+    const gold = [1.0, 0.72, 0.18], white = [1, 1, 1], dirv = SS.plane.dir(S), nrm = SS.plane.nrm(S), cnt = v => Math.max(1, Math.round(v * QN));
+    const going = () => !cin || !cin.celebrating || cin.celebrating();
+    const winners = () => S.worms.filter(w => !w.dead && w.hp > 0 && w.team === team);
+    const pickC = () => { const r = Math.random(); return r < 0.6 ? rgb.map(v => Math.min(1, v * rnd(0.8, 1.2))) : r < 0.8 ? rgb.map(v => v * 0.45 + 0.55) : r < 0.92 ? white : gold; };
+    function cannon(w, n) {                                                                  // confetti thrown up and out of a worm: it slows at once (drag) and flutters down at ~1 m/s
+      for (let i = 0, k = cnt(n); i < k; i++) {
+        const a = rnd(-1.05, 1.05), sp = rnd(5.5, 12.5), up = Math.cos(a) * sp * rnd(0.75, 1.1) + 2.5, side = Math.sin(a) * sp, nz = rnd(-0.35, 0.1) * sp * 0.3;
+        spawn(K_CONF, w.pos.x, w.pos.y + 0.55, w.pos.z, { vx: dirv.x * side + nrm.x * nz, vy: up, vz: dirv.z * side + nrm.z * nz, drag: 2.0, grav: 2.2, life: rnd(4.2, 6.2), s0: 0.24, s1: 0.24, c0: pickC(), a0: 1, spin: rnd(-5, 5) });
+      }
+    }
+    function burst(x, y, z, kind) {                                                          // a firework: coloured streaks on a sphere (peony), a ring facing the camera, or a slow golden willow
+      const gold1 = kind === 'willow', hot = gold1 ? [3.4, 2.4, 0.9] : rgb.map(v => v * 2.4 + 0.35), cool = gold1 ? [1.6, 0.8, 0.12] : rgb.map(v => v * 1.7);
+      const n = cnt(kind === 'ring' ? 38 : kind === 'willow' ? 46 : 72), v0 = (kind === 'willow' ? 5.5 : 9) * (vac ? 1.15 : 1);
+      for (let i = 0; i < n; i++) {
+        let dx, dy, dz;
+        if (kind === 'ring') { const a = i / n * 6.2832; dx = dirv.x * Math.cos(a); dy = Math.sin(a); dz = dirv.z * Math.cos(a); }
+        else { const yy = 1 - 2 * (i + 0.5) / n, r = Math.sqrt(1 - yy * yy), ph = i * 2.39996; dx = dirv.x * r * Math.cos(ph) + nrm.x * r * Math.sin(ph) * 0.6; dy = yy; dz = dirv.z * r * Math.cos(ph) + nrm.z * r * Math.sin(ph) * 0.6; }
+        const v = v0 * rnd(0.82, 1.1);
+        spawn(K_GLINT, x, y, z, { vx: dx * v, vy: dy * v, vz: dz * v, drag: vac ? 0 : (gold1 ? 1.1 : 1.7), grav: vac ? 0 : (gold1 ? 4.2 : 2.6), life: gold1 ? rnd(1.9, 2.7) : rnd(1.1, 1.7), s0: 0.2, s1: 0.1, c0: hot, c1: cool, a0: 1 });
+      }
+      flash.color.setRGB(gold1 ? 1 : 0.5 + 0.5 * rgb[0], gold1 ? 0.8 : 0.5 + 0.5 * rgb[1], gold1 ? 0.3 : 0.5 + 0.5 * rgb[2]); flash.position.set(x, y, z); flash.distance = 20;
+      flash.intensity = (tod === 'night' ? 70 : tod === 'dusk' ? 45 : 22); flashK = 6; flashT = 0;
+    }
+    function shell(kind) {                                                                  // a rising streak, then the burst at its tip
+      const ws = winners(); if (!ws.length || cave) return;
+      const up = vac && ws[0].eup ? ws[0].eup : { x: 0, y: 1, z: 0 };                       // (the local up: in space a shell leaves along the surface normal of the winner's piece, not along the world's +y)
+      let cx = 0, cy = vac ? 0 : -1e9, cz = 0; for (const w of ws) { cx += w.pos.x / ws.length; cz += w.pos.z / ws.length; cy = vac ? cy + w.pos.y / ws.length : Math.max(cy, w.pos.y); }
+      const off = rnd(-1, 1) * (2.5 + 1.2 * ws.length), sx = cx + dirv.x * off - nrm.x * 0.3 + up.x * 0.4, sz = cz + dirv.z * off - nrm.z * 0.3 + up.z * 0.4, sy = cy + up.y * 0.4, rise = rnd(9, 10.5), tr = 0.5, g = vac ? 0 : 4;
+      spawn(K_SPARK, sx, sy, sz, { vx: up.x * rise, vy: up.y * rise, vz: up.z * rise, life: tr, s0: 0.16, s1: 0.1, c0: [3000, 1500, 0], grav: g, drag: 0.05 });
+      const bx = sx + up.x * rise * tr, bz = sz + up.z * rise * tr, by = sy + up.y * rise * tr - 0.5 * g * tr * tr;
+      later.push({ t: tr, fn: () => { if (going()) burst(bx, by, bz, kind); } });
+    }
+    const TL = [[0.15, 'c', 44], [0.2, 's', 'peony'], [0.9, 's', 'ring'], [1.4, 'c', 34], [1.9, 's', 'peony'], [2.6, 'c', 30], [2.7, 's', 'willow'], [3.4, 's', 'peony'], [4.0, 'c', 24]];
+    for (const [t, k, a] of TL) later.push({ t, fn: () => {
+      if (!going()) return;
+      if (k === 'c') { const ws = winners(), per = Math.max(10, Math.round(a * 2 / (ws.length + 1))); if (!vac) for (const w of ws) cannon(w, per); }
+      else shell(a);
+    } });
+  };
   FX.cliffSoft = on => { own.uCliff.value = on ? 1 : 0; };
+  FX.uniforms = own;                                                                    // the light uniforms the effects share (sun, sky, ground): the smoke ribbon of render/trails.js reads them too
   FX.stats = () => ({ n, add: nAdd, alpha: nAlp });
 })(window.SS = window.SS || {});

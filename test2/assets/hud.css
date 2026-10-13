@@ -206,20 +206,26 @@ button{font-family:var(--f-ui)}
 #winfo .di{color:var(--dim);font-weight:600}#winfo .di::before{content:"\2014";margin-right:4px}
 
 /* ---------- game over ---------- */
-#over{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(ellipse at center,rgba(13,10,8,.4),rgba(13,10,8,.88));z-index:8;animation:fadein .4s ease-out both}
+/* P118d (Q-25): the end of a match is a celebration, not a curtain. No dimming, nothing in the middle of the picture: a slim title under the top bar while the
+ * camera frames the winners (confetti, fireworks, the dance), and after ~5 s (or a click / key) a compact results card slides in at the right, under the maps. */
+#over{position:fixed;inset:0;z-index:8;pointer-events:none}
 #over.hidden{display:none}
-#over .card{position:relative;min-width:min(440px,92vw);max-width:94vw;text-align:center;padding:26px 34px 24px;background:linear-gradient(180deg,rgba(40,30,22,.96),rgba(18,14,12,.97));border:1px solid var(--edge);border-radius:20px;
-  box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,214,150,.12);animation:cardin .5s var(--ease) both;overflow:hidden}
-#over .card::before{content:"";position:absolute;left:0;right:0;top:0;height:5px;background:var(--team,var(--accent))}
-#over .card::after{content:"";position:absolute;left:50%;top:-80px;width:360px;height:200px;margin-left:-180px;background:radial-gradient(ellipse,var(--team,var(--accent)),transparent 70%);opacity:.22;pointer-events:none}
-#over .crown{width:54px;height:54px;margin:-4px auto 4px;display:block;color:var(--team,var(--accent));filter:drop-shadow(0 3px 0 rgba(0,0,0,.4));animation:crownin .7s .15s var(--ease) both}
-#over h2{margin:0;font:400 var(--fs-2xl) var(--f-display);color:var(--team,var(--accent));text-shadow:0 4px 0 rgba(0,0,0,.4)}
-#over p{margin:8px 0 14px;color:var(--dim);font-size:16px}
-#over .stand{display:grid;gap:4px;margin:0 0 18px;text-align:left}
-#over .st{--team:#fff;display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 12px;border-radius:var(--r-1);background:rgba(255,255,255,.05);color:var(--team);font-weight:700}
+#over .ttl{position:absolute;top:96px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;text-align:center;max-width:94vw;animation:ttlin .7s var(--ease) both}
+#over .crown{width:44px;height:44px;margin:0 auto;display:block;color:var(--team,var(--accent));filter:drop-shadow(0 3px 0 rgba(0,0,0,.45)) drop-shadow(0 0 14px rgba(0,0,0,.4));animation:crownin .7s .15s var(--ease) both}
+#over h2{margin:2px 0 0;font:400 var(--fs-2xl) var(--f-display);letter-spacing:1px;color:var(--team,var(--accent));text-shadow:0 4px 0 rgba(0,0,0,.45),0 0 26px rgba(0,0,0,.55);-webkit-text-stroke:2px rgba(10,6,4,.7);paint-order:stroke fill}
+#over p{margin:6px 0 0;color:var(--ink);font:600 16px var(--f-ui);text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 10px rgba(0,0,0,.7)}
+#over .card{position:absolute;right:16px;top:350px;width:300px;max-width:calc(100vw - 32px);box-sizing:border-box;padding:14px 14px 12px;text-align:center;background:linear-gradient(180deg,rgba(40,30,22,.9),rgba(18,14,12,.92));border:1px solid var(--edge);border-radius:16px;
+  box-shadow:0 14px 40px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,214,150,.12);overflow:hidden;opacity:0;visibility:hidden;transform:translateX(26px);transition:opacity .4s var(--ease),transform .4s var(--ease),visibility 0s .4s}
+#over.res .card{opacity:1;visibility:visible;transform:none;pointer-events:auto;transition:opacity .4s var(--ease),transform .4s var(--ease),visibility 0s}
+#over .card::before{content:"";position:absolute;left:0;right:0;top:0;height:4px;background:var(--team,var(--accent))}
+#over .stand{display:grid;gap:4px;margin:0 0 12px;text-align:left}
+#over .st{--team:#fff;display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;padding:5px 10px;border-radius:var(--r-1);background:rgba(255,255,255,.05);color:var(--team);font-weight:700}
 #over .st::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--team)}
 #over .st.win{background:rgba(255,255,255,.11);box-shadow:inset 3px 0 0 var(--team)}
 #over .st span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#over .st em{font-style:normal;color:var(--dim);font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
+#over .btns{display:flex;gap:8px;justify-content:center}#over .btns .bbtn{margin:0;flex:1 1 0;padding:9px 8px;font-size:16px;white-space:nowrap}
+#over .hint{margin:8px 0 0;color:var(--dim);font:600 var(--fs-xs) var(--f-ui);letter-spacing:.04em}
+@keyframes ttlin{from{opacity:0;transform:translateX(-50%) translateY(-14px)}to{opacity:1;transform:translateX(-50%)}}
 .bbtn{font:400 18px var(--f-display);padding:10px 20px;border-radius:var(--r-2);border:0;cursor:pointer;background:var(--accent);color:var(--accent-ink);box-shadow:var(--shadow-btn);margin:0 6px;
   transition:transform var(--t-fast) var(--ease),filter var(--t-fast),box-shadow var(--t-fast)}
 .bbtn:hover{filter:brightness(1.1);transform:translateY(-1px)}
@@ -307,6 +313,8 @@ body.touch #winfo{bottom:118px} body.touch #teams{display:none} body.touch #wtip
 @media (max-width:700px){.biomes{grid-template-columns:repeat(2,1fr)}#lcol{width:280px;top:84px}#topbar #tbWind{display:none}#topbar{left:8px;right:auto}#rcol{top:100px}}
 @media (max-height:600px){#lcol #log{display:none}}
 #over.draw .crown{display:none}
+@media (max-width:1100px){#over .card{top:64px}}
+@media (max-width:900px),(max-height:620px){#over .ttl{top:84px}#over h2{font-size:28px}#over p{font-size:13px}#over .card{top:64px;right:12px;width:min(260px,calc(100vw - 24px))}#over .stand{display:none}}
 
 /* P75: short windows (1024x640 and below): the bar gives height back */
 @media (max-height:700px){#weapons{padding:4px 6px 6px;gap:4px}#weapons .wgrid[data-m=big]{--w:54px;--h:54px}#weapons .wgrid[data-m=mid]{--w:44px;--h:44px}#weapons .wgrid[data-m=all]{--w:38px;--h:38px}.wtab{padding:4px 9px}}

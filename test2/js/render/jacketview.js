@@ -19,6 +19,7 @@
     scene = sc;
     ringGeo = new T.RingGeometry(0.82, 1, 40); ringGeo.rotateX(-Math.PI / 2);
     ringMat = new T.MeshBasicMaterial({ color: 0xe6f6ff, transparent: true, opacity: 0, depthWrite: false, side: T.DoubleSide });
+    ringMat.userData.sectionMargin = -0.03;             // P118c (Q-18): like the water itself, a ring on the sea ends at slice zero (3 cm behind it, so the 2 mm between the cut face and the plane keep no hairline over the rock). With the default 0.5 m margin a strip of every ring stayed in front of the cut face and, over the rock beside the water, hung there as a flat white rectangle (pairs of them at the waterline of every jacket swim)
     rings = new T.Group(); rings.name = 'jacketRings'; scene.add(rings);
     pool = [];
     for (let i = 0; i < NRING; i++) { const m = new T.Mesh(ringGeo, ringMat.clone()); m.visible = false; m.renderOrder = 6; m.frustumCulled = false; rings.add(m); pool.push({ m, t: 9, life: 1.6, x: 0, y: 0, z: 0, r0: 0.3, r1: 1.3, sx: 0, sz: 0 }); }

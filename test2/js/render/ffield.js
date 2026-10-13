@@ -88,7 +88,7 @@
         vec3 Nv = vec3(dot(uView0, N), dot(uView1, N), dot(uView2, N));               // normal in view space
         float k = (0.010 + 0.036 * pow(1.0 - ndv, 1.4)) * (1.0 + rip * 2.0);          // displacement: lens-like toward the rim, wobbles with ripples
         vec2 uv0 = gl_FragCoord.xy / uRes, off = -Nv.xy * k, asp = vec2(1.0, uRes.x / uRes.y);
-        vec3 refr = vec3(texture2D(tScene, uv0 + off * 0.85 * asp).r, texture2D(tScene, uv0 + off * asp).g, texture2D(tScene, uv0 + off * 1.15 * asp).b);   // dispersion
+        vec3 refr = vec3(textureLod(tScene, uv0 + off * 0.85 * asp, 0.0).r, textureLod(tScene, uv0 + off * asp, 0.0).g, textureLod(tScene, uv0 + off * 1.15 * asp, 0.0).b);   // dispersion (level 0: the mip chain of the lens target is not built until the end of the pass)
         refr *= mix(vec3(0.93, 0.99, 1.0), vec3(0.6, 0.85, 1.0), fres);               // a faint cyan glass tint, deeper at the rim
         vec3 Rf = reflect(-V, N); vec3 sky = mix(vec3(0.62, 0.74, 0.88), vec3(0.22, 0.42, 0.78), clamp(Rf.y, 0.0, 1.0)) * (0.25 + 0.75 * uDay);
         vec3 emit = c * a * 0.9 + sky * fres * 0.5;
@@ -117,17 +117,40 @@
   /* the colour grab: the frame as drawn so far (everything opaque, the sky, earlier transparents) copied into a
    * FramebufferTexture once per rendered frame, the first time a dome is drawn */
   let grabTex = null, grabW = 0, grabH = 0, grabFrame = -1;
-  const gv2 = new T.Vector2(), gv0 = new T.Vector2(0, 0);
+  const gv2 = new T.Vector2(), gv0 = new T.Vector2(0, 0), gFr = new T.Frustum(), gPM = new T.Matrix4(), gSp = new T.Sphere();
   function grabPass(renderer, sc, camera) {
     const u = this.userData.u, tgt = renderer.getRenderTarget();
-    if (tgt && tgt.samples > 0) { u.uRefr.value = 0; return; }                              // an MSAA target cannot be copied from
-    if (tgt) gv2.set(tgt.width, tgt.height); else renderer.getDrawingBufferSize(gv2);
-    const w = Math.max(1, Math.floor(gv2.x)), h = Math.max(1, Math.floor(gv2.y));
-    if (!grabTex || w !== grabW || h !== grabH) { if (grabTex) grabTex.dispose(); grabTex = new T.FramebufferTexture(w, h); grabTex.minFilter = grabTex.magFilter = T.LinearFilter; grabW = w; grabH = h; grabFrame = -1; }
-    const fr = renderer.info.render.frame;
-    if (fr !== grabFrame) { grabFrame = fr; renderer.copyFramebufferToTexture(gv0, grabTex); }
+    // only a dome that is on screen pays for a grab (the meshes are never frustum culled: the shader needs them every frame)
+    gPM.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); gFr.setFromProjectionMatrix(gPM); gSp.center.copy(this.position); gSp.radius = this.userData.R;
+    if (!gFr.intersectsSphere(gSp)) { u.uRefr.value = 0; return; }
+    let w, h;
+    if (tgt && tgt.samples > 0) {
+      /* P118d: the colour grade draws every frame into the lens pass's multisampled target, which cannot be copied from (copyFramebufferToTexture needs a single-sample
+       * read buffer: it raised INVALID_OPERATION and the dome never refracted at medium / high quality). Resolve that target by hand instead, once per frame, the way three.js
+       * resolves it at the end of a render call: blit the samples into the target's own texture (rt.texture, attached to its single-sample framebuffer), which is NOT bound
+       * for drawing now (the samples live in a renderbuffer), so the dome can sample it while it draws. The mip chain of that texture is stale until the end of the pass:
+       * the shader reads level 0 only (textureLod). The end-of-pass resolve overwrites the texture with the final image. */
+      const gl = renderer.getContext(), st = renderer.state, pr = renderer.properties.get(tgt), ms = pr.__webglMultisampledFramebuffer, rs = pr.__webglFramebuffer;
+      if (!ms || !rs) { u.uRefr.value = 0; return; }
+      w = tgt.width; h = tgt.height;
+      const fr = renderer.info.render.frame;
+      if (fr !== grabFrame) {
+        grabFrame = fr;
+        st.bindFramebuffer(gl.READ_FRAMEBUFFER, ms); st.bindFramebuffer(gl.DRAW_FRAMEBUFFER, rs);
+        gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+        st.bindFramebuffer(gl.FRAMEBUFFER, ms);                                              // back to drawing into the samples (READ and DRAW)
+      }
+      u.tScene.value = tgt.texture;
+    } else {
+      if (tgt) gv2.set(tgt.width, tgt.height); else renderer.getDrawingBufferSize(gv2);
+      w = Math.max(1, Math.floor(gv2.x)); h = Math.max(1, Math.floor(gv2.y));
+      if (!grabTex || w !== grabW || h !== grabH) { if (grabTex) grabTex.dispose(); grabTex = new T.FramebufferTexture(w, h); grabTex.minFilter = grabTex.magFilter = T.LinearFilter; grabW = w; grabH = h; grabFrame = -1; }
+      const fr = renderer.info.render.frame;
+      if (fr !== grabFrame) { grabFrame = fr; renderer.copyFramebufferToTexture(gv0, grabTex); }
+      u.tScene.value = grabTex;
+    }
     const e = camera.matrixWorldInverse.elements, c = this.position;
-    u.tScene.value = grabTex; u.uRes.value.set(w, h); u.uRefr.value = FV.refraction === false ? 0 : 1;
+    u.uRes.value.set(w, h); u.uRefr.value = FV.refraction === false ? 0 : 1;
     u.uView0.value.set(e[0], e[4], e[8]); u.uView1.value.set(e[1], e[5], e[9]); u.uView2.value.set(e[2], e[6], e[10]);
     u.uInside.value = camera.position.distanceTo(c) < this.userData.R ? 1 : 0;
     u.uDay.value = Math.min(1, Math.max(0, u.uSun.value.y * 2));

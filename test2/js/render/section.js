@@ -154,44 +154,63 @@
     for (const v of r.violations) { const k = v.obj + '|' + v.mat + '|' + v.why; if (v.why === 'program not built yet' || seen.has(k)) continue; seen.add(k); console.warn('section rule: ' + k); }
   };
 
-  /* 6. front ghost */
+  /* 6. front ghost. P118b (QA1 Q-09: it read as frosted glass, a milky double exposure over the cut face): the part the rule removes is drawn into an offscreen target WITH a depth
+   * texture and composited as (1) a LOW-opacity flat fill (cool, a little of its own colour, a quarter of the chosen opacity at the default 50 %), (2) a crisp one-pixel outline
+   * where a nearer surface ends in front of a farther one (a Laplacian of the linear depth: silhouettes and ridges, never a surface's own slope; the nearer side only), and (3) a fade by
+   * the distance in front of the section plane (the foreground next to the camera lets go first, what is close to the plane stays). No blur, no dither, no stipple. */
   let rt = null, quadScene = null, quadCam = null, qmat = null;
-  const sz = new T.Vector2();
+  const sz = new T.Vector2(), invVP = new T.Matrix4();
   function ghostInit(renderer, samples) {
-    rt = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, samples: samples || 0 });
+    const dt = new T.DepthTexture(4, 4); dt.type = T.UnsignedIntType; dt.minFilter = dt.magFilter = T.NearestFilter;
+    rt = new T.WebGLRenderTarget(4, 4, { type: T.HalfFloatType, samples: samples || 0, depthTexture: dt });
     qmat = new T.ShaderMaterial({
-      uniforms: { tG: { value: rt.texture }, uK: { value: 0 }, uPx: { value: new T.Vector2(1, 1) } },
+      uniforms: { tG: { value: rt.texture }, tD: { value: dt }, uK: { value: 0 }, uPx: { value: new T.Vector2(1, 1) }, uInvVP: { value: invVP }, uPl: { value: uP.value }, uNF: { value: new T.Vector2(0.1, 900) }, uFade: { value: 16 } },
       depthTest: false, depthWrite: false, transparent: true, blending: T.CustomBlending,
       blendSrc: T.OneFactor, blendDst: T.OneMinusSrcAlphaFactor, blendSrcAlpha: T.OneFactor, blendDstAlpha: T.OneMinusSrcAlphaFactor,
       vertexShader: 'varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: /* glsl */`
-        uniform sampler2D tG; uniform float uK; uniform vec2 uPx; varying vec2 vUv;
+        uniform sampler2D tG, tD; uniform float uK, uFade; uniform vec2 uPx, uNF; uniform mat4 uInvVP; uniform vec4 uPl; varying vec2 vUv;
+        float lin(vec2 uv){ float z = texture2D(tD, uv).x; return 2.0 * uNF.x * uNF.y / (uNF.y + uNF.x - (z * 2.0 - 1.0) * (uNF.y - uNF.x)); }
         void main() {
           vec4 g = texture2D(tG, vUv);
-          float an = texture2D(tG, vUv + vec2(uPx.x, 0.0)).a + texture2D(tG, vUv - vec2(uPx.x, 0.0)).a + texture2D(tG, vUv + vec2(0.0, uPx.y)).a + texture2D(tG, vUv - vec2(0.0, uPx.y)).a;
-          float edge = clamp(abs(4.0 * g.a - an) * 0.5, 0.0, 1.0);
-          float a = g.a * uK;
-          if (a < 0.002 && edge < 0.01) discard;
+          if (g.a < 0.004) discard;
+          float d0 = lin(vUv), dl = lin(vUv - vec2(uPx.x, 0.0)), dr = lin(vUv + vec2(uPx.x, 0.0)), du = lin(vUv + vec2(0.0, uPx.y)), dn = lin(vUv - vec2(0.0, uPx.y));
+          float dl2 = lin(vUv - vec2(uPx.x * 2.0, 0.0)), dr2 = lin(vUv + vec2(uPx.x * 2.0, 0.0)), du2 = lin(vUv + vec2(0.0, uPx.y * 2.0)), dn2 = lin(vUv - vec2(0.0, uPx.y * 2.0));
+          // a step to a FARTHER surface (or to the open sky: no depth there): the Laplacian is large and positive on the nearer side only; two reaches (1 and 2 px) give the line a soft
+          // two-pixel body instead of a jagged single pixel
+          float lap = max(dl + dr - 2.0 * d0, du + dn - 2.0 * d0) / max(d0, 1.0), lap2 = max(dl2 + dr2 - 2.0 * d0, du2 + dn2 - 2.0 * d0) / max(d0, 1.0);
+          vec2 p3 = uPx * 3.0;
+          float cov = (g.a + texture2D(tG, vUv - vec2(p3.x, 0.0)).a + texture2D(tG, vUv + vec2(p3.x, 0.0)).a + texture2D(tG, vUv + vec2(0.0, p3.y)).a + texture2D(tG, vUv - vec2(0.0, p3.y)).a) * 0.2;
+          float edge = max(smoothstep(0.09, 0.28, lap), 0.6 * smoothstep(0.12, 0.34, lap2)) * smoothstep(0.3, 0.9, g.a) * smoothstep(0.5, 0.7, cov);       // (thin things, grass blades, foliage, are not outlined: they would scribble)
+          // where this pixel is: metres in front of the section plane
+          vec4 ndc = vec4(vUv * 2.0 - 1.0, texture2D(tD, vUv).x * 2.0 - 1.0, 1.0);
+          vec4 wp = uInvVP * ndc; float t = max(dot(uPl.xyz, wp.xyz / wp.w) + uPl.w, 0.0);
+          float fade = exp(-t / uFade);
           vec3 c = g.rgb / max(g.a, 1e-3);
           gl_FragColor = vec4(c, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
           vec3 col = gl_FragColor.rgb;
           float l = dot(col, vec3(0.299, 0.587, 0.114));
-          col = mix(vec3(l), col, 0.3) * vec3(0.8, 0.93, 1.18);
-          float rim = edge * min(1.0, uK * 1.6) * 0.55;
-          float al = clamp(a + rim, 0.0, 1.0);
-          gl_FragColor = vec4(mix(col, vec3(0.75, 0.9, 1.0), clamp(rim * 1.6, 0.0, 1.0)) * al, al);
+          col = mix(vec3(l), col, 0.42) * vec3(0.8, 0.93, 1.12) * 0.9;
+          float fill = g.a * uK * sqrt(uK) * mix(0.45, 1.0, fade);                         // the chosen opacity to the power 1.5: 50 % reads as about a third, 100 % is solid
+          float line = edge * min(1.0, uK * 1.8) * mix(0.55, 1.0, fade) * 0.85;
+          vec3 lc = vec3(0.46, 0.74, 1.0);                                                   // an azure outline (the cut's own outline is cream): reads on a bright sky and on dark rock
+          float al = clamp(fill + line * (1.0 - fill), 0.0, 1.0);
+          gl_FragColor = vec4(col * fill * (1.0 - line) + lc * line, al);
         }`
     });
     quadScene = new T.Scene(); quadCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     const q = new T.Mesh(new T.PlaneGeometry(2, 2), SEC.exempt(qmat, 'ghost composite quad')); q.frustumCulled = false; quadScene.add(q);
   }
   const hid = [], ccTmp = new T.Color(); let hidN = 0;                   // (per-frame scratch: the ghost pass used to allocate an array, a Color and a [].concat per object every frame)
+  /* P118b: the ghost shows what stands in front of the plane (terrain, trees, props, worms, effects), not the water: the sea in front is a flat sheet that carries nothing and was the
+   * widest milky area of the old ghost. A water surface is recognised by its uniforms (render/water.js: uDeep + uShallow on the grid, the outer ocean and the section face). */
+  const isWater = m => !!(m.uniforms && m.uniforms.uDeep && m.uniforms.uShallow);
   function hideExempt(o) {
     const m = o.material; if (!m) return;
-    if (Array.isArray(m)) { for (let i = 0; i < m.length; i++) if (!isExempt(m[i])) return; }
-    else if (!isExempt(m)) return;
+    if (Array.isArray(m)) { for (let i = 0; i < m.length; i++) if (!isExempt(m[i]) && !isWater(m[i])) return; }
+    else if (!isExempt(m) && !isWater(m)) return;
     hid[hidN++] = o;
   }
   SEC.setGhost = function (pct) { const v = Number.isFinite(+pct) ? Math.max(0, Math.min(100, +pct)) : 0; SEC.ghost = v; SEC.frontOn = v >= 0.5 && SEC.mode === 0; return v; };
@@ -219,6 +238,7 @@
       hidN = 0;
     }
     qmat.uniforms.uK.value = g / 100; qmat.uniforms.uPx.value.set(1 / sz.x, 1 / sz.y);
+    invVP.multiplyMatrices(camera.matrixWorld, camera.projectionMatrixInverse); qmat.uniforms.uNF.value.set(camera.near, camera.far);
     const ac2 = renderer.autoClear; renderer.autoClear = false;
     renderer.render(quadScene, quadCam);
     renderer.autoClear = ac2;

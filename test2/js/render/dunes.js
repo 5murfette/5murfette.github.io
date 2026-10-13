@@ -93,7 +93,7 @@
           bool inside = rC < ${C.DRY.LAT_R.toFixed(2)};                        // (D6: the lattice disc)
           ${kind === 0 ? `if (rC < ${(C.DRY.LAT_R - OVERLAP).toFixed(2)}) discard;` : ''}
           bool inSlab = tD <= 0.05 && tD >= -uBack;          // the terrain's shadow rule: the slab receives, the context not
-          if (tD > 0.0) aV = 0.55 * uInsp;
+          if (tD > 0.0) aV = uInsp;                          // P118c: the overview (hold V) shows the whole map solid: the front dunes were a 55 % veil over the dark floor plane (brown stripes across the desert)
           aV *= 1.0 - smoothstep(330.0, 445.0, max(abs(vW.x - 48.0), abs(vW.z - 48.0)));   // the grid's square edge dissolves into the sky`)
         .replace('#include <map_fragment>', /* glsl */`
           vec3 nW = normalize(vWN);

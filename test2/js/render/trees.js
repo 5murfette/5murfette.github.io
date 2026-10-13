@@ -106,7 +106,9 @@
      #else
       float a = 1.0;
       if (vRootT < -uBack - ${CTX_M}) discard;
-      if (uSecG < 0.5 && t > 0.02 - jag) { if (uInsp < 0.02) discard; a = uInsp * 0.3 * exp(-max(t, 0.0) / 12.0); }
+      // P118c (Q-OV1): in the overview (P85: the whole map solid) the trees in front of the plane are as solid as the terrain under them; a = uInsp only
+      // dithers (screen door) during the 0.35 s transition. It used to be a 30 % ghost fading with the distance: a green stipple swarm over the island
+      if (uSecG < 0.5 && t > 0.02 - jag) { if (uInsp < 0.02) discard; a = uInsp; }
       if (a < 0.995 && a <= bayer4(gl_FragCoord.xy)) discard;
      #endif
     #endif
@@ -610,6 +612,7 @@
     }
     return { group: g, meshes: parts };
   };
+  TV.uInsp = () => (own ? own.uInsp.value : 0);                      // (tests: the overview factor the tree shaders see; 1 = every tree solid, P118c)
   TV.debug = () => ({ meshes, woodMats, leafMats, coreMats, state: stData, ROW, LEAF0 });   // dev tools (shot scripts, verify)
   TV.stats = () => ({ tris, fire: SS.fireView ? SS.fireView.stats().cells : 0, flames: [...flames.values()].reduce((a, f) => a + f.length, 0) });
 })(window.SS = window.SS || {});

@@ -1,10 +1,11 @@
 /* render/eowview.js — P68c EXPERIMENTAL biome "End of the World": the space look (presentation only; sim/eow.js has the rules).
  * Everything is procedural (shaders and math, no images, fire included):
- *   - the sky dome: stars (three layers), a nebula band, a harsh sun with a corona, a dark moon lit by it, a thin asteroid belt, all slowly
+ *   - the sky dome: stars (three layers + a star dust), a nebula band baked once into a cube map (P118d), a harsh sun with a corona, a dark moon lit by it, a thin asteroid belt, all slowly
  *     tumbling (the "rotation" of the world: the sim's chunks are static, the sky, the sun and the far debris turn);
  *   - heat: no core ball (P68d). The pieces themselves glow (lava veins, see sim/eow.js heatVeins; the terrain shader draws them); the 4 hot regions
  *     nearest the camera get a slow flickering orange point light, the only fill light on a night side;
- *   - vacuum effects: explosions = a flash, a glow sphere, straight sparks and a conical ejecta curtain on gravity arcs (no smoke, no shock ring),
+ *   - vacuum effects: explosions = a brief blue-white flash, a plasma glow that cools white -> orange -> dark, a fast spherical shell of sparks and glowing fragments, dark chunks and a fine
+ *     curtain on the local gravity arcs, a glowing crater (P118d; no smoke, no shock ring, no dust cloud),
  *     breached magma pockets release floating globules, the ship vents ice-crystal plumes, a shell lost to space gets an edge arrow with its distance;
  *   - far debris: an asteroid ring around the core, big silhouettes and small drifting scrap (one InstancedMesh, flat shaded lumps);
  *   - the lights: a hard white sun, a very dark blue ambient, a violet rim light from the nebula side; the terrain haze is black.
@@ -27,8 +28,36 @@
     float fbm(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a * vn(p); p = p * 2.03 + 17.1; a *= 0.5; } return s; }
   `;
   const SKY_V = 'varying vec3 vD; void main(){ vD = position; vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }';
+  /* P118d (Q-19): the milky way (the nebula band and its dust lanes) used to be 21 value-noise lookups per pixel at 120 cells per radian: boxy 6 px blotches and a
+   * visible lattice. It is now baked ONCE into a small cube map (smooth gradient noise, domain warped, half float) and read with linear filtering; the dome only
+   * adds stars, the belt, the moon and the sun on top, and dithers the dark gradient. The band's mask direction must stay equal in both shaders. */
+  const BAND_DIR = 'normalize(vec3(0.3, 0.9, 0.25))', BAND_N = 512;
+  const BAND_F = /* glsl */`
+    varying vec3 vD;
+    vec3 gh(vec3 p){ p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6))); return -1.0 + 2.0 * fract(sin(p) * 43758.5453123); }
+    float gn(vec3 p){
+      vec3 i = floor(p), f = fract(p), u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+      return mix(mix(mix(dot(gh(i), f), dot(gh(i + vec3(1,0,0)), f - vec3(1,0,0)), u.x), mix(dot(gh(i + vec3(0,1,0)), f - vec3(0,1,0)), dot(gh(i + vec3(1,1,0)), f - vec3(1,1,0)), u.x), u.y),
+                 mix(mix(dot(gh(i + vec3(0,0,1)), f - vec3(0,0,1)), dot(gh(i + vec3(1,0,1)), f - vec3(1,0,1)), u.x), mix(dot(gh(i + vec3(0,1,1)), f - vec3(0,1,1)), dot(gh(i + vec3(1,1,1)), f - vec3(1,1,1)), u.x), u.y), u.z);
+    }
+    const mat3 RM = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
+    float gf(vec3 p, int n){ float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { if (i >= n) break; s += a * gn(p); p = RM * p * 2.02 + 7.3; a *= 0.5; } return 0.5 + 0.9 * s; }   // about 0 .. 1 around 0.5
+    void main(){
+      vec3 q = normalize(vD);
+      float band = exp(-pow(dot(q, ${BAND_DIR}) / 0.3, 2.0));
+      vec3 w = vec3(gf(q * 1.6 + 1.0, 3), gf(q * 1.6 + 5.0, 3), gf(q * 1.6 + 9.0, 3)) - 0.5;          // a domain warp: the lanes and clouds meander instead of lying on a lattice
+      float n1 = gf(q * 2.1 + w * 1.1, 5), n2 = gf(q * 4.7 + 11.0 + w * 0.7, 4), dust = 0.55 + 0.9 * gf(q * 9.0 + 3.0 + w * 0.4, 4);
+      float lane = smoothstep(0.5, 0.74, gf(q * 5.6 + w * 1.5 + 7.0, 4));                             // dark dust lanes cut across the glow
+      // P86: the backdrop must not compete with the playfield: a dark, desaturated nebula
+      vec3 col = (mix(vec3(0.016, 0.02, 0.04), vec3(0.17, 0.1, 0.15), smoothstep(0.35, 0.8, n1)) * band * 0.75
+                + vec3(0.05, 0.1, 0.13) * smoothstep(0.5, 0.9, n2) * band * 0.3
+                + vec3(0.3, 0.2, 0.14) * pow(smoothstep(0.55, 0.95, n1 * n2 * 1.9), 2.0) * band * 0.12) * dust * 0.32;
+      col *= 1.0 - 0.6 * lane * smoothstep(0.0, 0.5, band);
+      col += vec3(0.02, 0.03, 0.06) * band * smoothstep(0.55, 0.8, gf(q * 30.0 + 2.0, 3)) * 0.35;         // a faint grain inside the band, soft (the old 120-cell value noise was the blocks)
+      gl_FragColor = vec4(col, 1.0);
+    }`;
   const SKY_F = /* glsl */`
-    uniform float uTime; uniform vec3 uSun, uMoon, uBeltN; uniform mat3 uRot;
+    uniform float uTime; uniform vec3 uSun, uMoon, uBeltN; uniform mat3 uRot; uniform samplerCube tBand;
     varying vec3 vD;
     ${NOISE}
     vec3 starLayer(vec3 d, float sc, float thr, float size, float gain){
@@ -43,14 +72,10 @@
     void main(){
       vec3 d = normalize(vD), q = uRot * d;
       vec3 col = vec3(0.003, 0.0035, 0.009);
-      float band = exp(-pow(dot(q, normalize(vec3(0.3, 0.9, 0.25))) / 0.3, 2.0));
-      float n1 = fbm(q * 2.1 + vec3(0.0, uTime * 0.0015, 0.0)), n2 = fbm(q * 4.7 + 11.0), dust = 0.55 + 0.9 * fbm(q * 9.0 + 3.0);
-      // P86: the backdrop must not compete with the playfield: a dark, desaturated nebula, a few dim stars
-      col += (mix(vec3(0.016, 0.02, 0.04), vec3(0.17, 0.1, 0.15), smoothstep(0.35, 0.8, n1)) * band * 0.75
-            + vec3(0.05, 0.1, 0.13) * smoothstep(0.5, 0.9, n2) * band * 0.3
-            + vec3(0.3, 0.2, 0.14) * pow(smoothstep(0.55, 0.95, n1 * n2 * 1.9), 2.0) * band * 0.12) * dust * 0.32;
+      float band = exp(-pow(dot(q, ${BAND_DIR}) / 0.3, 2.0));
+      col += textureCube(tBand, q).rgb;                                                  // P118d: the baked milky way (BAND_F), linear filtered
       col += starLayer(q, 28.0, 0.972, 0.17, 1.0) + starLayer(q, 70.0, 0.982, 0.17, 0.7) + starLayer(q, 170.0, 0.99, 0.17, 0.55);
-      col += vec3(0.02, 0.03, 0.06) * band * smoothstep(0.6, 0.9, vn(q * 120.0)) * 0.5;
+      col += starLayer(q, 330.0, mix(0.9, 0.985, 1.0 - band), 0.3, 0.3) * (0.4 + 0.6 * band);   // star dust: many faint pin pricks, densest in the band
       // the asteroid belt: a thin great circle of specks and dust
       float bn = dot(d, uBeltN), bb = exp(-pow(bn / 0.04, 2.0));
       vec3 bp = d * 230.0, bi = floor(bp); float bh = h13(bi + 5.0);
@@ -72,6 +97,8 @@
       gl_FragColor = vec4(col, 1.0);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
+      float dn = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));         // P118d: interleaved gradient noise: the dark gradient does not band into stripes
+      gl_FragColor.rgb += (dn - 0.5) / 255.0;
     }`;
   /* ---------- the ship hull's look (shared by the terrain surface and the cap shader: render/terrain.js has one-line hooks) ----------
    * In this world steel and concrete are only the wreck's gunmetal plates and decks: panel grid with seams and rivets, grime and soot
@@ -218,10 +245,22 @@
     return geo;
   }
 
+  /* the milky way, baked once: BAND_F drawn from inside a unit sphere into the six faces of a half-float cube map (linear filtering, no mip maps: the camera's
+   * field of view is fixed, the texture is only ever magnified). Presentation only; nothing here touches the sim. */
+  function bakeBand(rd) {
+    const rt = new T.WebGLCubeRenderTarget(BAND_N, { type: T.HalfFloatType, format: T.RGBAFormat, generateMipmaps: false, minFilter: T.LinearFilter, magFilter: T.LinearFilter });
+    const sc = new T.Scene(), m = new T.ShaderMaterial({ side: T.BackSide, depthTest: false, depthWrite: false, fog: false, vertexShader: 'varying vec3 vD; void main(){ vD = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }', fragmentShader: BAND_F });
+    const mesh = new T.Mesh(new T.SphereGeometry(1, 48, 24), m); mesh.frustumCulled = false; sc.add(mesh);
+    const cc = new T.CubeCamera(0.1, 10, rt), prev = rd.getRenderTarget(), ac = rd.autoClear;
+    rd.autoClear = true; cc.update(rd, sc); rd.autoClear = ac; rd.setRenderTarget(prev);
+    mesh.geometry.dispose(); m.dispose();
+    return rt.texture;
+  }
+
   function build(ctx) {
     const scene = ctx.scene, G = { scene, objs: [] };
     // sky dome
-    const skyMat = new T.ShaderMaterial({ side: T.BackSide, depthWrite: false, fog: false, uniforms: { uTime: { value: 0 }, uSun: { value: new T.Vector3(0.5, 0.4, 0.7).normalize() }, uMoon: { value: new T.Vector3(-0.5, 0.35, -0.6).normalize() }, uBeltN: { value: new T.Vector3(0.1, 1, 0.2).normalize() }, uRot: { value: new T.Matrix3() } }, vertexShader: SKY_V, fragmentShader: SKY_F });
+    const skyMat = new T.ShaderMaterial({ side: T.BackSide, depthWrite: false, fog: false, uniforms: { uTime: { value: 0 }, uSun: { value: new T.Vector3(0.5, 0.4, 0.7).normalize() }, uMoon: { value: new T.Vector3(-0.5, 0.35, -0.6).normalize() }, uBeltN: { value: new T.Vector3(0.1, 1, 0.2).normalize() }, uRot: { value: new T.Matrix3() }, tBand: { value: bakeBand(ctx.renderer) } }, vertexShader: SKY_V, fragmentShader: SKY_F });
     SS.section.exempt(skyMat, 'eow sky dome');
     G.dome = new T.Mesh(new T.SphereGeometry(500, 48, 24), skyMat); G.dome.renderOrder = -11; G.dome.frustumCulled = false; scene.add(G.dome); G.objs.push(G.dome); if (SS.envView) SS.envView.dome(G.dome);
     // far debris: an asteroid ring about the core, far silhouettes, near scrap
@@ -469,7 +508,7 @@
   EV.bbRGB = bbRGB;
   function hotLights(S, view, ctx, G) {
     G.lights = G.lights || [];
-    if (!G.hotL) { G.hotL = []; for (let i = 0; i < HOT_N; i++) { const l = new T.PointLight(0xff6a20, 0, 40, 2); ctx.scene.add(l); G.hotL.push(l); } G.boomL = new T.PointLight(0xfff0d0, 0, 60, 1.5); ctx.scene.add(G.boomL); G.lights.push(...G.hotL, G.boomL); }
+    if (!G.hotL) { G.hotL = []; for (let i = 0; i < HOT_N; i++) { const l = new T.PointLight(0xff6a20, 0, 40, 2); ctx.scene.add(l); G.hotL.push(l); } G.boomL = new T.PointLight(0xfff0d0, 0, 60, 1.5); ctx.scene.add(G.boomL); G.craterL = new T.PointLight(0xff8a30, 0, 16, 2); ctx.scene.add(G.craterL); G.lights.push(...G.hotL, G.boomL, G.craterL); }
     const hot = S.eow.hot || [], pk = S.eow.pockets || [], f = view.camT, n = SS.terrain.uniforms.uN.value, list = [];
     for (let i = 0; i < hot.length; i++) { const h = hot[i], d = M.len3(h.x - f.x, h.y - f.y, h.z - f.z); list.push({ h, d, T: h.T * 0.82, k: 1 }); }
     for (let i = 0; i < pk.length; i++) { const h = pk[i], d = M.len3(h.x - f.x, h.y - f.y, h.z - f.z); list.push({ h, d, T: 640, k: 0.5 }); }      // a sealed pocket: its crust glows dull red
@@ -483,6 +522,10 @@
       l.color.setRGB(tc3[0], tc3[1], tc3[2]); l.distance = 12 + h.r * 3; l.intensity = 110 * tk * tk * q.k * fl * (1 - M.smoothstep(34, 80, q.d));
     }
     if (G.boom) { G.boom.t += 1 / 60; G.boomL.visible = true; G.boomL.intensity = G.boom.i * Math.exp(-G.boom.t * 16); if (G.boom.t > 0.6) G.boom = null; } else { G.boomL.visible = true; G.boomL.intensity = 0; }
+    if (G.crater) {                                                      // P118d: the fresh crater glows: a slow light that cools from yellow-orange to dull red over ~3 s
+      const c = G.crater; c.t += 1 / 60; G.craterL.visible = true; bbRGB(1150 - 450 * M.min(1, c.t / 2.8), tc3); G.craterL.color.setRGB(tc3[0], tc3[1], tc3[2]);
+      G.craterL.position.set(c.x, c.y, c.z); G.craterL.distance = 9 + 3 * c.R; G.craterL.intensity = c.i * Math.exp(-c.t * 1.1) * M.smoothstep(0, 0.05, c.t); if (c.t > 4) G.crater = null;
+    } else { G.craterL.visible = true; G.craterL.intensity = 0; }
   }
 
   /* ---------- vacuum explosions, escaping sparks, floating lava globules ----------
@@ -543,8 +586,8 @@
         else if (p.kind === 4) { const f = 1 - a; D.col[c4] = 0.5 + 1.5 * f * f; D.col[c4 + 1] = 0.85 + 0.9 * f; D.col[c4 + 2] = 0.5 + 2.0 * f; D.col[c4 + 3] = f * f * 0.85; D.sz[n] = p.size * (0.7 + 0.9 * a); }    // P86: a thruster plume: pale blue-white, widening and fading
         else if (p.kind === 1) { D.col[c4] = p.r; D.col[c4 + 1] = p.g; D.col[c4 + 2] = p.b; D.col[c4 + 3] = 1 - M.smoothstep(0.8, 1, a) + (p.rest ? -0.0 : 0); D.sz[n] = p.size; }
         else if (p.kind === 2) {                        // globule: cools yellow -> red -> a black bead (the glow is the additive system, the bead the opaque one)
-          const k = M.max(0, 1 - p.age / 9);
-          if (D === G.dynA) { tempCol(k, tc); D.col[c4] = tc[0] * 0.8; D.col[c4 + 1] = tc[1] * 0.8; D.col[c4 + 2] = tc[2] * 0.8; D.col[c4 + 3] = k > 0.05 ? 0.9 : 0; D.sz[n] = p.size * (1 + 0.12 * M.sin(S.time * 7 + p.ph)); }
+          const k = M.max(0, 1 - p.age / 4.5);
+          if (D === G.dynA) { tempCol(k * 0.85, tc); D.col[c4] = tc[0] * 0.5; D.col[c4 + 1] = tc[1] * 0.34; D.col[c4 + 2] = tc[2] * 0.14; D.col[c4 + 3] = k > 0.05 ? 0.9 : 0; D.sz[n] = p.size * (0.8 + 0.1 * M.sin(S.time * 7 + p.ph)); }
           else { D.col[c4] = 0.03; D.col[c4 + 1] = 0.028; D.col[c4 + 2] = 0.035; D.col[c4 + 3] = 1 - M.smoothstep(0.85, 1, a); D.sz[n] = p.size * 0.8; }
         } else { const f = 1 - a; tempCol(0.4 + 0.6 * f, tc); D.col[c4] = tc[0] * f * 2; D.col[c4 + 1] = tc[1] * f * 2; D.col[c4 + 2] = tc[2] * f * 2; D.col[c4 + 3] = f * f; D.sz[n] = p.size * (0.6 + a * 0.8); }
         n++;
@@ -557,34 +600,74 @@
   const MATCOL = {};
   { const MT = C.MAT; MATCOL[MT.SOIL] = [0.3, 0.2, 0.14]; MATCOL[MT.SANDSTONE] = [0.5, 0.36, 0.25]; MATCOL[MT.ROCK] = [0.34, 0.32, 0.31]; MATCOL[MT.BASALT] = [0.14, 0.14, 0.16]; MATCOL[MT.CRUST] = [0.1, 0.09, 0.1]; MATCOL[MT.STEEL] = [0.35, 0.37, 0.4]; MATCOL[MT.CONCRETE] = [0.35, 0.35, 0.34]; MATCOL[MT.ICE] = [0.6, 0.75, 0.9]; MATCOL[MT.BEDROCK] = [0.2, 0.2, 0.22]; MATCOL[MT.LAVA] = [0.1, 0.05, 0.04]; }
   const rnd = (a, b) => a + (b - a) * Math.random();
-  // called by render/fx.js FX.explosion when the world is the End of the World: true = handled
+  const pend = [];                                                  // timed spawns of a blast (view time, so slow motion and replays keep their order)
+  const later = (t, fn) => { pend.push({ t, fn }); };
+  /* called by render/fx.js FX.explosion when the world is the End of the World: true = handled.
+   * P118d (Q-07): a blast in VACUUM, from what is physically there. No air: no shock ring, no dust skirt, no smoke, nothing that lingers as a cloud.
+   *   1. a flash: two sprites, 2-5 frames, blue-white (the detonation products at their hottest);
+   *   2. a plasma glow that expands fast and cools by its own T^4 law: blue-white -> yellow -> orange -> dark red -> gone in ~0.4 s (fx.js K_FIRE, black body);
+   *   3. a fast SPHERICAL SHELL: incandescent sparks (streaks) and glowing fragments leave at 14-30 m/s in every direction the rock does not stop and keep flying
+   *      straight, bent only by the local gravity field of the pieces (fx.js fld = 1: FX.field = E.field); what hits the rock goes out (sparks) or lies still (fragments cool in place);
+   *   4. dark rock chunks, sun lit, that tumble out on arcs and lie where they land, plus a fine regolith curtain (the grains of the CPU system below, small and dark);
+   *   5. the crater glows: ember patches on its floor and a slow orange light that fades over ~3 s (the fresh surface is hot).
+   * Counts scale with the quality (FX.qn). Everything is render-side randomness (Math.random is fine here). */
   EV.explosion = function (e) {
-    const G = built, S = EV.S; if (!G || !S || !S.eow || !G.dynA) return false;
-    const W3 = Math.cbrt(e.W || Math.pow((e.R || 3) / 3, 3)), R = Math.max(1, e.R || 3), W = SS.world, nv = { x: 0, y: 1, z: 0 };
+    const G = built, S = EV.S, FX = SS.fx; if (!G || !S || !S.eow || !G.dynA || !FX) return false;
+    const KD = FX.KIND, W3 = Math.cbrt(e.W || Math.pow((e.R || 3) / 3, 3)), R = Math.max(1, e.R || 3), W = SS.world, nv = { x: 0, y: 1, z: 0 }, qn = FX.qn ? FX.qn() : 1, cnt = v => Math.max(1, Math.round(v * qn));
     W.normal(e.x, e.y, e.z, nv); if (M.len3(nv.x, nv.y, nv.z) < 0.3) { nv.x = 0; nv.y = 1; nv.z = 0; }
-    const A = G.dynA, N = G.dynN, byMat = e.byMat || [];
+    const N = G.dynN, byMat = e.byMat || [];
     let bm = 0, bc = 0; for (let i = 0; i < byMat.length; i++) if (i !== C.MAT.LAVA && byMat[i] > bc) { bc = byMat[i]; bm = i; }
-    const mc = MATCOL[bm] || MATCOL[C.MAT.ROCK], lavaN = byMat[C.MAT.LAVA] || 0, fuel = !!e.boom;
-    // a hard flash and a glow sphere (0.1-0.2 s)
-    dynPush(A, { kind: 3, x: e.x, y: e.y, z: e.z, vx: 0, vy: 0, vz: 0, age: 0, life: 0.1 + 0.03 * W3, size: R * 1.2, r: 1, g: 1, b: 1, ph: 0 });
-    dynPush(A, { kind: 3, x: e.x, y: e.y, z: e.z, vx: 0, vy: 0, vz: 0, age: 0, life: 0.2 + 0.05 * W3, size: R * 2.1, r: 1, g: 1, b: 1, ph: 0 });
-    G.boom = { t: 0, i: 700 * W3 };
-    const dirOut = (spread) => { let x = rnd(-1, 1), y = rnd(-1, 1), z = rnd(-1, 1); const l = Math.hypot(x, y, z) || 1; x = x / l + nv.x * spread; y = y / l + nv.y * spread; z = z / l + nv.z * spread; const m = Math.hypot(x, y, z) || 1; return [x / m, y / m, z / m]; };
-    // sparks: incandescent bits that fly straight and cool
-    for (let i = 0, n = Math.round(26 + 22 * W3 + (fuel ? 30 : 0)); i < n; i++) { const d = dirOut(0.9), v = rnd(4, 16) * (0.7 + 0.3 * W3); dynPush(A, { kind: 0, x: e.x, y: e.y, z: e.z, vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, age: 0, life: rnd(1, 3), size: rnd(0.05, 0.11), ph: 0 }); }
-    // ejecta: a conical curtain of grains (mostly 3-9 m/s: back on the piece within a few crater radii), a few fast ones leave
-    for (let i = 0, n = Math.round(50 + 40 * W3); i < n; i++) {
-      const d = dirOut(2.2), v = 2.5 + Math.pow(Math.random(), 1.7) * 18 * (0.55 + 0.45 * W3), sh = rnd(0.6, 1.2);
-      dynPush(N, { kind: 1, x: e.x + nv.x * 0.3, y: e.y + nv.y * 0.3, z: e.z + nv.z * 0.3, vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, age: 0, life: rnd(5, 9), size: rnd(0.15, 0.34) * (0.7 + 0.3 * W3), r: mc[0] * sh * 1.7, g: mc[1] * sh * 1.7, b: mc[2] * sh * 1.7, ph: 0 });
+    const mc = MATCOL[bm] || MATCOL[C.MAT.ROCK], lavaN = byMat[C.MAT.LAVA] || 0, fuel = !!e.boom, wk = 0.8 + 0.25 * W3;
+    // a direction on the sphere, thinned toward the rock (nv: the surface normal; bias 0 = a full sphere, 1 = mostly the open side)
+    const dirOut = bias => { let x = rnd(-1, 1), y = rnd(-1, 1), z = rnd(-1, 1); const l = Math.hypot(x, y, z) || 1; x = x / l + nv.x * bias; y = y / l + nv.y * bias; z = z / l + nv.z * bias; const m = Math.hypot(x, y, z) || 1; return [x / m, y / m, z / m]; };
+    // 1. the flash
+    FX.spawn(KD.FLASH, e.x, e.y, e.z, { life: 0.034 + 0.012 * W3, s0: R * 0.5, s1: R * 1.4, c0: [6, 7, 10], c1: [2.2, 2.6, 4.2], a0: 1 });
+    FX.spawn(KD.FLASH, e.x, e.y, e.z, { life: 0.022, s0: R * 0.25, s1: R * 0.7, c0: [10, 10, 13], c1: [4, 4, 6], a0: 1 });
+    // 2. the plasma glow (fx.js fire: radiance ~ T^4 falls so fast that one puff alone would be blue-white and then gone): a small blue-white core now, then a cluster of lumpy
+    // yellow-orange lobes that fly apart and cool to a dull red (several small puffs: one big one is a smooth disc)
+    const pl = (0.2 + 0.07 * W3) * (fuel ? 1.6 : 1), fk = fuel ? 1.4 : 1, bx = e.x, by = e.y, bz = e.z;
+    FX.spawn(KD.FIRE, bx, by, bz, { life: pl * 0.5, s0: R * 0.3, s1: R * 1.15, c0: [fuel ? 5600 : 8500, 4800, 0], a0: fuel ? 0.02 : 0.0075 });
+    for (let i = 0, n = cnt(7); i < n; i++) {
+      const d = dirOut(0.3), v = rnd(3, 8) * wk, off = R * rnd(0.1, 0.4), tt = rnd(2300, 3700), li = pl * rnd(0.7, 1.5), sz = R * rnd(0.55, 1.05), t0 = rnd(0.015, 0.07);
+      later(t0, () => FX.spawn(KD.FIRE, bx + d[0] * off, by + d[1] * off, bz + d[2] * off, { vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, drag: 3, life: li, s0: sz * 0.45, s1: sz * rnd(1.3, 1.8), c0: [tt, 1300 + 0.25 * (tt - 2300), 0], a0: (tt > 3000 ? 0.12 : 0.4) * fk }));
     }
+    G.boom = { t: 0, i: 700 * W3 };
+    // 3. the shell: sparks (streaks) and glowing fragments, a thin spread of speeds so that the sphere is visible as one
+    for (let i = 0, n = cnt(58 + 38 * W3 + (fuel ? 30 : 0)); i < n; i++) {
+      const d = dirOut(0.35), v = (i % 5 < 3 ? 21 + 3 * Math.random() : 8 + 22 * Math.random()) * wk, hot = rnd(2300, 3300);       // 3 of 5 leave in a thin band of speeds: the shell reads as a sphere
+      FX.spawn(KD.SPARK, e.x + nv.x * 0.2, e.y + nv.y * 0.2, e.z + nv.z * 0.2, { vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, fld: 1, life: rnd(0.8, 2.2), s0: 0.13, s1: 0.06, c0: [hot, rnd(800, 1100), 0] });
+    }
+    for (let i = 0, n = cnt(12 + 9 * W3 + (fuel ? 10 : 0)); i < n; i++) {
+      const d = dirOut(0.5), v = (6 + 14 * Math.random()) * wk;
+      FX.spawn(KD.LAVA, e.x + nv.x * 0.25, e.y + nv.y * 0.25, e.z + nv.z * 0.25, { vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, fld: 1, life: rnd(1.2, 2.6), s0: rnd(0.14, 0.3), s1: 0.1, c0: [rnd(1600, 2100), rnd(700, 900), 0] });
+    }
+    // 4. dark chunks that tumble out on arcs, and the fine curtain
+    for (let i = 0, n = cnt(14 + 10 * W3); i < n; i++) {
+      const d = dirOut(1.2), v = (3 + 13 * Math.pow(Math.random(), 1.4)) * wk, sh = rnd(0.8, 1.25), sz = rnd(0.12, 0.38) * (0.75 + 0.3 * W3);
+      FX.spawn(KD.CHUNK, e.x + nv.x * 0.3, e.y + nv.y * 0.3, e.z + nv.z * 0.3, { vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, fld: 1, life: rnd(4, 7), s0: sz, s1: sz, c0: [mc[0] * sh * 2.4, mc[1] * sh * 2.4, mc[2] * sh * 2.4], a0: 1, ang: rnd(0.6, 1), spin: rnd(-6, 6) });
+    }
+    for (let i = 0, n = cnt(46 + 40 * W3); i < n; i++) {
+      const d = dirOut(2.2), v = 2.5 + Math.pow(Math.random(), 1.7) * 18 * (0.55 + 0.45 * W3), sh = rnd(0.6, 1.0);
+      dynPush(N, { kind: 1, x: e.x + nv.x * 0.3, y: e.y + nv.y * 0.3, z: e.z + nv.z * 0.3, vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, age: 0, life: rnd(5, 9), size: rnd(0.04, 0.11) * (0.7 + 0.3 * W3), r: mc[0] * sh * 1.3, g: mc[1] * sh * 1.3, b: mc[2] * sh * 1.3, ph: 0 });
+    }
+    // 5. the crater glows: ember patches round its floor (additive, cooling) and a slow warm light
+    { const rf = Math.abs(nv.y) < 0.9 ? [0, 1, 0] : [1, 0, 0]; let t1x = nv.y * rf[2] - nv.z * rf[1], t1y = nv.z * rf[0] - nv.x * rf[2], t1z = nv.x * rf[1] - nv.y * rf[0]; const tl = Math.hypot(t1x, t1y, t1z) || 1; t1x /= tl; t1y /= tl; t1z /= tl;
+      const t2x = nv.y * t1z - nv.z * t1y, t2y = nv.z * t1x - nv.x * t1z, t2z = nv.x * t1y - nv.y * t1x;
+      for (let i = 0, n = cnt(5); i < n; i++) {
+        const a = rnd(0, TAU), rr = rnd(0.1, 0.55) * R, ca = Math.cos(a) * rr, sa = Math.sin(a) * rr;
+        FX.spawn(KD.LAVA, e.x + t1x * ca + t2x * sa + nv.x * 0.15, e.y + t1y * ca + t2y * sa + nv.y * 0.15, e.z + t1z * ca + t2z * sa + nv.z * 0.15, { life: rnd(1.8, 3.2), s0: rnd(0.5, 1.0) * R * 0.35, s1: rnd(0.9, 1.5) * R * 0.35, c0: [rnd(1200, 1500), rnd(650, 800), 0] });
+      }
+    }
+    G.crater = { t: 0, x: e.x + nv.x * 1.0, y: e.y + nv.y * 1.0, z: e.z + nv.z * 1.0, i: 52 * W3 * (fuel ? 1.3 : 1), R: R };
     // molten globules: from a breached pocket (its lava voxels were in the crater) or a fuel splash: slow, glowing, they drift and cool
-    const ng = Math.min(36, Math.round(lavaN / 10) + (fuel ? 14 : 0));
+    const ng = Math.min(36, Math.round(lavaN / 10) + (fuel ? 14 : 0)), A = G.dynA;
     for (let i = 0; i < ng; i++) { const d = dirOut(0.7), v = rnd(0.8, fuel ? 6 : 3.2), q = { kind: 2, x: e.x, y: e.y, z: e.z, vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, age: 0, life: 9 + rnd(0, 6), size: rnd(0.35, 0.7), ph: rnd(0, 6), r: 0, g: 0, b: 0 }; dynPush(A, q); dynPush(N, Object.assign({}, q)); }
     return true;
   };
 
   /* ---------- a shell lost to space: the camera holds, an edge arrow shows where it flies and how far ---------- */
   EV.lostFocus = function (S) {
+    if (S.phase === 'play') return null;                                    // P118d (Q-05): a new turn never waits for a lost shell: the camera goes to the active worm at once (the edge arrow below still shows the shell for LOST_T)
     const L = S.eow && S.eow.shots; if (!L || !L.length) return null;
     const q = L[L.length - 1]; if (S.time - q.t0 > SS.eow.K.LOST_T - 0.2) return null;
     return { key: 'eowlost' + q.t0.toFixed(2), x: q.x0, y: q.y0, z: q.z0, d: 760, p: 7.2 };
@@ -632,7 +715,12 @@
   /* the look */
   const LOOK = { sunDir: [0.5, 0.45, 0.7], sky: 'sky', sun: 0xfff1de, sunI: 4.4, hemiS: 0x0c1020, hemiG: 0x050408, hemiI: 0.05, fog: 0, haze: 0x03040a, exp: 1.18, grass: [0.7, 0.62, 0.52], dry: [0.7, 0.62, 0.52], gBase: 0x2a1a10, gTip: 0x6a4a30, gDry: 0x6a5a40, deep: 0x000000, shallow: 0x000000 };
   const GRADE = { sat: 1.12, con: 0.3, vig: 0.34, sh: [0.0, 0.0, 0.016], hi: [1.02, 0.97, 0.93] };
-  const v3 = new T.Vector3();
+  const v3 = new T.Vector3(), SKY_FX = { horizon: [0.03, 0.035, 0.07] }, fxA = { x: 0, y: 0, z: 0 };
+  // the acceleration (m/s2) the summed gravity field of the pieces gives a particle (render/fx.js FX.field)
+  function fxField(x, y, z, out) {
+    const S = EV.S; if (!S || !S.eow) { out.x = out.y = out.z = 0; return out; }
+    SS.eow.field(S, x, y, z, fxA); const g = C.G * 0.7; out.x = fxA.x * g; out.y = fxA.y * g; out.z = fxA.z * g; return out;
+  }
   EV.frame = function (S, view, camera, ctx) {
     const sun = ctx.sun, hemi = ctx.hemi, fill = ctx.fill, lamp = ctx.lamp, U = SS.terrain.uniforms, e = S.eow;
     if (!built) built = build(ctx);
@@ -680,7 +768,8 @@
     }
     im.instanceMatrix.needsUpdate = true;
     fxFrame(S, view, camera, ctx, G);
-    EV.S = S; dynInit(G, ctx); { const dtp = M.clamp(view.time - (G.dynT == null ? view.time : G.dynT), 0, 0.1); G.dynT = view.time; plumes(S, G, dtp); dynStep(S, G, dtp); }
+    EV.S = S; if (SS.fx) { SS.fx.field = fxField; if (SS.fx.look) SS.fx.look(LOOK, SKY_FX); }                    // P118d: effect particles in space follow the pieces' gravity and are lit by this world's sun
+    dynInit(G, ctx); { const dtp = M.clamp(view.time - (G.dynT == null ? view.time : G.dynT), 0, 0.1); G.dynT = view.time; plumes(S, G, dtp); dynStep(S, G, dtp); for (let i = pend.length - 1; i >= 0; i--) if ((pend[i].t -= dtp) <= 0) { const q = pend[i]; pend.splice(i, 1); q.fn(); } }
     G.dynA.pts.material.uniforms.uScale.value = G.dynN.pts.material.uniforms.uScale.value = camera.projectionMatrix.elements[5] * ctx.renderer.domElement.height * 0.5;
     arrow(S, camera, ctx);
     view.eowSun = LOOK.sunDir;
@@ -688,7 +777,7 @@
   /* back to the normal look: a new world that is not the End of the World (applyLook restores the lights' colours and the fog; this puts back
    * what only this file changed: the pollen, the fill light, the worm lamp, the cap shader's switch) */
   EV.reset = function (S) {
-    lastGrade = -1; if (arrowEl) arrowEl.style.display = 'none';
+    lastGrade = -1; pend.length = 0; if (arrowEl) arrowEl.style.display = 'none';
     if (typeof SS.terrain.capEow === 'function') SS.terrain.capEow(!!S.eow);
     if (!built || S.eow) return;
     for (const o of built.objs) o.visible = false;

@@ -425,6 +425,7 @@
       flash += I * b.near;
     }
     flash = Math.min(1.5, flash);
+    view.flash = flash;                                      // P118b: the cut face is lit by the flash too (terrain.js capFlash, from view.js)
     if (flash > 0.01) flashDir.copy(tmp);
 
     // sky, lights, fog, motes

@@ -26,23 +26,25 @@
    * and >= 2 worms died since, the end state is kept aside, the start restored and the recorded steps re-run at half
    * speed under a REPLAY banner (Space / Enter / a click skips), then the end state comes back. Local games only (a
    * lockstep game would have to pause every peer). */
-  const RP = { snap: null, inputs: null, dead0: 0, turn: -1, play: null };
+  const RP = { snap: null, inputs: null, dead0: 0, deadN: 0, lastKill: -1, final: false, turn: -1, play: null };
   const deadCount = () => S.worms.reduce((n, w) => n + ((w.dead || w.hp <= 0) && !w.reserve ? 1 : 0), 0);   // (0 HP = the fatal moment; the dying beats come later)
   function replayStart() {
     const end = SS.sim.snapshot(S);
     SS.sim.restore(S, RP.snap); if (SS.view.clearActors) SS.view.clearActors(); if (SS.ui.clear) SS.ui.clear(); SS.view.snapCamera();
     // fast-forward (unseen) from the snapshot to the step that started the attack (or to 3 s before the second kill:
     // a long fuse is not worth watching twice), then play it back visibly
-    if (RP.killAt > 0) RP.at = Math.max(RP.at, RP.killAt - 360);
+    const fin = RP.final;                                       // P118d (Q-25): the kill that ENDS the match: 1.8 s before it to 1.2 s after (never into the step that made the match over), at 0.4 x
+    if (RP.killAt > 0) RP.at = Math.max(RP.at, RP.killAt - (fin ? 216 : 360));
     for (let i = 0; i < RP.at; i++) SS.sim.step(S, RP.inputs[i], C.STEP);
     S.events.length = 0;
-    RP.play = { inputs: RP.killAt > 0 ? RP.inputs.slice(0, Math.min(RP.inputs.length, RP.killAt + 180)) : RP.inputs, i: RP.at, end };   // up to 1.5 s after the 2nd kill
+    RP.play = { inputs: RP.killAt > 0 ? RP.inputs.slice(0, Math.min(RP.inputs.length - (fin ? 3 : 0), RP.killAt + (fin ? 144 : 180))) : RP.inputs, i: RP.at, end, slow: fin ? 0.4 : 0.5 };   // up to 1.5 s after the 2nd kill
     RP.snap = null; RP.inputs = null;
-    S.events.push({ type: 'banner', title: 'Instant replay', sub: 'Space skips' });
+    S.events.push({ type: 'banner', title: fin ? 'Final blow' : 'Instant replay', sub: 'slow motion · Space skips' });
   }
   function replayEnd() {
     SS.sim.restore(S, RP.play.end); RP.play = null; if (SS.view.clearActors) SS.view.clearActors(); if (SS.ui.clear) SS.ui.clear(); SS.view.snapCamera();
     S.events.length = 0;
+    if (S.phase === 'over') S.events.push({ type: 'gameover', team: S.over, round: S.round });      // P118d: the end state is the match over: its fanfare (the original event was dropped with the queue)
   }
   function replayStep() {
     const I = SS.input, skip = I.pressed.has('Space') || I.pressed.has('Enter') || I.pressed.has('Escape') || I.clicks.length;
@@ -59,15 +61,17 @@
     const phase0 = S.phase, turn0 = S.turnNo;
     // while the worm aims / walks: a fresh snapshot every 2 s of sim time (~5 ms each); the inputs since it are kept
     if (!netGame && phase0 === 'play' && (!RP.snap || (!RP.armed && (RP.turn !== turn0 || S.time - RP.snapT > 2)))) {
-      RP.snap = SS.sim.snapshot(S); RP.snapT = S.time; RP.inputs = []; RP.dead0 = deadCount(); RP.turn = turn0; RP.armed = false; RP.at = 0;
+      RP.snap = SS.sim.snapshot(S); RP.snapT = S.time; RP.inputs = []; RP.dead0 = RP.deadN = deadCount(); RP.lastKill = -1; RP.final = false; RP.turn = turn0; RP.armed = false; RP.at = 0;
     }
     SS.sim.step(S, inp, C.STEP);
     if (RP.snap) {
       RP.inputs.push(Object.assign({}, inp));
       if (!RP.armed && S.phase !== 'play' && S.turnNo === RP.turn) { RP.armed = true; RP.at = RP.inputs.length - 1; RP.killAt = -1; }   // the attack starts with this step
       if (RP.armed && RP.killAt < 0 && deadCount() - RP.dead0 >= 2) RP.killAt = RP.inputs.length;                 // the second fatal hit
+      if (RP.armed && deadCount() > RP.deadN) { RP.deadN = deadCount(); RP.lastKill = RP.inputs.length; }      // P118d: the step of the latest fatal hit (the final blow of a match needs only one)
       if (S.turnNo !== RP.turn || S.phase === 'over') {
-        if (RP.armed && deadCount() - RP.dead0 >= 2 && RP.inputs.length < 120 * 60) { replayStart(); SS.input.end_step(); return; }
+        const nd = deadCount() - RP.dead0, fin = S.phase === 'over' && S.over >= 0 && nd >= 1 && RP.lastKill > 0;     // P118d (Q-25): a match-ending kill gets its slow-motion replay too
+        if (RP.armed && (nd >= 2 || fin) && RP.inputs.length < 120 * 60) { RP.final = fin; if (fin) RP.killAt = RP.lastKill; replayStart(); SS.input.end_step(); return; }
         RP.snap = RP.inputs = null;
       }
     }
@@ -367,7 +371,7 @@
             // lockstep: the driver steps in real time; the follower also catches up on queued inputs (<= 60 per frame)
             // (catch-up applies to the follower only: a driver never runs ahead of real time)
             if (!menuOpen) { acc += dt; let n = 0; while (running && n < 60 && (acc >= C.STEP || (!SS.net.drives(S.active ? S.active.team : 0) && SS.net.pending() > 2))) { if (!stepNet()) { acc = Math.min(acc, C.STEP); break; } acc = Math.max(0, acc - C.STEP); n++; } SS.net.flush(); }
-          } else if (!paused && !menuOpen) { tscale = RP.play ? 0.5 : S.time < (S.slowUntil || 0) && S.slowUntil - S.time < 1.5 ? 0.35 : 1; if (!RP.play && SS.cine) tscale = Math.min(tscale, SS.cine.timeScale()); acc += dt * tscale; while (acc >= C.STEP && running) { step(); acc -= C.STEP; } }   // (PoC slow motion)
+          } else if (!paused && !menuOpen) { tscale = RP.play ? (RP.play.slow || 0.5) : S.time < (S.slowUntil || 0) && S.slowUntil - S.time < 1.5 ? 0.35 : 1; if (!RP.play && SS.cine) tscale = Math.min(tscale, SS.cine.timeScale()); acc += dt * tscale; while (acc >= C.STEP && running) { step(); acc -= C.STEP; } }   // (PoC slow motion)
           else acc = 0;
           if (!paused) { SS.view.timeScale = menuOpen ? 1 : tscale; frameRender(dt); adaptDpr(rawMs, now / 1000); }
         }

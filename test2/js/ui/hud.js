@@ -5,6 +5,7 @@
   const U = SS.ui = {};
   const $ = id => document.getElementById(id);
   const css = C.css;
+  let overT0 = 0;                                                  // when the results card appeared (P118d: its buttons ignore the first 0.4 s)
   let labels, secC, secX, secBase, topC, topX, topBase, topVer = -1, camera, canvas;
   let underOpen = null, underVer = -1, underLevel = 5;
   const wl = new Map(); // worm -> label element
@@ -22,8 +23,8 @@
     topC = $('topmap'); topX = topC.getContext('2d'); topBase = document.createElement('canvas');
     fuseEl = document.createElement('div'); fuseEl.className = 'fuse'; labels.appendChild(fuseEl);
     if (SS.offscreen) SS.offscreen.init(labels, cam, cv);
-    $('bRematch').onclick = () => U.onRematch && U.onRematch();
-    $('bSetup').onclick = () => U.onSetup && U.onSetup();
+    $('bRematch').onclick = () => { if (performance.now() - overT0 > 400) U.onRematch && U.onRematch(); };      // P118d: a key that skipped the celebration (and repeats) must not rematch by itself
+    $('bSetup').onclick = () => { if (performance.now() - overT0 > 400) U.onSetup && U.onSetup(); };
   };
 
   const v3 = new THREE.Vector3();
@@ -477,25 +478,34 @@
       el.className = q[4]; setText(el, q[3]); el.style.display = sp.front ? 'block' : 'none'; el.style.transform = `translate(${sp.x}px,${sp.y}px) translate(-50%,-100%)`;
     }
   }
-  /* P9 game over (PoC #over): winner, rounds, Rematch / Change setup */
-  let overShown = false;
+  /* P9 game over (PoC #over): winner, rounds, Rematch / Change setup.
+   * P118d (Q-25): a title strip at once (no dimming, the camera frames the winners: render/view.js 'victory', confetti and fireworks: render/fx.js celebrate); the results
+   * card (standings, Rematch, Change setup) slides in when the celebration is over (SS.cine.panelReady: ~5 s, or any click / key skips it); nothing covers the picture. */
+  let overShown = false, overRes = false, overGuest = false, overFocusT = 0;
   function drawOver(S) {
-    const show = S.phase === 'over';
-    if (show === overShown) return;
-    overShown = show; const el = $('over'); el.classList.toggle('hidden', !show);
+    const show = S.phase === 'over', el = $('over');
+    if (show !== overShown) {
+      overShown = show; overRes = false; clearTimeout(overFocusT); el.classList.toggle('hidden', !show); el.classList.remove('res');
+      if (!show) return;
+      const t = S.over, names = S.worms.filter(w => !w.dead).map(w => w.name).join(', ');
+      el.style.setProperty('--team', t >= 0 ? css(SS.sim.team_rgb(S, t)) : 'var(--accent)');
+      el.classList.toggle('draw', t < 0);
+      el.querySelector('h2').textContent = t >= 0 ? `${SS.sim.team_name(S, t)} win` : 'Nobody wins';
+      el.querySelector('p').textContent = t >= 0 ? `${names} ${names.indexOf(',') > 0 ? 'are' : 'is'} the last worm${names.indexOf(',') > 0 ? 's' : ''} standing after ${S.round} round${S.round > 1 ? 's' : ''}.` : 'Everyone went down together.';
+      el.querySelector('.stand').innerHTML = (S.teams || []).map((tm, i) => {
+        const alive = S.worms.filter(w => w.team === i && !w.dead), hp = alive.reduce((s, w) => s + Math.max(0, Math.round(w.hp)), 0);
+        return `<div class="st${i === t ? ' win' : ''}" style="--team:${css(tm.rgb)}"><span>${esc(SS.sim.team_name(S, i))}</span><em>${alive.length} left · ${hp} HP</em></div>`;
+      }).join('');
+      overGuest = !!(SS.net && SS.net.active && !SS.net.isHost);
+      $('bRematch').style.display = overGuest ? 'none' : ''; $('bSetup').style.display = overGuest ? 'none' : '';
+      el.querySelector('.hint').textContent = overGuest ? 'The host starts the next map.' : 'Enter: rematch';
+    }
     if (!show) return;
-    const t = S.over, names = S.worms.filter(w => !w.dead).map(w => w.name).join(', ');
-    el.style.setProperty('--team', t >= 0 ? css(SS.sim.team_rgb(S, t)) : 'var(--accent)');
-    el.classList.toggle('draw', t < 0);
-    el.querySelector('h2').textContent = t >= 0 ? `${SS.sim.team_name(S, t)} win` : 'Nobody wins';
-    el.querySelector('p').textContent = t >= 0 ? `${names} ${names.indexOf(',') > 0 ? 'are' : 'is'} the last worm${names.indexOf(',') > 0 ? 's' : ''} standing after ${S.round} round${S.round > 1 ? 's' : ''}.` : 'Everyone went down together.';
-    el.querySelector('.stand').innerHTML = (S.teams || []).map((tm, i) => {
-      const alive = S.worms.filter(w => w.team === i && !w.dead), hp = alive.reduce((s, w) => s + Math.max(0, Math.round(w.hp)), 0);
-      return `<div class="st${i === t ? ' win' : ''}" style="--team:${css(tm.rgb)}"><span>${esc(SS.sim.team_name(S, i))}</span><em>${alive.length} left · ${hp} HP</em></div>`;
-    }).join('');
-    const guest = SS.net && SS.net.active && !SS.net.isHost;
-    $('bRematch').style.display = guest ? 'none' : ''; $('bSetup').style.display = guest ? 'none' : '';
-    if (guest) el.querySelector('p').textContent += ' The host starts the next map.'; else $('bRematch').focus();
+    const ready = !SS.cine || SS.cine.panelReady(S);
+    if (ready !== overRes) {
+      overRes = ready; el.classList.toggle('res', ready);
+      if (ready) { overT0 = performance.now(); overFocusT = setTimeout(() => { if (overShown && overRes && !overGuest) $('bRematch').focus(); }, 500); }
+    }
   }
   /* the team panel: persistent rows (the bars animate); only the parts that changed are written */
   let teamEls = [], teamN = -1;

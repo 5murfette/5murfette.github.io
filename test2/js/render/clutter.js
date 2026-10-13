@@ -126,26 +126,53 @@
   const TRI_NRM = `
     { vec3 nv = normalize(vMx * gNrm.x + vMy * gNrm.y + vMz * gNrm.z); normal = nv * faceDirection; }`;
 
+  /* P118c (Q-15: worm-sized mushrooms in front of the plane hid the active worm): every clutter fragment that lies between the camera and a worm, over the
+   * worm's silhouette, fades to see-through. The section keeps everything up to 0.5 m in FRONT of slice zero (a worm stands on the plane with its front 0.45 m
+   * proud of it), so a mushroom (the 0.3 m model scaled 2-3.4 x: 0.6-1 m tall, up to 0.6 m across) standing at t = 0.3 m is nearer the camera than the worm and covers it. A clearance radius around each worm
+   * would pop clutter in and out as the worm walks and cannot know which side is nearer the camera; a per-fragment cone test costs nothing where no worm is
+   * near. uWorm[i] = world x, y, z of a sphere around a living worm (the active one first as three, then the nearest) and its radius (0 = unused slot); the test runs in WORLD space
+   * with the camera position of this very frame (a view-space uniform would lag the camera by a frame). The materials are transparent for it (alpha is the
+   * fade; double sided ones draw in one pass); the core of the hole is discarded, not just faint: a faint fragment still writes depth, and the worm's x-ray
+   * silhouette (render/actors.js, drawn where something nearer hides the worm) would then tint the worm red over it. */
+  const WORM_SLOTS = 8, WORM_R_ACTIVE = 0.7, WORM_R = 0.85;
+  const UW = { uWorm: { value: Array.from({ length: WORM_SLOTS }, () => new T.Vector4(0, 0, 0, 0)) } };
+  const GLSL_WORM = `
+    uniform vec4 uWorm[${WORM_SLOTS}]; varying vec3 vCW;
+    float wormSeeThrough() {                                         // 0 = opaque, 1 = see-through
+      float k = 0.0;
+      for (int i = 0; i < ${WORM_SLOTS}; i++) {
+        vec4 W = uWorm[i];
+        if (W.w <= 0.0) continue;
+        vec3 toW = W.xyz - cameraPosition, toP = vCW - cameraPosition;
+        float wl = length(toW), pl = dot(toP, toW) / wl, dz = wl - pl;       // distance along the ray to the worm / to the fragment: dz > 0 = nearer than the worm
+        if (dz < -W.w) continue;
+        float lat = length(toP - toW * (pl / wl)) * wl / max(pl, 0.1);       // the offset from the ray, scaled to the worm's distance (the silhouette is a cone)
+        k = max(k, smoothstep(-0.55 * W.w, 0.25 * W.w, dz) * (1.0 - smoothstep(0.95 * W.w, 1.7 * W.w, lat)));
+      }
+      return k;
+    }`;
   /* o: { dbl, rough, metal, emit, tex (triplanar atlas), map (alpha card texture), aoK } (P96 decor: double sided, glossy glass / obsidian, metal, self-lit fungi and crystals) */
   function mat(sway, flat, kill, o) {
     o = o || {};
-    const m = new T.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: o.rough != null ? o.rough : 0.95, metalness: o.metal || 0, side: sway || o.dbl ? T.DoubleSide : T.FrontSide, flatShading: !!flat });
+    const m = new T.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: o.rough != null ? o.rough : 0.95, metalness: o.metal || 0, side: sway || o.dbl ? T.DoubleSide : T.FrontSide, flatShading: !!flat, transparent: true });
+    m.forceSinglePass = true;                              // (P118c: transparent only for the worm see-through fade, alpha is 1 elsewhere: no back-then-front double draw)
     if (o.map) { m.map = o.map; m.alphaTest = 0.45; m.alphaToCoverage = true; }
     m.onBeforeCompile = sh => {
       const U = (SS.terrain && SS.terrain.uniforms) || FALLBACK_U;
       sh.uniforms.uO = U.uO; sh.uniforms.uN = U.uN; sh.uniforms.uBack = U.uBack; sh.uniforms.uTime = uTime; sh.uniforms.uWind = uWind;
       sh.uniforms.tCover = U.tCover || { value: null }; sh.uniforms.uNL = U.uNL || { value: 193 }; sh.uniforms.uSnowU = U.uSnow || { value: 0 }; sh.uniforms.uKill = { value: kill ? 1 : 0 };
-      sh.uniforms.uEmit = { value: o.emit || 0 }; Object.assign(sh.uniforms, SS.slab2d.U);      // P113: the 2D slab ground relief lifts every instance with the terrain under it
+      sh.uniforms.uEmit = { value: o.emit || 0 }; Object.assign(sh.uniforms, SS.slab2d.U, UW);      // P113: the 2D slab ground relief lifts every instance with the terrain under it
       if (o.tex) { sh.uniforms.tAlb = ATL.alb; sh.uniforms.tNrm = ATL.nrm; sh.uniforms.uGrid = ATL.grid; sh.uniforms.uNS = { value: o.ns != null ? o.ns : 0.9 }; sh.uniforms.uRK = { value: o.rk != null ? o.rk : 1 }; sh.uniforms.uAO = { value: o.aoK != null ? o.aoK : 0.55 }; sh.uniforms.uTexD = { value: o.dens || 3.4 }; }
       sh.vertexShader = sh.vertexShader
-        .replace('void main() {', SS.slab2d.GLSL + 'uniform vec3 uO; uniform vec3 uN; uniform float uBack, uTime, uNL, uSnowU, uKill; uniform vec3 uWind; uniform sampler2D tCover;' + (o.tex ? TRI_VS : '') + '\nvoid main() {')
+        .replace('void main() {', SS.slab2d.GLSL + 'uniform vec3 uO; uniform vec3 uN; uniform float uBack, uTime, uNL, uSnowU, uKill; uniform vec3 uWind; uniform sampler2D tCover; varying vec3 vCW;' + (o.tex ? TRI_VS : '') + '\nvoid main() {')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n transformed *= s2Clear(dot(uO - instanceMatrix[3].xyz, uN));\n { vec2 cv = texture2D(tCover, (instanceMatrix[3].xz * 2.0 + 0.5) / uNL).rg * 0.4; float sn = max(uSnowU, max(cv.x / 0.05, cv.y / 0.03)); transformed *= mix(1.0, 1.0 - smoothstep(0.35, 0.7, sn), uKill); }\n' + (o.tex ? TRI_VS_BODY : '') + (sway ? `
           { float ph = instanceMatrix[3].x * 3.1 + instanceMatrix[3].z * 2.3; float hh = transformed.y * transformed.y;
             transformed.x += (uWind.x * 0.5 + sin(uTime * 1.8 + ph) * 0.05) * hh * 4.0; transformed.z += (uWind.z * 0.5 + cos(uTime * 1.3 + ph) * 0.04) * hh * 4.0; }` : ''))
         .replace('#include <project_vertex>', `#include <project_vertex>
-          if (uSlab.x > 0.5) { vec3 ip = instanceMatrix[3].xyz; float s2L = s2H(ip.xz, dot(uO - ip, uN), s2K(ip.y, 1.0)); mvPosition.xyz += (viewMatrix * vec4(0.0, s2L, 0.0, 0.0)).xyz; gl_Position = projectionMatrix * mvPosition; }
-          { vec4 cw = instanceMatrix * vec4(transformed, 1.0); if (dot(cw.xz - uO.xz, uN.xz) < -(uSlab.x > 0.5 ? s2Edge(cw.x) : uBack)) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }`);
-      let fs = sh.fragmentShader;
+          float s2Lift = 0.0;
+          if (uSlab.x > 0.5) { vec3 ip = instanceMatrix[3].xyz; float s2L = s2H(ip.xz, dot(uO - ip, uN), s2K(ip.y, 1.0)); s2Lift = s2L; mvPosition.xyz += (viewMatrix * vec4(0.0, s2L, 0.0, 0.0)).xyz; gl_Position = projectionMatrix * mvPosition; }
+          { vec4 cw = instanceMatrix * vec4(transformed, 1.0); vCW = cw.xyz + vec3(0.0, s2Lift, 0.0); if (dot(cw.xz - uO.xz, uN.xz) < -(uSlab.x > 0.5 ? s2Edge(cw.x) : uBack)) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }`);
+      let fs = sh.fragmentShader.replace('void main() {', GLSL_WORM + '\nvoid main() {').replace('#include <alphatest_fragment>', '#include <alphatest_fragment>\n float seeK = wormSeeThrough(); diffuseColor.a *= 1.0 - 0.95 * seeK; if (seeK > 0.0 && diffuseColor.a < 0.12) discard;');
       if (o.emit || o.tex) fs = fs.replace('void main() {', (o.emit ? 'uniform float uEmit;\n' : '') + (o.tex ? TRI_FS : '') + '\nvoid main() {');
       if (o.emit) fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vColor.rgb * uEmit;');
       if (o.tex) { fs = fs.replace('#include <map_fragment>', '#include <map_fragment>\n' + TRI_MAP).replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = clamp(gRough * uRK, 0.12, 1.0);').replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + TRI_NRM); }
@@ -246,8 +273,8 @@
       if (ceil) {
         if (dd > 0 && !snowy) kinds.push(['stalag', 0.12 * dd * (0.3 + patch2), 0]);
       } else if (eow) {
-        if (mt === MT.STEEL) { kinds.push(['plate', 0.1 * dd, 0]); kinds.push(['wreck', 0.012 * dd * (patch2 > 0.4 ? 1 : 0), 0]); kinds.push(['cable', 0.03 * dd * patch, 0]); kinds.push(['ice', 0.025 * dd * patch2, 0]); kinds.push(['stone', B.stone * 0.2, 0]); }
-        else { kinds.push(['stone', B.stone * (0.3 + 1.4 * patch), 0]); kinds.push(['ice', 0.012 * dd * patch2 * patch2 * 3, 0]); }
+        if (mt === MT.STEEL) { kinds.push(['plate', 0.1 * dd, 0]); kinds.push(['wreck', 0.012 * dd * (patch2 > 0.4 ? 1 : 0), 0]); kinds.push(['cable', 0.03 * dd * patch, 0]); kinds.push(['stone', B.stone * 0.2, 0]); }
+        else { kinds.push(['stone', B.stone * (0.3 + 1.4 * patch), 0]); }                  // P118d (Q-22): no frost-crystal clusters in vacuum: on sunlit rock they read as fans of white blades
       } else if (s2 && mt === MT.CONCRETE) {                                 // P113: a 2D bunker / ruin floor: chips of concrete, a little rubble, dry weeds in the cracks
         kinds.push(['stone', 0.6 * (0.3 + patch), 0]); kinds.push(['tuft', 0.3 * patch2 * patch2, 2]); if (dd > 0) kinds.push(['rubble', 0.07 * dd * patch, 0]);
       } else {
@@ -443,10 +470,31 @@
     TW.mesh.instanceMatrix.needsUpdate = true;
   }
 
+  /* P118c: the worms the clutter keeps clear of (the shader test is in GLSL_WORM): the active worm first as a capsule of three spheres (its centre and +-0.6 m
+   * along the plane: a crawling worm is 1.5-1.9 m long and one sphere left its tail covered, seen on the alpine slope), then the nearest worms to the camera
+   * focus as one sphere each, up to 8 spheres */
+  const wormList = [];
+  function fillWorms(S, view) {
+    const A = UW.uWorm.value, ws = S.worms || [], act = S.active, ft = view && view.camT, pd = SS.plane.dir(S);
+    const fx = ft ? ft.x : act ? act.pos.x : 0, fz = ft ? ft.z : act ? act.pos.z : 0;
+    wormList.length = 0;
+    for (let i = 0; i < ws.length; i++) { const w = ws[i]; if (w && !w.dead && w !== act && w.pos) wormList.push(w); }
+    wormList.sort((a, b) => (a.pos.x - fx) * (a.pos.x - fx) + (a.pos.z - fz) * (a.pos.z - fz) - (b.pos.x - fx) * (b.pos.x - fx) - (b.pos.z - fz) * (b.pos.z - fz));
+    let n = 0;
+    if (CL.fade && act && !act.dead && act.pos) {
+      const f = act.facing || 1;
+      for (let k = -1; k <= 1 && n < WORM_SLOTS; k++) A[n++].set(act.pos.x + pd.x * f * 0.6 * k, act.pos.y + 0.05, act.pos.z + pd.z * f * 0.6 * k, WORM_R_ACTIVE);
+    }
+    for (let i = 0; CL.fade && i < wormList.length && n < WORM_SLOTS; i++) { const w = wormList[i]; A[n++].set(w.pos.x, w.pos.y + 0.05, w.pos.z, WORM_R); }
+    for (; n < WORM_SLOTS; n++) A[n].w = 0;
+  }
+  CL.fade = true;                                              // (tools / tests: false = no see-through fade, the clutter is solid as before P118c)
+  CL.wormSlots = () => UW.uWorm.value.map(v => v.toArray());   // (tests: the slots the shader sees: x, y, z, radius)
   CL.frame = function (S, view, wind) {
     CL.S = S;
     if (!geos) return;
     uTime.value = view.time;
+    fillWorms(S, view);
     if (wind) uWind.value.set(wind.x, 0, wind.z);
     for (const s of per.values()) for (const im of s) { const c = im.userData.chunk; im.visible = !!(c && c.slab && c.slab.visible); }
     tumbleFrame(S, view, wind);

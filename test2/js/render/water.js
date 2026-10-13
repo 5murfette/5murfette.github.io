@@ -190,7 +190,9 @@
       a = mix(a, smoothstep(0.006, 0.035, depth) * mix(0.34, 1.0, smoothstep(0.0, 5.0, dA)), uClear);   // P116: the seabed shows through the clear shallows
       a = mix(a, smoothstep(0.006, 0.06, depth) * mix(0.4, 0.9, smoothstep(0.0, 1.2, depth)), inl);   // a puddle shows its floor
       a = max(a, foam * smoothstep(0.006, 0.03, depth));
-      if (tD > 0.0) a *= uInsp * 0.85;                       // inspection: the 3D overview shows the sea in front too
+      // inspection: the 3D overview shows the sea in front too. P118c (Q-OV5): at the SAME opacity as the sea behind the plane (it was x 0.85: a lighter
+      // translucent sheet with a hard step along the whole cut line; the play view still hides it all, uInsp = 0)
+      if (tD > 0.0) a *= uInsp;
       float fd = length(cameraPosition - vW);
       // P29f: the distance fog goes to the real sky colour at the horizon in this direction (the fixed warm haze was
       // far brighter than the horizon: the near sea read as a bright layer under the far ocean / islands)
@@ -432,7 +434,10 @@
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const d = Math.hypot(i * 0.5 - x, k * 0.5 - z) / r; if (d >= 1) continue;
       const an = Math.atan2(k * 0.5 - z, i * 0.5 - x), pat = 0.3 + 0.7 * Math.max(0, 0.5 + 0.5 * Math.sin(an * 4 + x * 3.1) * 0.6 + 0.5 * Math.sin(an * 9 + z * 2.3) * 0.4), dd = d * (1 - 0.08 * Math.sin(an * 3 + x) - 0.05 * Math.sin(an * 7 + z));   // P87: a broken, wobbling front, not a clean hoop
-      const w = ring ? Math.max(1 - d, 0.8 * pat * Math.exp(-Math.pow((dd - 0.75) / 0.18, 2))) : 1 - d * d;
+      // P118c (Q-18): a splash is not a clean disc either: the radius wanders with the angle (lobes that only bite INTO the disc) and the strength is patchy,
+      // so the foam of a worm that hits the sea reads as torn, wavy clumps and bands, not a round (at the grazing camera: flat) white patch
+      const lob = 1 + Math.max(0, 0.34 * Math.sin(an * 3 + x * 1.7) + 0.22 * Math.sin(an * 5 + z * 2.3 + 1.0) + 0.14 * Math.sin(an * 9 + x + z) + 0.1);
+      const w = ring ? Math.max(1 - d, 0.8 * pat * Math.exp(-Math.pow((dd - 0.75) / 0.18, 2))) : Math.max(0, 1 - d * d * lob * lob) * (0.6 + 0.4 * pat);
       const c = k * N1 + i; foam[c] = Math.min(3, foam[c] + amt * w);   // up to 3: a blast's churn lasts ~5 s
     }
   }
@@ -539,7 +544,9 @@
     const o = U.uO.value, n = U.uN.value;
     face.position.set(o.x, (SS.world.SEA + 4) / 2, o.z);
     face.rotation.set(0, Math.atan2(n.x, n.z), 0);
-    face.visible = !!faceMat.uniforms.tVol.value;
+    // P118c (Q-OV2): the aquarium face is the cut through the water of the half-cut play view; in the overview (the whole sea is drawn) it is a 3 km wide
+    // plane that drew a line (teal on temperate, a thick twisted green-white rope on the beach) across the entire sea
+    face.visible = !!faceMat.uniforms.tVol.value && (view.insp || 0) < 0.05;
   };
   /* weather (render/weather.js): rain intensity for the rings, fog density multiplier */
   WV.weather = function (rain, fogMul, fogCol, cloud) { own.uRain.value = rain; own.uCloud.value = cloud || 0; own.uFogD.value = FOG_D * fogMul; if (fogCol) own.uFog.value.copy(fogCol); };

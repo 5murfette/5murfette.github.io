@@ -102,6 +102,14 @@
     /* P65i: the night headlamp is a real spot (worn on the head, aimed ahead and a little down, inverse-square), not a point light hanging
      * next to the worm: the worm itself is outside the cone (lit by the moon, not blown out) and a pool of light lies on the ground ahead */
     headSpot = new T.SpotLight(0xffd9a8, 0, 26, 0.66, 1.0, 2); scene.add(headSpot); scene.add(headSpot.target);
+    /* P118c (Q-16: "the cave headlamp reads as an orange fireball on the worm's head"): the cave light used to be ONE point light (34 cd) inside the worm's head:
+     * at 0.15-0.3 m the 1/d^1.6 falloff blasted the head to white, and the bloom pass spread that into a red-orange fireball. Now it is what a head lamp is: the
+     * headSpot above (a spot, the worm itself lies outside its cone) on a small warm bulb that rides on the worm's head, and a weak fill that hangs in front of the
+     * worm (toward the camera, never inside it) so the worm and the ground at its feet read. No light is added: the spot is the surface night lamp's. */
+    { const dot = new T.Group();
+      const bulb = new T.Mesh(new T.SphereGeometry(0.035, 10, 8), new T.MeshBasicMaterial({ color: 0xfff0cc, toneMapped: false, fog: false }));
+      const halo = new T.Sprite(new T.SpriteMaterial({ map: tx.glow, color: 0xffd79a, transparent: true, opacity: 0.42, blending: T.AdditiveBlending, depthWrite: false, fog: false }));
+      halo.scale.set(0.23, 0.23, 1); dot.add(bulb); dot.add(halo); dot.visible = false; scene.add(dot); view.cave = { spot: headSpot, dot, host: null }; }
     // night sky: stars on the upper dome (procedural points; the glow sprite), shown at night (faintly at dusk)
     { const n = 1600, p = new Float32Array(n * 3), c = new Float32Array(n * 3);
       for (let i = 0; i < n; i++) { const u = Math.random() * 0.97 + 0.03, a = Math.random() * 6.283, r = Math.sqrt(1 - u * u), k = 0.55 + Math.random() * 0.45, warm = Math.random();
@@ -245,14 +253,38 @@
   /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
   const PX = 0.0643;
   const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView', 'jacketView', 'heroView', 'boulderView', 'rayView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
+  /* P118d (Q-06): the children of a cluster / banana bomb and the missiles of an air strike go off on first contact: where a shell in flight will land is a ballistic
+   * line on the plane (cached per shell for 0.3 s, 40 steps of 0.08 s at most). The director frames the shells AND their landing points, in metres of camera distance
+   * (dm), so the payoff blasts are inside the picture; afterwards the normal 'boom' / 'active' interests bring the camera back. */
+  const landC = new WeakMap();
+  function landing(S, p) {
+    let c = landC.get(p); if (c && view.time - c.t < 0.3) return c;
+    if (!c) { c = { t: 0, s: p.s, y: p.y }; landC.set(p, c); }
+    c.t = view.time; let s = p.s, y = p.y, vy = p.vy; const vs = p.vs, g = S.eow ? 0 : C.G, sea = SS.world.under ? -99 : SS.world.SEA;
+    for (let i = 0; i < 40; i++) { s += vs * 0.08; y += vy * 0.08; vy -= g * 0.08; if (y < sea || P.solid2(S, s, y)) break; }
+    c.s = s; c.y = y; return c;
+  }
+  function projBox(S, ex) {
+    let s0 = 1e9, y0 = 1e9, s1 = -1e9, y1 = -1e9;
+    const add = (s, y) => { s0 = Math.min(s0, s); s1 = Math.max(s1, s); y0 = Math.min(y0, y); y1 = Math.max(y1, y); };
+    for (const p of S.proj) { add(p.s, p.y); if (!S.eow) { const l = landing(S, p); add(l.s, l.y); } }      // (in space there is no -y fall: no landing line, and the camera never chases bomblets that leave the wells)
+    if (ex) add(ex[0], ex[1]);
+    const t2 = Math.tan((camera ? camera.fov : 42) * Math.PI / 360), asp = camera ? camera.aspect : 1.5, c = P.to_world(S, (s0 + s1) / 2, (y0 + y1) / 2);
+    return { x: c.x, y: c.y, z: c.z, dm: Math.min(S.eow ? 48 : 110, Math.max((s1 - s0) * 1.3 / (2 * t2 * asp), (y1 - y0) * 1.5 / (2 * t2))) };
+  }
   function interest(S, a) {
     const P2 = SS.plane, at = (s, y) => P2.to_world(S, s, y);
     if (S.phase === 'place') return null;
     const ctl = S.phase === 'play';                                                        // P85: the player has control: nothing but its own worm and its own shot may take the camera (edge indicators, ui/offscreen.js, point at the rest)
-    if (S.phase === 'over' && S.over >= 0 && SS.cine && SS.cine.victory()) {                 // P63: the winners
-      let win = S.active && !S.active.dead && S.active.team === S.over ? S.active : null;      // (the team's centroid can lie inside the land: frame one worm)
-      if (!win) for (const w of S.worms) if (!w.dead && w.team === S.over) { win = w; break; }
-      if (win) return { key: 'victory', x: win.pos.x, y: win.pos.y, z: win.pos.z, d: 520, p: 9 };
+    if (S.phase === 'over' && S.over >= 0) {                                                  // P63 / P118d (Q-25): the winners, for the whole end of the match: the surviving worms of the winning team in the picture (the old interest framed one worm and was dropped by the first click)
+      const pts = [], all = []; for (const w of S.worms) if (!w.dead && w.hp > 0 && w.team === S.over) { const q = P2.to_plane(S, w.pos); all.push([q.s, w.pos.y]); if (V.inSlab(S, w.pos)) pts.push([q.s, w.pos.y]); }     // (a winner outside the slab is hidden by the section rule: in 3D the camera frames those that can be seen; if none can, the winners all the same)
+      if (!pts.length) for (const q of all) pts.push(q);
+      const t2 = Math.tan((camera ? camera.fov : 42) * Math.PI / 360), asp = camera ? camera.aspect : 1.5;
+      let s0, s1, y0, y1, need;
+      const box = () => { s0 = 1e9; y0 = 1e9; s1 = -1e9; y1 = -1e9; for (const q of pts) { s0 = Math.min(s0, q[0]); s1 = Math.max(s1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); } need = Math.max((s1 - s0 + 6) * 1.2 / (2 * t2 * asp), (y1 - y0 + 9) * 1.1 / (2 * t2)); };
+      box();
+      while (pts.length > 1 && need > 34) { let mx = 0, bi = 0; for (let i = 0; i < pts.length; i++) { const d = Math.abs(pts[i][0] - (s0 + s1) / 2) + 0.5 * Math.abs(pts[i][1] - (y0 + y1) / 2); if (d > mx) { mx = d; bi = i; } } pts.splice(bi, 1); box(); }     // winners too far apart to celebrate in one picture: the farthest are left out of the frame (they dance anyway)
+      if (pts.length) { const c = at((s0 + s1) / 2, (y0 + y1) / 2 - 0.8); return { key: 'victory', x: c.x, y: c.y, z: c.z, d: 520, dm: Math.min(80, Math.max(view.zoom * 1.6, need)), p: 9 }; }       // (the camera adds 1.5 m: the worm sits a little under the middle of the picture, the sky above it is for the fireworks and the confetti)
     }
     if (S.free3d && S.free3d.length) { const q = S.free3d[0]; return { key: 'free3d', x: q.pos.x, y: q.pos.y, z: q.pos.z, d: 900, p: 9 }; }   // P37 W4: a shell bounced off a force field flies in 3D
     if (S.phase === 'dying' && S.dyingW) { const w = S.dyingW, g = S.dyingGrave && w.grave ? w.grave : w.pos; return { key: 'dying', x: g.x, y: g.y, z: g.z, d: 480, p: 9 }; }
@@ -260,6 +292,7 @@
       const st = S.strikes[0], pl = at(st.s, st.y);
       if (st.k === 0 && Math.abs(st.s - st.tS) > 14) return { key: 'plane', x: pl.x, y: pl.y - 2, z: pl.z, d: 820, p: 8 };
       const gy = SS.weapons && SS.weapons.ground_below ? SS.weapons.ground_below(S, st.tS, st.y) : st.y - 8, tp = at(st.tS, gy + 3.9);
+      if (S.proj.length) { const b = projBox(S, [st.tS, gy + 3.9]); return { key: 'strike', x: b.x, y: b.y, z: b.z, d: 760, dm: Math.max(b.dm, view.zoom * 1.66), p: 8 }; }     // P118d (Q-06): the falling missiles and their landing points stay in the picture
       return { key: 'strike', x: tp.x, y: tp.y, z: tp.z, d: 760, p: 8 };
     }
     // Thunder Strike: during its delay the camera looks at the TARGET on the ground (not the sky / cloud), then the
@@ -275,15 +308,11 @@
     // wins over falling shells / gel, explosions and the shooter ("most important")
     const rv = SS.reactq && !ctl ? SS.reactq.visit(S) : null, rw = rv ? S.worms[rv.id] : null;      // P85: the affected worms, one after the other, in the order they speak
     if (rw && rw.dead) { const g = rw.grave || rw.pos; return { key: 'death' + rw.id, x: g.x, y: g.y, z: g.z, d: 520, p: 7.6 }; }
+    if (rw && S.proj.length) { const hp = P2.to_plane(S, rw.pos), b = projBox(S, [hp.s, rw.pos.y + 0.6]); return { key: 'hurt' + rw.id, x: b.x, y: b.y, z: b.z, d: 520, dm: Math.max(b.dm, view.zoom * 1.0), p: 7.5 }; }       // P118d (Q-06): shells still in flight (the children of a bomb whose first blast hurt a worm): the hurt worm AND the payoff blasts stay in the picture
     if (rw) return { key: 'hurt' + rw.id, x: rw.pos.x, y: rw.pos.y, z: rw.pos.z, d: 520, p: 7.5 };
     if (S.eow && SS.eowView) { const lf = SS.eowView.lostFocus(S); if (lf) return lf; }   // P68d: a shell lost to space: the camera holds
     if (S.proj.length) {
-      if (S.proj.length > 1) {
-        let s0 = 1e9, y0 = 1e9, s1 = -1e9, y1 = -1e9;
-        for (const p of S.proj) { s0 = Math.min(s0, p.s); y0 = Math.min(y0, p.y); s1 = Math.max(s1, p.s); y1 = Math.max(y1, p.y); }
-        const asp = camera ? camera.aspect : 1.5, dd = M.clamp((Math.max((s1 - s0) / asp, y1 - y0) / PX) * 1.25 + 380, 560, 1300), c = at((s0 + s1) / 2, (y0 + y1) / 2);
-        return { key: 'projs', x: c.x, y: c.y, z: c.z, d: dd, p: 7 };
-      }
+      if (S.proj.length > 1) { const b = projBox(S); return { key: 'projs', x: b.x, y: b.y, z: b.z, d: 640, dm: Math.max(b.dm, view.zoom * 1.1), p: 7 }; }      // P118d (Q-06): the children and where they land, in metres of camera distance (the old px formula clamped at 1300 and ignored the landing)
       const p = S.proj[0], sp = Math.hypot(p.vs, p.vy), cin = SS.cine && SS.cine.enabled, ld = cin ? 0.2 : 0.12, c = at(p.s + p.vs * ld, p.y + p.vy * ld);
       return { key: 'proj' + (p.id || 0), x: c.x, y: c.y, z: c.z, d: M.clamp(560 + sp / PX * 0.3, 560, cin ? 980 : 860), p: 7 };   // P63: a long shot zooms out a little more
     }
@@ -431,9 +460,9 @@
     if (SS.waterView) SS.waterView.look(L, sk, haze);
     {                                    // P65c: the cut faces (rock cap, sea face) take the time of day's light: dusk warm and dimmer, moonlight cool, dark and desaturated
       const hz = S.biome === 'volcanic' ? 0.3 : 0, ft = S.biome === 'volcanic' ? 0.45 : 0, wv = SS.waterView || {};
-      if (tod === 'night') { if (SS.terrain.capLook) SS.terrain.capLook(0.7, 0.8, 0.98, 0.72); if (wv.faceLook) wv.faceLook(0.2, 0.3, 0.44, 0.8, hz + 0.1, ft); }
-      else if (tod === 'dusk') { if (SS.terrain.capLook) SS.terrain.capLook(1, 0.97, 0.93, 1); if (wv.faceLook) wv.faceLook(0.78, 0.64, 0.52, 0.9, hz, ft); }
-      else { if (SS.terrain.capLook) SS.terrain.capLook(1, 1, 1, 1); if (wv.faceLook) wv.faceLook(1, 1, 1, 1, hz, ft); }
+      if (tod === 'night') { if (SS.terrain.capTod) SS.terrain.capTod('night', view.stormK, S.biome); if (wv.faceLook) wv.faceLook(0.2, 0.3, 0.44, 0.8, hz + 0.1, ft); }
+      else if (tod === 'dusk') { if (SS.terrain.capTod) SS.terrain.capTod('dusk', view.stormK, S.biome); if (wv.faceLook) wv.faceLook(0.78, 0.64, 0.52, 0.9, hz, ft); }
+      else { if (SS.terrain.capTod) SS.terrain.capTod('day', view.stormK, S.biome); if (wv.faceLook) wv.faceLook(1, 1, 1, 1, hz, ft); }
     }
     if (SS.weatherView) SS.weatherView.look(L, sk, haze);
     if (SS.fx.look) SS.fx.look(L, sk);
@@ -591,7 +620,7 @@
     if (t > r && SS.section.frontOn) return true;                    // (front ghost: drawn, and clipped / ghosted by render/section.js)
     return t <= r && (t >= -back - r || ((view.ctxA || 0) > 0.004 && back < 200));
   };
-  V.inSlab = (S, p) => { const t = P.to_plane(S, p).t; return t <= C.WORM_R && t >= -SS.terrain.uniforms.uBack.value - C.WORM_R; };
+  V.inSlab = (S, p) => { const t = P.to_plane(S, p).t; return t <= C.WORM_R && t >= -SS.terrain.back() - C.WORM_R; };      // (P118c: the player's slice view, not the overview's full one: a worm off the section is still a ghost marker while V is held)
   // P29j (user 2026-10-08: "the slice view setting doesn't work, the full map behind is always shown"): the slab depth
   // (uBack) AND the haze of everything behind it: thin / thick = crisp to 1.5 / 6 m, the rest recedes; full = all crisp
   /* the front ghost = max(the player's setting, the automatic one): after the attack (resolve / dying) and while an alien
@@ -738,7 +767,7 @@
     if (SS.crackView) SS.crackView.frame(S);                            // P66b: the crack damage texture (CRACKS lab flag)
     SS.terrain.frame(S, view, ctxF, insp);
     const wind = S.wind || null;
-    SS.fx.env.wx = wind && wind.mean ? wind.mean.x : 0; SS.fx.env.wz = wind && wind.mean ? wind.mean.z : 0;
+    SS.fx.env.wx = wind && wind.mean ? wind.mean.x : 0; SS.fx.env.wz = wind && wind.mean ? wind.mean.z : 0; SS.fx.env.vac = !!SS.world.eow;       // (P118d: every frame, not only at a blast: the rocket smoke and the dust of a landing must know the world has no air)
     SS.grass.frame(S, view.time, wind ? wind.mean : null, wind ? wind.whirls : null, S.weather ? S.weather.snowCover : 0);
     if (SS.clutterView) SS.clutterView.frame(S, view, wind ? wind.mean : null);
     { const oc = outlineMat.uniforms.uColor.value, nt = view.tod === 'night', dk = view.tod === 'dusk'; oc.setHex(nt ? 0xa8c4ff : dk ? 0xffd08a : 0xfff0b0); }   // P97: the cut line takes the light of the hour (cool and dim at night, warm at dusk) instead of one cream at all times
@@ -753,24 +782,25 @@
     // PoC camera director (interest() / updateCamera): the most interesting thing wins by priority, a new interest of
     // the same or lower priority takes over only after 1.2 s; zoom = the PoC distance / its default 640 px x the user's
     if (SS.reactq) SS.reactq.frame(S, dtU);
+    if (SS.cine) SS.cine.tick(S, dtU);                                        // P118d (Q-25): the end-of-match clock (celebration, results card), whatever the cine option says
     const it = interest(S, a), dr = view.dir, cin = SS.cine && SS.cine.enabled, prevKey = dr.cur ? dr.cur.key : '';
     dr.since += dtU;
-    if (it && (!dr.cur || it.key === dr.cur.key || it.p > dr.cur.p || dr.since > 1.2 || (dr.cur.key.startsWith('proj') && it.key.startsWith('boom')) || (S.phase === 'play' && it.key === 'active'))) { if (!dr.cur || it.key !== dr.cur.key) dr.since = 0; dr.cur = it; }
+    if (it && (!dr.cur || it.key === dr.cur.key || it.p > dr.cur.p || dr.since > 1.2 || (dr.cur.key.startsWith('proj') && (it.key.startsWith('boom') || it.key.startsWith('proj'))) || (S.phase === 'play' && it.key === 'active'))) { if (!dr.cur || it.key !== dr.cur.key) dr.since = 0; dr.cur = it; }
     else if (!it && dr.cur && dr.since > 1.2) dr.cur = null;
     const cur = view.lock || dr.cur || { key: 'active', x: a ? a.pos.x : SS.world.MX, y: a ? a.pos.y : 10, z: a ? a.pos.z : SS.world.MZ, d: 0, p: 0 };
     const co = cin ? SS.cine.frame(S, dtU, cur.key, view) : null;                    // P63: the cinematic moves on top of the director
-    const pk = cur.key === 'active' ? 1 : 0, Wd = SS.world, oi = Wd && !Wd.flat ? insp : 0;   // P85: the overview (V) frames the WHOLE map: the focus slides to the world centre, the distance grows to fit it
+    const pk = cur.key === 'active' || cur.key === 'victory' ? 1 : 0, Wd = SS.world, oi = Wd && !Wd.flat ? insp : 0;   // P85: the overview (V) frames the WHOLE map: the focus slides to the world centre, the distance grows to fit it
     const fx = cur.x + d.x * view.pan.s * pk + (Wd ? (Wd.MX - cur.x) * oi : 0), fy = cur.y + 1.2 + view.pan.y * pk + (co ? co.dy : 0) + (Wd ? (Wd.SY * 0.3 - cur.y) * oi : 0), fz = cur.z + d.z * view.pan.s * pk + (Wd ? (Wd.MZ - cur.z) * oi : 0);
     applyAutoZoom();
     // active: a charging shot / a target pick pulls the view back a little so the flight and the target stay in frame; an event (shell, blast, death) frames x1.4 of the default
     const pull = cur.key === 'active' && a && S.phase === 'play' ? (SS.CFG.ARSENAL[S.weapon] && SS.CFG.ARSENAL[S.weapon].kind === 'target' ? 1.6 : S.charging ? 1.35 : 1) : 1;
-    const wantZ = cur.key === 'active' ? view.zoom * pull : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * 1.4 * cur.d / 640);   // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
+    const wantZ = cur.key === 'active' ? view.zoom * pull : cur.dm ? Math.max(view.zoom * (cur.zk || 0.85), cur.dm) : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * 1.4 * cur.d / 640);   // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
     if (!view.camT) { view.camT = new T.Vector3(fx, fy, fz); view.camZ = wantZ; }
     else if (!cin && SS.cine && cur.key !== prevKey && prevKey && !view.lock) { view.camT.set(fx, fy, fz); view.camZ = wantZ; }     // cinematic camera off: an instant cut to a new interest
     const rate = cur.key === 'active' ? 6 : cur.p >= 7 ? 4.5 : 3.2;
     const tp = co ? SS.cine.turnPos(fx, fy, fz, v5) : null;
     if (tp) view.camT.copy(tp); else view.camT.lerp(v4.set(fx, fy, fz), 1 - Math.exp(-dtU * rate));
-    view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dtU * 2.4));
+    view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dtU * (cur.dm && wantZ > view.camZ ? 4.5 : 2.4)));
     if (insp < 0.05) { view.orbit.yaw *= Math.exp(-dtU * 4); view.orbit.tilt *= Math.exp(-dtU * 4); }
     const tilt = 0.2 + insp * (0.5 + view.orbit.tilt), yaw = insp * (0.55 + view.orbit.yaw) + (co && insp < 0.05 ? co.yaw : 0), dist0 = M.max(co ? 7 : 0, (view.camZ || view.zoom) * (1 + insp * 0.9) * (co ? co.k : 1)), fitD = oi > 0 && Wd ? 0.52 * Math.hypot(Wd.SX, Wd.SZ) / Math.tan(camera.fov * Math.PI / 360) * (camera.aspect < 1.3 ? 1.3 / camera.aspect : 1) : 0, dist = dist0 + (M.max(dist0, fitD) - dist0) * oi;
     // P85 (user: "when zooming out dont multiply the fog ... player wants to see more of the map not more of the fog"): the fog / haze / weather
@@ -813,6 +843,7 @@
     if (SS.waterView) SS.waterView.frame(S, view, camera);
     if (SS.dunesView) SS.dunesView.frame(S, view);
     if (SS.weatherView) SS.weatherView.frame(S, view, camera, dt);
+    if (SS.terrain.capFlash) SS.terrain.capFlash(view.flash || 0);           // P118b: the lightning flash lights the cut face too
     if (SS.world.under && insp > 0.02) hemi.intensity += insp * 2.2;       // P85: the overview of a cave world is lit: the whole map has to be readable (the cave dark is for the play view)
     if (SS.lifeView) SS.lifeView.frame(S, view, camera, dt);
     if (SS.trailView) SS.trailView.frame(S, view, camera, dt);
@@ -838,13 +869,26 @@
       const lit = view.tod === "night" || SS.world.under ? 0 : view.tod === "dusk" ? 0.7 : 1, k = 0.34 * lit * M.clamp((0.9 - cv) / 0.5, 0, 1);
       SS.terrain.cloudShadow(cd.x, cd.z, cv, k);
     }
+    {                                    // P118c (Q-16): the cave head lamp: the bulb rides on top of the active worm's head (it follows jumps and flips like the tin-foil hat), headSpot hangs at the bulb; only underground (on the surface headSpot is the night lamp, driven below)
+      const cv = view.cave, a = S.active, on = !!cv && SS.world.under && !!a && !a.dead, vis = on ? SS.actors.vis(a) : null, v = vis && vis.v, host = v ? v.body : null;
+      if (cv) {
+        if (cv.host !== host) { if (cv.host) cv.host.remove(cv.dot); if (host) host.add(cv.dot); cv.host = host; }
+        cv.dot.visible = !!host;
+        if (SS.world.under) headSpot.intensity = host ? 90 / Math.max(0.6, renderer.toneMappingExposure) : 0;
+        if (host) {
+          const ep = v.eyes.position, ha = v.eyes.rotation.z, ux = -Math.sin(ha), uy = Math.cos(ha), fx = Math.cos(ha), fy = Math.sin(ha), n = SS.plane.nrm(S), d = SS.plane.dir(S), f = a.facing || 1;
+          cv.dot.position.set(ep.x + ux * 0.27 + fx * 0.03, ep.y + uy * 0.27 + fy * 0.03, 0.06); cv.dot.updateWorldMatrix(true, false); cv.dot.getWorldPosition(headSpot.position);
+          headSpot.target.position.set(a.pos.x + d.x * f * 3.6 + n.x * 0.1, a.pos.y - 0.5, a.pos.z + d.z * f * 3.6 + n.z * 0.1); headSpot.target.updateMatrixWorld();
+        }
+      }
+    }
     // U: underground maps hide the whole sky world (several modules re-enable their meshes per frame) and light the
     // active worm's lamp
     if (SS.world.under) {
       if (sky) sky.visible = false; if (motes) motes.visible = false;
       for (const m of [SS.cloudView && SS.cloudView.mesh && SS.cloudView.mesh(), SS.farView && SS.farView.quad && SS.farView.quad()]) if (m) m.visible = false;
       if (SS.waterView && SS.waterView.meshes) for (const m of SS.waterView.meshes()) if (m) m.visible = false;
-      const a = S.active; lamp.intensity = a && !a.dead ? 34 : 0; if (a) lamp.position.set(a.pos.x, a.pos.y + 0.7, a.pos.z);
+      const a = S.active; lamp.intensity = a && !a.dead ? 15 : 0; if (a) lamp.position.set(a.pos.x + SS.plane.nrm(S).x * 2.2, a.pos.y + 1.1, a.pos.z + SS.plane.nrm(S).z * 2.2);       // P118c: the fill 2.2 m in front of the worm (toward the camera), not inside its head: the worm gets about 2 (it was 700), the cave around it keeps its warm glow
     } else {
       if (sky) sky.visible = true; if (motes) motes.visible = view.tod !== 'night';
       // night: the active worm's lamp lights its surroundings (as in the caves, a little weaker)

@@ -4,7 +4,7 @@
  *   hit punch   a short (0.3 s) slow motion + slight push-in when a blast hurts a worm
  *   kill cam    (the dying beat / a drowning) a 1.7 s push-in with a small dutch angle and orbit, slowed at first, when a worm dies from a hit
  *   rise        a pull-back that looks down at the waterline when sudden death raises the sea
- *   victory     a slow orbit around the winning team
+ *   victory     a slow orbit around the winning team (P118d: the clock, the confetti / fireworks and the results card are NOT the option's: tick() runs always)
  *   air strike  a gentle orbit drift while the plane flies over
  * Everything is skippable: any key / pointer press / wheel calls skip() and the camera is the player's again at once.
  * Slow motion only scales the render clock and the pace at which main.js feeds the fixed sim step (never the step itself),
@@ -23,14 +23,14 @@
   const kill = { t: -1, side: 1 };
   const punch = { t: -1 };
   const rise = { t: -1 };
-  let styleYaw = 0, vicT = -1, vicSkip = false, cool = 0, seaLast = null, turnNo = -1;
-  const KILL_T = 1.7, PUNCH_T = 0.45, RISE_T = 2.2, TURN_MIN_DIST = 3.5;
+  let styleYaw = 0, vicT = -1, vicSkip = false, vicFx = false, cool = 0, seaLast = null, turnNo = -1;
+  const KILL_T = 1.7, PUNCH_T = 0.45, RISE_T = 2.2, TURN_MIN_DIST = 3.5, CELEBRATE_T = 5.0, DRAW_T = 1.2;   // CELEBRATE_T: seconds of victory before the results card (P118d, Q-25)
 
   CN.setEnabled = function (v) { CN.enabled = v !== false; if (!CN.enabled) CN.reset(); };
-  CN.reset = function () { turn.on = false; slow.t = 0; kill.t = -1; punch.t = -1; rise.t = -1; styleYaw = 0; vicT = -1; vicSkip = false; cool = 0; seaLast = null; };
+  CN.reset = function () { turn.on = false; slow.t = 0; kill.t = -1; punch.t = -1; rise.t = -1; styleYaw = 0; vicT = -1; vicSkip = false; vicFx = false; cool = 0; seaLast = null; };
   /* the player does anything: the camera is theirs at once (the director's exponential follow takes over from where it is) */
-  CN.skip = function () { turn.on = false; slow.t = 0; kill.t = -1; punch.t = -1; rise.t = -1; if (vicT >= 0) vicSkip = true; };
-  if (typeof addEventListener === 'function') for (const ev of ['keydown', 'pointerdown', 'wheel']) addEventListener(ev, () => CN.skip(), { capture: true, passive: true });
+  CN.skip = function (rep) { turn.on = false; slow.t = 0; kill.t = -1; punch.t = -1; rise.t = -1; if (vicT >= 0.35 && !rep) vicSkip = true; };      // (P118d: the end-of-match celebration is skipped by a fresh press after its first 0.35 s: a key the player was still holding, and its repeats, are not a skip)
+  if (typeof addEventListener === 'function') for (const ev of ['keydown', 'pointerdown', 'wheel']) addEventListener(ev, e => CN.skip(!!e.repeat), { capture: true, passive: true });
 
   /* main.js: the pace of the fixed sim step while the camera dwells on a hit (1 = real time) */
   CN.timeScale = function () {
@@ -41,6 +41,19 @@
   CN.turnDelay = () => (turn.on ? turn.dur * 0.3 : 0);
   CN.moving = () => turn.on;
   CN.victory = () => CN.enabled && vicT >= 0 && !vicSkip;
+  /* P118d (Q-25): the end-of-match clock. view.js calls tick() every frame whatever the cine option says (the camera's orbit is the option's, the celebration is not):
+   * vicT counts view seconds from the moment the match is over; a click / key / wheel skips (CN.skip). The confetti and fireworks (render/fx.js celebrate) start once; the
+   * results card of ui/hud.js drawOver appears when panelReady() says so. A replay of the final kill (main.js) runs BEFORE the phase becomes 'over' again, so the clock starts after it. */
+  CN.tick = function (S, dtU) {
+    if (S.phase === 'over') {
+      if (vicT < 0) { vicT = 0; vicSkip = false; vicFx = false; }
+      vicT += dtU;
+      if (!vicFx && S.over >= 0 && SS.fx && SS.fx.celebrate) { vicFx = true; SS.fx.celebrate(S, S.over); }
+    } else { vicT = -1; vicSkip = false; vicFx = false; }
+  };
+  CN.celebrating = () => vicT >= 0 && !vicSkip && vicT < CELEBRATE_T;
+  CN.victoryT = () => vicT;
+  CN.panelReady = S => vicT >= 0 && (vicSkip || vicT >= (S && S.over >= 0 ? CELEBRATE_T : DRAW_T));
 
   /* view.js onEvents(S, e) (the view's clock: events arrive once per frame, in step order) */
   CN.onEvent = function (S, e, cam) {
@@ -84,8 +97,7 @@
         out.k *= 1 - 0.36 * env; out.roll += 0.055 * env * kill.side; out.yaw += 0.22 * env * kill.side * (0.6 + 0.4 * t / KILL_T);
       }
     }
-    if (S.phase === 'over' && S.over >= 0) { if (vicT < 0) { vicT = 0; vicSkip = false; } vicT += dtU; } else { vicT = -1; vicSkip = false; }
-    if (vicT >= 0 && !vicSkip) { const e = ease(vicT / 1.4); out.k *= 1 - 0.22 * e; out.yaw += e * 0.6 * M.sin(vicT * 0.45); out.dy += 0.4 * e; }
+    if (vicT >= 0 && !vicSkip && S.over >= 0) { const e = ease(vicT / 1.4); out.k *= 1 - 0.08 * e; out.yaw += e * 0.45 * M.sin(vicT * 0.45); out.dy += 0.3 * e; }       // (P118d: the orbit is gentler: the framing already holds every winner)
     const W = SS.world;
     if (W && !W.under) {
       if (seaLast != null && W.SEA > seaLast + 0.15 && S.sudden && rise.t < 0) rise.t = 0;
