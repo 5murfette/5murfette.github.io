@@ -159,7 +159,8 @@
       { id: 'canyon', name: 'Red canyon', lavaChance: 0.3, storm: 0.2 },
       { id: 'desert', name: 'Desert dunes', lavaChance: 0.25, storm: 0.1, dry: true },   // dry: no sea (C.DRY, Step D)
       { id: 'volcanic', name: 'Volcano', lavaChance: 1, storm: 0.6 },
-      { id: 'eow', name: 'End of the World (experimental)', lavaChance: 0, storm: 0, experimental: true }   // P68c: sim/eow.js (never a 'random' pick)
+      { id: 'eow', name: 'End of the World (experimental)', lavaChance: 0, storm: 0, experimental: true },   // P68c: sim/eow.js (never a 'random' pick)
+      { id: 'beach', name: 'Tropical cove', lavaChance: 0, storm: 0.12 }   // P116: sandy cove, granite boulders, palms (appended last: the other biomes keep their seed offsets)
     ],
     /* Weather patterns (C: enum Weather). */
     WEATHER: ['clear', 'cloudy', 'rain', 'storm', 'snow', 'blizzard', 'ashfall', 'fog'],
@@ -185,7 +186,8 @@
       canyon: [['clear', 0.5], ['cloudy', 0.25], ['rain', 0.1], ['storm', 0.15]],
       desert: [['clear', 0.7], ['cloudy', 0.2], ['storm', 0.1]],
       volcanic: [['cloudy', 0.2], ['storm', 0.35], ['ashfall', 0.45]],
-      eow: [['clear', 1]]
+      eow: [['clear', 1]],
+      beach: [['clear', 0.62], ['cloudy', 0.2], ['rain', 0.12], ['storm', 0.06]]
     },
     /* Wind classes (menu / URL 'wind'): speed at 10 m (m/s) and gust amplitude (fraction). */
     WIND: {
@@ -248,7 +250,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p105-rigid-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p116b-beach',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
@@ -326,6 +328,7 @@
       ALWAYS: { alpine: true },                                   // freezes whatever the weather (cold climate)
       T_AIR: {                                                    // air temperature (°C) by biome x weather kind
         alpine: { clear: -10, cloudy: -8, rain: 1, storm: -2, snow: -12, blizzard: -20 },
+        beach: { clear: 29, cloudy: 27, rain: 25, storm: 24, snow: 2, blizzard: 1, ashfall: 27 },     // P116: a tropical sea never freezes
         other: { clear: 4, cloudy: 3, rain: 5, storm: 4, snow: -4, blizzard: -9, ashfall: 6 }
       },
       T_TOD: { dusk: -2, night: -5 },  // °C: colder at dusk / at night (sim.time_of_day)
@@ -420,20 +423,21 @@
       EJECTA_FUEL_T: 0.3,    // fuel x exp(-t / this): the spoil lands in clods, dry stems between them still burn (a W 1
                             // crater is about as wide as the fireball's ignition reach; burying all fuel ended blast fires)
       FIRE_H: 1.2,          // flames reach this high above the ground (worm centre)
-      DRY_BASE: { temperate: 0.12, alpine: 0.3, canyon: 0.72, desert: 0.9, volcanic: 0.62 }
+      DRY_BASE: { temperate: 0.12, alpine: 0.3, canyon: 0.72, desert: 0.9, volcanic: 0.62, beach: 0.08 }
     },
     /* Trees made of parts (sim/trees.js). Wood 600 kg/m^3 (floats). A segment snaps when the bending angular impulse
      * about its base, times its natural angular frequency, exceeds its strength MOR pi r0^3 / 4 (T2 dynamic response,
      * see sim/trees.js), or is cut by a burst within CUT_K W^(1/3) + r (if no thicker than CUT_D sqrt(W)). */
     TREES: {
-      COUNT: { temperate: 22, alpine: 16, canyon: 9, desert: 4, volcanic: 6 },
-      SPECIES: { temperate: 'oak', alpine: 'spruce', canyon: 'juniper', desert: 'snag', volcanic: 'snag' },
+      COUNT: { temperate: 22, alpine: 16, canyon: 9, desert: 4, volcanic: 6, beach: 46 },
+      SPECIES: { temperate: 'oak', alpine: 'spruce', canyon: 'juniper', desert: 'snag', volcanic: 'snag', beach: 'palm' },
       SPEC: {                 // h, r (trunk base) ranges; nT trunk segments up to top x h; taper (top / base radius);
                               // lean (rad per m), wob (m of trunk wobble); dry = a + b x (grass dryness at the root)
         oak:     { h: [5.5, 8], r: [0.16, 0.24], nT: 3, top: 0.72, taper: 0.45, lean: 0.06, wob: 0.3, dry: [0.12, 0.5] },
         spruce:  { h: [6, 9.5], r: [0.13, 0.2], nT: 4, top: 1.0, taper: 0.15, lean: 0.02, wob: 0.08, dry: [0.3, 0.5] },
         juniper: { h: [2.6, 4], r: [0.1, 0.15], nT: 2, top: 0.72, taper: 0.55, lean: 0.25, wob: 0.4, dry: [0.45, 0.45] },
-        snag:    { h: [3, 5.5], r: [0.12, 0.18], nT: 3, top: 0.9, taper: 0.4, lean: 0.1, wob: 0.3, dry: [0.95, 0] }
+        snag:    { h: [3, 5.5], r: [0.12, 0.18], nT: 3, top: 0.9, taper: 0.4, lean: 0.1, wob: 0.3, dry: [0.95, 0] },
+        palm:    { h: [5.5, 8.5], r: [0.17, 0.22], nT: 4, top: 0.9, taper: 0.62, lean: 0.34, wob: 0.12, dry: [0.04, 0.2] }
       },
       SEP: 3.5, WORM_SEP: 3,  // m between trees (and worm / prop spots), from worms
       WOOD_KG: 600, LEAF_KG: 6, MIN_KG: 2,   // wood density; leaf cluster kg / m^3 of r^3; lighter pieces vanish
@@ -467,7 +471,7 @@
       SETTLE: 4,            // s of body simulation at load so props rest on the ground
       // per biome: crates, barrels, mines, boulders
       GIRDER: { L: 5, KG: 210, H: 0.3, B: 0.15 },          // M: loose steel I-beam (IPE 300, 42 kg/m)
-      COUNT: { temperate: [3, 4, 6, 3, 1], alpine: [2, 3, 6, 5, 1], canyon: [2, 4, 6, 6, 2], desert: [3, 4, 6, 4, 3], volcanic: [2, 3, 6, 5, 2] },   // mines: 6 per match (PoC populate)
+      COUNT: { temperate: [3, 4, 6, 3, 1], alpine: [2, 3, 6, 5, 1], canyon: [2, 4, 6, 6, 2], desert: [3, 4, 6, 4, 3], volcanic: [2, 3, 6, 5, 2], beach: [3, 3, 6, 2, 1] },   // mines: 6 per match (PoC populate)
       // P24.10 (PoC PROPS): explosive cars (a strong blast or fire sets one off: R54 dmg 44 + burning fuel, a wreck stays),
       // metal junk (fridge, vending machine, phone booth: break under a blast, conduct lightning), stone monuments
       // (column, obelisk: heavy, never break). Size: PoC px x 0.0643. Placed after the classic props (own stream).
@@ -540,6 +544,13 @@
   SS.CFG.DENSITY = { LEVELS: ['none', 'low', 'medium', 'high'], MUL: [0, 0.5, 1, 2],
     KEYS: ['dTrees', 'dRocks', 'dBarrels', 'dProps', 'dCrates', 'dMines', 'dBunkers', 'dTown', 'dEggs'] };
   SS.CFG.density_level = (st, key) => { const v = st && st[key], i = SS.CFG.DENSITY.LEVELS.indexOf(v); return i < 0 ? 2 : i; };
+  /* P116: each biome's own weather pool. A biome without an entry takes every kind (nothing changed for the five old maps); the beach is tropical: clear, cloudy,
+   * rain, a (tropical) storm and fog, never snow, blizzard or ash. A kind the biome does not have (a saved setting, a URL, a peer) is mapped to the nearest one that
+   * it has (WEATHER_MAP): snow -> rain, blizzard -> storm, ash fall -> cloudy. C: bool weather_ok(biome, kind). */
+  SS.CFG.WEATHER_POOL = { beach: ['clear', 'cloudy', 'rain', 'storm', 'fog'] };
+  SS.CFG.WEATHER_MAP = { beach: { snow: 'rain', blizzard: 'storm', ashfall: 'cloudy' } };
+  SS.CFG.weather_ok = (biome, kind) => { const p = SS.CFG.WEATHER_POOL[biome]; return !p || p.indexOf(kind) >= 0; };
+  SS.CFG.weather_for = (biome, kind) => SS.CFG.weather_ok(biome, kind) ? kind : ((SS.CFG.WEATHER_MAP[biome] || {})[kind] || 'cloudy');
   SS.CFG.density_count = (st, key, base) => {
     const lv = SS.CFG.density_level(st, key);
     if (base <= 0) return base;

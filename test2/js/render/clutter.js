@@ -163,15 +163,17 @@
     mushA: [0.6, 0.01, 2.0, 3.4, 'std'], mushB: [0.6, 0.01, 2.0, 3.4, 'std'], fern: [0.7, 0.02, 1.0, 1.7, 'std'], log: [0.12, 0.05, 1.0, 1.8, 'logm'], stump: [0.9, 0.06, 1.0, 1.7, 'std'],
     cactus: [0.95, 0.04, 1.0, 1.8, 'std'], barrel: [0.9, 0.03, 1.0, 1.9, 'std'], pear: [0.85, 0.03, 1.2, 2.2, 'std'], skull: [0.15, 0.03, 1.6, 2.5, 'std'], ribs: [0.1, 0.04, 1.5, 2.4, 'std'], bone: [0.1, 0.01, 1.8, 3.0, 'std'],
     rubble: [0.15, 0.04, 1.2, 2.4, 'std'], pillar: [1.0, 0.1, 0.6, 1.4, 'std'], obsidian: [0.5, 0.03, 1.3, 2.6, 'gloss'], ice: [0.55, 0.03, 1.2, 2.6, 'ice'], crystal: [0.4, 0.03, 1.2, 2.6, 'crys'],
+    jbush: [0.9, 0.04, 0.8, 1.5, 'jleaf'], bigleaf: [0.9, 0.02, 1.0, 1.7, 'leafm'], coconut: [0.2, 0.02, 1.0, 1.4, 'std'],
     boulder: [0.1, 0.12, 0.7, 1.5, 'std0'], stalag: [0.35, 0.05, 0.9, 2.1, 'std0'], fungi: [0.3, 0.01, 1.4, 2.6, 'fungi'], plate: [0, 0.0, 1.1, 2.2, 'metal'], wreck: [0, 0.04, 0.8, 1.4, 'metal'], cable: [0, 0.0, 1.2, 2.0, 'metal']
   };
-  const MK = { logm: [false, true, { dbl: true, tex: true, aoK: 1 }], std: [false, true, { dbl: true, tex: true }], std0: [false, false, { dbl: true, tex: true }], gloss: [false, true, { dbl: true, tex: true, rk: 0.75, metal: 0.05 }], ice: [false, false, { dbl: true, tex: true, rk: 0.55, emit: 0.22 }], crys: [false, false, { dbl: true, rough: 0.15, emit: 0.7 }], fungi: [false, false, { dbl: true, emit: 1.5, rough: 0.6 }], metal: [false, false, { dbl: true, tex: true, metal: 0.7, rk: 0.8 }] };
+  let TXr = null;
+  const MK = { jleaf: [false, true, { dbl: true, rough: 0.7, get map() { return TXr && TXr.foliage; } }], leafm: [false, false, { dbl: true, rough: 0.5 }], logm: [false, true, { dbl: true, tex: true, aoK: 1 }], std: [false, true, { dbl: true, tex: true }], std0: [false, false, { dbl: true, tex: true }], gloss: [false, true, { dbl: true, tex: true, rk: 0.75, metal: 0.05 }], ice: [false, false, { dbl: true, tex: true, rk: 0.55, emit: 0.22 }], crys: [false, false, { dbl: true, rough: 0.15, emit: 0.7 }], fungi: [false, false, { dbl: true, emit: 1.5, rough: 0.6 }], metal: [false, false, { dbl: true, tex: true, metal: 0.7, rk: 0.8 }] };
   const geoCache = {}, matCache = {};
   const geoOf = k => geos[k] || geoCache[k] || (geoCache[k] = GF[k]());
   const matOf = k => { if (mats[k]) return mats[k]; const d = DEC[k][4]; return matCache[d] || (matCache[d] = mat(false, MK[d][0] || false, MK[d][1], MK[d][2])); };
 
   CL.init = function (sc, tx, quality) {
-    scene = sc; Q = quality;
+    scene = sc; Q = quality; TXr = tx;
     if (!(Q.clutter > 0)) return;
     const sg = stoneGeo();
     geos = { stone: sg, snow: sg, twig: twigGeo(), tuft: tuftGeo(8, 0.45, 0.16), flower: flowerGeo(), scrub: scrubGeo() };
@@ -201,7 +203,8 @@
     canyon: { stone: 1.2, twig: 0.25, tuft: 0.25, flower: 0.05, scrub: 0.35, snow: 0 },
     desert: { stone: 0.5, twig: 0.08, tuft: 0.1, flower: 0, scrub: 0.45, snow: 0 },
     volcanic: { stone: 1.4, twig: 0.1, tuft: 0.04, flower: 0, scrub: 0.05, snow: 0 },
-    eow: { stone: 0.5, twig: 0, tuft: 0, flower: 0, scrub: 0, snow: 0 }
+    eow: { stone: 0.5, twig: 0, tuft: 0, flower: 0, scrub: 0, snow: 0 },
+    beach: { stone: 0.28, twig: 0.3, tuft: 1.1, flower: 0.5, scrub: 0, snow: 0 }      // P116: a few pebbles on the sand, driftwood twigs, lush grass and flowers on the jungle floor
   };
   const SC = SS.CFG.MATS;
   function matCol(m) { const c = SC[m] ? SC[m].rgb : 0x808080; return [(c >> 16 & 255) / 255, (c >> 8 & 255) / 255, (c & 255) / 255]; }
@@ -249,14 +252,16 @@
         kinds.push(['stone', 0.6 * (0.3 + patch), 0]); kinds.push(['tuft', 0.3 * patch2 * patch2, 2]); if (dd > 0) kinds.push(['rubble', 0.07 * dd * patch, 0]);
       } else {
         if (isSnow) { kinds.push(['snow', B.snow * (0.4 + patch2), 1]); kinds.push(['stone', B.stone * 0.12, 0]); }
-        else if (isSoil || isSand || isRock || isDark) kinds.push(['stone', B.stone * (0.3 + 1.4 * patch) * (isSand ? 0.45 : 1) * shore, 0]);
+        else if (isSoil || isSand || (isRock && biome !== 'beach') || isDark) kinds.push(['stone', B.stone * (0.3 + 1.4 * patch) * (isSand ? 0.45 : 1) * shore, 0]);
         if (!under) {
           if (isSoil && !snowy) { kinds.push(['twig', B.twig * (0.3 + patch2), 0]); if (gr > 0.2) { kinds.push(['tuft', B.tuft * gr * (0.4 + patch), 0]); kinds.push(['flower', B.flower * gr * patch * patch * 4.5, 0]); } }
-          if (isSand && !snowy) { kinds.push(['scrub', B.scrub * (patch2 > 0.45 ? patch2 : 0.1) * 1.4, 0]); if (B.tuft > 0) kinds.push(['tuft', B.tuft * patch, 2]); }
+          if (isSand && !snowy) { kinds.push(['scrub', B.scrub * (patch2 > 0.45 ? patch2 : 0.1) * 1.4, 0]); if (B.tuft > 0) kinds.push(['tuft', B.tuft * patch * (biome === 'beach' ? 0.06 : 1), biome === 'beach' ? 0 : 2]); }
           if (isRock && !snowy && B.scrub > 0) kinds.push(['scrub', B.scrub * 0.4 * patch2, 0]);
           if (isDark && B.scrub > 0) kinds.push(['scrub', B.scrub * patch2, 3]);
         }
-        if (dd > 0 && !snowy) decorKinds(kinds, biome, { mt, isSoil, isSand, isSnow, isRock, isDark, patch, patch2, gr, ny, flat, under, ax, az, vents, dd, shore });
+        let dh = 99;                                                          // P116: the distance to the nearest hut of the beach village (bushes crowd between and round the huts)
+        if (biome === 'beach' && W.features.beach && W.features.beach.huts) for (const h of W.features.beach.huts) dh = Math.min(dh, Math.hypot(h.x - ax, h.z - az));
+        if (dd > 0 && !snowy) decorKinds(kinds, biome, { mt, isSoil, isSand, isSnow, isRock, isDark, patch, patch2, gr, ny, flat, under, ax, ay, az, vents, dd, shore, sea, dh });
       }
       for (let k = 0; k < kinds.length; k++) {
         const kd = kinds[k], kind = kd[0];
@@ -356,6 +361,18 @@
     } else if (biome === 'canyon') {
       if (x.isRock) { K.push(['rubble', 0.12 * dd * (0.3 + p), 0]); if (x.ny > 0.85 && p2 > 0.3) K.push(['pillar', 0.06 * dd, 0]); }
       else if (x.isSand || x.isSoil) { K.push(['pear', 0.014 * dd * p, 0]); K.push(['barrel', 0.01 * dd * p2, 0]); K.push(['bone', 0.006 * dd, 0]); K.push(['skull', 0.002 * dd, 0]); K.push(['rubble', 0.03 * dd * p, 0]); }
+    } else if (biome === 'beach') {                                     // P116: jungle floor under the palms, driftwood and coconuts on the sand, leafy bushes where the sand meets the green
+      if (x.dh < 10 && x.dh > 3.0 && (x.isSand || x.isSoil) && x.ay > x.sea + 0.6) {         // the village: green between and round the huts (not on the pads)
+        const nh = 1 - x.dh / 10;
+        K.push(['jbush', 0.12 * dd * nh * (0.3 + p2), 0]); K.push(['bigleaf', 0.05 * dd * nh * (0.3 + p), 0]); K.push(['fern', 0.3 * dd * nh * p2, 0]);
+      }
+      if (x.isSoil) {
+        K.push(['fern', 0.5 * dd * (0.3 + p2), 0]); K.push(['jbush', 0.05 * dd * p, 0]); K.push(['bigleaf', 0.06 * dd * p2 * p2 * 2, 0]);
+        if (x.ny > 0.85) K.push(['log', 0.012 * dd * (p > 0.55 ? 1 : 0), 0]);
+      } else if (x.isSand) {
+        if (x.ay > x.sea + 1.9) { K.push(['jbush', 0.008 * dd * p2 * p2 * 2, 0]); K.push(['fern', 0.12 * dd * p2, 0]); }
+        K.push(['coconut', 0.008 * dd * (p2 > 0.5 ? 1 : 0), 0]); K.push(['log', 0.006 * dd * (p > 0.6 ? 1 : 0), 0]);
+      }
     } else if (biome === 'volcanic') {
       if (x.isDark || x.isRock) {
         K.push(['obsidian', 0.1 * dd * p2 * p2 * 2, 0]); K.push(['stone', 0.07 * dd * p, 4]);

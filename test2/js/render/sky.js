@@ -26,7 +26,8 @@
     alpine:    { turb: 2.0, abs: [0.08, 0.08, 0.08], alb: [0.3, 0.32, 0.36], ovc: [0.84, 0.86, 0.9] },
     canyon:    { turb: 7.0, abs: [0.12, 0.2, 0.34], alb: [0.2, 0.13, 0.08], ovc: [0.82, 0.78, 0.74] },
     desert:    { turb: 12.0, abs: [0.08, 0.16, 0.34], alb: [0.42, 0.33, 0.2], ovc: [0.86, 0.8, 0.7] },
-    volcanic:  { turb: 30.0, abs: [0.3, 0.48, 0.75], alb: [0.05, 0.045, 0.04], ovc: [0.56, 0.46, 0.4] }
+    volcanic:  { turb: 30.0, abs: [0.3, 0.48, 0.75], alb: [0.05, 0.045, 0.04], ovc: [0.56, 0.46, 0.4] },
+    beach:     { turb: 3.4, abs: [0.1, 0.11, 0.12], alb: [0.2, 0.17, 0.11], ovc: [0.82, 0.82, 0.85] }       // P116: clean humid tropical air over a bright sand shore (warm ground bounce for the low sun)
   };
   // per weather kind: overcast (0 clear .. 1 full deck), its brightness, extra turbidity, ash loading (multiplies the
   // absorption), storm flag (weather.js)

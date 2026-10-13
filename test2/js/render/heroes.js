@@ -17,9 +17,11 @@
     temperate: [['hero_well', 2, [MT.SOIL, MT.ROCK], 0.05, 0.0, 0.0]],
     desert: [['hero_wheel', 2, [MT.SAND, MT.SANDSTONE], 0.0, 0.32, 0.36]],
     canyon: [['hero_wheel', 1, [MT.SAND, MT.SANDSTONE, MT.SOIL], 0.0, 0.32, 0.36]],
-    volcanic: [['hero_monolith', 2, [MT.BASALT, MT.ASH, MT.CRUST], 0.12, 0.0, 0.0]]
+    volcanic: [['hero_monolith', 2, [MT.BASALT, MT.ASH, MT.CRUST], 0.12, 0.0, 0.0]],
+    // P116: beach huts on the dry sand / jungle edge (maxAbove: m above the sea; door towards the water, see pick())
+    beach: [['hero_hut_thatch', 3, [MT.SAND, MT.SOIL], 0.0, 0.0, 0.0, 4.3], ['hero_hut_tin', 2, [MT.SAND, MT.SOIL], 0.0, 0.0, 0.0, 4.3]]
   };
-  const FOOT = { hero_well: 1.0, hero_wheel: 0.8, hero_monolith: 0.85 };
+  const FOOT = { hero_well: 1.0, hero_wheel: 0.8, hero_monolith: 0.85, hero_hut_thatch: 1.9, hero_hut_tin: 2.0 };
   let scene = null, items = [], key = '', lastT = -1, chk = 0, glowT = 0, built = 0;
 
   HV.init = function (sc) { scene = sc; };
@@ -43,25 +45,36 @@
     return dev;
   }
 
+  /* P116: the beach village: the sim lists the huts (sim/beach.js village: flat pads, doors to the water); a hut whose pad is gone (a 2D map's other rows, a fort) is skipped */
+  function pickBeach(S, W) {
+    const out = [], B = W.features && W.features.beach;
+    for (const h of (B && B.huts) || []) {
+      const id = 'hero_hut_' + h.type, y0 = W.top_at(h.x, h.z);
+      if (y0 < -1e8 || Math.abs(y0 - h.y) > 0.6 || y0 < W.SEA + 0.5) continue;
+      out.push({ id: id, x: h.x, y: y0, z: h.z, y0: y0, yaw: h.yaw, lean: 0, leanDir: 1, r: FOOT[id] });
+    }
+    return out;
+  }
   function pick(S, W, biome) {
+    if (biome === 'beach') return pickBeach(S, W);
     const set = SETS[biome]; if (!set) return [];
     const out = [], seed = (S.settings && S.settings.seed | 0) || 0, sea = W.SEA, dry = !!W.dry;
     const cx = W.SX * 0.5, cz = W.SZ * 0.5, pr = dry && SS.CFG.DRY ? SS.CFG.DRY.PLAY_R - 3 : Math.min(W.SX, W.SZ) * 0.5 - 7;
     for (let s = 0; s < set.length; s++) {
-      const [id, cnt, mats, sink, lean, lift] = set[s];
+      const [id, cnt, mats, sink, lean, lift, maxAbove] = set[s];
       let tries = 0;
-      for (let n = 0; n < cnt && tries < 600; tries++) {
+      for (let n = 0; n < cnt && tries < (maxAbove != null ? 6000 : 600); tries++) {
         const h1 = M.hash3(seed + 31, tries, s * 7 + n), h2 = M.hash3(seed + 77, s * 7 + n, tries), h3 = M.hash3(seed + 5, tries, 101 + s);
         const x = W.flat ? 6 + h1 * (W.SX - 12) : cx + (h1 * 2 - 1) * pr, z = W.flat ? W.MZ : cz + (h2 * 2 - 1) * pr;
         if (!W.flat && Math.hypot(x - cx, z - cz) > pr) continue;
         const y0 = W.top_at(x, z);
-        if (y0 < -1e8 || y0 < sea + 0.9 || y0 > W.SY - 3) continue;
+        if (y0 < -1e8 || y0 < sea + 0.9 || y0 > W.SY - 3 || (maxAbove != null && y0 > sea + maxAbove + 1.2)) continue;
         const m0 = W.mat_at(x, y0 - 0.12, z);
         if (mats.indexOf(m0) < 0) continue;
         const dev = flatEnough(W, x, z, FOOT[id], y0);
-        if (dev < 0 || dev > 0.3) continue;
+        if (dev < 0 || dev > (maxAbove != null ? 0.45 : 0.3)) continue;
         let near = false;
-        for (const o of out) if (Math.hypot(o.x - x, o.z - z) < 14) near = true;
+        for (const o of out) if (Math.hypot(o.x - x, o.z - z) < (maxAbove != null ? 6.5 : 14)) near = true;
         for (const w of S.worms || []) if (w.pos && Math.hypot(w.pos.x - x, w.pos.z - z) < 5) near = true;
         for (const t of S.trees || []) if (Math.hypot(t.x - x, t.z - z) < 2.6) near = true;                     // (sim trees / props are not moved: keep clear of them)
         for (const o of S.bodies || []) if (o.pos && Math.hypot(o.pos.x - x, o.pos.z - z) < 2.4 + (o.rb || 0)) near = true;
@@ -72,7 +85,13 @@
           for (let k = 0; k < 8 && !hot; k++) { const a = k * Math.PI / 4; if (W.mat_at(x + Math.cos(a) * 2.2, W.top_at(x + Math.cos(a) * 2.2, z + Math.sin(a) * 2.2) - 0.12, z + Math.sin(a) * 2.2) === MT.LAVA) hot = true; }
           if (hot) continue;
         }
-        out.push({ id: id, x: x, y: y0 - sink - dev * 0.5 + lift, z: z, y0: y0, yaw: h3 * Math.PI * 2, lean: lean, leanDir: h1 < 0.5 ? 1 : -1, r: FOOT[id] });
+        let yaw = h3 * Math.PI * 2;
+        if (maxAbove != null) {                                     // a hut stands with its door (+X) towards the nearest open water: the lowest of 12 probes 9 m round
+          let lo = 1e9, bx = 1, bz = 0;
+          for (let q = 0; q < 12; q++) { const a = q * Math.PI / 6, hq = W.top_at(x + Math.cos(a) * 9, z + Math.sin(a) * 9); if (hq < lo) { lo = hq; bx = Math.cos(a); bz = Math.sin(a); } }
+          yaw = -Math.atan2(bz, bx) + (h3 - 0.5) * 0.4;
+        }
+        out.push({ id: id, x: x, y: y0 - sink - dev * 0.5 + lift, z: z, y0: y0, yaw: yaw, lean: lean, leanDir: h1 < 0.5 ? 1 : -1, r: FOOT[id] });
         n++;
       }
     }

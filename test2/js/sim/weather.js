@@ -54,7 +54,7 @@
   function pickKind(S, r) {
     if (W().under) return 'clear';                                    // U: no weather underground
     const want = S.settings.weather;
-    if (want && want !== 'auto' && C.WEATHER_KIND[want]) return want;
+    if (want && want !== 'auto' && C.WEATHER_KIND[want]) return C.weather_for(S.biome, want);          // (P116: the biome's own pool)
     const tab = C.WEATHER_AUTO[S.biome] || C.WEATHER_AUTO.temperate;
     let u = M.rng_next(r), last = 'clear';
     for (let i = 0; i < tab.length; i++) { last = tab[i][0]; u -= tab[i][1]; if (u < 0) return last; }

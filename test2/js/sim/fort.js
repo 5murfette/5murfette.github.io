@@ -39,7 +39,8 @@
     canyon: { kind: 'sea', floor: 1.3, bank: 2.2, hwk: 1 },
     alpine: { kind: 'sea', floor: 1.3, bank: 2.6, hwk: 1 },
     desert: { kind: 'chasm', floor: 1.4, bank: 14, hwk: 1.15 },
-    volcanic: { kind: 'lava', floor: -1, bank: 2.4, hwk: 1 }
+    volcanic: { kind: 'lava', floor: -1, bank: 2.4, hwk: 1 },
+    beach: { kind: 'sea', floor: 1.3, bank: 2.2, hwk: 1 }
   };
 
   FT.on = st => !!st && !!st.fort && st.fort !== '0' && st.fort !== 'off';

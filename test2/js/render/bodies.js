@@ -157,8 +157,17 @@
         pa.setXYZ(i, v.x * r * j, v.y * r * j, v.z * r * j);
       }
       geo.computeVertexNormals();
-      const bk = SS.models && SS.models.mesh('prop_boulder');
-      if (bk) {
+      const beachRock = SS.world.biome === 'beach' && SS.models && SS.models.has('beach_rock_M0');
+      const bk = beachRock ? SS.models.mesh(['beach_rock_M0', 'beach_rock_M1', 'beach_rock_M2'][((SS.math.hash3(b.shapeId || b.id, 9, 3) * 3) | 0) % 3]) : SS.models && SS.models.mesh('prop_boulder');
+      if (bk && beachRock) {
+        /* P116: the beach's loose boulders are the same smooth granite meshes as the cove's rocks (beach_rock_M*): fitted to the shell's bounding box, the pivot (the stone's centre) corrected by the model's box */
+        geo.computeBoundingBox();
+        const bb = geo.boundingBox, md = SS.MODELS[bk.userData.model], mb = md.bbox, sz = md.size;
+        const ex = bb.max.x - bb.min.x, ey = bb.max.y - bb.min.y, ez = bb.max.z - bb.min.z, sx = ex / sz[0], sy = ey / sz[1], sz2 = ez / sz[2];
+        bk.scale.set(sx, sy, sz2);
+        bk.position.set((bb.min.x + bb.max.x) / 2 - (mb[0] + mb[3]) / 2 * sx, (bb.min.y + bb.max.y) / 2 - (mb[1] + mb[4]) / 2 * sy, (bb.min.z + bb.max.z) / 2 - (mb[2] + mb[5]) / 2 * sz2);
+        geo.dispose(); g.add(bk);
+      } else if (bk) {
         /* P59: the baked mossy rock, fitted to the bounding box of THIS shell (the sim collides with the shell): turned by a hash-chosen
          * quarter turn about Y first (so equal shells do not look alike), then stretched per axis; sits on the shell's centre */
         geo.computeBoundingBox();

@@ -351,5 +351,6 @@
     for (const kk of [1, 3, 5]) { const pts = []; for (let a = 0; a <= NA; a++) { const v = P(a, kk, -0.07); pts.push([v[0], v[1], v[2]]); } tube(b, pts, new Array(pts.length).fill(0.035), 6, () => [0.85, 0.8, 0.78], null, null); }
     return fin(b);
   }
+  K.B = { mk, tri, quad, blob, fin, lathe, vn, fbm, mixc, TILE };      // (P116: the builders, for render/beachdecor.js)
   K.GF = { wreck: wreckGeo, mushA: () => mushGeo(0), mushB: () => mushGeo(1), fern: fernGeo, log: logGeo, stump: stumpGeo, cactus: cactusGeo, barrel: barrelGeo, pear: pearGeo, skull: skullGeo, ribs: ribsGeo, bone: boneGeo, tumble: tumbleGeo, rubble: rubbleGeo, pillar: pillarGeo, obsidian: obsidianGeo, ice: iceGeo, crystal: crysGeo, boulder: boulderGeo, stalag: stalagGeo, fungi: fungiGeo, plate: plateGeo, cable: cableGeo };
 })(window.SS = window.SS || {});

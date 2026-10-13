@@ -125,6 +125,28 @@
     /* P65i: the ruined town of the volcanic island is dressed stone, not pale concrete: courses of dark basalt and brown tuff ashlar (rows 0.28 m on walls, 0.6 m
      * flagstones on roads / floors), recessed joints, pitted faces, lava-orange stains running down from the wall tops, soot, thermal-crack lines.
      * a = along the wall (or x), b = up (or z); returns the albedo, k = 1 on the stone / 0 in the joint */
+    /* P116 beach: the bunkers are granite block pillboxes: courses of rounded pink-brown granite blocks, dark joints, rain streaks, pale lichen and moss on the top faces */
+    vec3 graniteMasonry(vec2 fq, bool horiz, float up, out float k) {
+      float rowH = horiz ? 1.3 : 0.55, row = floor(fq.y / rowH);
+      float r1 = texture(tNoise, vec2(row * 0.137, 0.31)).r;
+      float a2 = fq.x + r1 * 7.0, bl = (horiz ? 1.6 : 1.1) + 0.6 * texture(tNoise, vec2(row * 0.211, 0.67)).g;
+      float cell = floor(a2 / bl), fa = a2 / bl - cell, fb = fq.y / rowH - row;
+      float dj = min(min(fa, 1.0 - fa) * bl, min(fb, 1.0 - fb) * rowH);
+      float cr = texture(tNoise, vec2(cell * 0.0731 + row * 0.1301, row * 0.0937 + cell * 0.0413)).b;
+      float tint = texture(tNoise, vec2(cell * 0.173 + 0.11, row * 0.239 + 0.37)).r;
+      vec3 c = mix(vec3(0.4, 0.31, 0.26), vec3(0.49, 0.39, 0.33), smoothstep(0.25, 0.75, tint)) * (0.88 + 0.24 * cr);
+      float sp = texture(tNoise, fq * 11.0 + 0.2).b, sp2 = texture(tNoise, fq * 31.0 + 0.6).b;
+      c = mix(c, vec3(0.62, 0.52, 0.48), smoothstep(0.78, 0.92, sp2) * 0.6);
+      c *= 0.88 + 0.24 * sp;
+      float st = smoothstep(0.6, 0.92, texture(tNoise, vec2(fq.x * 1.7, fq.y * 0.07)).b);                              // rain streaks
+      c *= 1.0 - 0.38 * st * (horiz ? 0.0 : 1.0);
+      float li = smoothstep(0.58, 0.8, texture(tNoise, fq * 0.9 + 0.3).g), mo = smoothstep(0.5, 0.78, texture(tNoise, fq * 0.5 + 0.8).r);
+      c = mix(c, vec3(0.5, 0.52, 0.36), li * 0.4);                                                                      // lichen
+      c = mix(c, vec3(0.1, 0.2, 0.06), mo * (horiz ? 0.75 : 0.3 * (1.0 - smoothstep(0.0, 0.5, fq.y - floor(fq.y / 3.0) * 3.0))));   // moss: thick on the top faces
+      k = smoothstep(0.008, 0.035, dj);
+      c *= mix(0.68, 1.0, k);
+      return c;
+    }
     vec3 tuffMasonry(vec2 fq, bool horiz, float up, out float k) {
       float rowH = horiz ? 0.6 : 0.28, row = floor(fq.y / rowH);
       float r1 = texture(tNoise, vec2(row * 0.137, 0.31)).r;
@@ -236,7 +258,7 @@
     }
 
     ${TUFF_GLSL}
-    uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze;
+    uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze, uBeach;
     uniform float uEow;
     ${EOW_GLSL}
     // the landscape behind the slab (mode 1, ad = m beyond its back face): the old ghost haze while it fades
@@ -388,6 +410,29 @@
       vec3 c1 = triAT(float(i1), vT, bw, P1.x) * uMatTint[i1];
       vec3 c2 = triAT(float(i2), vT, bw, P2.x) * uMatTint[i2];
       vec3 col = mix(c1, c2, t);
+      // P116 beach biome: the rock slot is red-brown rounded granite, the sand slot a fine pale warm sand (the shared textures are a grey-brown crag and a rippled dune sand)
+      float bwR = Wt[1] / max(sum, 1e-3), bwS = Wt[3] / max(sum, 1e-3);
+      if (uBeach > 0.5) {
+        float lmB = dot(col, vec3(0.3, 0.55, 0.15));
+        // granite (the tors, the hill slopes, the voxel skin under the boulder meshes): warm red-brown, fine feldspar / biotite speckle, a slow mottling (no crag texture)
+        float gk1 = 1.0 - smoothstep(0.012, 0.05, fw), gk2 = 1.0 - smoothstep(0.03, 0.14, fw);           // the speckle fades with the pixel footprint (the noise has no mip maps: it would alias into a woven pattern at a distance)
+        vec3 gq = vT * 6.0;
+        float gs1 = mix(0.5, texture(tNoise, gq.zy).b * bw.x + texture(tNoise, gq.xz).b * bw.y + texture(tNoise, gq.xy).b * bw.z, gk1);
+        float gs2 = mix(0.5, texture(tNoise, gq.zy * 3.1 + 0.3).b * bw.x + texture(tNoise, gq.xz * 3.1 + 0.3).b * bw.y + texture(tNoise, gq.xy * 3.1 + 0.3).b * bw.z, gk1);
+        float glf = texture(tNoise, vT.xz * 0.09 + vT.y * 0.06).a;
+        float gm1 = texture(tNoise, vT.xz * 0.33 + vT.y * 0.21).a, gm2 = mix(0.5, texture(tNoise, vT.xz * 1.25 + vT.y * 0.7 + 0.4).g, gk2);
+        float gst = smoothstep(0.55, 0.9, texture(tNoise, vec2(dot(vT.xz, vec2(0.83, 0.56)) * 1.4, vT.y * 0.07)).b);       // dark weathering streaks running down the faces
+        float gli = smoothstep(0.6, 0.82, gm2 * 0.6 + gm1 * 0.5);                                                          // pale grey-green lichen patches
+        vec3 gbase = mix(vec3(0.5, 0.36, 0.3), vec3(0.65, 0.5, 0.42), glf) * (0.86 + 0.28 * gs1) * (0.78 + 0.44 * gm1);
+        gbase *= 1.0 - 0.3 * gst * (1.0 - smoothstep(0.35, 0.85, nW.y));
+        gbase = mix(gbase, vec3(0.6, 0.58, 0.44), gli * 0.4);
+        gbase = mix(gbase, vec3(0.66, 0.54, 0.5), smoothstep(0.76, 0.9, gs2) * 0.65);
+        gbase = mix(gbase, vec3(0.09, 0.07, 0.06), smoothstep(0.76, 0.92, 1.0 - gs2) * 0.45);
+        vec3 granA = pow(gbase, vec3(2.2));
+        vec3 sandA = pow(vec3(0.9, 0.82, 0.66), vec3(2.2)) * mix(1.0, lmB / 0.42, 0.18);
+        col = mix(col, granA, bwR);
+        col = mix(col, sandA, bwS);
+      }
       col *= mix(vec3(0.94, 0.9, 0.86), vec3(1.07, 1.03, 0.97), nz);
       // volcanic ground (basalt 7, crust 9, ash 10) is black rock and tephra (user 2026-10-08: "black rocky ground,
       // not shiny plastic"): the source textures' red scoria specks and brown cast are muted toward charcoal
@@ -400,6 +445,7 @@
       rough = mix(P1.y, P2.y, t);
       float poro = mix(P1.w, P2.w, t);
       vec4 RA = mix(uRelief[i1], uRelief[i2], t);
+      if (uBeach > 0.5) RA *= 1.0 - 0.7 * bwR;                // (rounded boulders: smoother than a crag)
       float GD = mix(uGlint[i1], uGlint[i2], t);
       // surface state from the simulation (grass cover, dryness, char, burning)
       vec4 sf = texture(tSurf, (vT.xz * 2.0 + 0.5) / uNL);   // 193 columns, texel centres at x = i * 0.5
@@ -463,7 +509,7 @@
         float lnz2 = texture(tNoise, vW.xz * 1.7 + vec2(uTime * 0.02, 0.0)).g;
         lapFoam = exp(-pow((u2 + 0.01) / 0.03, 2.0)) * smoothstep(0.3, 0.7, lnz * 0.5 + lnz2 * 0.7) * nearSea * step(0.0, u2 + 0.1);
       }
-      col *= mix(1.0, 0.5, wetB * (0.45 + 0.55 * poro));     // wet sand loses ~40 % albedo; wet rock darkens too (film fills its micro-relief)
+      col *= mix(vec3(1.0), mix(vec3(0.5), vec3(0.45, 0.36, 0.26), uBeach), wetB * (0.45 + 0.55 * poro));     // wet sand loses ~40 % albedo; wet rock darkens too (film fills its micro-relief)
       rough = mix(rough, 0.3 + 0.3 * (1.0 - poro), wetB * 0.7 * smoothstep(-0.45, 0.0, under));   // a sheen near the water only; damp ground stays matte
       // water film: the smoothed mesh lies a few cm above the simulated bed in concave floors (one vertex per cell),
       // so a shallow pool's water is under it: terrain just above the surface of a wet column reads as a film
@@ -471,10 +517,15 @@
       if (uWaterTex > 0.5) { film = smoothstep(0.0, 0.02, wt.g) * smoothstep(-0.07, -0.005, under); col *= mix(1.0, 0.8, film); rough = mix(rough, 0.07, film); }
       RA *= (1.0 - film) * uDetail;                       // a puddle's water surface is flat (and Low has no relief)
       GD *= (1.0 - film) * (1.0 - smoothstep(-0.05, 0.05, under)) * uDetail * sky;   // none in puddles, under water, caves
-      col = mix(col, vec3(0.95, 0.97, 1.0), lapFoam * 0.7 * (1.0 - smoothstep(0.0, 0.1, under)));
+      col = mix(col, vec3(0.95, 0.97, 1.0), lapFoam * (0.7 - 0.55 * uBeach) * (1.0 - smoothstep(0.0, 0.1, under)));
       if (under > 0.0) {
-        col *= mix(vec3(1.0), vec3(0.42, 0.66, 0.72), smoothstep(0.0, 2.0, under));
-        col += uCaustic * caustic(vW) * vec3(0.55, 0.7, 0.62) * smoothstep(0.0, 0.35, under) * exp(-under * 0.6) * max(up, 0.2);
+        col *= mix(vec3(1.0), mix(vec3(0.42, 0.66, 0.72), vec3(0.56, 0.74, 0.58), uBeach), smoothstep(0.0, 2.0, under));
+        col += uCaustic * (1.0 - 0.8 * uBeach) * caustic(vW) * vec3(0.55, 0.7, 0.62) * smoothstep(0.0, 0.35, under) * exp(-under * 0.6) * max(up, 0.2);
+        if (uBeach > 0.5) {                                 // P116: the sea floor is not one sand sheet: darker patches of weed, reef and rock rubble
+          float pn = texture(tNoise, vW.xz * 0.045).a * 0.6 + texture(tNoise, vW.xz * 0.16 + 0.3).g * 0.4;
+          float pat = smoothstep(0.46, 0.7, pn) * smoothstep(0.1, 0.8, under);
+          col = mix(col, col * vec3(0.3, 0.38, 0.2), pat * 0.75);
+        }
         rough = 0.4;
       }
       // lava glow (fresh lava = slot 8, crust = slot 9 with faint cracks)
@@ -524,6 +575,7 @@
         conc *= 1.0 - 0.13 * lift - 0.22 * streak * (1.0 - smoothstep(-0.3, 0.6, up));
         float kj = 1.0;
         if (uVolc > 0.5) { bool hz = abs(nW.y) > 0.62; vec2 tq = hz ? vT.xz : (abs(nW.x) > abs(nW.z) ? vT.zy : vT.xy); conc = tuffMasonry(tq, hz, up, kj); }
+        else if (uBeach > 0.5) { bool hz = abs(nW.y) > 0.62; vec2 tq = hz ? vT.xz : (abs(nW.x) > abs(nW.z) ? vT.zy : vT.xy); conc = pow(graniteMasonry(tq, hz, up, kj), vec3(2.2)); }
         #ifdef S2
         if (uSlab.x > 0.5 && up > 0.75) {
           // P113 fort / ruin floors seen from above: cast panels with joints, rain stains, hairline cracks and moss creeping in from the back edge (the deck used to be one flat grey extrusion)
@@ -1148,7 +1200,7 @@
       uCtxHaze: { value: 1 },   // P29j: the slice-view setting: 1 (thin / thick) = the landscape behind the slab recedes into haze; 0 (full) = crisp
       uO: { value: new T.Vector3() }, uN: { value: new T.Vector3(0, 0, 1) }, uHaze: { value: new T.Color(0xf3d2b0) }, uCaveAmb: { value: new T.Color(0, 0, 0) },
       uGrassTint: { value: new T.Color(1, 1, 1) }, uDryTint: { value: new T.Color(1, 1, 1) }, uSunDir: { value: new T.Vector3(0, 1, 0) },
-      uHalf: { value: C.HALF }, uBack: { value: C.HALF }, uAlpha: { value: 0 }, uTime: { value: 0 }, uSea: { value: W.SEA }, uWaterTex: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
+      uHalf: { value: C.HALF }, uBack: { value: C.HALF }, uAlpha: { value: 0 }, uTime: { value: 0 }, uSea: { value: W.SEA }, uBeach: { value: 0 }, uWaterTex: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
       uCaustic: { value: 1 }, uCloudSh: { value: new T.Vector4(0, 0, 0, 0) }, uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
       uVent: { value: Array.from({ length: 8 }, () => new T.Vector4()) }, uNVent: { value: 0 }, uVentHot: { value: 0 },   // P90: fumarole craters in the terrain shader (render/vents.js)
       uNL: { value: W.NX }, uSL: { value: W.SX },

@@ -18,13 +18,14 @@
   const TV = SS.treeView = {};
   const ROW = 49, LEAF0 = 32, TREE_T = 47, ROOT_T = 48;
   const CTX_M = 0.3;   // a tree whose root is more than this behind the slab belongs to the context (ghost); else it is drawn whole
-  const SPN = ['oak', 'spruce', 'juniper', 'snag'];
+  const SPN = ['oak', 'spruce', 'juniper', 'snag', 'palm'];
   // per species: bark tint, leaf tint (multiplies the card texture), core colour
   const LOOK = {
     oak: { bark: [0.5, 0.44, 0.38], leaf: [0.95, 1.0, 0.85], core: [0.05, 0.09, 0.03] },
     spruce: { bark: [0.55, 0.4, 0.32], leaf: [0.85, 1.0, 0.9], core: [0.035, 0.08, 0.05] },
     juniper: { bark: [0.7, 0.62, 0.55], leaf: [0.78, 0.86, 0.7], core: [0.05, 0.07, 0.04] },
-    snag: { bark: [1.05, 0.98, 0.9], leaf: [1, 1, 1], core: [0.05, 0.05, 0.05] }
+    snag: { bark: [1.05, 0.98, 0.9], leaf: [1, 1, 1], core: [0.05, 0.05, 0.05] },
+    palm: { bark: [0.95, 0.86, 0.74], leaf: [0.9, 1.0, 0.74], core: [0.05, 0.08, 0.03] }      // P116: coconut palm: grey-tan ringed trunk, glossy yellow-green fronds
   };
   let scene = null, tx = null, Q = null, U = null, own = null;
   let woodMat, leafMat, coreMat, woodMats, leafMats, coreMats, woodDepth, leafDepth, coreDepth, meshes = [];
@@ -34,7 +35,7 @@
 
   /* ---------- shaders ---------- */
   const VHEAD = /* glsl */`
-    uniform highp sampler2D tState; uniform float uTime; uniform vec3 uWind, uO, uN;
+    uniform highp sampler2D tState; uniform float uTime, uPalm; uniform vec3 uWind, uO, uN;
     attribute vec4 aInfo; attribute vec3 aCen;
     varying vec3 vTW; varying vec4 vTr; varying float vLeafF; varying float vCut; varying float vRootT; varying vec3 vCenT; varying float vRoot;
     vec3 treeXform(vec3 p) {
@@ -59,9 +60,12 @@
       if (leaf) p = aCen + (p - aCen) * (0.55 + 0.45 * sqrt(clamp(f, 0.0, 1.0)));
       float h = floor(aInfo.w * 64.0) / 63.0;         // height fraction above the root (0..1), packed in aInfo.w
       float g = 0.65 + 0.35 * sin(uTime * 0.83 + tr.a * 6.28) * sin(uTime * 0.31 + tr.a * 3.7);
-      vec2 sw = uWind.xz * 0.014 * g * h * h + vec2(sin(uTime * 1.25 + tr.a * 9.0), cos(uTime * 1.05 + tr.a * 7.0)) * 0.03 * h * h;
+      vec2 sw = (uWind.xz * 0.014 * g * h * h + vec2(sin(uTime * 1.25 + tr.a * 9.0), cos(uTime * 1.05 + tr.a * 7.0)) * 0.03 * h * h) * (1.0 + 1.2 * uPalm);
       p.xz += sw * (1.0 - 0.75 * tr.g);
-      if (leaf) p += vec3(sin(uTime * 4.7 + p.y * 2.7 + seed * 30.0), 0.0, cos(uTime * 4.1 + p.x * 2.9)) * 0.022 * (0.4 + length(uWind.xz) * 0.12);
+      if (leaf) {
+        float fk = uPalm > 0.5 ? 0.02 + 0.2 * length(p - aCen) * (0.35 + length(uWind.xz) * 0.09) : 0.022 * (0.4 + length(uWind.xz) * 0.12);       // a frond flutters at its tip (P116)
+        p += vec3(sin(uTime * 4.7 + p.y * 2.7 + seed * 30.0), uPalm * 0.7 * sin(uTime * 2.3 + seed * 17.0 + p.x), cos(uTime * 4.1 + p.x * 2.9)) * fk;
+      }
       return keep > 0.5 ? p : vec3(0.0);
     #endif
     }`;
@@ -116,17 +120,18 @@
     own = {
       tState: { value: stTex }, uTime: { value: 0 }, uWind: { value: new T.Vector3(1.6, 0, 0.7) },
       uBarkTint: { value: new T.Color(1, 1, 1) }, uLeafTint: { value: new T.Color(1, 1, 1) }, uCore: { value: new T.Color(0.05, 0.08, 0.03) },
-      uInsp: { value: 0 }, tLeaf: { value: tx.foliage || null }
+      uInsp: { value: 0 }, uPalm: { value: 0 }, tLeaf: { value: tx.foliage || null }
     };
     const shared = () => Object.assign({}, own, { uO: U.uO, uN: U.uN, uBack: U.uBack, uAlpha: U.uAlpha, uSecG: SS.section.uniforms.uSecG, uCtxSolid: U.uCtxSolid, uCtxHaze: U.uCtxHaze, tNoise: U.tNoise, uHaze: U.uHaze || { value: new T.Color(0.6, 0.7, 0.8) } });
     const woodFS = sh => {
       sh.fragmentShader = FCLIP + `
-        uniform float uTime; uniform vec3 uBarkTint; uniform sampler2D tNoise;
+        uniform float uTime, uPalm; uniform vec3 uBarkTint; uniform sampler2D tNoise;
 \n` + sh.fragmentShader
         .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n treeClip();')
         .replace('#include <color_fragment>', /* glsl */`#include <color_fragment>
           float nb = texture2D(tNoise, vTW.xz * 0.23 + vTW.y * 0.11).a;
           vec3 c = diffuseColor.rgb * uBarkTint;
+          if (uPalm > 0.5) { float rb = 0.5 + 0.5 * sin(vTW.y * 21.0 + nb * 2.2); c *= 0.7 + 0.42 * rb * rb + 0.12 * (nb - 0.5); }   // P116: palm trunk: ring scars of the old fronds
           float lum = dot(diffuseColor.rgb, vec3(0.33));
           if (!gl_FrontFacing || vCut > 0.5) {
             // T3: fresh inner wood (slice / broken end): bright pale-yellow sapwood, growth bands about the segment axis
@@ -349,6 +354,35 @@
       B.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
     }
   }
+  /* P116 palm crown: radial arching fronds (flat strips with a V fold, the leaflets droop from the midrib) at the cluster centre l, textured with tx.palm
+   * (chroma-keyed; the frond runs along u, its width across v 0.25..0.75). One card per frond: a blast strips them one by one (the seed in aInfo.w). */
+  function palmCrown(B, l, row, part, sp, hf, seed, low) {
+    const r = l.r, n = low ? 9 : 14, segs = low ? 3 : 5, ga = 2.399963, sd0 = seed * 997 | 0;
+    for (let i = 0; i < n; i++) {
+      const ring = i / n, hh = k => M.hash3(i, sd0, k);
+      const az = i * ga + seed * 6.28 + 0.5 * hh(21), e0 = 1.0 - 1.55 * ring + (hh(23) - 0.5) * 0.4, L = r * (1.5 + 0.4 * hh(25)) * (1 - 0.1 * ring);
+      const bend = 0.75 + 0.8 * ring + 0.3 * hh(27), w = L * 0.4, ca = Math.cos(az), sa = Math.sin(az);
+      const side = { x: -sa, y: 0, z: ca };
+      const info = [row, part, sp, pack(hf, 0.02 + 0.97 * hh(29))], base = B.v;
+      let px = l.x + ca * 0.12, py = l.y - 0.1 - 0.15 * ring, pz = l.z + sa * 0.12;
+      for (let s = 0; s <= segs; s++) {
+        const t = s / segs, el = e0 - bend * (s === 0 ? 0 : t - 0.5 / segs);
+        let dx = Math.cos(el) * ca, dy = Math.sin(el), dz = Math.cos(el) * sa;
+        if (s > 0) { px += dx * L / segs; py += dy * L / segs; pz += dz * L / segs; }
+        const el1 = e0 - bend * t; dx = Math.cos(el1) * ca; dy = Math.sin(el1); dz = Math.cos(el1) * sa;
+        const ux = side.y * dz - side.z * dy, uy = side.z * dx - side.x * dz, uz = side.x * dy - side.y * dx;     // side x dir: the frond's upper face
+        const hw = w * 0.5 * (0.35 + 0.65 * Math.sin(Math.min(1, t * 1.15 + 0.1) * 1.5708)), fold = 0.42;
+        const cf = Math.cos(fold), sf = Math.sin(fold), u = 0.01 + t * 0.98;
+        vert(B, px - side.x * hw * cf - ux * hw * sf, py - side.y * hw * cf - uy * hw * sf, pz - side.z * hw * cf - uz * hw * sf, ux, uy, uz, u, 0.25, info, l.x, l.y, l.z);
+        vert(B, px, py, pz, ux, uy, uz, u, 0.5, info, l.x, l.y, l.z);
+        vert(B, px + side.x * hw * cf - ux * hw * sf, py + side.y * hw * cf - uy * hw * sf, pz + side.z * hw * cf - uz * hw * sf, ux, uy, uz, u, 0.75, info, l.x, l.y, l.z);
+      }
+      for (let s = 0; s < segs; s++) {
+        const a = base + s * 3, b = a + 3;
+        B.idx.push(a, a + 1, b, a + 1, b + 1, b, a + 1, a + 2, b + 1, a + 2, b + 2, b + 1);
+      }
+    }
+  }
   function geo(B) {
     const g = new T.BufferGeometry();
     g.setAttribute('position', new T.Float32BufferAttribute(B.p, 3));
@@ -378,7 +412,8 @@
     for (let k = 0; k < t.leaf.length && k < TREE_T - LEAF0; k++) {
       const l = t.leaf[k]; if (l.s === -1 && row >= 0) continue;
       const lc = { x: l.x - ox, y: l.y - oy, z: l.z - oz, r: l.r }, seed = ((t.id || 1) * 0.6180339 + k * 0.137) % 1;
-      if (sp === 1) tier(Bl, Bc, lc, row, LEAF0 + k, sp, hf(l.y), seed, low ? 12 : 26);
+      if (sp === 4) palmCrown(Bl, lc, row, LEAF0 + k, sp, hf(l.y), seed, low);
+      else if (sp === 1) tier(Bl, Bc, lc, row, LEAF0 + k, sp, hf(l.y), seed, low ? 12 : 26);
       else cluster(Bl, Bc, lc, row, LEAF0 + k, sp, hf(l.y), seed, Math.round((low ? 7 : 14) * M.clamp(l.r / 1.2, 0.6, 1.4)), low ? 0 : 1);
     }
   }
@@ -395,7 +430,7 @@
     let hs = (((t.id || 1) * 2654435761) ^ 0x9e3779b9) >>> 0;
     const R = () => (hs = (Math.imul(hs, 1664525) + 1013904223) >>> 0) / 4294967296;
     const Wd = SS.world, gy = (x, z) => (Wd && Wd.top_at ? Wd.top_at(x, z) : t.y);
-    const n = low ? 4 : 6 + Math.floor(R() * 3);
+    const palm = t.sp === 4, n = palm ? 3 : low ? 4 : 6 + Math.floor(R() * 3);          // (P116: a palm's root plate is hidden under the sand: three short laterals are enough, they only show in a crater)
     const under = (P, r) => { const g = gy(P.x, P.z) - r - 0.05; if (P.y > g) P.y = g; return P; };
     const chain = (P, ang, dip, Lr, r, nSeg, side) => {
       for (let q = 0; q < nSeg; q++) {
@@ -411,7 +446,7 @@
     for (let i = 0; i < n; i++) {
       const ang = (i + R() * 0.6) / n * 6.2832, Lr = plate * (0.6 + 0.5 * R());
       const P = under({ x: t.x + Math.cos(ang) * rs * 0.6, y: t.y - 0.1, z: t.z + Math.sin(ang) * rs * 0.6 }, rs * 0.4);
-      chain(P, ang, 0.1 + 0.3 * R(), Lr, rs * (0.38 + 0.15 * R()), low ? 3 : 5, !low);
+      chain(P, ang, 0.1 + 0.3 * R(), Lr, rs * (0.38 + 0.15 * R()), palm || low ? 3 : 5, !low && !palm);
     }
     if (t.sp !== 1) L.push({ a: { x: t.x, y: t.y - 0.3, z: t.z }, b: { x: t.x + (R() - 0.5) * 0.3, y: t.y - TK.TAP_D, z: t.z + (R() - 0.5) * 0.3 }, r0: rs * 0.55, r1: 0.04 });   // tap root (spruce: plate only)
     rootCache.set(t, L);
@@ -461,7 +496,9 @@
     trees.forEach((t, i) => treeInto(t, i, Bw, Bl, Bc, 0, 0, 0, low));
     const sp = SPN[trees[0].sp] || 'oak', L = LOOK[sp] || LOOK.oak;          // (an unknown species falls back to oak)
     own.uBarkTint.value.setRGB(L.bark[0], L.bark[1], L.bark[2]); own.uLeafTint.value.setRGB(L.leaf[0], L.leaf[1], L.leaf[2]); own.uCore.value.setRGB(L.core[0], L.core[1], L.core[2]);
-    const map = sp === 'spruce' ? tx.pine : tx.foliage;
+    const map = sp === 'spruce' ? tx.pine : sp === 'palm' ? tx.palm : tx.foliage;
+    own.uPalm.value = sp === 'palm' ? 1 : 0;
+    for (const m of leafMats) m.roughness = sp === 'palm' ? 0.36 : 0.85;                  // P116: glossy fronds: the sun glints on them
     if (leafMat.map !== map) for (const m of [...leafMats, leafDepth, ...[...logMats.values()].filter(c => c.userData.logOf === leafMat || c.userData.logOf === leafDepth)]) { m.map = map || null; m.needsUpdate = true; }
     own.tLeaf.value = map || null;
     const mk = (B, mats, dm) => {

@@ -190,10 +190,10 @@
   }
   function updateFlocks(dt) {
     const want = [];
-    const birdsOK = (F.day || F.tod === 'dusk') && F.rain < 0.45 && (F.biome === 'temperate' || F.biome === 'canyon' || F.biome === 'alpine');
+    const birdsOK = (F.day || F.tod === 'dusk') && F.rain < 0.45 && (F.biome === 'temperate' || F.biome === 'canyon' || F.biome === 'alpine' || F.biome === 'beach');
     const gullsOK = (F.day || F.tod === 'dusk') && F.rain < 0.6 && F.biome !== 'volcanic';
     const batsOK = (F.tod === 'dusk' || F.night) && F.rain < 0.3 && (F.biome === 'temperate' || F.biome === 'canyon');
-    const nb = birdsOK && !F.flat ? Math.max(1, Math.round(2 * Q.life)) : 0, ng = gullsOK && !F.flat ? 1 : 0, nt = batsOK && !F.flat ? 1 : 0;      // (P104: far flocks circle behind the slice: none in a 2D match)
+    const nb = birdsOK && !F.flat ? Math.max(1, Math.round(2 * Q.life)) : 0, ng = gullsOK && !F.flat ? (F.biome === 'beach' ? 2 : 1) : 0, nt = batsOK && !F.flat ? 1 : 0;      // (P104: far flocks circle behind the slice: none in a 2D match)
     const have = { bird: 0, gull: 0, bat: 0 };
     for (const f of flocks) have[f.kind]++;
     const lim = { bird: nb, gull: ng, bat: nt };
@@ -255,7 +255,7 @@
     trees = [];
     const S = F.S; if (!S || !S.trees) return;
     for (const t of S.trees) {
-      if (!t.alive || (t.sp !== 0 && t.sp !== 2) || !t.leaf.length) continue;
+      if (!t.alive || (t.sp !== 0 && t.sp !== 2 && t.sp !== 4) || !t.leaf.length) continue;
       const tt = toT(t.x, t.z), s = toS(t.x, t.z) - F.cs;
       if (tt > -1.2 || tt < -13 || Math.abs(s) > 26) continue;
       trees.push(t);
@@ -272,7 +272,7 @@
     return false;
   }
   function updatePerched(dt) {
-    const wantN = (F.day) && F.rain < 0.5 && (F.biome === 'temperate' || F.biome === 'canyon') ? Math.round(3 * Q.life) : 0;
+    const wantN = (F.day) && F.rain < 0.5 && (F.biome === 'temperate' || F.biome === 'canyon' || F.biome === 'beach') ? Math.round(3 * Q.life) : 0;
     while (perched.length < wantN) perched.push({ mode: 2, t: RR(0, 3), cool: 0, tree: null, x: 0, y: 0, z: 0, yaw: 0, vx: 0, vy: 0, vz: 0, vis: 0, col: R() });
     while (perched.length > wantN) perched.pop();
     for (const p of perched) {
@@ -307,8 +307,8 @@
 
   /* ---------- butterflies ---------- */
   function updateButterflies(dt) {
-    const ok = F.day && F.rain < 0.1 && F.wsp < 5 && (F.biome === 'temperate' || F.biome === 'canyon');
-    const want = ok ? Math.round((F.biome === 'temperate' ? 9 : 4) * Q.life) : 0;
+    const ok = F.day && F.rain < 0.1 && F.wsp < 5 && (F.biome === 'temperate' || F.biome === 'canyon' || F.biome === 'beach');
+    const want = ok ? Math.round((F.biome === 'temperate' ? 9 : F.biome === 'beach' ? 7 : 4) * Q.life) : 0;
     while (bflies.length < want) bflies.push({ x: 0, z: 0, y: 0, h: R() * 6.28, sp: RR(0.5, 1.1), vis: 0, ph: R() * 6.28, hov: RR(0.5, 1.7), c: Math.floor(R() * 5), placed: 0 });
     while (bflies.length > want) bflies.pop();
     const g = F.S;
@@ -410,8 +410,8 @@
 
   /* ---------- point clouds: fireflies, embers, ash ---------- */
   function updateFireflies(dt) {
-    const ok = F.night && F.rain < 0.3 && (F.biome === 'temperate' || F.biome === 'canyon');
-    const p = ffP, want = ok ? Math.round((F.biome === 'temperate' ? 70 : 24) * Q.life) : 0;
+    const ok = F.night && F.rain < 0.3 && (F.biome === 'temperate' || F.biome === 'canyon' || F.biome === 'beach');
+    const p = ffP, want = ok ? Math.round((F.biome === 'temperate' ? 70 : F.biome === 'beach' ? 46 : 24) * Q.life) : 0;
     p.p.visible = want > 0;
     p.alive = Math.min(p.n, want);
     for (let i = 0; i < p.n; i++) {

@@ -27,6 +27,7 @@
     temperate: { thr: 0.56, h: 220, peak: 900, ridge: 0.3, cliff: 0.8, isl: [30, 140], sand: [0.72, 0.66, 0.5], low: [0.2, 0.32, 0.12], mid: [0.16, 0.24, 0.1], rock: [0.4, 0.38, 0.34], snow: 2400 },
     alpine:    { thr: 0.52, h: 500, peak: 3200, ridge: 0.9, cliff: 1, isl: [60, 380], sand: [0.55, 0.53, 0.5], low: [0.16, 0.24, 0.13], mid: [0.22, 0.26, 0.2], rock: [0.42, 0.42, 0.44], snow: 1300 },
     canyon:    { thr: 0.55, h: 300, peak: 700, ridge: 0.2, mesa: true, cliff: 1, isl: [60, 220], sand: [0.78, 0.6, 0.42], low: [0.62, 0.36, 0.22], mid: [0.55, 0.3, 0.18], rock: [0.6, 0.38, 0.26], snow: 9e9 },
+    beach:     { thr: 0.5, h: 150, peak: 520, ridge: 0.18, cliff: 0.5, isl: [30, 220], sand: [0.82, 0.74, 0.55], low: [0.1, 0.26, 0.09], mid: [0.08, 0.2, 0.08], rock: [0.38, 0.3, 0.26], snow: 9e9 },      // P116: low jungle islands with pale beaches
     volcanic:  { thr: 0.6, h: 260, peak: 1400, ridge: 0.25, cones: true, cliff: 0.6, isl: [40, 260], sand: [0.16, 0.15, 0.14], low: [0.12, 0.13, 0.1], mid: [0.1, 0.09, 0.09], rock: [0.14, 0.12, 0.11], snow: 9e9 }
   };
   let farScale = 0.5, farT = -99, farOK = false, renderer = null, rt = null, farScene = null, farCam = null, quad = null, mesh = null, mat = null, on = false, mainScene = null;

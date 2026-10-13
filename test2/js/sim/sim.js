@@ -342,6 +342,7 @@
     emit(S, 'reset', {});
     const taken = [], nT = S.teams.length, nW = nT * M.clamp(S.settings.worms | 0 || 3, 1, 4), names = SS.game.names(S, nW);
     const hp0 = M.clamp(S.settings.hp | 0 || 100, 1, 999), sep = nW > 8 ? 11 : 15, fortOn = !!SS.fort && SS.fort.is();
+    if (S.biome === 'beach' && !W().under && W().features && W().features.beach && W().features.beach.huts) for (const h of W().features.beach.huts) taken.push({ x: h.x, y: h.y, z: h.z });   // P116: nobody spawns on a hut's pad (the village stays clear; props / palms keep out of the huts too)
     for (let i = 0; i < nW; i++) {                                   // interleaved round-robin across the teams (PoC populate)
       const team = i % nT, fo = fortOn ? { team } : undefined;                       // P68b: fort mode: worm t (the team's first) sits in its bunker, the rest on the team's fort
       const spot = fortOn && i < nT ? SS.fort.seat(team) : sim.find_spot(S, sep, taken, fo) || sim.find_spot(S, 6, taken, fo) || sim.find_spot(S, 3, taken, fo) || (fortOn ? SS.fort.seat(team) : fallbackSpot(S));

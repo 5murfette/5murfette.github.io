@@ -14,6 +14,7 @@
   const G = SS.worldgen = {};
   const sat = M.sat, sm = M.smooth, clamp = M.clamp;
   let W, NX, NY, NZ, H, SEA, rng, seed, hgt, ginv, lavaZone, canalD, extra, F;
+  let BE = null;                                                       // P116: the beach biome's context (sim/beach.js), null on every other biome
   let kLo = 0, kHi = 0;                                                // P104: the lattice rows that get filled (all of them in 3D; a 2D match: the slab's band, dim2d.band)
   const R = () => M.rng_next(rng);
   const RR = (a, b) => a + (b - a) * M.rng_next(rng);
@@ -148,6 +149,9 @@
       const h = desertH(x, z);
       extra[col] = desertSand;
       return W.dry ? h : coast(h, x, z, 40, 5, -0.1);          // dry (Step D): dunes run to the border and beyond
+    },
+    beach(x, z) {
+      return BE ? SS.beachgen.height(BE, x, z) : HEIGHT.temperate(x, z);       // P116 (sim/beach.js)
     },
     volcanic(x, z) {
       // P25: a volcanic island with 0-3 cones (F.volcanoes); without one, broader lava-plateau hills
@@ -331,6 +335,7 @@
       const x = RR(W.MX - 30 * W.SC, W.MX + 30 * W.SC), z = RR(W.MZ - 30 * W.SC, W.MZ + 30 * W.SC), h = hgt[Math.round(z / H) * NX + Math.round(x / H)];
       if (h < SEA + 3 || M.len2(x - W.MX, z - W.MZ) > 32 * W.SC) continue;
       if (nearVolcano(x, z, 7)) continue;
+      if (F.beach && F.beach.huts && F.beach.huts.some(hh => M.len2(hh.x - x, hh.z - z) < spec.r1 + 7)) continue;        // P116: no granite tor on a hut's pad
       if (F.fort && SS.fort.keep_out(x, z, 6, 6)) continue;                 // P68b: no spire in a channel or on a bunker pad
       if (canalD && canalD[Math.round(z / H) * NX + Math.round(x / H)] < 7) continue;     // keep canals free (lava under a spire)
       if (sp.some(s => M.len2(s[0] - x, s[1] - z) < 12)) continue;
@@ -832,6 +837,9 @@
       if (cliffMax[col] - y > 3 && ny > 0.5 && de < 0.7) return MAT.SAND;   // sand banked against cliff feet
       return dv > G.ROCK_DV ? MAT.ROCK : MAT.SANDSTONE;
     },
+    beach(x, y, z, de, ny, col, dv) {
+      return BE ? SS.beachgen.rule(BE.r || (BE.r = { SEA, extra, cliffMax, nz }), x, y, z, de, ny, col, dv) : RULES.temperate(x, y, z, de, ny, col);   // P116
+    },
     volcanic(x, y, z, de, ny, col) {
       const n = nz(x, z, 24);
       if (y < SEA + 1.2 && ny > 0.5 && de < 1.3) return MAT.ASH;                  // black-sand beaches
@@ -849,7 +857,8 @@
     alpine: { dome: 1.6, band: true, caves: 0.07, sp: [5, 3], r0: 1.8, r1: 2.6, h0: 6, h1: 11, bridgeMat: MAT.ICE },
     canyon: { dome: 0.12, band: true, caves: 0.06, sp: [8, 4], r0: 1.3, r1: 2.2, h0: 6, h1: 12, spireMat: MAT.SANDSTONE, bridgeMat: MAT.SANDSTONE },
     desert: { dome: 0.2, band: false, caves: 0.05, sp: [3, 2], r0: 1.6, r1: 2.4, h0: 7, h1: 12, spireMat: MAT.SANDSTONE, bridgeMat: MAT.SANDSTONE },
-    volcanic: { dome: 0.8, band: false, caves: 0.07, sp: [3, 2], r0: 1.5, r1: 2.2, h0: 6, h1: 10, spireMat: MAT.BASALT, bridgeMat: MAT.BASALT }
+    volcanic: { dome: 0.8, band: false, caves: 0.07, sp: [3, 2], r0: 1.5, r1: 2.2, h0: 6, h1: 10, spireMat: MAT.BASALT, bridgeMat: MAT.BASALT },
+    beach: { dome: 1.7, band: false, caves: 0, sp: [4, 0], r0: 2.4, r1: 3.6, h0: 3.5, h1: 6.5, spireMat: MAT.ROCK, bridgeMat: MAT.ROCK }   // P116: rounded granite tors and stacks
   };
 
   /* Analytic ground height outside the lattice of a dry world (Step D): the same dunes as the lattice (no mesas this
@@ -929,6 +938,8 @@
       const ir = M.rng_make((seed * 977 + 5) >>> 0 || 1), A = [0.1, 0.13, 0.08, 0.05];
       F.isl = { A: A.map(v => v * (0.5 + M.rng_next(ir))), P: [0, 1, 2, 3].map(() => M.rng_next(ir) * Math.PI * 2), k: biome === 'volcanic' ? 0.45 : 1 };
     }
+    BE = null;
+    if (biome === 'beach' && SS.beachgen) { SS.beachgen.setup(W, F, seed); BE = { W, F, falloff, base: 38 * W.SC, wob: 4, seed }; }   // P116
     if (SS.fort) F.fort = SS.fort.layout(W, F, settings, biome, seed);   // P68b fort mode (null when off)
     W.features = F; W.biome = biome;
     return { settings, biome, spec: SPEC[biome], stage: 0, k: 0, label: W.under ? 'Boring the caves' : 'Shaping the land', under: W.under };
@@ -956,6 +967,7 @@
           if (e < BORDER_BAND) { const c = k * NX + i; hgt[c] = e <= 0 ? raw[c] : M.lerp(raw[c], hgt[c], sm(e / BORDER_BAND)); }
         }
         if (F.fort) SS.fort.shape(W, hgt, F, seed, lavaZone);          // P68b: one fort per team, channels between, bunker pads
+        if (BE) { SS.beachgen.stamp(BE, hgt, extra); SS.beachgen.village(BE, hgt, extra); }   // P116: granite boulders (after the blur: they stay round), then the village pads
         // 1/|grad(h - y)|: turns h - y into an approximate signed distance (smooth meshes on steep slopes)
         ginv = new Float32Array(NC);
         for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) { const g = gradH(i, k); ginv[k * NX + i] = g[0] * g[0] + g[1] * g[1]; }
@@ -1000,7 +1012,7 @@
         if (SS.collapse && kLo === 0 && kHi === NZ - 1) SS.collapse.remove_floating_all(W);    // (P104: a 2D band: dim2d.crop runs it on the slab, which removes a superset)
         F.lavaPresent = job.lava || biome === 'volcanic';
         if (W.dry && kLo === 0 && kHi === NZ - 1) W.freeze_beyond(C.DRY.CX, C.DRY.CZ, C.DRY.EDIT_R);   // D6: only the disc is destructible
-        hgt = ginv = lavaZone = canalD = extra = cliffMax = glacier = sLay = sNy = null;
+        hgt = ginv = lavaZone = canalD = extra = cliffMax = glacier = sLay = sNy = null; BE = null;
         job.stage = 5; job.label = 'Done';
         return 1;
       }
@@ -1017,7 +1029,7 @@
    *   volcanoes: [{x, z, Rc, Rb}], biome, shape } */
   G.preview = function (settings, n) {
     if (settings.biome === 'eow' && SS.eow) { const r0 = W || SS.world; return SS.eow.preview(settings, n, r0.size_of ? r0.size_of(settings) : r0.SX); }
-    const sv = { W, NX, NY, NZ, H, SEA, ISL_MAX, rng, seed, hgt, ginv, lavaZone, canalD, extra, F, shape: G.shape };
+    const sv = { W, NX, NY, NZ, H, SEA, ISL_MAX, rng, seed, hgt, ginv, lavaZone, canalD, extra, F, BE, shape: G.shape };
     const real = W || SS.world, sx = real.size_of ? real.size_of(settings) : real.SX;   // P38: the preview has the size of the map it previews
     const dummy = { NX: Math.round(sx / real.H) + 1, NY: real.NY, NZ: Math.round(sx / real.H) + 1, H: real.H, SX: sx, SZ: sx, SY: real.SY, MX: sx / 2, MZ: sx / 2, PR: sx / 2 - 3.5, SC: sx / 96, SEA: 3, SEA_WET: real.SEA_WET, dry: false, under: false, features: {} };
     const out = { n, sx, sea: 3, under: false, dry: false, h: new Float32Array(n * n), lava: new Uint8Array(n * n), volcanoes: [], biome: 'temperate', shape: 'islands' };
@@ -1039,7 +1051,7 @@
       }
     } finally {
       W = sv.W; NX = sv.NX; NY = sv.NY; NZ = sv.NZ; H = sv.H; SEA = sv.SEA; ISL_MAX = sv.ISL_MAX; rng = sv.rng; seed = sv.seed; hgt = sv.hgt; ginv = sv.ginv;
-      lavaZone = sv.lavaZone; canalD = sv.canalD; extra = sv.extra; F = sv.F; G.shape = sv.shape;
+      lavaZone = sv.lavaZone; canalD = sv.canalD; extra = sv.extra; F = sv.F; BE = sv.BE; G.shape = sv.shape;
     }
     return out;
   };

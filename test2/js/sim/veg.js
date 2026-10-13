@@ -43,14 +43,14 @@
     const st = S.veg = { n, surf: new Uint8Array(N * 4), fuel: new Float32Array(N), burnT: new Float32Array(N), burnI: new Float32Array(N),
       heat: new Float32Array(N), thr: new Float32Array(N), top0: new Float32Array(N), act: new Int32Array(N), nxt: new Int32Array(N), nAct: 0, acc: 0, tick: 0, surfVer: 1, logT: -9, stats: { ignited: 0, burnt: 0 } };
     const seed = (S.settings.seed | 0) * 17 + 5;
-    const dryBase = K.DRY_BASE[S.biome] !== undefined ? K.DRY_BASE[S.biome] : 0.2;
+    const dryBase = K.DRY_BASE[S.biome] !== undefined ? K.DRY_BASE[S.biome] : 0.2, beachy = S.biome === 'beach';
     for (let k = 0; k < w.NZ; k++) for (let i = 0; i < n; i++) {
       const c = k * n + i, j = w.topJ[c], x = i * w.H, z = k * w.H;
       let cover = 0;
       if (j > 0 && w.top[c] > w.SEA + 0.5) {
         const m = w.mat[(k * w.NY + j) * w.NX + i];
         cover = m === MAT.SOIL ? 1 : m === MAT.SCREE ? 0.12 : m === MAT.ASH ? 0.06 : 0;
-        cover *= M.smoothstep(0.28, 0.5, M.fbm2(x / 9, z / 9, seed, 3));
+        cover *= beachy ? M.smoothstep(0.08, 0.26, M.fbm2(x / 9, z / 9, seed, 3)) : M.smoothstep(0.28, 0.5, M.fbm2(x / 9, z / 9, seed, 3));   // P116: the jungle floor is covered almost everywhere
       }
       const dry = M.clamp(dryBase + (M.fbm2(x / 14, z / 14, seed + 3, 3) - 0.5) * 0.7, 0, 1);
       st.surf[c * 4] = cover * 255; st.surf[c * 4 + 1] = dry * 255;

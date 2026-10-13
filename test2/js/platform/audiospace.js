@@ -202,8 +202,8 @@
     A.surf = sv; A.surfPan = sp;
     // wildlife: birds by day in fair weather, crickets at night; not in caves / deserts' heat / on lava or snow; hushed by blasts
     const tod = st.tod || 'day', fair = (we.rain || 0) < 0.15 && (we.snow || 0) < 0.15 && (we.ash || 0) < 0.15 && (we.kind !== 'storm') && wmean < 9;
-    const bio = S.biome, bday = bio === 'temperate' ? 1 : bio === 'canyon' ? 0.45 : bio === 'alpine' ? 0.3 : bio === 'desert' ? 0.12 : 0;
-    const bnight = bio === 'temperate' ? 1 : bio === 'canyon' ? 0.5 : bio === 'desert' ? 0.5 : 0;
+    const bio = S.biome, bday = bio === 'temperate' ? 1 : bio === 'beach' ? 0.8 : bio === 'canyon' ? 0.45 : bio === 'alpine' ? 0.3 : bio === 'desert' ? 0.12 : 0;
+    const bnight = bio === 'temperate' ? 1 : bio === 'beach' ? 0.8 : bio === 'canyon' ? 0.5 : bio === 'desert' ? 0.5 : 0;
     const calm = fair && !under && !L.uw ? open * (1 - A.hush) : 0;
     A.birds = (tod === 'day' ? bday : tod === 'dusk' ? bday * 0.3 : 0) * calm;
     A.crickets = (tod === 'night' ? bnight : tod === 'dusk' ? bnight * 0.5 : 0) * calm;

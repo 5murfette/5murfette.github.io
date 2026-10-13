@@ -28,6 +28,7 @@
     tW: { value: null }, tSky: { value: null }, tEnv: { value: null }, uEnv: { value: 0 }, uSun: { value: new T.Vector3(0.5, 0.6, 0.3).normalize() },
     uHorizon: { value: new T.Color(0xf6c89a) }, uDeep: { value: new T.Color(0x0d3a5c) }, uShallow: { value: new T.Color(0x2fa7a8) },
     uFog: { value: new T.Color(0xf3d2b0) }, uFogD: { value: 0.0026 }, uInsp: { value: 0 }, uWTime: { value: 0 }, uRain: { value: 0 }, uCloud: { value: 0 }, uFaceT: { value: 0 }, uSunCol: { value: new T.Vector3(1, 0.86, 0.66) }, uWDir: { value: new T.Vector2(1, 0) }, uWindD: { value: new T.Vector4(0, 0, 0, 0) },   // P65c: wind-driven chop: xy = distance the wind has carried the ripples (m), z = wind speed (m/s)
+    uClear: { value: 0 }, uWc0: { value: new T.Color(0x70602a) }, uWc1: { value: new T.Color(0x2c4a22) }, uWc2: { value: new T.Color(0x0f2a24) },   // P116: clear tropical water (uClear 1): the colour by apparent depth, near shore -> mid -> deep
     tShelf: { value: null }, uNW: { value: 193 }, uSW: { value: 96 }, uMC: { value: new T.Vector2(48, 48) },   // lattice texels / map side (m) / map centre
     uRing: { value: [0, 1, 2, 3, 4, 5].map(() => new T.Vector4(0, 0, -99, 0)) }   // P29l: open-sea ring waves (x, z, start time, strength)
   };
@@ -44,7 +45,7 @@
   /* shared surface shading (inner grid and outer ocean) */
   const SURF = /* glsl */`
     uniform sampler2D tNoise, tSky; uniform samplerCube tEnv; uniform float uEnv, uWTime, uSea, uFogD, uInsp, uRain, uCloud, uFaceT; uniform vec2 uWDir; uniform vec3 uSunCol, uSun, uHorizon, uDeep, uShallow, uFog, uO, uN;
-    uniform vec4 uRing[6], uWindD;
+    uniform vec4 uRing[6], uWindD; uniform float uClear; uniform vec3 uWc0, uWc1, uWc2;
     // P29l (user 2026-10-08: "hitting water just outside the island makes no splash, no wave"): the open sea beyond the
     // simulated lattice has no wave field, so a splash / water blast there starts an expanding ring wave: a wave train
     // behind a front moving at ~5 m/s, decaying with age and radius; returns the slope (normal) and a crest-foam share
@@ -83,7 +84,7 @@
       }
       return g;
     }
-    varying vec3 vW; varying vec3 vNg; varying vec4 vD;
+    varying vec3 vW; varying vec3 vNg; varying vec4 vD; varying float vSl;
     // P65l: wind-driven chop is anisotropic: with the wind rising the crests stretch across the wind direction (short
     // wavelength along it, long across it) and ride downwind; in a calm the pattern is isotropic
     vec2 chopUV(vec2 u){
@@ -108,6 +109,7 @@
       float tD = dot(vW - uO, uN);
       if (depth < 0.006) discard;
       float inl = clamp(-foamS, 0.0, 1.0);                   // inland still water (foam channel stored as -1 - foam)
+      inl = mix(inl, smoothstep(0.92, 1.0, inl), uClear);    // P116: the dry bank of the SEA carries the inland sign too (-1): across a rock's rim inl was a fraction, which let the turquoise shallow colour (uShallow) show as a cyan outline; only a real pool counts
       foamS = max(foamS, 0.0) + max(-1.0 - foamS, 0.0);
       vec2 p = vW.xz; float e = 0.12;
       float h0 = hgt(p), hx = hgt(p + vec2(e, 0.0)), hz = hgt(p + vec2(0.0, e));
@@ -129,6 +131,10 @@
       float turbS = clamp(uFaceT + uRain * 0.7 + uCloud * 0.45, 0.0, 1.0);          // P76: storm / ash murk: the shelf is no tropical turquoise under a black sky
       vec3 shW = mix(uShallow, vec3(dot(uShallow, vec3(0.333))) * vec3(0.55, 0.6, 0.58), 0.62 * turbS) * (1.0 - 0.45 * turbS);
       vec3 col = mix(mix(shW, uDeep, smoothstep(0.3, 4.5, dA)), mix(vec3(0.05, 0.048, 0.04), vec3(0.018, 0.026, 0.028), smoothstep(0.1, 1.5, depth)), inl);
+      if (uClear > 0.0) {                                    // P116: clear tropical water: golden-olive turbid shallows -> green -> deep grey-green (the seabed shows through, see the alpha below)
+        vec3 cc = mix(mix(uWc0, uWc1, smoothstep(0.15, 2.4, dA)), uWc2, smoothstep(1.8, 7.0, dA));
+        col = mix(col, mix(cc, col, inl), uClear);
+      }
       float fres = pow(1.0 - max(dot(n, V), 0.0), 5.0);                          // Schlick, F0 0.02 (n 1.33): the weight below keeps the sky tint of a deep sea
       vec3 R = reflect(-V, n);
       // K2: the procedural sky-view LUT (render/sky.js: azimuth x elevation, rows packed toward the horizon; no mips)
@@ -140,6 +146,11 @@
       vec3 H = normalize(uSun + V);
       float nh = max(dot(n, H), 0.0);
       col += uSunCol * (1.0 - 0.9 * max(uRain, uCloud * 0.85)) * (pow(nh, 260.0) * 3.0 + pow(nh, 40.0) * 0.12);   // P65l: sun / moon colour; a clouded sun leaves no glint
+      if (uClear > 0.0) {                                    // P116: the glitter path: with the sun low a broad, sparkling streak runs from the sun across the sea towards the viewer
+        float low = 1.0 - smoothstep(0.08, 0.55, uSun.y);
+        float spk = 0.55 + 0.9 * texture2D(tNoise, p * 2.7 + vec2(uWTime * 0.05, 0.0)).g * texture2D(tNoise, p * 0.9 - vec2(0.0, uWTime * 0.03)).r * 2.0;
+        col += uClear * uSunCol * (1.0 - 0.9 * max(uRain, uCloud * 0.85)) * (pow(nh, 70.0) * 1.1 + pow(nh, 16.0) * 0.28 * low + pow(nh, 140.0) * 2.0 * spk) * (0.35 + 0.65 * low) * smoothstep(0.05, 0.4, depth);
+      }
       // foam: shore band (moving lines), the thin run-up film, simulated foam (fast water, blasts), steep crests
       float fn = texture2D(tNoise, p * 0.5 + uWTime * 0.03).b;
       float band = 0.5 + 0.5 * sin(depth * 9.0 - uWTime * 1.7 + fn * 4.0);
@@ -149,7 +160,24 @@
       float swl = smoothstep(0.0, 0.05, swp) * (1.0 - smoothstep(0.05, 0.36, swp)) * (1.0 - smoothstep(0.5, 1.7, depth));
       float swn = smoothstep(0.3, 0.72, fn * 0.55 + texture2D(tNoise, p * 2.3 + uWTime * 0.02).g * 0.65);
       foam = max(foam, swl * swn * 0.9);
-      foam = max(foam, (1.0 - smoothstep(0.01, 0.07, depth)) * 0.75) * (1.0 - inl);       // swash: the sea only
+      foam *= 1.0 - 0.6 * uClear;                            // P116: clear water: thin lines, not a white band
+      if (uClear > 0.0) {                                    // surf round rocks: where the bed climbs steeply under shallow water, lace and churn
+        float dg = vSl;
+        float lace2 = fn * 0.55 + texture2D(tNoise, p * 1.3 + vec2(uWTime * 0.04, 0.0)).g * 0.6 + texture2D(tNoise, p * 4.1 - uWTime * 0.03).b * 0.25;
+        float surge = 0.5 + 0.5 * sin(uWTime * 1.15 + p.x * 0.8 + p.y * 0.6 + fn * 3.0);         // the swell washes the stones: the surf breathes in and out
+        foam = max(foam, uClear * smoothstep(0.12, 0.55, dg) * (1.0 - smoothstep(0.02, 0.07 + 0.09 * surge, depth)) * (0.4 + 0.6 * smoothstep(0.3 - 0.1 * surge, 0.7, lace2)) * (0.7 + 0.3 * surge));
+        foam = max(foam, uClear * smoothstep(0.05, 0.4, dg) * (1.0 - smoothstep(0.05, 0.4, depth)) * smoothstep(0.55, 0.9, lace2) * 0.4);
+      }
+      foam = max(foam, (1.0 - smoothstep(0.01, 0.07, depth)) * mix(0.75, 0.0, uClear)) * (1.0 - inl);       // swash: the sea only
+      if (uClear > 0.0) {                                    // P116: the photo's foam: a thin crisp swash arc, broken wave-front lines that creep up the beach, a faint film behind
+        float brk = smoothstep(0.4, 0.72, fn * 0.6 + texture2D(tNoise, p * 0.9 + vec2(0.0, uWTime * 0.02)).r * 0.6);
+        float ph = fract(depth * 1.25 - uWTime * 0.06 + fn * 0.6);
+        float wl = smoothstep(0.0, 0.035, ph) * (1.0 - smoothstep(0.035, 0.11, ph)) * (1.0 - smoothstep(0.25, 1.4, depth)) * smoothstep(0.03, 0.12, depth);
+        float arc = (1.0 - smoothstep(0.008, 0.024, depth)) * smoothstep(0.0015, 0.007, depth);
+        float fb = max(wl * brk * 0.85, arc * (0.55 + 0.4 * brk)) * (1.0 - inl);
+        fb = max(fb, (1.0 - smoothstep(0.0, 0.012, depth)) * 0.2 * (1.0 - inl));
+        foam = mix(foam, max(foam * 0.3, fb), uClear);
+      }
       // simulated foam (blasts, fast water) as a lace: dense with holes while fresh, breaking into streaks as it fades
       float lace = fn * 0.6 + texture2D(tNoise, p * 1.9 - uWTime * 0.05).g * 0.5, fq = min(foamS, 1.5);
       foam = max(foam, smoothstep(0.05, 0.5, foamS) * smoothstep(0.78 - fq * 0.32, 0.98 - fq * 0.28, lace));
@@ -159,6 +187,7 @@
       float lk = smoothstep(0.05, 0.8, dot(uSunCol, vec3(0.333)));     // P65l: foam is lit like everything else: white in daylight, dark blue-grey under the moon
       col = mix(col, mix(vec3(0.2, 0.25, 0.36), vec3(0.97, 0.98, 1.0), lk), foam * 0.85);
       float a = smoothstep(0.006, 0.05, depth) * mix(mix(0.64, 0.93, smoothstep(0.0, 3.0, dA)), 1.0, smoothstep(4.0, 9.0, dA));
+      a = mix(a, smoothstep(0.006, 0.035, depth) * mix(0.34, 1.0, smoothstep(0.0, 5.0, dA)), uClear);   // P116: the seabed shows through the clear shallows
       a = mix(a, smoothstep(0.006, 0.06, depth) * mix(0.4, 0.9, smoothstep(0.0, 1.2, depth)), inl);   // a puddle shows its floor
       a = max(a, foam * smoothstep(0.006, 0.03, depth));
       if (tD > 0.0) a *= uInsp * 0.85;                       // inspection: the 3D overview shows the sea in front too
@@ -208,7 +237,7 @@
       transparent: true, depthWrite: false, fog: false, uniforms: shared(),
       vertexShader: /* glsl */`
         uniform highp sampler2D tW; uniform sampler2D tShelf; uniform float uSea, uNW;
-        varying vec3 vW; varying vec3 vNg; varying vec4 vD; varying vec2 vSh;
+        varying vec3 vW; varying vec3 vNg; varying vec4 vD; varying vec2 vSh; varying float vSl;
         float lvl(ivec2 q, float own){ q = clamp(q, ivec2(0), ivec2(int(uNW) - 1)); vec4 d = texelFetch(tW, q, 0); return d.g > ${WETH} ? d.r : own; }
         void main(){
           ivec2 ij = ivec2(floor(position.x * 2.0 + 0.5), floor(position.z * 2.0 + 0.5));
@@ -219,6 +248,8 @@
           float hx = lvl(ij + ivec2(1, 0), y) - lvl(ij - ivec2(1, 0), y), hz = lvl(ij + ivec2(0, 1), y) - lvl(ij - ivec2(0, 1), y);
           vNg = normalize(vec3(-hx, 1.0, -hz));
           vD = d.gbag;
+          { float dxp = texelFetch(tW, clamp(ij + ivec2(1, 0), ivec2(0), ivec2(int(uNW) - 1)), 0).g - texelFetch(tW, clamp(ij - ivec2(1, 0), ivec2(0), ivec2(int(uNW) - 1)), 0).g, dzp = texelFetch(tW, clamp(ij + ivec2(0, 1), ivec2(0), ivec2(int(uNW) - 1)), 0).g - texelFetch(tW, clamp(ij - ivec2(0, 1), ivec2(0), ivec2(int(uNW) - 1)), 0).g;
+            vSl = length(vec2(dxp, dzp)) * 1.0; }                     // P116: slope of the bed under the water (m / m: 2 columns = 1 m), smooth across the grid: surf round rocks
           vSh = vec2(texelFetch(tShelf, ij, 0).r * 255.0 / 8.0, e * 0.5);      // m to the coast, m to the lattice border
           vec4 w = modelMatrix * vec4(position.x, y, position.z, 1.0); vW = w.xyz;
           gl_Position = projectionMatrix * viewMatrix * w;
@@ -226,8 +257,8 @@
       fragmentShader: SURF + `varying vec2 vSh;
         void main(){
           float nz = texture2D(tNoise, vW.xz * 0.023 + 0.37).r;                     // irregular shelf edge (reefs, bars)
-          float ex = ${SHELF_D}.0 * smoothstep(1.5, 12.0, vSh.x * (0.6 + 0.8 * nz));
-          ex = max(ex, 9.0 * (1.0 - smoothstep(0.0, 3.0, vSh.y)));                // deep at the border (the outer plane)
+          float ex = ${SHELF_D}.0 * smoothstep(mix(1.5, 4.0, uClear), mix(12.0, 30.0, uClear), vSh.x * (0.6 + 0.8 * nz));   // (P116: the clear shelf is wide)
+          ex = max(ex, 9.0 * (1.0 - smoothstep(0.0, mix(3.0, 16.0, uClear), vSh.y)));                // deep at the border (the outer plane; P116: a long soft ramp on the clear sea: no hard line where the lattice ends)
           gl_FragColor = shade(vD.x, vD.y, vD.y < -0.5 ? vD.x : vD.x + ex); ${TAIL} }`
     });
     gridMat.userData.sectionMargin = 0;                    // P46: the water follows the terrain's front limit (render/section.js)
@@ -238,8 +269,8 @@
     outerMat = new T.ShaderMaterial({
       transparent: true, depthWrite: false, fog: false, uniforms: shared(),
       vertexShader: /* glsl */`
-        varying vec3 vW; varying vec3 vNg; varying vec4 vD;
-        void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vNg = vec3(0.0, 1.0, 0.0); vD = vec4(0.0); gl_Position = projectionMatrix * viewMatrix * w; }`,
+        varying vec3 vW; varying vec3 vNg; varying vec4 vD; varying float vSl;
+        void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vNg = vec3(0.0, 1.0, 0.0); vD = vec4(0.0); vSl = 0.0; gl_Position = projectionMatrix * viewMatrix * w; }`,
       fragmentShader: /* glsl */`uniform highp sampler2D tW; uniform float uBack, uAlpha, uNW, uSW; uniform vec2 uMC;
 ` + SURF + /* glsl */`void main(){
           float vis = 1.0;
@@ -387,6 +418,8 @@
       { const sc = new T.Color(L.sun), k = Math.min(1, L.sunI / 3.0); u.uSunCol.value.set(sc.r * k + 0.0, sc.g * k, sc.b * k); }   // P65l: warm sun by day, cool dim moon at night
       if (sk.env) { u.tEnv.value = sk.env; u.uEnv.value = 1; } u.uShallow.value.set(L.shallow); u.uFog.value.copy(haze);
       u.uHorizon.value.setRGB(sk.horizon[0], sk.horizon[1], sk.horizon[2], T.SRGBColorSpace);
+      const wc = L.water; u.uClear.value = wc ? 1 : 0;
+      if (wc) { u.uWc0.value.set(wc.near); u.uWc1.value.set(wc.mid); u.uWc2.value.set(wc.deep); }
     };
     // the three materials share the `own` uniform objects: one set is enough
     set(gridMat);

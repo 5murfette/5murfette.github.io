@@ -81,6 +81,7 @@
 
   BK.populate = function (S, taken) {
     S.bunkers = [];
+    if (S.biome === 'beach') return;                          // P116: no concrete pillboxes on the tropical cove (granite, huts and palms are its cover; fort mode builds its own bunkers)
     const w = W();
     const NB0 = K ? [0, 1, K.N, K.N + 1][C.density_level(S.settings, 'dBunkers')] : 0, NB = NB0 > 1 ? Math.round(NB0 * w.SC * (w.flat ? 1 : w.SC)) : NB0;   // (P38: more on a bigger map)   // P37 W5: none / low / medium (= K.N) / high
     if (!K || !(NB > 0) || w.under) return;

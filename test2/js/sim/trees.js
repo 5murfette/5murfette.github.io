@@ -5,7 +5,7 @@
  *   segment 0 = root stump (0.4 m below ground to 0.3 m above): it never breaks;
  *   trunk segments (kind 1) and branches (kind 2) above it.
  * Species per biome (C.TREES.SPECIES / SPEC): oak (temperate), spruce (alpine: foliage tiers on the trunk), juniper
- * (canyon), snag (desert, volcanic: dead, leafless).
+ * (canyon), snag (desert, volcanic: dead, leafless), palm (beach: a curved trunk leaning to the sea, a crown of arching fronds).
  * Blast (veg.blast -> TR.blast, after the crater is carved): every part takes the Kinney-Graham impulse I at its
  * distance, shielded by the solid on the line like worms; leaf clusters lose clamp((I - LEAF_I) / LEAF_SPAN) of their
  * leaves; each part's impulse J = I A (A = frontal area; a crown catches POROSITY of its disc) acts at the part along
@@ -35,7 +35,7 @@
   const C = SS.CFG, M = SS.math, K = C.TREES, BC = C.BLAST;
   const TR = SS.trees = {};
   const W = () => SS.world;
-  const SPN = ['oak', 'spruce', 'juniper', 'snag'];
+  const SPN = ['oak', 'spruce', 'juniper', 'snag', 'palm'];
   const v = (x, y, z) => ({ x, y, z });
   const dist3 = (a, b) => M.len3(a.x - b.x, a.y - b.y, a.z - b.z);
   function segd(p, a, b) {                               // point to segment distance (objects)
@@ -47,17 +47,19 @@
   /* ---------- growth ---------- */
   function seg(t, p, a, b, r0, r1, kind) { t.seg.push({ p, a, b, r0, r1, kind, on: 1 }); return t.seg.length - 1; }
   function leaf(t, s, x, y, z, r) { t.leaf.push({ x, y, z, r, f: 1, s }); }
-  function grow(rg, sp, x, y, z) {
+  function grow(rg, sp, x, y, z, laSea, flat) {
     const R = () => M.rng_next(rg), P = K.SPEC[SPN[sp]];
     const t = { id: 0, sp, alive: 1, x, y, z, h: 0, crown: 0, top: 0, seg: [], leaf: [], dry: 0, burn: -1, heat: 0, thr: 1, thr0: 1, leaf0: 0, char: 0, emb: 0, ft: 0 };
-    const h = P.h[0] + (P.h[1] - P.h[0]) * R(), r = P.r[0] + (P.r[1] - P.r[0]) * R(), la = R() * M.TAU, ln = P.lean * (0.3 + 0.7 * R());
+    const h = P.h[0] + (P.h[1] - P.h[0]) * R(), r = P.r[0] + (P.r[1] - P.r[0]) * R(), la0 = R() * M.TAU, ln = P.lean * (0.3 + 0.7 * R());
+    let la = laSea == null ? la0 : laSea + (la0 - M.PI) * 0.18;               // a palm leans towards the sea (and a little at random)
+    if (flat && sp === 4) la = M.cos(laSea == null ? la0 : laSea) >= 0 ? 0 : M.PI;      // (2D: the crown must stay in the section plane, a palm leaning at the camera is cut off and shows as a bare stake)
     t.h = h;
     const root = seg(t, -1, v(x, y - 0.4, z), v(x, y + 0.3, z), r * 1.35, r * 1.12, 0);
     const trunk = [root];
     let pa = t.seg[root].b, prev = root;
     const topY = h * P.top;
     for (let i = 1; i <= P.nT; i++) {
-      const f = i / P.nT, yy = 0.3 + (topY - 0.3) * f, off = ln * yy;
+      const f = i / P.nT, yy = 0.3 + (topY - 0.3) * f, off = sp === 4 ? ln * yy * (0.25 + 0.75 * f) : ln * yy;       // (a palm's trunk bends: the lean grows with the height)
       const b = v(x + M.cos(la) * off + (R() - 0.5) * P.wob * f, y + yy, z + M.sin(la) * off + (R() - 0.5) * P.wob * f);
       prev = seg(t, prev, pa, b, t.seg[prev].r1, r * (1 - (1 - P.taper) * f), 1); pa = b; trunk.push(prev);
     }
@@ -87,6 +89,9 @@
     } else if (sp === 2) {                                 // juniper: a crooked crown of a few short limbs
       branch(trunk[P.nT], 3, 0.3, 0.8, 0.9, 1.5, 0.75, [0.6, 0.9]);
       leaf(t, trunk[P.nT], tp.x, tp.y + 0.3 * sc, tp.z, (0.7 + 0.2 * R()) * sc);
+    } else if (sp === 4) {                                 // palm: a crown of fronds at the top (two overlapping clusters: the render draws radial arching fronds)
+      leaf(t, trunk[P.nT], tp.x, tp.y + 0.15 * sc, tp.z, (1.9 + 0.35 * R()) * sc);
+      leaf(t, trunk[P.nT], tp.x + M.cos(la) * 0.3 * sc, tp.y - 0.45 * sc, tp.z + M.sin(la) * 0.3 * sc, (1.5 + 0.3 * R()) * sc);
     } else {                                               // snag: bare limbs
       branch(trunk[P.nT - 1], 1 + (R() < 0.6 ? 1 : 0), 0.4, 1.0, 0.8, 1.4, 0.55, null);
       branch(trunk[P.nT], 1 + (R() < 0.5 ? 1 : 0), 0.5, 1.1, 0.6, 1.1, 0.6, null);
@@ -105,15 +110,21 @@
     const w = W(), st = S.veg, sp = SPN.indexOf(K.SPECIES[S.biome] || 'oak'), N = C.density_count(S.settings, 'dTrees', K.COUNT[S.biome] || 0);
     if (!N) return;
     const rg = M.rng_make((Math.imul(S.settings.seed | 0, 7919) + 101) >>> 0), P = K.SPEC[SPN[sp]];
+    const BB = sp === 4 && !w.flat && w.features && w.features.beach ? w.features.beach : null, vil = BB && BB.village ? BB.village : null, nV = vil ? M.min(20, Math.round(N * 0.5)) : 0, sepK = sp === 4 ? 0.7 : 1;   // P116: palms crowd round the village
     for (let tries = 0; tries < 6000 && S.trees.length < N; tries++) {
-      const x = 6 + M.rng_next(rg) * (w.SX - 12), z = w.zpick(M.rng_next(rg), 6), top = w.topHeight(x, z);
-      if (top < w.SEA + 1.2) continue;
+      let x, z;
+      if (vil && S.trees.length < nV && tries < 2500) { const an = M.rng_next(rg) * M.TAU, rd = 2.6 + 9 * Math.sqrt(M.rng_next(rg)); x = vil.x + M.cos(an) * rd; z = vil.z + M.sin(an) * rd; if (!(x > 6 && z > 6 && x < w.SX - 6 && z < w.SZ - 6)) continue; }
+      else { x = 6 + M.rng_next(rg) * (w.SX - 12); z = w.zpick(M.rng_next(rg), 6); }
+      const top = w.topHeight(x, z);
+      if (BB && BB.huts && BB.huts.some(h => M.len2(h.x - x, h.z - z) < 3.3)) continue;       // (a hut's footprint)
+      if (top < w.SEA + (sp === 4 ? 0.75 : 1.2)) continue;
       const i = Math.round(x / w.H), k = Math.round(z / w.H), c = k * w.NX + i;
       const m = w.mat_at(x, top - 0.2, z);
       // oaks need grass (soil); spruce also takes the thin soil / scree / rock of the lower alpine slopes (real
       // montane conifers do, snow-covered in winter; LS1 smaller islands left too little grass: 3 trees on alpine 7)
       const conifer = sp === 1 && (m === C.MAT.SOIL || m === C.MAT.SCREE || m === C.MAT.ROCK || m === C.MAT.SNOW) && top < w.SEA + 14;
       if (sp <= 1 ? !(st && st.fuel[c] > 0.35) && !conifer : w.topJ[c] <= 0) continue;
+      if (sp === 4 && m !== C.MAT.SAND && m !== C.MAT.SOIL) continue;       // palms: sand and jungle floor, never bare granite
       if (m === C.MAT.LAVA || m === C.MAT.ICE || m === C.MAT.BEDROCK) continue;
       if (m === C.MAT.CONCRETE || m === C.MAT.STEEL || m === C.MAT.FOAM || m === C.MAT.OBSIDIAN) continue;   // P65f: no tree grows out of a slab / glass (volcanic ruins)
       let ok = true;
@@ -123,9 +134,15 @@
       if ((F.volcanoes || []).some(v => M.len2(x - v.x, z - v.z) < v.Rc + 4)) continue;
       if (SS.sim.near_lava && SS.sim.near_lava(S, x, z)) continue;
       if (S.water && S.water.h[c] > 0.004) continue;
-      if (taken.some(p => M.len2(p.x - x, p.z - z) < K.SEP * w.sepk)) continue;
+      if (taken.some(p => M.len2(p.x - x, p.z - z) < K.SEP * w.sepk * sepK)) continue;
       if (S.worms.some(o => M.len2(o.pos.x - x, o.pos.z - z) < K.WORM_SEP * w.sepk) || S.bodies.some(o => M.len2(o.pos.x - x, o.pos.z - z) < (2 + o.rb) * w.sepk)) continue;
-      const t = grow(rg, sp, x, top, z);
+      let laSea = null;
+      if (sp === 4) {                                       // lean to the nearest open water: the lowest of 8 probes 7 m round (a palm on a beach reaches for the light over the sea)
+        let lo = 1e9;
+        for (let q = 0; q < 8; q += w.flat ? 4 : 1) { const an = q * M.TAU / 8, hq = w.topHeight(x + M.cos(an) * 7, z + M.sin(an) * 7); if (hq < lo) { lo = hq; laSea = an; } }
+        if (top - lo < 0.8) laSea = null;
+      }
+      const t = grow(rg, sp, x, top, z, laSea, w.flat);
       // room for the crown: no rock in the trunk line or around the crown
       for (let yy = 1; yy < t.h && ok; yy += 0.8) if (w.sample(x, top + yy, z) > 0) ok = false;
       for (let a = 0; a < 6 && ok; a++) { const an = a * M.TAU / 6; if (w.sample(x + M.cos(an) * t.crown * 0.75, top + t.h * 0.65, z + M.sin(an) * t.crown * 0.75) > 0) ok = false; }

@@ -20,6 +20,7 @@
     canyon: 'linear-gradient(160deg,#ffd8a8 0%,#e08a50 45%,#a8502e 75%,#6e3420)',
     desert: 'linear-gradient(160deg,#fff1cf 0%,#f0d08a 45%,#d8a860 75%,#a07040)',
     volcanic: 'linear-gradient(160deg,#4a4048 0%,#2a2426 45%,#ff5a10 75%,#3a2a24)',
+    beach: 'linear-gradient(160deg,#bfe9f2 0%,#35c2b8 28%,#e9d29a 52%,#d9b878 66%,#3f7a3a 88%,#24501f)',
     eow: 'radial-gradient(circle at 70% 30%,#ffb24a 0 6%,transparent 7%),radial-gradient(circle at 40% 62%,#ff6a1a 0 9%,#3a1a10 10% 14%,transparent 15%),linear-gradient(160deg,#05060f 0%,#1a1230 55%,#3a1840 100%)'   // P68c
   };
   const LV = [['none', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
@@ -162,9 +163,14 @@
 
   function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
   /* the biome a 'random' choice resolves to: by the seed, so the preview shows exactly what Start will build */
+  /* a beta biome (C.BIOMES[i].beta) is listed and drawn only with ?beta=1 in the URL: it ships with the build but stays out of
+   * the menu and the random pool until its look is finished */
+  MN.beta = typeof location !== 'undefined' && /[?&]beta=1(&|$)/.test(location.search);
+  MN.biome_listed = b => !b.beta || MN.beta;
   MN.resolve_biome = s => {
     if (s.biome !== 'random') return s.biome;
-    const pool = C.BIOMES.filter(b => !b.experimental);            // (P68c: an experimental biome is never a surprise)
+    // an experimental biome is never a surprise (P68c), a beta one only with ?beta=1
+    const pool = C.BIOMES.filter(b => !b.experimental && MN.biome_listed(b));
     return pool[(Math.imul((s.seed | 0) + 12345, 2654435761) >>> 11) % pool.length].id;
   };
   const resolved = () => Object.assign({}, cur, { biome: MN.resolve_biome(cur) });
@@ -355,7 +361,7 @@
   function buildField() {
     sec(rowsEl, 'Biome');
     const cards = el('div', 'biomes');
-    for (const b of [{ id: 'random', name: 'Surprise me' }].concat(C.BIOMES)) {
+    for (const b of [{ id: 'random', name: 'Surprise me' }].concat(C.BIOMES.filter(MN.biome_listed))) {
       const c = el('button', 'bcard' + (cur.biome === b.id ? ' on' : ''), `<span>${b.name}</span>`);
       c.style.background = BIOME_LOOK[b.id]; c.type = 'button'; c.dataset.biome = b.id;
       c.onclick = () => { cur.biome = b.id; for (const x of cards.children) x.classList.remove('on'); c.classList.add('on'); refreshPreview(true); syncField(); };
@@ -364,7 +370,7 @@
     rowsEl.appendChild(cards);
     sec(rowsEl, 'Terrain and sky');
     const fhost = el('div', 'fieldrows'); rowsEl.appendChild(fhost);
-    for (const r of FIELD) { const row = rowOf(r, fhost, () => refreshPreview()); row.dataset.only = r.only || ''; }
+    for (const r of FIELD) { const row = rowOf(r, fhost, () => refreshPreview()); row.dataset.only = r.only || ''; row.dataset.k = r.k; }
     sec(rowsEl, 'How much of everything');
     const dhost = el('div', 'fieldrows'); rowsEl.appendChild(dhost);
     for (const r of DENSITY) {
@@ -376,6 +382,11 @@
   function syncField() {
     const b = MN.resolve_biome(cur);
     for (const r of rowsEl.querySelectorAll('.row[data-only]')) r.style.display = (!r.dataset.only || r.dataset.only === b) ? '' : 'none';
+    const ws = rowsEl.querySelector('.row[data-k="weather"] select');                // P116: the biome's own weather pool (no snow on the beach)
+    if (ws) {
+      for (const o of ws.options) { const ok = o.value === 'auto' || C.weather_ok(b, o.value); o.hidden = !ok; o.disabled = !ok; }
+      if (cur.weather && cur.weather !== 'auto' && !C.weather_ok(b, cur.weather)) { cur.weather = C.weather_for(b, cur.weather); ws.value = cur.weather; MN.save(cur); }
+    }
   }
 
   MN.init = function () {

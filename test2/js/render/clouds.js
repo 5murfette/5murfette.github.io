@@ -36,10 +36,10 @@
   };
   const BIOME = {             // multipliers / overrides per map: dry desert air has few, high clouds
     desert: { cuK: 0.35, baseK: 1.7 }, canyon: { cuK: 0.7, baseK: 1.3 }, alpine: { cuK: 1.1, baseK: 0.9 },
-    temperate: { cuK: 1, baseK: 1 }, volcanic: { cuK: 0.8, baseK: 1, plume: true, tint: [0.62, 0.55, 0.5] }
+    temperate: { cuK: 1, baseK: 1 }, beach: { cuK: 1.15, baseK: 0.9 }, volcanic: { cuK: 0.8, baseK: 1, plume: true, tint: [0.62, 0.55, 0.5] }
   };
   // visibility (m) for the aerial perspective, per biome x weather
-  const VIS = { temperate: 45000, alpine: 70000, canyon: 32000, desert: 20000, volcanic: 14000 };
+  const VIS = { beach: 42000, temperate: 45000, alpine: 70000, canyon: 32000, desert: 20000, volcanic: 14000 };
   const VIS_W = { clear: 1, cloudy: 0.85, rain: 0.35, storm: 0.3, snow: 0.3, blizzard: 0.12, ashfall: 0.6, fog: 0.03 };
 
   let mesh = null, geo = null, mat = null, cam = null, n = 0, sortT = -1, order = null;

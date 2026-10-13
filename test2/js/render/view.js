@@ -20,6 +20,7 @@
     alpine: { sky: 'sky_cold', sun: 0xfff3e6, sunI: 2.9, hemiS: 0xd8e8ff, hemiG: 0x6a7080, hemiI: 1.3, fog: 0.0070, haze: 0xdde8f5, exp: 1.0, grass: [0.86, 0.96, 0.92], dry: [0.95, 0.95, 0.9], gBase: 0x1a3418, gTip: 0x7aa860, gDry: 0xb8a878, deep: 0x123a58, shallow: 0x5fb0c8, sunDir: [-0.5, 0.5, 0.7] },
     canyon: { sky: 'sky', sun: 0xffd4a0, sunI: 3.2, hemiS: 0xffe2c4, hemiG: 0x8a4a2a, hemiI: 1.1, fog: 0.0058, haze: 0xf0c8a0, exp: 1.05, grass: [1.05, 0.95, 0.75], dry: [1.1, 0.98, 0.8], gBase: 0x2a3a12, gTip: 0xa8b050, gDry: 0xd8b070, deep: 0x1a3a48, shallow: 0x4a9a8a, sunDir: [-0.55, 0.55, 0.62] },
     desert: { sky: 'sky', sun: 0xfff0d2, sunI: 3.4, hemiS: 0xfff0d8, hemiG: 0xa07850, hemiI: 1.15, fog: 0.0055, haze: 0xf5dcb0, exp: 0.94, grass: [1.1, 1.0, 0.75], dry: [1.15, 1.0, 0.8], gBase: 0x3a3a14, gTip: 0xb8b060, gDry: 0xe0c080, deep: 0x0d4a66, shallow: 0x38c0c0, sunDir: [-0.35, 0.72, 0.6] },
+    beach: { sky: 'sky', sun: 0xffe2bc, sunI: 3.3, hemiS: 0xdcd2c2, hemiG: 0xb89460, hemiI: 1.15, fog: 0.0046, haze: 0xf4dcb4, exp: 1.0, grass: [0.82, 1.06, 0.66], dry: [1.0, 1.0, 0.8], gBase: 0x0e3a0c, gTip: 0x4ca82c, gDry: 0xb4a45c, deep: 0x0c3a30, shallow: 0x4f8f5c, sunDir: [-0.5, 0.46, 0.72], water: { near: 0x7a6a40, mid: 0x344034, deep: 0x283e3a } },
     volcanic: { sky: 'sky_storm', skyTint: [1.7, 1.55, 1.6], sun: 0xffc896, sunI: 3.1, hemiS: 0xb8b4c4, hemiG: 0x5e463a, hemiI: 1.7, fog: 0.0072, haze: 0x8e7672, exp: 1.45, grass: [0.8, 0.85, 0.7], dry: [0.9, 0.85, 0.7], gBase: 0x1a2410, gTip: 0x6a7a40, gDry: 0x8a7a50, deep: 0x0a1a22, shallow: 0x2a5a5a, sunDir: [-0.5, 0.45, 0.72] }
   };
   V.LOOKS = LOOKS;
@@ -174,6 +175,7 @@
     if (SS.prewarm) SS.prewarm.begin(renderer, scene, camera, scene);        // the rest (materials of not yet shown effects): V.render spreads it over the next frames
     return V.prewarmMs;
   };
+  V.quality = () => Q;
   V.camera = () => camera; V.scene = () => scene; V.renderer = () => renderer;
   V.vis = w => SS.actors.vis(w);
   /* P9: client (x, y) -> the point on the section plane under the cursor, {s, y} in plane coordinates (or null) */
@@ -242,7 +244,7 @@
   V.snapCamera = () => { view.camT = null; view.dir.cur = null; };
   /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
   const PX = 0.0643;
-  const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView', 'jacketView', 'heroView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
+  const W4V = ['gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView', 'jacketView', 'heroView', 'boulderView', 'rayView'];     // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
   function interest(S, a) {
     const P2 = SS.plane, at = (s, y) => P2.to_world(S, s, y);
     if (S.phase === 'place') return null;
@@ -348,7 +350,8 @@
     alpine: { sat: 1.1, con: 0.2, vig: 0.22, sh: [-0.006, 0.0, 0.016], hi: [1.02, 1.0, 0.96] },
     canyon: { sat: 1.06, con: 0.18, vig: 0.24, sh: [0.0, -0.004, 0.012], hi: [1.04, 1.0, 0.94] },
     desert: { sat: 1.14, con: 0.27, vig: 0.22, sh: [0.004, -0.002, 0.012], hi: [1.03, 0.99, 0.93] },
-    volcanic: { sat: 1.14, con: 0.2, vig: 0.3, sh: [0.004, -0.004, 0.008], hi: [1.05, 0.98, 0.92] }
+    volcanic: { sat: 1.14, con: 0.2, vig: 0.3, sh: [0.004, -0.004, 0.008], hi: [1.05, 0.98, 0.92] },
+    beach: { sat: 1.2, con: 0.2, vig: 0.2, sh: [-0.004, 0.002, 0.012], hi: [1.04, 1.0, 0.93] }
   };
   function gradeFor(L, tod) {
     const g = GRADES[view.biome] || GRADES.temperate;
@@ -360,6 +363,13 @@
     view.biome = S.biome;
     let L = LOOKS[S.biome] || LOOKS.temperate, skyDir = null;
     const tod = SS.world.under ? 'day' : V.timeOfDay(S); view.tod = tod;
+    if (S.biome === 'beach' && SS.world.features && SS.world.features.beach && !SS.world.under) {
+      // P116: the sun's bearing is tied to the cove (the photo's light: sea on one side, the low sun over the land and along the shore, long shadows towards the water);
+      // the sunset swings it over the open sea (a glitter path on the water, the palms backlit)
+      const a0 = SS.world.features.beach.a0, ca = Math.cos(a0), sa = Math.sin(a0), el = tod === 'dusk' ? 0.07 : 0.4;
+      const az = tod === 'dusk' ? a0 + 0.5 : Math.atan2(-0.85 * sa + 0.5 * ca, -0.85 * ca - 0.5 * sa);
+      L = Object.assign({}, L, { sunDir: [Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)] });
+    }
     if (tod !== 'day') {
       const sd = L.sunDir, az = Math.atan2(sd[2], sd[0]);
       if (tod === 'dusk') { const el = 0.07; L = Object.assign({}, L, { sunDir: [Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)], sunI: L.sunI * 0.9, hemiI: L.hemiI * 0.7, exp: L.exp * 1.15 }); }
@@ -408,6 +418,7 @@
       SS.lens.sun(!Q.grade || tod === 'night' || SS.world.under ? null : L.sunDir, [sc.r * 0.5, sc.g * 0.4, sc.b * 0.3], tod === 'dusk' ? 0.55 : 0.3);
     }
     const U = SS.terrain.uniforms;
+    U.uBeach.value = S.biome === 'beach' ? 1 : 0;       // P116: granite / pale sand material look in the terrain shader
     U.uHaze.value.copy(haze);
     U.uGrassTint.value.setRGB(L.grass[0], L.grass[1], L.grass[2]); U.uDryTint.value.setRGB(L.dry[0], L.dry[1], L.dry[2]);
     const G = SS.grass.material().userData.uniforms;
@@ -450,7 +461,7 @@
   function surfaceBuffer(S) {
     if (S.veg && S.veg.surf) return { buf: S.veg.surf, n: S.veg.n };
     const W = SS.world, n = NS, buf = new Uint8Array(n * n * 4), seed = (S.settings.seed | 0) * 17 + 5;
-    const dryBase = { temperate: 0.12, alpine: 0.3, canyon: 0.72, desert: 0.9, volcanic: 0.62 }[S.biome] || 0.2;
+    const dryBase = { temperate: 0.12, alpine: 0.3, canyon: 0.72, desert: 0.9, volcanic: 0.62, beach: 0.08 }[S.biome] || 0.2;
     for (let k = 0; k < n; k++) for (let i = 0; i < n; i++) {
       const c = k * W.NX + i, j = W.topJ[c], x = i * W.H, z = k * W.H;
       let cover = 0;
@@ -771,6 +782,7 @@
     const cy = Math.cos(yaw), sy = Math.sin(yaw), bx = n.x * cy + d.x * sy, bz = n.z * cy + d.z * sy;
     camera.position.set(view.camT.x + bx * dist * Math.cos(tilt), view.camT.y + dist * Math.sin(tilt), view.camT.z + bz * dist * Math.cos(tilt));
     camera.lookAt(view.camT);
+    if (V.camHook) V.camHook(camera, view);                                   // tools only: a free camera (P116 top-down comparison shots)
     if (co && co.roll && insp < 0.05) camera.rotateZ(co.roll);
     const sh = SS.fx.shake();
     if (sh > 0) {                                                           // P58: a smooth, damped rattle (a few mixed frequencies, mostly vertical and along the slab), not white noise
