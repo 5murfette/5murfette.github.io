@@ -17,7 +17,9 @@
  * the stump (segment 0, 0.3 m above ground). Roots (T1): only a direct hit on the lower stem (within the cut radius
  * of the stem up to STEM_LOW) destroys the stump and the roots ('treeshatter'); a crater beside the tree leaves it
  * standing (roots exposed) unless less than ROOT_HOLD of its root plate (ROOT_R_K x crown, ROOT_D deep) has ground
- * left ('uproot': the whole tree falls).
+ * left ('uproot': the whole tree falls), and a tree STANDS on the ground under its trunk (P118a, Q-27: foot_ok): when a blast, a
+ * collapse, a dig, lava, acid, a quake ... takes that ground (any edit: W.mark -> veg dirty rect -> on_edit) the whole tree falls
+ * ('uproot'), a stump and a crown that survived a break included: no tree hangs in the air by its roots.
  * Fire: heat accumulates from burning grass around the root, fireballs (veg.ignite), lava at the root and burning
  * neighbours; a tree ignites at IGNITE + IGNITE_GREEN (1 - dry); burning consumes leaves (LEAF_BURN_T) and chars the
  * wood (BURN_T), drops embers on the grass under the crown, lights props and neighbours, burns worms near the trunk
@@ -49,7 +51,7 @@
   function leaf(t, s, x, y, z, r) { t.leaf.push({ x, y, z, r, f: 1, s }); }
   function grow(rg, sp, x, y, z, laSea, flat) {
     const R = () => M.rng_next(rg), P = K.SPEC[SPN[sp]];
-    const t = { id: 0, sp, alive: 1, x, y, z, h: 0, crown: 0, top: 0, seg: [], leaf: [], dry: 0, burn: -1, heat: 0, thr: 1, thr0: 1, leaf0: 0, char: 0, emb: 0, ft: 0 };
+    const t = { id: 0, sp, alive: 1, x, y, z, h: 0, crown: 0, top: 0, seg: [], leaf: [], dry: 0, burn: -1, heat: 0, thr: 1, thr0: 1, leaf0: 0, char: 0, emb: 0 };
     const h = P.h[0] + (P.h[1] - P.h[0]) * R(), r = P.r[0] + (P.r[1] - P.r[0]) * R(), la0 = R() * M.TAU, ln = P.lean * (0.3 + 0.7 * R());
     let la = laSea == null ? la0 : laSea + (la0 - M.PI) * 0.18;               // a palm leans towards the sea (and a little at random)
     if (flat && sp === 4) la = M.cos(laSea == null ? la0 : laSea) >= 0 ? 0 : M.PI;      // (2D: the crown must stay in the section plane, a palm leaning at the camera is cut off and shows as a bare stake)
@@ -200,7 +202,7 @@
     return b;
   }
   /* T1: the root system holds the tree. Roots spread over a plate of radius ROOT_R_K x crown (>= ROOT_R_MIN) and
-   * ROOT_D deep; the tree only falls when less than ROOT_HOLD of that plate still has ground (probes: centre +
+   * ROOT_D deep; the tree falls when less than ROOT_HOLD of that plate still has ground (probes: centre +
    * 3 rings x 8 azimuths x 2 depths + the tap root TAP_D deep). Thick roots are far stronger than soil: a crater beside the tree blows the
    * soil out but leaves the roots (exposed) anchored in the ground around it. */
   TR.root_r = t => M.max(K.ROOT_R_MIN, K.ROOT_R_K * t.crown);
@@ -218,27 +220,22 @@
     return s / n;
   }
   TR.root_hold = root_hold;
-  /* P105: the roots may hold a tree on a lip (ROOT_HOLD of the plate is enough, a crater beside the trunk leaves it standing on exposed roots), but when the LAND
-   * ITSELF breaks away under the trunk (collapse.detach cut the column the foot stood on) the tree is not "held by its roots in mid-air": it falls with the piece.
-   * foot_mark(box) notes which trees stand with a solid foot before the cut, foot_check() drops those whose foot column was taken. */
-  const foot_solid = t => {
-    const w = W(), y = t.y - K.FOOT_D;
-    return w.sample(t.x, y, t.z) > 0 || w.sample(t.x + 0.35, y, t.z) > 0 || w.sample(t.x - 0.35, y, t.z) > 0 || w.sample(t.x, y, t.z + 0.35) > 0 || w.sample(t.x, y, t.z - 0.35) > 0;
+  /* P118a (Q-27, the user's B6 "tree left standing in the air"): a tree ALSO stands on the ground UNDER ITS TRUNK. A tree is a rigid column with its weight
+   * (a few hundred kg) on its footing; roots anchor it against tipping, they do not carry it over a hole. The root rule alone asks for 10 % of the whole
+   * root plate (2 m and more round), so two pillars either side of a shaft shot through the foot kept the trunk in mid-air (6 of 13 sampled 2D matches).
+   * The footing is the trunk axis column plus a small root plate: FOOT_D under the base the axis AND FOOT_MIN of 8 probes on a ring of the trunk base
+   * radius + FOOT_PLATE must be solid. The same rule serves every caller (a blast right after its crater, collapse, dig / drill / foam, lava, acid, a
+   * quake / crack break ... all end in W.mark, which the veg dirty rect hands to on_edit): no per-cause special cases. A crater whose edge stops
+   * beside the trunk leaves the footing alone, so the tree stands with exposed roots (the T1 design); one that takes the footing drops it. */
+  const foot_ok = t => {
+    const w = W(), y = t.y - K.FOOT_D, r = t.seg[0].r0 + K.FOOT_PLATE;
+    if (!(w.sample(t.x, y, t.z) > 0)) return false;
+    let n = 0;
+    for (let a = 0; a < 8; a++) { const an = a * M.TAU / 8; if (w.sample(t.x + M.cos(an) * r, y, t.z + M.sin(an) * r) > 0) n++; }
+    return n >= K.FOOT_MIN;
   };
-  const supported = t => root_hold(t) >= K.ROOT_HOLD;
-  TR.foot_mark = function (S, b) {
-    if (!S.trees) return;
-    const H = W().H;
-    for (const t of S.trees) { t.ft = 0; if (t.alive && t.x / H >= b.i0 - 3 && t.x / H <= b.i1 + 3 && t.z / H >= b.k0 - 3 && t.z / H <= b.k1 + 3 && foot_solid(t)) t.ft = 1; }
-  };
-  TR.foot_check = function (S) {
-    if (!S.trees) return;
-    for (const t of S.trees) {
-      if (!t.ft) continue;
-      t.ft = 0;
-      if (t.alive && !foot_solid(t)) { detach(S, t, 0, null, 0, 'uproot'); SS.sim.emit(S, 'uproot', { tree: t.id, x: t.x, y: t.y, z: t.z }); }
-    }
-  };
+  TR.foot_ok = foot_ok;
+  const supported = t => foot_ok(t) && root_hold(t) >= K.ROOT_HOLD;                  // (the cheap footing test first)
   const shield = (c, p) => 0.25 + 0.75 * M.exp(-W().solid_len(c.x, c.y, c.z, p.x, p.y, p.z) / BC.SHIELD_L);
   /* T2: slender parts (wood, leaves) are pushed by the blast WIND: drag of the dynamic pressure q, not the side-on
    * pressure. q / p = 2.5 p / (p + 7 p0) (Rankine-Hugoniot, ideal air): ~1.5 next to a 1 kg charge (p ~ 1 MPa),

@@ -124,6 +124,52 @@
   }
   function wake(b) { b.asleep = false; b.sleepT = -1; }
 
+  /* P118a (Q-12): the support of a SLEEPING body. The wake-up probe used to look at the voxels only, so a body that lies on another sleeping body (a log on a log, a crate on a
+   * boulder, a branch on a tree's crown) woke every 0.25 s and fell asleep again 0.6 s later, and held every turn open until the settle cap (6 of 12 sampled 2D matches had a log
+   * that never slept; the sleep rule itself counts a contact with any body as support). Now it also counts a chain of touching sleepers that ends in a body with voxel contact,
+   * searched breadth-first with each body visited once: a pile that holds itself up in the air (logs resting on each other, the ground under all of them gone) reaches no ground and
+   * wakes; the lowest body that loses its ground wakes at its own probe and the ones above it one probe (0.25 s) after it. C: bool sleeper_supported(Game*, Body*). */
+  const SUP = [];
+  function voxelTouch(S, b) {
+    const ge = S.eow ? SS.eow.gdir(S, b.pos, gdv) : null, gx = ge ? ge.x : 0, gy = ge ? ge.y : -1, gz = ge ? ge.z : 0;   // P68c: the probe goes along the local down
+    for (let k = 0; k < b.np; k++) {
+      M.q_rot(b.q, b.pts[k * 4], b.pts[k * 4 + 1], b.pts[k * 4 + 2], tp);
+      if (contact(b.pos.x + tp.x + gx * 0.08, b.pos.y + tp.y + gy * 0.08, b.pos.z + tp.z + gz * 0.08, b.pts[k * 4 + 3], tn) > 0) return true;
+    }
+    return false;
+  }
+  function touching(a, o) {                          // any shell sphere of a within 0.1 m of one of o
+    const R = a.rb + o.rb + 0.2, dx = o.pos.x - a.pos.x, dy = o.pos.y - a.pos.y, dz = o.pos.z - a.pos.z;
+    if (dx * dx + dy * dy + dz * dz > R * R) return false;
+    for (let k = 0; k < a.np; k++) {
+      M.q_rot(a.q, a.pts[k * 4], a.pts[k * 4 + 1], a.pts[k * 4 + 2], tp);
+      const ax = a.pos.x + tp.x, ay = a.pos.y + tp.y, az = a.pos.z + tp.z;
+      for (let m = 0; m < o.np; m++) {
+        M.q_rot(o.q, o.pts[m * 4], o.pts[m * 4 + 1], o.pts[m * 4 + 2], tq);
+        const ex = o.pos.x + tq.x - ax, ey = o.pos.y + tq.y - ay, ez = o.pos.z + tq.z - az, r = a.pts[k * 4 + 3] + o.pts[m * 4 + 3] + 0.1;
+        if (ex * ex + ey * ey + ez * ez < r * r) return true;
+      }
+    }
+    return false;
+  }
+  function sleeperSupported(S, b) {
+    if (voxelTouch(S, b)) return true;
+    if (S.eow) return false;
+    const L = S.bodies;
+    SUP.length = 0; SUP.push(b);
+    for (let h = 0; h < SUP.length; h++) {
+      const a = SUP[h];
+      for (let i = 0; i < L.length; i++) {
+        const o = L[i];
+        if (!o.asleep || SUP.indexOf(o) >= 0 || !touching(a, o)) continue;
+        if (voxelTouch(S, o)) return true;
+        if (SUP.length >= 32) return true;           // (a pile of 32 sleepers: not searched on, taken as held: a probe must not wake a heap for nothing)
+        SUP.push(o);
+      }
+    }
+    return false;
+  }
+
   /* ---------- simulation ---------- */
   /* One solver for the whole step (P105): forces -> contact generation for every awake body (terrain AND body pairs) ->
    * sequential impulses over the whole contact list -> position projection -> integration -> sleep. Before, each body was
@@ -532,9 +578,7 @@
         }
         // re-check support now and then: wake when the ground under it was blasted away
         if (S.tick % 30 === b.id % 30) {
-          let touch = false;
-          const ge = S.eow ? SS.eow.gdir(S, b.pos, gdv) : null, gx = ge ? ge.x : 0, gy = ge ? ge.y : -1, gz = ge ? ge.z : 0;   // P68c: the probe goes along the local down
-          for (let k = 0; k < b.np && !touch; k++) { M.q_rot(b.q, b.pts[k * 4], b.pts[k * 4 + 1], b.pts[k * 4 + 2], tp); if (contact(b.pos.x + tp.x + gx * 0.08, b.pos.y + tp.y + gy * 0.08, b.pos.z + tp.z + gz * 0.08, b.pts[k * 4 + 3], tn) > 0) touch = true; }
+          const touch = sleeperSupported(S, b);
           if (!touch) wake(b);
           // LV3: lava reached it (it rises over its base): it floats or is dragged along
           else if (SS.lava && S.lava && SS.lava.surface_at(S, b.pos.x, b.pos.z) > b.pos.y - b.rb * 0.7) wake(b);

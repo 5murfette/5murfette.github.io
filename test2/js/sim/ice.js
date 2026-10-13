@@ -4,11 +4,14 @@
  * Field: per lattice column (the water grid, 193²) thickness h (cm, 0 = open water), snow on the ice (cm), floe id
  * (render: the crack pattern of refrozen pieces). Ice only on water deeper than WET.
  * Temperature (air_temp, °C, shown in the HUD): biome x weather (C.ICE.T_AIR) + time of day (T_TOD: dusk, night).
- * Which water freezes: alpine always; other biomes when the air is below 0 °C (snow / blizzard, cold nights).
+ * Which water freezes: alpine always; other biomes when the air is below the freezing point of sea water, T_FREEZE (about -1.9 °C), which
+ * only an explicit snow / blizzard weather reaches there (P118a: a night on a temperate, canyon or volcanic map stays far above it); never within
+ * HOT_R of lava or a vent (the water there is warm).
  * Growth per turn (TURN_H hours of frost): Stefan's law h² += a² dFDD (a = A_GROW cm/sqrt(°C day), sea ice; Ashton,
- * Lebedev): the colder, the faster; thin ice thickens fast, thick ice slowly. The sheet spreads from shores and ice one
- * cell per turn (leads refreeze from their edges as new thin ice). Above 0 °C it melts (MELT cm per °C per turn, +
- * MELT_SUN on a clear day): the new thin ice goes first.
+ * Lebedev; the degree-days count the cold below T_FREEZE): the colder, the faster; thin ice thickens fast, thick ice slowly.
+ * The sheet spreads from shores and ice one cell per turn (leads refreeze from their edges as new thin ice). Above 0 °C it
+ * melts (MELT cm per °C per turn, + MELT_SUN on a clear day): the new thin ice goes first; between T_FREEZE and 0 °C nothing
+ * changes.
  * Bearing (Gold): a cell fails above A_FAIL h² kg (h in cm). A worm (WORM_KG, game scale) stands on one-turn ice
  * (~1.5 cm); a hard landing breaks it; ice melted thin gives way under it. Loads: static, or a landing:
  * F = m (1 + sqrt(1 + 2 H / STOP_D)) / 2, H = v² / 2g.
@@ -30,7 +33,7 @@
  * would_punch / impact(S, x, z, mass, vn) (projectile: true = through), blast(S, c, W), plane_sections(S), stats(S).
  * C layout: struct Floe { i32 id, round; f32 x, z, a, vx, vz, va, h, r; u8 n; f32 px[8], pz[8]; };
  *   struct Wave { f32 x, z, r, c, E; };
- *   struct Ice { f32 T; f32 *h, *snow; u8 *crack, *floe; Floe floes[FLOE_MAX]; Wave waves[8]; u32 ver, turns; }. */
+ *   struct Ice { f32 T; f32 *h, *snow; u8 *crack, *floe, *warm; Floe floes[FLOE_MAX]; Wave waves[8]; u32 ver, turns; }. */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.ICE;
@@ -55,13 +58,13 @@
 
   function create(S) {
     const w = W(), NX = w.NX, NZ = w.NZ, N = NX * NZ;
-    S.ice = { NX, NZ, N, h: new Float32Array(N), snow: new Float32Array(N), crack: new Uint8Array(N), floe: new Uint8Array(N), ver: 1, turns: 0, T: airT(S),
+    S.ice = { NX, NZ, N, h: new Float32Array(N), snow: new Float32Array(N), crack: new Uint8Array(N), floe: new Uint8Array(N), warm: new Uint8Array(N), ver: 1, turns: 0, T: airT(S),
       prevVy: new Float64Array(16), scratch: new Uint8Array(N), floes: [], floeId: 0, waves: [], snowT: 0 };
   }
   IC.init = function (S) {
     S.ice = null;
     if (!S.water || !K || SS.world.under) return;                      // U: no sea ice in the caves
-    if (airT(S) >= 0 && !K.ALWAYS[S.biome]) return;
+    if (airT(S) >= K.T_FREEZE && !K.ALWAYS[S.biome]) return;
     create(S);
     // the winter before the match: an always-cold biome pre-freezes with its clear-weather frost even if the match
     // starts in a thaw (alpine rain / ashfall)
@@ -70,11 +73,36 @@
     S.ice.turns = 0;
   };
 
+  /* P118a (Q-04): the sea round lava and a vent is warm: st.warm marks the columns within HOT_R of a lava column (S.lava.h) or a vent mouth (world features), rebuilt every
+   * turn (lava flows). Only the rim of a lava body is marked (any cell within HOT_R of its inside is within HOT_R of its rim). C: void warm_cells(Game*, Ice*). */
+  function warmCells(S, st) {
+    const w = W(), NX = st.NX, NZ = st.NZ, H = w.H, warm = st.warm, rr = Math.ceil(K.HOT_R / H), lv = S.lava, F = w.features || {};
+    warm.fill(0);
+    const mark = (ci, ck) => {
+      for (let dk = -rr; dk <= rr; dk++) {
+        const k = ck + dk; if (k < 0 || k >= NZ) continue;
+        for (let di = -rr; di <= rr; di++) { const i = ci + di; if (i >= 0 && i < NX && M.len2(di * H, dk * H) <= K.HOT_R) warm[k * NX + i] = 1; }
+      }
+    };
+    if (lv && lv.i1 >= lv.i0) {
+      for (let k = lv.k0; k <= lv.k1; k++) for (let i = lv.i0; i <= lv.i1; i++) {
+        const c = k * NX + i; if (!(lv.h[c] > 0.02)) continue;
+        if (i > 0 && i < NX - 1 && k > 0 && k < NZ - 1 && lv.h[c - 1] > 0.02 && lv.h[c + 1] > 0.02 && lv.h[c - NX] > 0.02 && lv.h[c + NX] > 0.02) continue;
+        mark(i, k);
+      }
+    }
+    const vs = F.vents || [];
+    for (let q = 0; q < vs.length; q++) mark(M.clamp(Math.round(vs[q].x / H), 0, NX - 1), M.clamp(Math.round(vs[q].z / H), 0, NZ - 1));
+  }
+
   /* one turn: frost (growth, spreading, floes freeze back in) or thaw (melting, floes melt) */
   function freezeTurn(S, hours, Tforce) {
     const st = S.ice, NX = st.NX, NZ = st.NZ, h = st.h, wh = S.water.h, T = Tforce != null ? Tforce : airT(S);
     st.T = T; st.turns++;
     const hrs = hours || K.TURN_H;
+    warmCells(S, st);
+    const warm = st.warm;
+    for (let c = 0; c < st.N; c++) if (warm[c] && (h[c] > 0 || st.snow[c] > 0)) { h[c] = 0; st.crack[c] = 0; st.snow[c] = 0; }      // (the ice that was there is gone: warm water)
     if (T >= 0) {                                              // thaw: the thin new ice goes first
       const d = (K.MELT * T + (sunny(S) ? K.MELT_SUN : 0)) * hrs / K.TURN_H;
       for (let c = 0; c < st.N; c++) {
@@ -84,7 +112,8 @@
       for (let i = st.floes.length - 1; i >= 0; i--) { const f = st.floes[i]; f.h -= d; if (f.h < K.H_MIN) st.floes.splice(i, 1); }
       st.ver++; return;
     }
-    const dF = -T * hrs / 24, a2 = K.A_GROW * K.A_GROW;
+    if (T >= K.T_FREEZE) { st.ver++; return; }                 // above the freezing point of sea water, below 0 °C: nothing grows, nothing melts
+    const dF = (K.T_FREEZE - T) * hrs / 24, a2 = K.A_GROW * K.A_GROW;
     for (let c = 0; c < st.N; c++) {
       if (h[c] <= 0) continue;
       if (!(wh[c] > K.WET)) { h[c] = 0; st.crack[c] = 0; st.snow[c] = 0; continue; }   // the water went (drained / dry)
@@ -100,14 +129,14 @@
       const f = st.floes[i], hf = M.len2(f.h, K.A_GROW * M.pow(dF, 0.5));
       if ((S.turnNo | 0) - f.turn < nT) { f.h = hf; continue; }
       const tag = 1 + (f.id % 15), sn = M.min(K.SNOW_MAX, f.snow || 0);
-      floeCells(st, f, c => { if (wh[c] > K.WET && h[c] < hf) { h[c] = hf; st.crack[c] = 0; st.floe[c] = tag; st.snow[c] = sn; } });
+      floeCells(st, f, c => { if (wh[c] > K.WET && h[c] < hf && !warm[c]) { h[c] = hf; st.crack[c] = 0; st.floe[c] = tag; st.snow[c] = sn; } });
       st.floes.splice(i, 1);
     }
     // spread: open water next to land (a shore) or to ice freezes as new thin ice
     const h0 = K.A_GROW * M.pow(dF, 0.5) * K.NEW_K, mark = st.scratch; mark.fill(0);
     for (let k = 1; k < NZ - 1; k++) for (let i = 1; i < NX - 1; i++) {
       const c = k * NX + i;
-      if (h[c] > 0 || !(wh[c] > K.WET)) continue;
+      if (h[c] > 0 || warm[c] || !(wh[c] > K.WET)) continue;
       if (h[c - 1] >= K.H_MIN || h[c + 1] >= K.H_MIN || h[c - NX] >= K.H_MIN || h[c + NX] >= K.H_MIN ||
           !(wh[c - 1] > K.WET) || !(wh[c + 1] > K.WET) || !(wh[c - NX] > K.WET) || !(wh[c + NX] > K.WET)) mark[c] = 1;
     }
@@ -115,7 +144,7 @@
     st.ver++;
   }
   // a frost that sets in mid-match ('auto' weather turned cold) starts the field from open water
-  IC.new_turn = function (S) { if (!S.ice && S.water && K && !SS.world.under && airT(S) < 0) create(S); if (S.ice) freezeTurn(S); };
+  IC.new_turn = function (S) { if (!S.ice && S.water && K && !SS.world.under && airT(S) < K.T_FREEZE) create(S); if (S.ice) freezeTurn(S); };
 
   /* ---------- queries ---------- */
   IC.cell = (S, x, z) => (S.ice ? idx(S.ice, x, z) : -1);

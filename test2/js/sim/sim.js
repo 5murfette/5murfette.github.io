@@ -736,33 +736,67 @@
     return null;
   }
   function breakPin(S, pin) {
-    const b = SS.bodies.by_id(S, pin.body); SS.bodies.remove(S, b);
+    const b = pin.body !== undefined && typeof pin.body === 'number' ? SS.bodies.by_id(S, pin.body) : pin; SS.bodies.remove(S, b);
     emit(S, 'propbreak', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop || 'rubble', why: 'pinned' });
   }
-  /* P88: the worms that are NOT under control are pinned by a prop too (a crate landed on a resting worm: its body stayed inside the prop until its turn, and the
-   * soft body, buried in the prop's field, exploded). Same rule as the active worm: the nearest free spot, else the prop breaks. Worms in the plane band only (the
-   * only ones that have prop cross-sections); runs once per step before the active worm moves. */
-  function unpinOthers(S) {
+  /* P88: a worm inside a resting prop (a crate landed on it, a boulder settled into it) is moved out, else the prop breaks (never a soft-locked worm: the soft body, buried
+   * in the prop's field, exploded). Before P118a this was the PoC rule for the worm under control (the whole disc free of the prop's plane section, an axis-aligned box) and,
+   * for the others, the same box (a worm that sank into a log was lifted onto the top of that box, which hovers over a tilted log, and body3D dropped it back in: four lifts a
+   * second for ever, Q-12). Now ONE rule for every worm, against what body3D lands the worms on (propDepth: the collision spheres) and what a hollow shell cannot show (propBox:
+   * a crate): pinned = the core of the body (PIN_RAD round the centre) inside a prop, or the feet inside it. The worm is pushed out along the normal (feet only: straight up),
+   * else straight up, in 0.1 m steps, to the first spot where the core is clear and the feet are outside the padded spheres (so it falls on the prop and rests, instead of sinking
+   * in below the centre of a thin log and being lifted again); none within reach: the prop breaks. The worm under control (planar) is pushed inside its section plane and
+   * judged by where its disc stands (feet up to PLANE_SINK inside a surface are legal), not by the padded sphere. One rule for both is what makes a worm that rests on a log or
+   * beside a crate legal when its turn starts: with the whole-disc rule for the worm under control and a core rule for the others, 4 % of the turns began with a jump of 0.2 to
+   * 3 m. The End of the World keeps the plane-section rule (local gravity: no world up to push along). Returns 0: free, 1: moved out, 2: no way out, the prop broke. */
+  function unpinProp(S, o, planar) {
+    if (S.eow) return 0;
+    const pc = pinDepth(S, o.pos.x, o.pos.y, o.pos.z, PIN_RAD, 0, pn), bc = pnBody;                      // the core of the body inside a prop...
+    const pf = pc > 0 ? 0 : pinDepth(S, o.pos.x, o.pos.y - o.foot, o.pos.z, 0, planar ? -PLANE_SINK : 0, pn2), bf = pnBody;      // ...or the feet (a log that settled around them)
+    if (!(pc > 0) && !(pf > 0)) return 0;
+    const pen = pc > 0 ? pc : pf, pb = pc > 0 ? bc : bf, reach = M.min(110 * PX, pb.rb * 2 + C.WORM_R);
+    let nx = pc > 0 ? pn.x : 0, ny = pc > 0 ? pn.y : 1, nz = pc > 0 ? pn.z : 0;                          // (feet only: straight up, a normal pointing down would push the worm into the ground)
+    if (planar) {                                                                    // the worm under control stays in its section plane
+      const q = P.nrm(S), dn = nx * q.x + nz * q.z; nx -= dn * q.x; nz -= dn * q.z;
+      const l = M.len3(nx, ny, nz); if (l < 1e-3) { nx = 0; ny = 1; nz = 0; } else { nx /= l; ny /= l; nz /= l; }
+    }
+    const x0 = o.pos.x, y0 = o.pos.y, z0 = o.pos.z, pad = planar ? -PLANE_SINK : PROP_PAD;
+    const free = (r, ux, uy, uz) => {
+      const x = x0 + ux * r, y = y0 + uy * r, z = z0 + uz * r;
+      return bodyFree(o, x, y, z) && !(pinDepth(S, x, y, z, PIN_RAD, 0, pn2) > 0) && !(pinDepth(S, x, y - o.foot, z, 0, pad, pn2) > 0) && y - o.foot >= sim.surface_at(S, x, z) - 0.3;
+    };
+    let found = false;
+    for (let k = 0; k < 2 && !found; k++) {                                          // k = 0: out along the normal; k = 1: straight up
+      const ux = k ? 0 : nx, uy = k ? 1 : ny, uz = k ? 0 : nz;
+      for (let r = pen + 0.03; r <= reach && !found; r += 0.1) {
+        if (!free(r, ux, uy, uz)) continue;
+        let q = r; if (planar) while (q - 0.02 > pen && free(q - 0.02, ux, uy, uz)) q -= 0.02;                       // (the worm under control lands at once)
+        o.pos.x = x0 + ux * q; o.pos.y = y0 + uy * q; o.pos.z = z0 + uz * q; found = true;
+      }
+    }
+    if (!found) { breakPin(S, pb); return 2; }
+    o.vel.x = o.vel.y = o.vel.z = 0; o.rest = false; o.slide = false; o.stillT = 0;
+    return 1;
+  }
+  function unpinOthers(S) {                                                          // once per step before the active worm moves
     if (S.eow) return;
     for (let i = 0; i < S.worms.length; i++) {
       const o = S.worms[i]; if (o.dead || o.drowning || o.swim || o.rope || sim.ctl(S, o)) continue;      // (a worm under control frees itself: recoverPinned)
-      const q = P.to_plane(S, o.pos); if (Math.abs(q.t) > C.WORM_R) continue;
-      const pin = pinningBody(S, q.s, o.pos.y); if (!pin) continue;
-      const f = pinFree(S, pin, q.s, o.pos.y, true);
-      if (!f) { breakPin(S, pin); continue; }
-      const wq = P.to_world(S, f.s, f.y), n = P.nrm(S);
-      o.pos.x = wq.x + n.x * q.t; o.pos.y = wq.y; o.pos.z = wq.z + n.z * q.t; o.vel.x = o.vel.y = o.vel.z = 0; o.rest = false; o.slide = false; o.stillT = 0;
+      unpinProp(S, o, false);
     }
   }
   function recoverPinned(S, a, dt) {
     if (S.rope || S.hook || S.dig || a.drowning || a.swim || a.dead || !sim.ctl(S, a)) return;
-    const s = P.to_plane(S, a.pos).s, y = a.pos.y, pin = pinningBody(S, s, y);
-    if (pin) {
-      const found = pinFree(S, pin, s, y);
-      if (!found) { breakPin(S, pin); return; }          // remove the obstruction rather than soft-lock the worm
-      setActive2D(S, a, found.s, found.y);
+    let moved = 0;
+    if (S.eow) {                                                                     // (the End of the World: the plane-section rule)
+      const s0 = P.to_plane(S, a.pos).s, pin = pinningBody(S, s0, a.pos.y);
+      if (pin) { const found = pinFree(S, pin, s0, a.pos.y); if (!found) { breakPin(S, pin); return; } setActive2D(S, a, found.s, found.y); moved = 1; }
+    } else moved = unpinProp(S, a, true);
+    if (moved === 2) return;                                                         // (the prop broke: remove the obstruction rather than soft-lock the worm)
+    const q = P.to_plane(S, a.pos), s = q.s, y = a.pos.y;
+    if (moved === 1) {
       a.vs = a.vy = 0; a.flip = false; a.hop = false; a.slide = false;
-      a.air = !P.grounded2(S, found.s, found.y); if (!a.air) landNow(S, a, 0);
+      a.air = !P.grounded2(S, s, y); if (!a.air) landNow(S, a, 0);
       a.pinProbe = null;
     } else if (a.air && !a.slide && !a.hop && !a.flip && M.len2(a.vs, a.vy) < 70 * PX && P.grounded2(S, s, y)) {
       const p = a.pinProbe || (a.pinProbe = { s, y, t: 0 });
@@ -1361,6 +1395,73 @@
     if (SS.ice && S.ice) { const t = SS.ice.top_at(S, x, z); if (t > f && t <= y + 0.05) f = t; }
     return f;
   };
+  /* P118a (Q-12): a SLEEPING rigid prop (a log, a crate, a boulder, a wreck piece) is ground for a worm that is not under control. body3D knew only voxels, decks and
+   * ice: such a worm sank into the prop, unpinOthers lifted it out, gravity dropped it back in, four times a second for ever (the soft body hid it, but the turn waited
+   * out the 16 s settle cap). propDepth(S, x, y, z, rad, pad, n): how deep the point (a worm's feet; with rad > 0 a ball round it) lies inside the collision spheres of the
+   * sleeping bodies, each padded by `pad` (the shells are sparse: a worm must not slip between two touching spheres); the deepest sphere wins: n = the unit vector away
+   * from its centre, pnBody = its body; 0 = outside all of them. Spheres thinner than PROP_RMIN (sticks and twigs 0.05-0.12 m, barrels 0.09-0.11, mines 0.07: a worm
+   * stands on trunks, crates (0.175) and boulders, not on sticks) are neither ground nor pin: with them 3 of 16 test matches held a turn open (a worm between sticks is
+   * lifted and falls back). PIN_RAD = the core of the body that a prop must not overlap (the feet are tested on their own: a larger ball overlaps the incline of a leaning
+   * log while the feet stand on it). The same spheres the bodies collide with, in 3D (the plane section is an axis-aligned box: over a tilted log it is a hovering lid).
+   * C: f32 prop_depth(Game*, vec3 p, f32 rad, f32 pad, vec3* n). */
+  const PROP_PAD = 0.06, PROP_RMIN = 0.13, PIN_RAD = 0.1, PLANE_SINK = 0.075, BOX_SHRINK = 0.03;                 // (PLANE_SINK: the worm under control stands with its feet this deep in a surface: its disc, radius WORM_R - PX = 0.434, touches at 0.5 - 0.434 = 0.066 above them; BOX_SHRINK: a crate's box is the same 3 cm smaller for the pin test: the padded spheres dip that far under its top face between two of them)
+  const pn = { x: 0, y: 1, z: 0 }, pn2 = { x: 0, y: 1, z: 0 }, pq = { x: 0, y: 0, z: 0 };       // (scratch)
+  let pnBody = null;
+  function propDepth(S, x, y, z, rad, pad, n) {
+    const L = S.bodies;
+    let best = 0;
+    for (let i = 0; i < L.length; i++) {
+      const b = L[i];
+      if (!b.asleep || b.held) continue;
+      const R = b.rb + pad + rad, dx = x - b.pos.x, dy = y - b.pos.y, dz = z - b.pos.z;
+      if (dx * dx + dy * dy + dz * dz > R * R) continue;
+      for (let k = 0; k < b.np; k++) {
+        const r = b.pts[k * 4 + 3];
+        if (r < PROP_RMIN) continue;
+        M.q_rot(b.q, b.pts[k * 4], b.pts[k * 4 + 1], b.pts[k * 4 + 2], pq);
+        const ex = x - (b.pos.x + pq.x), ey = y - (b.pos.y + pq.y), ez = z - (b.pos.z + pq.z), d = Math.sqrt(ex * ex + ey * ey + ez * ez), pen = r + pad + rad - d;
+        if (pen > best) { best = pen; pnBody = b; if (d > 1e-6) { n.x = ex / d; n.y = ey / d; n.z = ez / d; } else { n.x = 0; n.y = 1; n.z = 0; } }
+      }
+    }
+    return best;
+  }
+  /* The pin test asks whether a worm is INSIDE a prop, and a shell of spheres is hollow: a crate is 26 spheres on its surface (a worm at its centre is 0.33 m from the nearest).
+   * propBox(S, x, y, z, rad, n) is propDepth's twin for crates (kind box): the box of the shell in the body's own frame (the extents of its spheres: exactly the crate); the
+   * shallowest axis gives the way out (n = that face's normal in the world). Not for the other props: the box of a tilted log or a barrel has empty corners (a worm that falls
+   * into one has no sphere to land on and would be lifted and dropped again, the Q-12 loop), and a barrel's spheres are thinner than PROP_RMIN anyway (it neither carries nor
+   * pins: a barrel that settles on a worm leaves it inside). C: f32 prop_box(Game*, vec3 p, f32 rad, vec3* n). */
+  function propBox(S, x, y, z, rad, n) {
+    const L = S.bodies;
+    let best = 0;
+    for (let i = 0; i < L.length; i++) {
+      const b = L[i];
+      if (!b.asleep || b.held || b.kind !== 'box') continue;
+      const R = b.rb + rad, dx = x - b.pos.x, dy = y - b.pos.y, dz = z - b.pos.z;
+      if (dx * dx + dy * dy + dz * dz > R * R) continue;
+      M.q_rot_inv(b.q, dx, dy, dz, pq);
+      let l0 = 1e9, l1 = 1e9, l2 = 1e9, h0 = -1e9, h1 = -1e9, h2 = -1e9;
+      for (let k = 0; k < b.np; k++) {
+        const r = b.pts[k * 4 + 3], a = b.pts[k * 4], c = b.pts[k * 4 + 1], d = b.pts[k * 4 + 2];
+        l0 = M.min(l0, a - r); h0 = M.max(h0, a + r); l1 = M.min(l1, c - r); h1 = M.max(h1, c + r); l2 = M.min(l2, d - r); h2 = M.max(h2, d + r);
+      }
+      const e0 = pq.x - (l0 + h0) / 2, e1 = pq.y - (l1 + h1) / 2, e2 = pq.z - (l2 + h2) / 2;
+      const d0 = (h0 - l0) / 2 + rad - Math.abs(e0), d1 = (h1 - l1) / 2 + rad - Math.abs(e1), d2 = (h2 - l2) / 2 + rad - Math.abs(e2);
+      const m = M.min(d0, M.min(d1, d2)); if (!(m > best)) continue;                // (the way out: the shallowest face)
+      best = m; pnBody = b;
+      let ax = 0, ay = 0, az = 0;
+      if (m === d0) ax = e0 < 0 ? -1 : 1; else if (m === d1) ay = e1 < 0 ? -1 : 1; else az = e2 < 0 ? -1 : 1;
+      M.q_rot(b.q, ax, ay, az, n);
+    }
+    return best;
+  }
+  const pn3 = { x: 0, y: 1, z: 0 };
+  // how deep the point (a ball of radius rad round it, padded by pad) lies in a sleeping prop, as the pin test sees it: the deeper of the shell's spheres (propDepth) and, for a
+  // crate, its box (propBox)
+  function pinDepth(S, x, y, z, rad, pad, n) {
+    const ds = propDepth(S, x, y, z, rad, pad, n), bs = pnBody, db = propBox(S, x, y, z, rad + pad - BOX_SHRINK, pn3);
+    if (db > ds) { n.x = pn3.x; n.y = pn3.y; n.z = pn3.z; return db; }
+    pnBody = bs; return ds;
+  }
   /* a kept rope (inactive worm): a 3D pendulum on the anchor; it drops when the anchor's rock is gone */
   function hangOnRope(S, b, dt) {
     const r = b.rope, w = W();
@@ -1439,7 +1540,7 @@
       const need = Math.sqrt(M.max(0, R2 * R2 - dy * dy)) - hh, share = o.rest && o !== S.active ? 0.5 : 1, m = M.min(WD.SEP_V * dt, need * share + 0.002);
       const nx = b.pos.x + ux * m, nz = b.pos.z + uz * m; let y = b.pos.y;
       for (let k = 0; k < 4 && w.sample(nx, y - b.foot, nz) > 0; k++) y += 0.03;                // a rising slope: follow it a little
-      if (w.sample(nx, y - b.foot, nz) > 0 || blocked3(nx, y, nz) || !(w.sample(nx, y - b.foot - 0.06, nz) > 0)) continue;   // rock in the way, or no footing there: stay
+      if (w.sample(nx, y - b.foot, nz) > 0 || blocked3(nx, y, nz) || !(w.sample(nx, y - b.foot - 0.06, nz) > 0 || propDepth(S, nx, y - b.foot - 0.06, nz, 0, PROP_PAD, pn2) > 0)) continue;   // rock in the way, or no footing there: stay
       b.pos.x = nx; b.pos.y = y; b.pos.z = nz;
     }
   }
@@ -1482,7 +1583,7 @@
     }
     if (b.rope && hangOnRope(S, b, dt)) return;
     if (b.rest) {
-      if (w.sample(b.pos.x, b.pos.y - foot - 0.06, b.pos.z) > 0 || Math.abs(deckFloor(S, b.pos.x, b.pos.y - foot, b.pos.z) - (b.pos.y - foot)) < 0.08) { if (b !== S.active) wormSeparate(S, b, dt); return; }
+      if (w.sample(b.pos.x, b.pos.y - foot - 0.06, b.pos.z) > 0 || Math.abs(deckFloor(S, b.pos.x, b.pos.y - foot, b.pos.z) - (b.pos.y - foot)) < 0.08 || propDepth(S, b.pos.x, b.pos.y - foot - 0.06, b.pos.z, 0, PROP_PAD, pn) > 0) { if (b !== S.active) wormSeparate(S, b, dt); return; }
       if (wormUnder(S, b)) return;                                             // P88: standing on another worm
       b.rest = false;
     }
@@ -1501,8 +1602,9 @@
         b.pos.x = nx; b.pos.z = nz; b.pos.y = lf + foot; b.vel.y = 0; b.vel.x *= 0.3; b.vel.z *= 0.3; b.slide = false; landHurt(S, b, 0); break;
       }
       const df = deckFloor(S, nx, b.pos.y - foot + 0.05, nz);                    // M: a bridge deck (a flat floor)
-      let hit = false;
+      let hit = false, onProp = false;
       if (b.vel.y <= 0 && df > -1e8 && ny - foot <= df) { nv.x = 0; nv.y = 1; nv.z = 0; hit = true; }
+      else if (b.vel.y <= 0 && propDepth(S, nx, ny - foot, nz, 0, PROP_PAD, pn) > 0 && pn.y > 0) { nv.x = pn.x; nv.y = pn.y; nv.z = pn.z; hit = true; onProp = true; }   // P118a: a sleeping prop under the feet (its upper half: below the sphere's centre the worm passes by)
       else if (w.sample(nx, ny - foot, nz) > 0 || blocked3(nx, ny, nz)) {
         // the contact point: below the feet when falling onto ground, else the body's side
         if (w.sample(nx, ny - foot, nz) > 0) w.normal(nx, ny - foot, nz, nv); else w.normal(nx, ny, nz, nv);
@@ -1513,6 +1615,13 @@
       touched = true;
       const vn = b.vel.x * nv.x + b.vel.y * nv.y + b.vel.z * nv.z;
       if (wo) { if (wormLand(S, b, wo, nv, vn, nx, ny, nz)) break; continue; }
+      if (onProp && vn < 0 && nv.y < WD.STACK_NY) {                              // P118a: the shoulder of a ball (past the 32 degrees a worm's head holds): no hold, it rolls off with its tangential speed
+        const dep = M.min(0.3, propDepth(S, nx, ny - foot, nz, 0, PROP_PAD, pn2)), px = nx + pn2.x * dep, py = ny + pn2.y * dep, pz = nz + pn2.z * dep;       // (out onto the sphere's surface, along its normal)
+        if (w.sample(px, py - foot, pz) > 0 || blocked3(px, py, pz)) { b.vel.x = b.vel.y = b.vel.z = 0; b.rest = true; b.slide = false; b.stillT = 0; landHurt(S, b, 0); break; }   // wedged between the prop and the rock (a log against a wall): nowhere to roll to, it stays
+        b.vel.x = (b.vel.x - vn * nv.x) * WD.FRIC; b.vel.y = (b.vel.y - vn * nv.y) * WD.FRIC; b.vel.z = (b.vel.z - vn * nv.z) * WD.FRIC; b.slide = true;
+        b.pos.x = px; b.pos.y = py; b.pos.z = pz;
+        continue;
+      }
       if (vn >= 0) { b.pos.x = nx; b.pos.z = nz; continue; }
       const imp = -vn, sp = M.len3(b.vel.x, b.vel.y, b.vel.z), tx = b.vel.x - vn * nv.x, ty = b.vel.y - vn * nv.y, tz = b.vel.z - vn * nv.z;
       const along = M.len3(tx, ty, tz) / M.max(1e-6, sp);
@@ -1531,7 +1640,7 @@
       // stand on top of the ground (never inside it)
       // (P38 R9: only while the lift does not push the body centre deeper into the rock: a worm thrown into a slot used to climb 1.2 m per step into the ceiling)
       let y = b.pos.y; const c0 = w.sample(b.pos.x, y, b.pos.z);
-      for (let k = 0; k < 30 && (w.sample(b.pos.x, y - foot, b.pos.z) > 0 || (df > -1e8 && y - foot < df)); k++) { if (w.sample(b.pos.x, y + 0.04, b.pos.z) > M.max(c0, 0) + 0.15) break; y += 0.04; }
+      for (let k = 0; k < 30 && (w.sample(b.pos.x, y - foot, b.pos.z) > 0 || (df > -1e8 && y - foot < df) || (onProp && propDepth(S, b.pos.x, y - foot, b.pos.z, 0, PROP_PAD, pn2) > 0 && pn2.y > 0)); k++) { if (w.sample(b.pos.x, y + 0.04, b.pos.z) > M.max(c0, 0) + 0.15) break; y += 0.04; }
       b.pos.y = y;
     }
     // a skidding worm comes to rest when slow and supported for 0.45 s (PoC still), or a soft touch

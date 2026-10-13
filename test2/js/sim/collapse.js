@@ -205,14 +205,15 @@
 
   /* blast.js hook (settings.collapse): after a crater, cut out every component around the edited box that lost its
    * support and hand the pieces to the rigid-body solver (they fall, tumble and re-bake where they come to rest).
-   * Small leftovers (< 22 voxels) become 'rubble' (FX only). The new pieces get the same blast kick as other bodies. */
+   * Small leftovers (< 22 voxels) become 'rubble' (FX only). The new pieces get the same blast kick as other bodies.
+   * Trees on a piece that breaks away are not handled here (P118a): the cut is a terrain edit like any other (W.mark), so the one
+   * central support check (trees.js on_edit, from the veg dirty rect) drops every tree whose footing is gone. */
   SS.collapse_hook = function (S, box) {
     if (!SS.bodies) return null;
     const W = SS.world, comps = K.find_floating(W, box);
     if (!comps.length) return null;
     let vox = 0, rub = 0;
     const made = [];
-    if (SS.trees) SS.trees.foot_mark(S, box);                                      // P105: trees standing on a piece that breaks away fall with it (foot_check below)
     for (const comp of comps) {
       vox += comp.length;
       const r = K.detach(W, comp, S.rng);
@@ -220,7 +221,6 @@
       rub += r.rubble.length;
       if (r.rubble.length) SS.sim.emit(S, 'rubble', { pts: r.rubble.slice(0, 24) });
     }
-    if (SS.trees) SS.trees.foot_check(S);
     const e = S.lastExplosion;
     if (e && made.length) SS.bodies.blast(S, e, M.pow(e.R / 3, 3), made);
     const ev = { voxels: vox, pieces: made.length, rubble: rub, x: 0, y: 0, z: 0 };

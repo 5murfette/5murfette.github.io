@@ -250,7 +250,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p118b-fix-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p118a-fix-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
@@ -326,12 +326,23 @@
     /* Sea / pool ice (Step I, sim/ice.js; research §8 "Ice (I)"): Stefan growth, Gold bearing capacity, blasts */
     ICE: {
       ALWAYS: { alpine: true },                                   // freezes whatever the weather (cold climate)
+      // P118a (Q-04): the air of each biome at its day temperature by weather kind (a kind that is not listed, fog, takes the biome's clear). Sea water
+      // freezes at T_FREEZE (about -1.9 °C, the salt lowers it), and only SUSTAINED cold makes ice: a night is 5 °C colder than the day (T_TOD), so
+      // every non-snow weather of a warm biome stays well above it at night (before: the shared 'other' row had 4 °C by day, -1 °C at night, and
+      // the sea of every temperate, canyon and volcanic map froze after dark, a lava island included). Only an alpine climate (ALWAYS) or an explicit
+      // snow / blizzard weather (the 'auto' weather never draws them outside the alpine biome) brings sea ice to the other biomes.
       T_AIR: {                                                    // air temperature (°C) by biome x weather kind
         alpine: { clear: -10, cloudy: -8, rain: 1, storm: -2, snow: -12, blizzard: -20 },
         beach: { clear: 29, cloudy: 27, rain: 25, storm: 24, snow: 2, blizzard: 1, ashfall: 27 },     // P116: a tropical sea never freezes
-        other: { clear: 4, cloudy: 3, rain: 5, storm: 4, snow: -4, blizzard: -9, ashfall: 6 }
+        temperate: { clear: 14, cloudy: 11, rain: 9, storm: 8, snow: -4, blizzard: -9, ashfall: 10 },
+        canyon: { clear: 20, cloudy: 16, rain: 12, storm: 12, snow: -4, blizzard: -9, ashfall: 16 },
+        volcanic: { clear: 24, cloudy: 21, rain: 19, storm: 18, snow: -4, blizzard: -9, ashfall: 26 },
+        desert: { clear: 32, cloudy: 27, rain: 22, storm: 22, snow: -2, blizzard: -6, ashfall: 30 },    // (dry: no sea, the HUD shows it)
+        other: { clear: 14, cloudy: 11, rain: 9, storm: 8, snow: -4, blizzard: -9, ashfall: 10 }
       },
       T_TOD: { dusk: -2, night: -5 },  // °C: colder at dusk / at night (sim.time_of_day)
+      T_FREEZE: -1.9,       // °C: sea water freezes below this (growth counts the cold below it, not below 0 °C); between it and 0 °C ice neither grows nor melts
+      HOT_R: 5,             // m: no ice within this of lava or a vent (the water there is warm: a lava island keeps an open sea round it)
       TURN_H: 2,            // hours of frost per turn (a match spans a few days of ice growth)
       A_GROW: 2.2,          // cm / sqrt(°C day): sea ice, a little snow (Ashton / Lebedev; bare lake ice 3.3)
       NEW_K: 0.8,           // new ice at a freezing edge: this share of one turn's Stefan growth from 0
@@ -452,8 +463,10 @@
       FIRE_R: 1.2,            // worms within this of a burning trunk burn
       // T1/T2: roots hold (plate radius ROOT_R_K x crown >= ROOT_R_MIN, ROOT_D deep; falls below ROOT_HOLD of it in
       // ground); a direct hit within the cut radius of the stem up to STEM_LOW m destroys stump + roots; torn-off
-      // leaves pass LEAF_HOLD of their impulse on to the branch
-      ROOT_R_K: 1.5, ROOT_R_MIN: 2.0, ROOT_D: 0.8, TAP_D: 1.5, ROOT_HOLD: 0.1, FOOT_D: 0.3, STEM_LOW: 1.0, LEAF_HOLD: 0.5,
+      // leaves pass LEAF_HOLD of their impulse on to the branch.
+      // P118a (Q-27): and a tree STANDS on ground under its trunk: FOOT_D m under the base the trunk axis and FOOT_MIN of 8 probes on a ring of the
+      // trunk radius + FOOT_PLATE m (the small root plate that carries the trunk) must be solid, else it falls (trees.js foot_ok)
+      ROOT_R_K: 1.5, ROOT_R_MIN: 2.0, ROOT_D: 0.8, TAP_D: 1.5, ROOT_HOLD: 0.1, FOOT_D: 0.3, FOOT_PLATE: 0.25, FOOT_MIN: 2, STEM_LOW: 1.0, LEAF_HOLD: 0.5,
       DRAG_CD: 1.2, JOINT: 0.6, // blast-wind drag coefficient (cylinder); branch junction strength vs clear wood
       CUT_D: 0.7                // a burst within CUT_K W^(1/3) + r cuts wood up to CUT_D sqrt(W) m thick
     },

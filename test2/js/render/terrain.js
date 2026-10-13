@@ -247,14 +247,18 @@
         float broom = texture(tNoise, vec2(tq.x * 1.4, tq.y * 31.0)).g;
         c *= 1.0 + (broom - 0.5) * 0.18 * kM;
         rel += 0.0005 * (broom - 0.5) * kM - 0.0015 * jt * kM;
-        #ifndef S2
-        c *= 1.0 - 0.34 * jt;
+        // joint lines, hairline cracks and dirt. S2 is defined for the play slab's material in 3D matches too, so the test is the runtime
+        // one: only the 2D slab's floors seen from above skip them, because the caller paints its own cast panels there (uSlab.x, up > 0.75)
+        float kT = 1.0;
+        #ifdef S2
+        if (uSlab.x > 0.5 && up > 0.75) kT = 0.0;
+        #endif
+        c *= 1.0 - 0.34 * jt * kT;
         float cr = texture(tNoise, tq * vec2(0.55, 0.9) + 0.6).g;
         float crk = (1.0 - smoothstep(0.0, 0.012 + 0.6 * aa, abs(cr - 0.5))) * smoothstep(0.35, 0.6, texture(tNoise, tq * 0.21).b);
-        c *= 1.0 - 0.5 * crk;
+        c *= 1.0 - 0.5 * crk * kT;
         float dirt = smoothstep(0.5, 0.85, texture(tNoise, tq * vec2(0.13, 0.35) + 0.2).g);
-        c *= 1.0 - 0.26 * dirt;
-        #endif
+        c *= 1.0 - 0.26 * dirt * kT;
       }
       return c;
     }
