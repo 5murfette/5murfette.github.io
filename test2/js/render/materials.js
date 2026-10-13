@@ -124,8 +124,8 @@
       uBase: { value: new T.Color(0.09, 0.22, 0.05) }, uTip: { value: new T.Color(0.55, 0.78, 0.25) }, uDryTip: { value: new T.Color(0.78, 0.66, 0.36) }, uSnow: { value: 0 }, uAcid: { value: Array.from({ length: 8 }, () => new T.Vector4(0, 0, 0, 0)) }
     };
     m.onBeforeCompile = sh => {
-      Object.assign(sh.uniforms, U);
-      sh.vertexShader = /* glsl */`
+      Object.assign(sh.uniforms, U, SS.slab2d.U);
+      sh.vertexShader = SS.slab2d.GLSL + /* glsl */`
         uniform float uTime, uHalf, uBack, uSnow; uniform sampler2D tNoise, tSurf; uniform vec3 uO, uN, uWind; uniform vec4 uWhirl[4], uWhirlB[4], uBlast[4]; uniform vec4 uAcid[8];
         varying float vH; varying vec3 vTint; varying vec4 vSurf; varying float vAcid; varying float vGust; varying float vPatch;
       ` + sh.vertexShader
@@ -134,7 +134,9 @@
           vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
           vSurf = texture2D(tSurf, (ip.xz * 2.0 + 0.5) / 193.0);   // texel centre of column round(x / 0.5)
           float tI = dot(ip - uO, uN);                       // slab behind slice zero only (nothing in front of it)
-          float keep = step(tI, 0.05) * step(-uBack - 0.05, tI) * step(0.04, vSurf.r) * (1.0 - step(0.55, vSurf.b));
+          float s2L = 0.0;                                   // P113: the 2D slab's ground relief (render/slab2d.js): the blade stands on the displaced terrain
+          if (uSlab.x > 0.5) s2L = s2H(ip.xz, -tI, s2K(ip.y, 1.0));
+          float keep = step(tI, 0.05) * step(-(uSlab.x > 0.5 ? s2Edge(ip.x) : uBack) - 0.05, tI) * step(0.04, vSurf.r) * (1.0 - step(0.55, vSurf.b));
           // wind: mean flow + gust noise + whirlwinds (tangential swirl)
           float wn = texture2D(tNoise, ip.xz * 0.03 - uWind.xz * uTime * 0.012).a;
           vec2 w = uWind.xz * (0.35 + 0.9 * wn) * 0.09 + vec2(sin(uTime * 2.1 + ip.x * 0.7 + ip.z * 0.5), cos(uTime * 1.7 + ip.z * 0.6)) * 0.04 * (0.3 + length(uWind.xz) * 0.1);
@@ -172,7 +174,7 @@
           float ac = 0.0;                                      // P44: acid pools (xz, r, strength): the grass inside is burnt and flattened
           for (int i = 0; i < 8; i++) { vec4 a = uAcid[i]; if (a.w <= 0.0) continue; float d = length(ip.xz - a.xy) / max(a.z, 0.05); ac = max(ac, a.w * (1.0 - smoothstep(0.75, 1.45, d))); }
           vAcid = ac;
-          transformed *= keep;
+          transformed *= keep; transformed.y *= s2Clear(-tI);
           transformed.y *= (1.0 - 0.28 * lean * lean) * (1.0 - uSnow * 0.6) * (1.0 - 0.75 * ac) * (1.0 - 0.55 * clamp(bflat, 0.0, 1.0));
           transformed.z += ac * vH * 0.25;
           vTint = vec3(1.0);
@@ -182,7 +184,7 @@
         .replace('#include <project_vertex>', `
           vec4 mvPosition = vec4(transformed, 1.0);
           mvPosition = instanceMatrix * mvPosition;
-          mvPosition.xz += sway * keep;
+          mvPosition.xz += sway * keep; mvPosition.y += s2L;
           mvPosition = modelViewMatrix * mvPosition;
           gl_Position = projectionMatrix * mvPosition;`)
         .replace('#include <worldpos_vertex>', `
@@ -205,7 +207,7 @@
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           totalEmissiveRadiance += vSurf.a * vec3(3.0, 1.0, 0.2) * smoothstep(0.3, 1.0, vH) * (0.7 + 0.3 * sin(uTime * 13.0 + vH * 9.0));`);
     };
-    m.customProgramCacheKey = () => 'grass7';
+    m.customProgramCacheKey = () => 'grass8';
     return m;
   };
 

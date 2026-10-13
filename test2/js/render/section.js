@@ -79,17 +79,17 @@
     const VPOST = '\nvoid main() { secMainV_(); vec4 secH = inverse(viewMatrix) * (inverse(projectionMatrix) * gl_Position); vSecW = secH.xyz / secH.w; }\n';
     const FPOST = '\nvoid main() {\n  float secT = dot(uSecP.xyz, vSecW) + uSecP.w;\n  if (uSecS.x < 0.5 ? secT > uSecM : (uSecS.x < 1.5 && secT < uSecM)) discard;\n  secMainF_();\n}\n';
     function inject(mat, p) {
-      if (p.__sec) return;
+      if (p.__sec) { if (p.__secMode && mat.userData) mat.userData.sectionInjected = p.__secMode; return; }   // P105: a wrapped onBeforeCompile (a cloned log material calls the base's) injects once; the outer material still carries the flag
       p.__sec = 1;
       if (isExempt(mat)) return;
       const vs = p.vertexShader, fs = p.fragmentShader;
       if (!vs || !fs || mat.isRawShaderMaterial) return;
-      if (/clipping_planes_fragment/.test(fs)) { mat.userData.sectionInjected = 'native'; return; }
+      if (/clipping_planes_fragment/.test(fs)) { mat.userData.sectionInjected = p.__secMode = 'native'; return; }
       if (!RE.test(vs) || !RE.test(fs)) return;
       p.vertexShader = vs.replace(RE, 'varying vec3 vSecW;\nvoid secMainV_()') + VPOST;
       p.fragmentShader = fs.replace(RE, 'varying vec3 vSecW; uniform vec4 uSecP; uniform vec2 uSecS; uniform float uSecM;\nvoid secMainF_()') + FPOST;
       p.uniforms.uSecP = uP; p.uniforms.uSecS = uS; p.uniforms.uSecM = { value: marginOf(mat) + GLSL_EPS };
-      mat.userData.sectionInjected = 'glsl';
+      mat.userData.sectionInjected = p.__secMode = 'glsl';
     }
     function wrap(mat, user) {
       const w = function (p, r) { if (user) user.call(mat, p, r); inject(mat, p); };

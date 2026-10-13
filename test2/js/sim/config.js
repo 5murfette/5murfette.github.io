@@ -248,7 +248,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p112-jumps-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p105-rigid-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
@@ -366,12 +366,13 @@
     // rigid bodies (sim/bodies.js): solver, sleep, impacts on worms
     BODY: { CRUSH_KG: 1500,       // PoC 'Buried!': a falling rock slab this heavy kills a standing worm under it
      
-      MAX: 64, ITERS: 6, BAUMGARTE: 0.25, SLOP: 0.01, MAX_PUSH: 2.0,   // contact solver (projection: 25 %/step of pen - slop, <= 2 m/s)
+      MAX: 64, ITERS: 16, BAUMGARTE: 0.25, SLOP: 0.01, MAX_PUSH: 2.0,   // contact solver (projection: 25 %/step of pen - slop, <= 2 m/s)
       LIN_DAMP: 0.05, ANG_DAMP: 0.3, WATER_DRAG: 1.5, WATER_CD: 0.8,                  // 1/s
+      REST_V: 1.0, REST_LIN: 3, REST_ANG: 5,                          // P105: extra damping (1/s) of a touching chunk below REST_V m/s
       ROLL_DAMP: 2.5,                                                  // 1/s on spin while touching ground (rolling resistance)
       ROLL_MU: 0.25,                                                   // B1: Coulomb rolling resistance coefficient (rock on soil)
       TORSION_R: 0.3,                                                  // B1: contact patch radius / sphere radius (torsional friction)
-      SLEEP: 0.6, SLEEP_D: 0.04, SLEEP_A: 0.05, MAX_AGE: 40,   // moved < 4 cm, turned < 0.05 rad in
+      SLEEP: 0.6, SLEEP_D: 0.04, SLEEP_A: 0.05, SLEEP_D_CH: 0.1, SLEEP_A_CH: 0.12, SETTLE_AGE: 8, SETTLE_V: 0.4, SETTLE_W: 0.4, MAX_AGE: 40,   // moved < 4 cm, turned < 0.05 rad in
                                                                        // SLEEP s while touching -> sleep / re-bake
       HIT_V: 2.5, HIT_COOL: 0.6, HIT_MASS: 400, HIT_PER_KJ: 6, HIT_MAX: 60,   // worm hit: dmg = KE(kJ, mass <= 400) x 6
       BLAST_DV: 25                                                     // max blast velocity change (m/s)
@@ -448,7 +449,7 @@
       // T1/T2: roots hold (plate radius ROOT_R_K x crown >= ROOT_R_MIN, ROOT_D deep; falls below ROOT_HOLD of it in
       // ground); a direct hit within the cut radius of the stem up to STEM_LOW m destroys stump + roots; torn-off
       // leaves pass LEAF_HOLD of their impulse on to the branch
-      ROOT_R_K: 1.5, ROOT_R_MIN: 2.0, ROOT_D: 0.8, TAP_D: 1.5, ROOT_HOLD: 0.1, STEM_LOW: 1.0, LEAF_HOLD: 0.5,
+      ROOT_R_K: 1.5, ROOT_R_MIN: 2.0, ROOT_D: 0.8, TAP_D: 1.5, ROOT_HOLD: 0.1, FOOT_D: 0.3, STEM_LOW: 1.0, LEAF_HOLD: 0.5,
       DRAG_CD: 1.2, JOINT: 0.6, // blast-wind drag coefficient (cylinder); branch junction strength vs clear wood
       CUT_D: 0.7                // a burst within CUT_K W^(1/3) + r cuts wood up to CUT_D sqrt(W) m thick
     },

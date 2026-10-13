@@ -29,7 +29,8 @@
   function grassAt(x, z) {
     if (!surf) return 0;
     if (SS.heroView && SS.heroView.blocked(x, z)) return 0;                  // P101: no grass inside a hero set piece
-    const i = M.clamp(Math.round(x / SS.world.SX * (surfN - 1)), 0, surfN - 1), k = M.clamp(Math.round(z / SS.world.SZ * (surfN - 1)), 0, surfN - 1);
+    const H = SS.world.H;           // P113: one texel per lattice column (x = i * H, z = k * H), also on the 4 m 2D slab (SZ << SX: scaling z by SZ read rows far past the slab = no grass / flowers / ferns in 2D since P68a)
+    const i = M.clamp(Math.round(x / H), 0, surfN - 1), k = M.clamp(Math.round(z / H), 0, surfN - 1);
     return surf[(k * surfN + i) * 4] / 255;
   }
 
@@ -82,7 +83,9 @@
     if (im) { scene.remove(im); im.dispose(); per.delete(ci); }
     if (!c || !c.data || !surf) return;
     if (GR.S) GR.hotMap(GR.S);
-    const G = SS.meshgen.grass(c.data, grassAt, SS.world.SEA, MAXC, Q.grass, hotD ? GR.hotDist : null, HOT_R), n = G.length / 6;
+    let md = c.data, dens = Q.grass;
+    if (SS.slab2d.on()) { md = SS.slab2d.band(md); dens *= SS.slab2d.GRASS_K; }      // P113: only the visible band of the 2D slab grows blades, thicker than the 3D meadow
+    const G = SS.meshgen.grass(md, grassAt, SS.world.SEA, MAXC, dens, hotD ? GR.hotDist : null, HOT_R), n = G.length / 6;
     if (!n) return;
     im = new T.InstancedMesh(geo, mat, n);
     for (let i = 0; i < n; i++) {

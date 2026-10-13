@@ -724,9 +724,10 @@
     return null;
   }
   // the nearest spot where the whole disc is free of the pinning prop (null: none within reach)
-  function pinFree(S, pin, s, y) {
+  function pinFree(S, pin, s, y, radial) {
     const size = pin.kind === 0 ? pin.r : M.max(pin.hs, pin.hy), maxR = M.min(110 * PX, size * 2 + C.WORM_R);
-    for (let r = PX; r <= maxR + 1e-6; r += PX) for (const t of PIN_ANG) {
+    const angs = radial ? [M.atan2(y - pin.y, s - pin.s)].concat(PIN_ANG) : PIN_ANG;       // (radial: away from the prop's centre, so a worm on a boulder's shoulder slides off instead of being lifted straight up and dropped back in)
+    for (let r = PX; r <= maxR + 1e-6; r += PX) for (const t of angs) {
       const ns = s + M.cos(t) * r, ny = y + M.sin(t) * r, wq = P.to_world(S, ns, ny);
       if (ny - C.WORM_R < sim.surface_at(S, wq.x, wq.z) || P.overlap2(S, ns, ny) > 0) continue;
       return { s: ns, y: ny };
@@ -746,7 +747,7 @@
       const o = S.worms[i]; if (o.dead || o.drowning || o.swim || o.rope || sim.ctl(S, o)) continue;      // (a worm under control frees itself: recoverPinned)
       const q = P.to_plane(S, o.pos); if (Math.abs(q.t) > C.WORM_R) continue;
       const pin = pinningBody(S, q.s, o.pos.y); if (!pin) continue;
-      const f = pinFree(S, pin, q.s, o.pos.y);
+      const f = pinFree(S, pin, q.s, o.pos.y, true);
       if (!f) { breakPin(S, pin); continue; }
       const wq = P.to_world(S, f.s, f.y), n = P.nrm(S);
       o.pos.x = wq.x + n.x * q.t; o.pos.y = wq.y; o.pos.z = wq.z + n.z * q.t; o.vel.x = o.vel.y = o.vel.z = 0; o.rest = false; o.slide = false; o.stillT = 0;

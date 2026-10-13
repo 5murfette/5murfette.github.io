@@ -370,10 +370,19 @@
       int i1 = 1; float w1 = -1.0; int i2 = 1; float w2 = -1.0; float sum = 0.0;
       for (int i = 0; i < 12; i++){ float v = Wt[i]; sum += v; if (v > w1){ w2 = w1; i2 = i1; w1 = v; i1 = i; } else if (v > w2){ w2 = v; i2 = i; } }
       float nb = texture(tNoise, vT.xz*0.21 + vT.y*0.09).b, nz = texture(tNoise, vT.xz*0.05 + vT.y*0.02).g;
+      #ifdef S2
+      // P113: the 2D slab's ground (render/slab2d.js): s2w = 0 within 0.3 m of the gameplay plane, 1 from 1 m behind it; s2h = the relief height field (the same one that moves the vertices)
+      float s2d = -dot(vW - uO, uN), s2w = uSlab.x > 0.5 ? smoothstep(0.3, 1.0, s2d) : 0.0, s2h = 0.0;
+      vec2 s2n = vec2(0.5);
+      if (s2w > 0.0) { s2h = s2Field(vW.xz, s2d); s2n = vec2(texture(tNoise, vW.xz * vec2(0.17, 0.5) + vec2(0.3, s2d * 0.5)).g, texture(tNoise, vW.xz * vec2(0.43, 0.9) + vec2(0.7, s2d * 0.9)).r); }
+      #endif
       // symmetric blend: each material's score = its share + its own noise; swapping i1/i2 gives 1 - t, so there is
       // no seam where the ranking flips (adding noise to t itself left a lattice-shaped seam = stair steps)
       vec3 bwn = pow(abs(nW), vec3(2.0)); bwn /= (bwn.x + bwn.y + bwn.z);
       float dsc = (w2 - w1) / (w1 + w2 + 1e-4) + (matNoise(vT, bwn, float(i2)) - matNoise(vT, bwn, float(i1))) * 0.9;
+      #ifdef S2
+      dsc += s2w * (s2n.x - 0.5) * 0.7;                       // material seams wander with the depth: no straight line running into the slab
+      #endif
       float t = w2 > 1e-3 ? smoothstep(-0.22, 0.22, dsc) : 0.0;
       vec4 P1 = uMatP[i1], P2 = uMatP[i2];
       vec3 c1 = triAT(float(i1), vT, bw, P1.x) * uMatTint[i1];
@@ -394,11 +403,18 @@
       float GD = mix(uGlint[i1], uGlint[i2], t);
       // surface state from the simulation (grass cover, dryness, char, burning)
       vec4 sf = texture(tSurf, (vT.xz * 2.0 + 0.5) / uNL);   // 193 columns, texel centres at x = i * 0.5
+      #ifdef S2
+      sf.r *= 1.0 - 0.85 * s2w * (1.0 - smoothstep(0.3, 0.62, s2n.y + 0.28 * s2h));   // grass in patches that break up with the depth, not one stripe along z
+      #endif
       float up = nW.y, sky = (1.0 - smoothstep(0.05, 0.35, vDepth));
       float cover = sf.r * smoothstep(0.55, 0.8, up + (nb - 0.5) * 0.25) * sky;
       vec3 gT = triA(12.0, vT, bw, 0.33), dT = triA(13.0, vT, bw, 0.3);
       vec3 grass = mix(gT * uGrassTint, dT * uDryTint, smoothstep(0.35, 0.8, sf.g + (nz - 0.5) * 0.3));
       col = mix(col, grass, smoothstep(0.15, 0.6, cover));
+      #ifdef S2
+      col *= 1.0 + s2w * (0.34 * s2h + 0.14 * (s2n.x - 0.5));  // crests dry and pale, dips damp and dark
+      col *= mix(vec3(1.0), mix(vec3(0.92, 0.9, 0.85), vec3(1.07, 1.04, 0.97), s2n.y), s2w * 0.9);
+      #endif
       // weather cover (5e): per-column snow / ash depth from the sim (render/weather.js tCover: r / g = depth / 0.4 m)
       // on up-facing, sky-exposed surfaces; full from ~5 cm snow / ~3 cm ash, patchy below; uSnow = a uniform floor
       vec2 cvr = texture(tCover, (vT.xz * 2.0 + 0.5) / uNL).rg * 0.4;
@@ -508,6 +524,18 @@
         conc *= 1.0 - 0.13 * lift - 0.22 * streak * (1.0 - smoothstep(-0.3, 0.6, up));
         float kj = 1.0;
         if (uVolc > 0.5) { bool hz = abs(nW.y) > 0.62; vec2 tq = hz ? vT.xz : (abs(nW.x) > abs(nW.z) ? vT.zy : vT.xy); conc = tuffMasonry(tq, hz, up, kj); }
+        #ifdef S2
+        if (uSlab.x > 0.5 && up > 0.75) {
+          // P113 fort / ruin floors seen from above: cast panels with joints, rain stains, hairline cracks and moss creeping in from the back edge (the deck used to be one flat grey extrusion)
+          float ax = 1.2 - abs(fract(vW.x / 2.4) - 0.5) * 2.4, ad = 0.55 - abs(fract(s2d / 1.1 + 0.37) - 0.5) * 1.1;
+          float joint = 1.0 - smoothstep(0.012, 0.034, min(ax, ad));
+          float st = smoothstep(0.5, 0.85, texture(tNoise, vW.xz * vec2(0.13, 0.35) + 0.2).g), cr = texture(tNoise, vW.xz * vec2(0.55, 0.9) + 0.6).g;
+          float crack = (1.0 - smoothstep(0.0, 0.014, abs(cr - 0.5))) * smoothstep(0.35, 0.6, texture(tNoise, vW.xz * 0.21).b);
+          float mo = smoothstep(0.52, 0.8, texture(tNoise, vW.xz * vec2(0.3, 0.8) + 0.4).r + 0.35 * smoothstep(0.5, 1.3, s2d) - 0.2);
+          conc *= 1.0 - 0.3 * st - 0.4 * joint - 0.5 * crack;
+          conc = mix(conc, vec3(0.13, 0.17, 0.07) * (0.7 + 0.6 * texture(tNoise, vW.xz * 2.3).g), 0.7 * mo * smoothstep(0.3, 1.0, s2d));
+        }
+        #endif
         float kc = smoothstep(0.2, 0.55, xc);
         col = mix(col, conc, kc); rough = mix(rough, uVolc > 0.5 ? 0.97 : 0.9, kc); RA *= 1.0 - kc * 0.7; GD *= 1.0 - kc; emis *= 1.0 - kc;
       }
@@ -539,7 +567,24 @@
       }
       if (uEow > 0.5 && xs + xc > 0.02) eoHull(vT, nW, xs, xc, col, rough, emis, RA, GD);   // P68d: the wrecked hull (render/eowview.js)
       float sv; relief = reliefH(vT, RA, fw, sv); glintD = GD;
+      #ifdef S2
+      if (s2w > 0.0) {
+        // P113 sand: wind ripples across the dune (crests run along the depth, wobbling with a noise), pale crests, darker troughs
+        float sandW = Wt[3] / max(sum, 1e-3);
+        if (sandW > 0.05 && up > 0.6) {
+          float ph = vW.x * 5.2 + 1.7 * texture(tNoise, vW.xz * vec2(0.35, 0.8) + 0.2).g + 0.35 * s2h;
+          float rp = sin(ph * 6.2832) * (1.0 - smoothstep(0.03, 0.1, fw)) * sandW * s2w;
+          relief += 0.011 * rp; col *= 1.0 + 0.07 * rp;
+        }
+        // P113 snow: soft wind-packed drifts (low sastrugi lines) over the lumps
+        float snW = Wt[5] / max(sum, 1e-3);
+        if (snW > 0.05) { float sp = texture(tNoise, vW.xz * vec2(0.9, 1.9) + 0.4).b - 0.5; relief += 0.02 * sp * snW * s2w * (1.0 - smoothstep(0.05, 0.2, fw)); }
+      }
+      #endif
       rough = min(1.0, sqrt(rough * rough + sv));
+      #ifdef S2
+      if (uS2D > 0.5) col = vec3(s2d / 1.5, fract(s2d * 4.0), 0.0);
+      #endif
       return col;
     }
   `;
@@ -573,10 +618,14 @@
       return 1.0 - 0.72 * clamp(a / 4.0, 0.0, 1.0);
     }
   `;
-  function patchVertex(sh, body) {
+  function patchVertex(sh, body, slab) {
     sh.vertexShader = 'attribute float depth; attribute vec4 mA; attribute vec4 mB; attribute vec4 mC; attribute vec4 mD;\nvarying vec3 vW; varying vec3 vWN; varying float vDepth; varying vec4 vMA; varying vec4 vMB; varying vec4 vMC; varying vec4 vMD;\nvarying vec3 vT; varying vec3 vTN;\n' +
       (body ? 'attribute vec3 tpos;\n' : '') +
-      sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+      (slab ? 'uniform vec3 uO, uN; uniform highp sampler2D tLavaS; uniform float uLavaOn;\n' + SS.slab2d.GLSL + SS.slab2d.VERT + '\n' : '') +
+      sh.vertexShader.replace('#include <beginnormal_vertex>', slab ? `#include <beginnormal_vertex>
+        float s2h = 0.0;
+        if (uSlab.x > 0.5) s2Vert((modelMatrix * vec4(position, 1.0)).xyz, mD, objectNormal, s2h);` : '#include <beginnormal_vertex>').replace('#include <begin_vertex>', `#include <begin_vertex>
+        ${slab ? 'transformed.y += s2h;' : ''}
         vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vWN = normalize(mat3(modelMatrix) * objectNormal); vDepth = depth; vMA = mA; vMB = mB; vMC = mC; vMD = mD;
         ${body ? 'vT = tpos; vTN = normalize(objectNormal);' : 'vT = vW; vTN = vWN;'}`);
   }
@@ -601,11 +650,16 @@
       Object.assign(sh.uniforms, U, EOWU);
       if (!envOn && mode !== 2) sh.fragmentShader = '#undef USE_ENVMAP\n' + sh.fragmentShader;      // P101: dry ground has nothing to reflect: the env sampler is compiled out of this variant
       if (mode === 0 && !body) Object.assign(sh.uniforms, { tVol: { value: volTex }, uVolSize: { value: VOLSIZE } });
-      patchVertex(sh, body);
+      const slab = mode === 0 && !body;                 // P113: the 2D slab's ground relief (render/slab2d.js)
+      if (slab) Object.assign(sh.uniforms, SS.slab2d.U);
+      patchVertex(sh, body, slab);
       // slice zero (t = 0) is the collision section: the slab is everything from -uBack up to it, nothing in front
       // D6: a dry world's lattice is drawn only inside the disc uLatR (x, z, r; r 0 = off): the far grid beyond it
       // (render/dunes.js); rock pieces (body) are never clipped
-      const clip = (mode === 0 ? 'if (tD < -uBack) discard;' : mode === 3 ? 'if (tD < 0.0) discard;' : 'if (tD > -uBack) discard;') +
+      // P105: a falling piece is never cut at the back (thin slice view): its far half was clipped away and the piece showed as a
+      // hollow shell; the whole piece is hidden by its centre instead (render/bodies.js). P113: the 2D slab clips at its ragged back edge.
+      const clip = (mode === 0 ? (body ? '' : slab ? 'if (tD < -(uSlab.x > 0.5 ? s2Edge(vW.x) : uBack)) discard;' : 'if (tD < -uBack) discard;')
+         : mode === 3 ? 'if (tD < 0.0) discard;' : 'if (tD > -uBack) discard;') +
         (body ? '' : ' if (uLatR.z > 0.0 && distance(vW.xz, uLatR.xy) > uLatR.z) discard;');
       if (mode === 2) {
         /* P38-R4: the far context's depth pre-pass writes depth only: the clip tests and nothing else (it ran the full terrain
@@ -613,7 +667,7 @@
         sh.fragmentShader = 'uniform vec3 uO, uN, uLatR; uniform float uBack; varying vec3 vW;\nvoid main() {\n float tD = dot(vW - uO, uN);\n ' + clip + '\n gl_FragColor = vec4(0.0);\n}';
         return;
       }
-      sh.fragmentShader = COMMON + (mode === 0 && !body ? SURF_AO : '') + sh.fragmentShader
+      sh.fragmentShader = (slab ? '#define S2 1\n' + SS.slab2d.GLSL : '') + COMMON + (mode === 0 && !body ? SURF_AO : '') + sh.fragmentShader
         .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
           float tD = dot(vW - uO, uN);
           ${clip}`)
@@ -659,7 +713,7 @@
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           totalEmissiveRadiance += tEmis + gCaveEm;`);
     };
-    m.customProgramCacheKey = () => 'terrain' + mode + (body ? 'b' : '') + (U.uDetail.value > 0.5 ? 'd' : '') + (envOn || mode === 2 ? '' : 'n');
+    m.customProgramCacheKey = () => 'terrain2' + mode + (body ? 'b' : '') + (U.uDetail.value > 0.5 ? 'd' : '') + (envOn || mode === 2 ? '' : 'n');
     return m;
   }
   /* shadow pass for the slab: same clip */
@@ -667,12 +721,14 @@
     const m = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking, side: T.DoubleSide });
     m.userData.sectionMargin = 0;
     m.onBeforeCompile = sh => {
-      Object.assign(sh.uniforms, { uO: U.uO, uN: U.uN, uBack: U.uBack, uLatR: U.uLatR });
-      sh.vertexShader = 'varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-      sh.fragmentShader = 'uniform vec3 uO, uN, uLatR; uniform float uBack; varying vec3 vW;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n float tD = dot(vW - uO, uN); if (tD < -uBack) discard;' +
+      Object.assign(sh.uniforms, { uO: U.uO, uN: U.uN, uBack: U.uBack, uLatR: U.uLatR, tLavaS: U.tLavaS, uLavaOn: U.uLavaOn }, SS.slab2d.U);
+      sh.vertexShader = 'attribute vec4 mD; uniform vec3 uO, uN; uniform highp sampler2D tLavaS; uniform float uLavaOn;\n' + SS.slab2d.GLSL + SS.slab2d.VERT + 'varying vec3 vW;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        if (uSlab.x > 0.5) { float s2h = 0.0; vec3 s2n = normal; s2Vert((modelMatrix * vec4(position, 1.0)).xyz, mD, s2n, s2h); transformed.y += s2h; }
+        vW = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
+      sh.fragmentShader = SS.slab2d.GLSL + 'uniform vec3 uO, uN, uLatR; uniform float uBack; varying vec3 vW;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n float tD = dot(vW - uO, uN); if (tD < -(uSlab.x > 0.5 ? s2Edge(vW.x) : uBack)) discard;' +
         ' if (uLatR.z > 0.0 && distance(vW.xz, uLatR.xy) > uLatR.z) discard;');
     };
-    m.customProgramCacheKey = () => 'slabdepth2';
+    m.customProgramCacheKey = () => 'slabdepth3';
     return m;
   }
 
@@ -1111,6 +1167,7 @@
     volTex.format = T.RGFormat; volTex.type = T.HalfFloatType; volTex.unpackAlignment = 1;
     volTex.minFilter = volTex.magFilter = T.LinearFilter; volTex.wrapS = volTex.wrapT = volTex.wrapR = T.ClampToEdgeWrapping;
     volTex.generateMipmaps = false; volTex.needsUpdate = true;
+    SS.slab2d.init(tx.noise);
     slabMat = terrainMaterial(0); ctxFar = terrainMaterial(1); ctxPre = terrainMaterial(2); ctxNear = terrainMaterial(3);
     bodyMats = { slab: terrainMaterial(0, true), far: terrainMaterial(1, true), pre: terrainMaterial(2, true), near: terrainMaterial(3, true) };
     slabDepth = slabDepthMaterial();
@@ -1169,6 +1226,7 @@
   }
 
   /* ---------- chunks ---------- */
+  const SUBDIV = 2;                                      // P113: 4^2 = 16 triangles per source triangle in the 2D band (0.5 m cells -> 0.125 m)
   function buildChunk(ci) {
     const W = SS.world, cx = ci % W.CX, cy = Math.floor(ci / W.CX) % W.CY, cz = Math.floor(ci / (W.CX * W.CY));
     const m = SS.meshgen.chunk(cx, cy, cz);
@@ -1178,14 +1236,17 @@
       return { ver: W.chunkVer[ci], empty: true };
     }
     const g = new T.BufferGeometry();
-    g.setAttribute('position', new T.BufferAttribute(m.pos, 3));
-    g.setAttribute('normal', new T.BufferAttribute(m.nrm, 3));
-    g.setAttribute('mA', new T.BufferAttribute(m.mA, 4, true));
-    g.setAttribute('mB', new T.BufferAttribute(m.mB, 4, true));
-    g.setAttribute('mC', new T.BufferAttribute(m.mC, 4, true));
-    g.setAttribute('mD', new T.BufferAttribute(m.mD || new Uint8Array(m.mC.length), 4, true));
-    g.setAttribute('depth', new T.BufferAttribute(m.depth, 1));
-    g.setIndex(new T.BufferAttribute(m.idx, 1));
+    /* P113: in a 2D match the slab's visible band (the 1.5 m behind the plane) is subdivided so the ground relief (render/slab2d.js) has vertices to move;
+     * c.data stays the raw chunk (grass / clutter / picking place on it) */
+    const gm = SS.slab2d.on() ? SS.slab2d.subdivide(m, SS.world.MZ - 2.1, SS.world.MZ + 0.3, SUBDIV) : m;
+    g.setAttribute('position', new T.BufferAttribute(gm.pos, 3));
+    g.setAttribute('normal', new T.BufferAttribute(gm.nrm, 3));
+    g.setAttribute('mA', new T.BufferAttribute(gm.mA, 4, true));
+    g.setAttribute('mB', new T.BufferAttribute(gm.mB, 4, true));
+    g.setAttribute('mC', new T.BufferAttribute(gm.mC, 4, true));
+    g.setAttribute('mD', new T.BufferAttribute(gm.mD || new Uint8Array(gm.mC.length), 4, true));
+    g.setAttribute('depth', new T.BufferAttribute(gm.depth, 1));
+    g.setIndex(new T.BufferAttribute(gm.idx, 1));
     g.computeBoundingSphere(); g.computeBoundingBox();
     if (!c) {
       const slab = new T.Mesh(g, slabMat); slab.castShadow = true; slab.receiveShadow = true; slab.customDepthMaterial = slabDepth;
@@ -1307,6 +1368,7 @@
   /* per frame visual uniforms */
   TR.frame = function (S, view, ctxA, inspect) {
     U.uTime.value = view.time;
+    SS.slab2d.update(S, U.uBack.value);
     U.uAlpha.value = ctxA;
     { const wet = U.uWet.value, want = S.biome === 'volcanic' || S.eow || wet > 0.01;
       if (want) { envOff = 0; setEnv(true); } else if (envOn && ++envOff > 120) setEnv(false); }
@@ -1317,7 +1379,7 @@
       for (let i = 0; i < n; i++) { const p = pl[i]; U.uPlA.value[i].set(p.cx, p.cy, p.cz, p.hl); U.uPlB.value[i].set(p.ux, p.uy, p.uz, p.ht); U.uPlC.value[i].set(p.nx, 0, p.nz, p.hd); }
       U.uNPl.value = n; }
     // far context only exists beyond the slab; near context (in front of slice zero) only while inspecting
-    const far = ctxA > 0.004 && U.uBack.value < 200;
+    const far = ctxA > 0.004 && U.uBack.value < 200 && !SS.slab2d.on();      // P113: a 2D slab has 0.5 m of lattice behind the visible band: no far context (it showed as a floating ribbon behind the ragged back edge)
     for (const c of chunks) if (c) { c.pre.visible = c.far.visible = far; c.near.visible = inspect > 0.05 && Q.nearCtx; }
   };
   TR.stats = () => ({ chunks: chunks.filter(Boolean).length, tris: chunks.reduce((s, c) => s + (c ? c.tris : 0), 0), slabChunks: chunks.filter(c => c && c.slab.visible).length });

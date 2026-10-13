@@ -42,7 +42,7 @@
       prop: '', wreck: false, burn: -1, burnT: 0, det: -1, armed: false, disarmed: false, team: -1, planted: -99, revealed: false, armAt: 0, dropped: false, fuseSet: null,
       vol: 0, metal: false, paint: 0, shapeId: 0, thrown: 0, held: false,
       // contact / sleep / fluids (bodies.js step, ice.js, water, lava)
-      acidT: 0, restP: null, restQ: null, touchAge: 0, wp: null, wpS: 0, wet: false, inLava: 0, floatT: 0, iceLock: false, seaY: -99, splashT: -9
+      ai: -1, acidT: 0, restP: null, restQ: null, touchAge: 0, wp: null, wpS: 0, wet: false, inLava: 0, floatT: 0, iceLock: false, seaY: -99, splashT: -9
     };
     b.acc = new Float32Array(b.np * 2);
     S.bodies.push(b);
@@ -125,16 +125,114 @@
   function wake(b) { b.asleep = false; b.sleepT = -1; }
 
   /* ---------- simulation ---------- */
+  /* One solver for the whole step (P105): forces -> contact generation for every awake body (terrain AND body pairs) ->
+   * sequential impulses over the whole contact list -> position projection -> integration -> sleep. Before, each body was
+   * solved against the terrain alone and the pairs were solved afterwards: two resting pieces pushed each other into the
+   * ground and the ground pushed them back apart every step (the "wiggle"). A contact has a body P that receives +J along the
+   * normal and an optional body Q (null = terrain) that receives -J. A static / sleeping partner has pd / qd = false.
+   * 2D (world.flat): the integrator is a planar rigid body: linear z and the x / y spins are locked inside the solver (inverse
+   * inertia, impulses, contact normals), so nothing has to be snapped back to the plane afterwards (dim2d.constrain is a net).
+   * C layout: struct Contact { Body *P, *Q; bool pd, qd; vec3 rP, rQ, n, t1, t2; f32 pen, vn0, jn, j1, j2, jw, r1, r2, rs, mu, e; i32 pair, ai; }. */
   const wv = { x: 0, y: 0, z: 0 };                 // water velocity scratch
   const lvb = { x: 0, y: 0, z: 0 };                // lava velocity scratch
-  // contact scratch: arm r, normal n, fixed tangent basis t1 / t2 (B1), penetration, approach speed, accumulated
-  // normal / tangent (2D) / torsional impulses, contact sphere radius
+  const CT_MAX = 3072;
   const CT = [];
-  for (let i = 0; i < 64; i++) CT.push({ rx: 0, ry: 0, rz: 0, nx: 0, ny: 0, nz: 0, t1x: 0, t1y: 0, t1z: 0, t2x: 0, t2y: 0, t2z: 0, pen: 0, vn0: 0, jn: 0, j1: 0, j2: 0, jw: 0, r1: 0, r2: 0, rs: 0 });
-  function stepBody(S, b, dt) {
+  let nCT = 0, LOCK = false;
+  function ct_new() {
+    if (nCT >= CT_MAX) return null;
+    if (nCT >= CT.length) CT.push({ P: null, Q: null, pd: false, qd: false, ai: -1, pair: -1, prx: 0, pry: 0, prz: 0, qrx: 0, qry: 0, qrz: 0, nx: 0, ny: 0, nz: 0, t1x: 0, t1y: 0, t1z: 0, t2x: 0, t2y: 0, t2z: 0, pen: 0, vn0: 0, jn: 0, j1: 0, j2: 0, jw: 0, r1: 0, r2: 0, rs: 0, mu: 0.6, e: 0 });
+    return CT[nCT++];
+  }
+  // fixed tangent basis t1 ⟂ n, t2 = n × t1 (2D: t1 in the plane, t2 = z)
+  function tangents(c) {
+    if (LOCK) { c.t1x = -c.ny; c.t1y = c.nx; c.t1z = 0; c.t2x = 0; c.t2y = 0; c.t2z = 1; return; }
+    const ax = Math.abs(c.nx) < 0.6 ? 1 : 0, ay = ax ? 0 : 1;
+    let t1x = ay * c.nz, t1y = -ax * c.nz, t1z = ax * c.ny - ay * c.nx; const tl = M.nz(M.len3(t1x, t1y, t1z), 1);
+    t1x /= tl; t1y /= tl; t1z /= tl;
+    c.t1x = t1x; c.t1y = t1y; c.t1z = t1z;
+    c.t2x = c.ny * t1z - c.nz * t1y; c.t2y = c.nz * t1x - c.nx * t1z; c.t2z = c.nx * t1y - c.ny * t1x;
+  }
+  // relative velocity of P over Q at the contact -> tq
+  function relv(c) {
+    const p = c.P, q = c.Q;
+    let x = p.vel.x + p.w.y * c.prz - p.w.z * c.pry, y = p.vel.y + p.w.z * c.prx - p.w.x * c.prz, z = p.vel.z + p.w.x * c.pry - p.w.y * c.prx;
+    if (q) { x -= q.vel.x + q.w.y * c.qrz - q.w.z * c.qry; y -= q.vel.y + q.w.z * c.qrx - q.w.x * c.qrz; z -= q.vel.z + q.w.x * c.qry - q.w.y * c.qrx; }
+    tq.x = x; tq.y = y; tq.z = z;
+  }
+  function kC(c, dx, dy, dz) { return (c.pd ? kEff(c.P, c.prx, c.pry, c.prz, dx, dy, dz) : 0) + (c.Q && c.qd ? kEff(c.Q, c.qrx, c.qry, c.qrz, dx, dy, dz) : 0); }
+  function imp(c, jx, jy, jz) {
+    if (c.pd) applyImpulse(c.P, c.prx, c.pry, c.prz, jx, jy, jz);
+    if (c.Q && c.qd) applyImpulse(c.Q, c.qrx, c.qry, c.qrz, -jx, -jy, -jz);
+  }
+  function spin(c, ax, ay, az, d) {                  // angular impulse d about the axis: P +, Q -
+    if (c.pd) { invI(c.P, ax * d, ay * d, az * d, tr); c.P.w.x += tr.x; c.P.w.y += tr.y; c.P.w.z += tr.z; }
+    if (c.Q && c.qd) { invI(c.Q, ax * d, ay * d, az * d, tr); c.Q.w.x -= tr.x; c.Q.w.y -= tr.y; c.Q.w.z -= tr.z; }
+  }
+  function kSpin(c, ax, ay, az) {
+    let k = 0;
+    if (c.pd) { invI(c.P, ax, ay, az, tr); k += tr.x * ax + tr.y * ay + tr.z * az; }
+    if (c.Q && c.qd) { invI(c.Q, ax, ay, az, tr); k += tr.x * ax + tr.y * ay + tr.z * az; }
+    return k;
+  }
+  function wAbout(c, ax, ay, az) {
+    let s = c.P.w.x * ax + c.P.w.y * ay + c.P.w.z * az;
+    if (c.Q) s -= c.Q.w.x * ax + c.Q.w.y * ay + c.Q.w.z * az;
+    return s;
+  }
+  function solve_contact(c) {
+    relv(c);
+    const vn = tq.x * c.nx + tq.y * c.ny + tq.z * c.nz, kn = kC(c, c.nx, c.ny, c.nz);
+    if (kn <= 0) return;
+    const target = c.vn0 < -1 ? -c.e * c.vn0 : 0;     // no velocity bias: penetration is projected out separately
+    let jn = (target - vn) / kn;
+    const acc = M.max(0, c.jn + jn); jn = acc - c.jn; c.jn = acc;
+    imp(c, jn * c.nx, jn * c.ny, jn * c.nz);
+    // friction (B1): a 2D impulse in the fixed tangent basis, the ACCUMULATED vector clamped to the cone |jt| <= mu jn
+    relv(c);
+    const v1 = tq.x * c.t1x + tq.y * c.t1y + tq.z * c.t1z, v2 = tq.x * c.t2x + tq.y * c.t2y + tq.z * c.t2z;
+    const k1 = kC(c, c.t1x, c.t1y, c.t1z), k2 = LOCK ? 0 : kC(c, c.t2x, c.t2y, c.t2z);
+    let a1 = k1 > 0 ? c.j1 - v1 / k1 : 0, a2 = k2 > 0 ? c.j2 - v2 / k2 : 0;
+    const lim = c.mu * c.jn, al = M.len2(a1, a2);
+    if (al > lim) { a1 *= lim / al; a2 *= lim / al; }
+    const d1 = a1 - c.j1, d2 = a2 - c.j2; c.j1 = a1; c.j2 = a2;
+    imp(c, d1 * c.t1x + d2 * c.t2x, d1 * c.t1y + d2 * c.t2y, d1 * c.t1z + d2 * c.t2z);
+    if (c.rs > 0) {
+      // torsional friction: spin about the normal through a contact patch of radius ~TORSION_R x the sphere radius
+      const kw = kSpin(c, c.nx, c.ny, c.nz);
+      if (kw > 1e-9) {
+        const limw = c.mu * c.jn * K.TORSION_R * c.rs;
+        const aw = M.clamp(c.jw - wAbout(c, c.nx, c.ny, c.nz) / kw, -limw, limw), dw = aw - c.jw; c.jw = aw;
+        spin(c, c.nx, c.ny, c.nz, dw);
+      }
+      // rolling resistance (Coulomb, soil deformation under the load) about t1 / t2
+      const kr1 = kSpin(c, c.t1x, c.t1y, c.t1z), kr2 = kSpin(c, c.t2x, c.t2y, c.t2z), limr = K.ROLL_MU * c.jn * c.rs;
+      if (kr1 > 1e-9 && kr2 > 1e-9) {
+        let r1 = c.r1 - wAbout(c, c.t1x, c.t1y, c.t1z) / kr1, r2 = c.r2 - wAbout(c, c.t2x, c.t2y, c.t2z) / kr2; const rl = M.len2(r1, r2);
+        if (rl > limr) { r1 *= limr / rl; r2 *= limr / rl; }
+        const e1 = r1 - c.r1, e2 = r2 - c.r2; c.r1 = r1; c.r2 = r2;
+        spin(c, c.t1x, c.t1y, c.t1z, e1); spin(c, c.t2x, c.t2y, c.t2z, e2);
+      } else if (kr2 > 1e-9) {                      // 2D: the only spin left is about z
+        const r2 = M.clamp(c.r2 - wAbout(c, c.t2x, c.t2y, c.t2z) / kr2, -limr, limr), e2 = r2 - c.r2; c.r2 = r2;
+        spin(c, c.t2x, c.t2y, c.t2z, e2);
+      }
+    }
+  }
+
+  // per-step scratch of the awake bodies (index = position in the act list)
+  const ACT = [], ACT_MAX = 128;
+  const aSub = new Float64Array(ACT_MAX), aSubL = new Float64Array(ACT_MAX), aWx = new Float64Array(ACT_MAX), aWz = new Float64Array(ACT_MAX), aLx = new Float64Array(ACT_MAX), aLz = new Float64Array(ACT_MAX);
+  const aBlk = new Uint8Array(ACT_MAX), aNc = new Int32Array(ACT_MAX), aN = new Int32Array(ACT_MAX), aDx = new Float64Array(ACT_MAX), aDy = new Float64Array(ACT_MAX), aDz = new Float64Array(ACT_MAX);
+
+  /* forces, fluids, damping and terrain contacts of one awake body; returns false when the body is frozen (sea ice) */
+  function prep(S, b, dt, ai) {
     const w = W(), G = C.G;
     b.age += dt;
-    if (b.iceLock) { b.vel.x = b.vel.y = b.vel.z = 0; b.w.x = b.w.y = b.w.z = 0; b.floatT = (b.floatT || 0) + dt; return 0; }   // Step I: frozen in
+    if (b.iceLock) { b.vel.x = b.vel.y = b.vel.z = 0; b.w.x = b.w.y = b.w.z = 0; b.floatT = (b.floatT || 0) + dt; return false; }   // Step I: frozen in
+    if (LOCK) {                                       // planar rigid body: z / x-y spin do not exist, the orientation is the in-plane angle
+      b.vel.z = 0; b.w.x = 0; b.w.y = 0;
+      const l = M.len2(b.q.z, b.q.w);
+      if (l > 1e-9) { b.q.x = 0; b.q.y = 0; b.q.z /= l; b.q.w /= l; } else { b.q.x = 0; b.q.y = 0; b.q.z = 0; b.q.w = 1; }
+    }
     // gravity, water (buoyancy of the submerged share + drag), air damping
     if (S.eow) SS.eow.body_g(S, b, dt); else b.vel.y -= G * dt;     // P68c: the summed chunk fields
     const sea = SS.sim.surface_at ? SS.sim.surface_at(S, b.pos.x, b.pos.z) : w.SEA;
@@ -182,11 +280,19 @@
       }
     }
     b.inLava = subL;
-    const la = M.exp(-K.LIN_DAMP * dt), aa = M.exp(-K.ANG_DAMP * dt);
+    let ld = K.LIN_DAMP, ad = K.ANG_DAMP;
+    if (b.kind === 'chunk' && b.age - b.touchAge < 0.1) {          // P105: a piece that is touching and nearly still loses its last motion fast (rubble does not rock for seconds)
+      const sl = M.clamp(1 - M.len3(b.vel.x, b.vel.y, b.vel.z) / K.REST_V, 0, 1);
+      ld += K.REST_LIN * sl; ad += K.REST_ANG * sl;
+    }
+    const la = M.exp(-ld * dt), aa = M.exp(-ad * dt);
     b.vel.x *= la; b.vel.y *= la; b.vel.z *= la; b.w.x *= aa; b.w.y *= aa; b.w.z *= aa;
-    // contacts
+    if (LOCK) { b.vel.z = 0; b.w.x = 0; b.w.y = 0; }
+    aSub[ai] = sub; aSubL[ai] = subL; aWx[ai] = wv.x; aWz[ai] = wv.z; aLx[ai] = lvb.x; aLz[ai] = lvb.z;
+    // terrain contacts
+    const mat = w.mat_at(b.pos.x, b.pos.y - b.rb, b.pos.z), mu = Math.sqrt(b.mu * ((C.MATS[mat] && C.MATS[mat].mu) || 0.6));
     let nc = 0;
-    for (let i = 0; i < b.np && nc < CT.length; i++) {
+    for (let i = 0; i < b.np; i++) {
       M.q_rot(b.q, b.pts[i * 4], b.pts[i * 4 + 1], b.pts[i * 4 + 2], tp);
       const px = b.pos.x + tp.x, py = b.pos.y + tp.y, pz = b.pos.z + tp.z;
       let pen = contact(px, py, pz, b.pts[i * 4 + 3], tn);
@@ -200,80 +306,47 @@
         }
       }
       if (pen <= 0) continue;
-      const c = CT[nc++];
-      c.rx = tp.x; c.ry = tp.y; c.rz = tp.z; c.nx = tn.x; c.ny = tn.y; c.nz = tn.z; c.pen = pen; c.jn = 0; c.j1 = 0; c.j2 = 0; c.jw = 0; c.r1 = 0; c.r2 = 0;
-      c.rs = b.pts[i * 4 + 3];
-      // tangent basis: t1 ⟂ n (from the axis least aligned with n), t2 = n × t1
-      let ax = Math.abs(tn.x) < 0.6 ? 1 : 0, ay = ax ? 0 : 1;
-      let t1x = ay * tn.z, t1y = -ax * tn.z, t1z = ax * tn.y - ay * tn.x; const tl = M.nz(M.len3(t1x, t1y, t1z), 1);
-      t1x /= tl; t1y /= tl; t1z /= tl;
-      c.t1x = t1x; c.t1y = t1y; c.t1z = t1z;
-      c.t2x = tn.y * t1z - tn.z * t1y; c.t2y = tn.z * t1x - tn.x * t1z; c.t2z = tn.x * t1y - tn.y * t1x;
-      c.vn0 = (b.vel.x + b.w.y * c.rz - b.w.z * c.ry) * c.nx + (b.vel.y + b.w.z * c.rx - b.w.x * c.rz) * c.ny + (b.vel.z + b.w.x * c.ry - b.w.y * c.rx) * c.nz;
+      if (LOCK) { const l = M.len2(tn.x, tn.y); if (l < 0.2) continue; tn.x /= l; tn.y /= l; tn.z = 0; }   // 2D: in-plane normal (the slab is z-invariant)
+      const c = ct_new(); if (!c) break;
+      c.P = b; c.Q = null; c.pd = true; c.qd = false; c.ai = ai; c.pair = -1;
+      c.prx = tp.x; c.pry = tp.y; c.prz = LOCK ? 0 : tp.z; c.nx = tn.x; c.ny = tn.y; c.nz = tn.z; c.pen = pen; c.jn = 0; c.j1 = 0; c.j2 = 0; c.jw = 0; c.r1 = 0; c.r2 = 0;
+      c.rs = b.pts[i * 4 + 3]; c.mu = mu; c.e = b.e;
+      tangents(c);
+      relv(c); c.vn0 = tq.x * c.nx + tq.y * c.ny + tq.z * c.nz;
+      nc++;
     }
-    if (nc) {
-      const mat = w.mat_at(b.pos.x, b.pos.y - b.rb, b.pos.z), mu = Math.sqrt(b.mu * ((C.MATS[mat] && C.MATS[mat].mu) || 0.6));
-      for (let it = 0; it < K.ITERS; it++) for (let q = 0; q < nc; q++) {
-        const c = CT[q];
-        let vx = b.vel.x + b.w.y * c.rz - b.w.z * c.ry, vy = b.vel.y + b.w.z * c.rx - b.w.x * c.rz, vz = b.vel.z + b.w.x * c.ry - b.w.y * c.rx;
-        const vn = vx * c.nx + vy * c.ny + vz * c.nz;
-        const target = c.vn0 < -1 ? -b.e * c.vn0 : 0;     // no velocity bias: penetration is projected out below
-        let jn = (target - vn) / kEff(b, c.rx, c.ry, c.rz, c.nx, c.ny, c.nz);
-        const acc = M.max(0, c.jn + jn); jn = acc - c.jn; c.jn = acc;
-        applyImpulse(b, c.rx, c.ry, c.rz, jn * c.nx, jn * c.ny, jn * c.nz);
-        // friction (B1): a 2D impulse in the fixed tangent basis, the ACCUMULATED vector clamped to the cone |jt| <= mu jn.
-        // (Accumulating one scalar along a direction re-taken every iteration let the summed impulse leave the cone and
-        // overshoot: a resting body on a slope kept being kicked.)
-        vx = b.vel.x + b.w.y * c.rz - b.w.z * c.ry; vy = b.vel.y + b.w.z * c.rx - b.w.x * c.rz; vz = b.vel.z + b.w.x * c.ry - b.w.y * c.rx;
-        const v1 = vx * c.t1x + vy * c.t1y + vz * c.t1z, v2 = vx * c.t2x + vy * c.t2y + vz * c.t2z;
-        let a1 = c.j1 - v1 / kEff(b, c.rx, c.ry, c.rz, c.t1x, c.t1y, c.t1z), a2 = c.j2 - v2 / kEff(b, c.rx, c.ry, c.rz, c.t2x, c.t2y, c.t2z);
-        const lim = mu * c.jn, al = M.len2(a1, a2);
-        if (al > lim) { a1 *= lim / al; a2 *= lim / al; }
-        const d1 = a1 - c.j1, d2 = a2 - c.j2; c.j1 = a1; c.j2 = a2;
-        applyImpulse(b, c.rx, c.ry, c.rz, d1 * c.t1x + d2 * c.t2x, d1 * c.t1y + d2 * c.t2y, d1 * c.t1z + d2 * c.t2z);
-        // torsional friction: spin about the normal through a contact patch of radius ~TORSION_R x the sphere radius
-        // (a point contact cannot resist it, so a body could yaw in place forever)
-        invI(b, c.nx, c.ny, c.nz, tr);
-        const kw = tr.x * c.nx + tr.y * c.ny + tr.z * c.nz;
-        if (kw > 1e-9) {
-          const wn = b.w.x * c.nx + b.w.y * c.ny + b.w.z * c.nz, limw = mu * c.jn * K.TORSION_R * c.rs;
-          const aw = M.clamp(c.jw - wn / kw, -limw, limw), dw = aw - c.jw; c.jw = aw;
-          invI(b, c.nx * dw, c.ny * dw, c.nz * dw, tr); b.w.x += tr.x; b.w.y += tr.y; b.w.z += tr.z;
-          // rolling resistance (Coulomb, soil deformation under the load): the rolling spin (about t1 / t2) is opposed by
-          // at most ROLL_MU jn rs, so a round body only rolls where the slope's tan exceeds ~ROLL_MU
-          invI(b, c.t1x, c.t1y, c.t1z, tr); const k1 = tr.x * c.t1x + tr.y * c.t1y + tr.z * c.t1z;
-          invI(b, c.t2x, c.t2y, c.t2z, tr); const k2 = tr.x * c.t2x + tr.y * c.t2y + tr.z * c.t2z;
-          const w1 = b.w.x * c.t1x + b.w.y * c.t1y + b.w.z * c.t1z, w2 = b.w.x * c.t2x + b.w.y * c.t2y + b.w.z * c.t2z;
-          let r1 = c.r1 - w1 / k1, r2 = c.r2 - w2 / k2; const limr = K.ROLL_MU * c.jn * c.rs, rl = M.len2(r1, r2);
-          if (rl > limr) { r1 *= limr / rl; r2 *= limr / rl; }
-          const e1 = r1 - c.r1, e2 = r2 - c.r2; c.r1 = r1; c.r2 = r2;
-          invI(b, e1 * c.t1x + e2 * c.t2x, e1 * c.t1y + e2 * c.t2y, e1 * c.t1z + e2 * c.t2z, tr); b.w.x += tr.x; b.w.y += tr.y; b.w.z += tr.z;
-        }
-      }
-    }
+    aNc[ai] = nc;
+    return true;
+  }
+
+  /* after the solver: position projection, rolling damping, integration, sleep timer. Returns the terrain contact count. */
+  function finish(S, b, dt, ai) {
+    const nc = aNc[ai], sub = aSub[ai], subL = aSubL[ai];
     // position projection (instead of a Baumgarte velocity bias, which pumped energy into resting bodies through the
     // noisy penetration estimate): move out by BAUMGARTE x the mean excess penetration along the contact normals
-    if (nc) {
-      let dx = 0, dy = 0, dz = 0, n = 0;
-      for (let q = 0; q < nc; q++) { const c = CT[q], e = c.pen - K.SLOP; if (e > 0) { dx += c.nx * e; dy += c.ny * e; dz += c.nz * e; n++; } }
-      if (n) { const k = K.BAUMGARTE / n, l = M.len3(dx, dy, dz) * k, cap = l > K.MAX_PUSH * dt ? K.MAX_PUSH * dt / l : 1; b.pos.x += dx * k * cap; b.pos.y += dy * k * cap; b.pos.z += dz * k * cap; }
-      b.touchAge = b.age;
+    if (aN[ai]) {
+      const k = K.BAUMGARTE / aN[ai], l = M.len3(aDx[ai], aDy[ai], aDz[ai]) * k, cap = l > K.MAX_PUSH * dt ? K.MAX_PUSH * dt / l : 1;
+      b.pos.x += aDx[ai] * k * cap; b.pos.y += aDy[ai] * k * cap; if (!LOCK) b.pos.z += aDz[ai] * k * cap;
     }
+    if (nc) b.touchAge = b.age;
     // rolling resistance (soil deformation): spin decays while the body touches ground; also kills contact rocking
     if (nc) { const rd = M.exp(-K.ROLL_DAMP * dt); b.w.x *= rd; b.w.y *= rd; b.w.z *= rd; }
     // afloat: in the water, touching nothing, riding with the flow and not bobbing hard -> counts as settled
-    if ((sub > 0 || subL > 0) && !nc && M.len2(b.vel.x - (subL > 0 ? lvb.x : wv.x), b.vel.z - (subL > 0 ? lvb.z : wv.z)) < 0.4 && Math.abs(b.vel.y) < 0.5) b.floatT = (b.floatT || 0) + dt;
+    if ((sub > 0 || subL > 0) && !nc && M.len2(b.vel.x - (subL > 0 ? aLx[ai] : aWx[ai]), b.vel.z - (subL > 0 ? aLz[ai] : aWz[ai])) < 0.4 && Math.abs(b.vel.y) < 0.5) b.floatT = (b.floatT || 0) + dt;
     else b.floatT = 0;
     // integrate
-    b.pos.x += b.vel.x * dt; b.pos.y += b.vel.y * dt; b.pos.z += b.vel.z * dt;
+    b.pos.x += b.vel.x * dt; b.pos.y += b.vel.y * dt; if (!LOCK) b.pos.z += b.vel.z * dt;
     M.q_integrate(b.q, b.w.x, b.w.y, b.w.z, dt);
     // sleep: touching something and nearly static for SLEEP s. Judged by displacement over the window (moved < SLEEP_D,
     // turned < SLEEP_A), not by the instantaneous speed: with dozens of contacts and 6 iterations the solver leaves
     // ~0.1-0.25 m/s of noise on a resting piece, which reset an instantaneous test forever.
     if (!b.restP) { b.restP = v3(); b.restQ = { x: 0, y: 0, z: 0, w: 1 }; b.sleepT = -1; }
     const dq = Math.abs(b.q.x * b.restQ.x + b.q.y * b.restQ.y + b.q.z * b.restQ.z + b.q.w * b.restQ.w);
-    const still = M.len3(b.pos.x - b.restP.x, b.pos.y - b.restP.y, b.pos.z - b.restP.z) < K.SLEEP_D && dq > M.cos(K.SLEEP_A / 2);
-    if (b.age - (b.touchAge || -9) < 0.1 && still && b.sleepT >= 0) b.sleepT += dt;
+    const sd = b.kind === 'chunk' ? K.SLEEP_D_CH : K.SLEEP_D, sa = b.kind === 'chunk' ? K.SLEEP_A_CH : K.SLEEP_A;   // P105: a pile of big pieces creeps ~0.1 m/s on its contact noise
+    const still = M.len3(b.pos.x - b.restP.x, b.pos.y - b.restP.y, b.pos.z - b.restP.z) < sd && dq > M.cos(sa / 2);
+    // a jammed pile of big pieces can keep creeping on its contact noise; after SETTLE_AGE s a touching chunk below SETTLE_V m/s is done
+    const settle = b.kind === 'chunk' && b.age > K.SETTLE_AGE && M.len3(b.vel.x, b.vel.y, b.vel.z) < K.SETTLE_V && M.len3(b.w.x, b.w.y, b.w.z) < K.SETTLE_W;
+    if (b.age - (b.touchAge || -9) < 0.1 && (still || settle) && b.sleepT >= 0) b.sleepT += dt;
     else { b.sleepT = 0; b.restP.x = b.pos.x; b.restP.y = b.pos.y; b.restP.z = b.pos.z; b.restQ.x = b.q.x; b.restQ.y = b.q.y; b.restQ.z = b.q.z; b.restQ.w = b.q.w; }
     return nc;
   }
@@ -326,16 +399,14 @@
       b.vel.x -= nx * j * b.invM; b.vel.y -= ny * j * b.invM; b.vel.z -= nz * j * b.invM;
     }
   }
-  /* body vs body: bounding spheres shrunk to 0.8 rb (rough; enough for a few pieces of rubble) */
-  /* body vs body (X1): the shell spheres of both bodies (narrow phase inside the bounding spheres), contact-point
-   * impulses with restitution only above 1 m/s and Coulomb friction (like the terrain contacts), then a capped
-   * position projection. The old rule pushed bounding spheres apart with a velocity bias every step: two pieces of
-   * one detached spire (bounding radii 7.6 + 4.7 m, centres 5 m apart) "overlapped" by metres from the first step
-   * and gained ~1 m/s per 1/120 s step: a 93 t block shot up 20 m. Sleeping bodies stay fixed unless hit hard. */
-  const PC = [];                                   // pair contacts: {ax, ay, az (arm on a), bx, by, bz, nx, ny, nz, pen, vn0, jn, jt}
-  for (let i = 0; i < 32; i++) PC.push({ ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, nx: 0, ny: 0, nz: 0, pen: 0, vn0: 0, jn: 0, jt: 0 });
-  // (P38 R1: the shell-point cache b.wp / b.wpS lives in the snapshotted body; a module counter let a stale b.wpS of a restored snapshot equal the
-  // counter of a fresh process. Now pairs() clears every b.wpS first and the cache key is the constant 1)
+  /* body vs body (P105): contacts of one body's shell spheres against the other body's SHAPE. A detached chunk carries its own local
+   * density grid, so the other body's sphere centres are tested against that grid's signed distance exactly like they are against the
+   * terrain (smooth normal from the grid gradient, deepest-point check, same penetration estimate). The old rule tested sphere against
+   * sphere: a piece's sparse, bumpy shell spheres snagged on each other's, the normals flipped between steps and resting pieces
+   * crept, rocked and never slept. Bodies without a grid (boxes, barrels, balls) still use their spheres, sphere vs sphere.
+   * Contacts go into the same list as the terrain contacts and are solved together with them. A sleeping body is a fixed obstacle
+   * unless it is struck (closing faster than 0.5 m/s: it wakes). */
+  // (P38 R1: the shell-point cache b.wp / b.wpS lives in the snapshotted body; pairs() clears every b.wpS first and the cache key is the constant 1)
   const pairStamp = 1;
   function worldPts(b) {                           // shell sphere centres relative to b.pos (world axes), cached per call
     if (b.wpS === pairStamp) return b.wp;
@@ -343,83 +414,114 @@
     for (let i = 0; i < b.np; i++) { M.q_rot(b.q, b.pts[i * 4], b.pts[i * 4 + 1], b.pts[i * 4 + 2], tp); b.wp[i * 3] = tp.x; b.wp[i * 3 + 1] = tp.y; b.wp[i * 3 + 2] = tp.z; }
     b.wpS = pairStamp; return b.wp;
   }
-  const relVn = (a, b, c) => {
-    const vax = a.vel.x + a.w.y * c.az - a.w.z * c.ay, vay = a.vel.y + a.w.z * c.ax - a.w.x * c.az, vaz = a.vel.z + a.w.x * c.ay - a.w.y * c.ax;
-    const vbx = b.vel.x + b.w.y * c.bz - b.w.z * c.by, vby = b.vel.y + b.w.z * c.bx - b.w.x * c.bz, vbz = b.vel.z + b.w.x * c.by - b.w.y * c.bx;
-    tq.x = vbx - vax; tq.y = vby - vay; tq.z = vbz - vaz;
-    return tq.x * c.nx + tq.y * c.ny + tq.z * c.nz;
-  };
-  function pairs(S, dt) {
-    const L = S.bodies; for (let i = 0; i < L.length; i++) L[i].wpS = 0;
+  const PAIR_MAX = 28, PR = [];
+  let nPR = 0;
+  const gn = v3(), gl = v3();
+  const dyn = (pr, x) => x === pr.a ? pr.ad : pr.bd;
+  function gsdf(g, fx, fy, fz) {                   // trilinear signed distance (m, > 0 inside) at lattice coords (grid-relative); outside the padded grid: 1 m of air
+    if (fx < 0 || fy < 0 || fz < 0 || fx >= g.nx - 1 || fy >= g.ny - 1 || fz >= g.nz - 1) return -1;
+    const a = Math.floor(fx), b = Math.floor(fy), c = Math.floor(fz), u = fx - a, v = fy - b, t = fz - c, d = g.s, o = (c * g.ny + b) * g.nx + a, sy = g.nx, sz = g.nx * g.ny;
+    const x0 = d[o] + (d[o + 1] - d[o]) * u, x1 = d[o + sy] + (d[o + sy + 1] - d[o + sy]) * u, x2 = d[o + sz] + (d[o + sz + 1] - d[o + sz]) * u, x3 = d[o + sz + sy] + (d[o + sz + sy + 1] - d[o + sz + sy]) * u;
+    const y0 = x0 + (x1 - x0) * v, y1 = x2 + (x3 - x2) * v;
+    return y0 + (y1 - y0) * t;
+  }
+  // penetration of the sphere (world centre x, y, z, radius r) into chunk G's shape (the distance field g.s, built in collapse.js);
+  // outward normal of G (world) -> n. 0 = no contact.
+  function grid_contact(G, x, y, z, r, n) {
+    const g = G.grid, ih = 1 / W().H;
+    M.q_rot_inv(G.q, x - G.pos.x, y - G.pos.y, z - G.pos.z, gl);
+    const fx = (G.com0.x + gl.x) * ih - g.i0, fy = (G.com0.y + gl.y) * ih - g.j0, fz = (G.com0.z + gl.z) * ih - g.k0;
+    const s = gsdf(g, fx, fy, fz);
+    if (s + r <= 0) return 0;
+    const e = 0.5;                                   // lattice cells
+    const gx = gsdf(g, fx + e, fy, fz) - gsdf(g, fx - e, fy, fz), gy = gsdf(g, fx, fy + e, fz) - gsdf(g, fx, fy - e, fz), gz = gsdf(g, fx, fy, fz + e) - gsdf(g, fx, fy, fz - e);
+    const l = M.len3(gx, gy, gz);
+    if (l < 1e-6) return 0;
+    M.q_rot(G.q, -gx / l, -gy / l, -gz / l, gn);     // the field grows inward: outward normal = -grad
+    n.x = gn.x; n.y = gn.y; n.z = gn.z;
+    return M.max(s + r, 0.005);
+  }
+  function pair_add(pr, Pb, Qb, px, py, pz, r, n, pen) {   // contact of P's sphere (world centre p, radius r) with Q's shape
+    let c;
+    if (pr.n < PAIR_MAX) c = ct_new();
+    else { let m = pr.start; for (let t = pr.start + 1; t < pr.start + pr.n; t++) if (CT[t].pen < CT[m].pen) m = t; if (CT[m].pen >= pen) return; c = CT[m]; pr.n--; }
+    if (!c) return;
+    pr.n++;
+    const cx = px - n.x * (r - pen * 0.5), cy = py - n.y * (r - pen * 0.5), cz = pz - n.z * (r - pen * 0.5);
+    c.P = Pb; c.Q = Qb; c.pd = dyn(pr, Pb); c.qd = dyn(pr, Qb); c.ai = -1; c.pair = pr.id;
+    c.prx = cx - Pb.pos.x; c.pry = cy - Pb.pos.y; c.prz = cz - Pb.pos.z; c.qrx = cx - Qb.pos.x; c.qry = cy - Qb.pos.y; c.qrz = cz - Qb.pos.z;
+    c.nx = n.x; c.ny = n.y; c.nz = n.z; c.pen = pen; c.jn = 0; c.j1 = 0; c.j2 = 0; c.jw = 0; c.r1 = 0; c.r2 = 0; c.rs = 0; c.e = M.min(Pb.e, Qb.e); c.mu = pr.mu;
+    pr.pmax = M.max(pr.pmax, pen);
+  }
+  const nrm = v3();
+  function pairs(S) {
+    const L = S.bodies; nPR = 0;
+    for (let i = 0; i < L.length; i++) L[i].wpS = 0;
     for (let i = 0; i < L.length; i++) for (let k = i + 1; k < L.length; k++) {
       const a = L[i], b = L[k];
-      if (a.asleep && b.asleep) continue;
+      if ((a.asleep && b.asleep) || a.iceLock && b.iceLock) continue;
       const dx = b.pos.x - a.pos.x, dy = b.pos.y - a.pos.y, dz = b.pos.z - a.pos.z, R = a.rb + b.rb;
       if (dx * dx + dy * dy + dz * dz >= R * R) continue;
-      const A = worldPts(a), Bp = worldPts(b);
-      let nc = 0, pmax = 0;
-      for (let p = 0; p < a.np; p++) {
+      if (nPR >= PR.length) PR.push({ id: 0, a: null, b: null, start: 0, n: 0, pmax: 0, mu: 0.6, ad: false, bd: false });
+      const pr = PR[nPR]; pr.id = nPR; pr.a = a; pr.b = b; pr.start = nCT; pr.n = 0; pr.pmax = 0; pr.mu = Math.sqrt(a.mu * b.mu);
+      pr.ad = !a.asleep && !a.held && !a.iceLock; pr.bd = !b.asleep && !b.held && !b.iceLock;
+      const A = worldPts(a), Bp = worldPts(b), aG = a.kind === 'chunk' && a.grid, bG = b.kind === 'chunk' && b.grid;
+      if (bG) for (let p = 0; p < a.np; p++) {       // a's spheres inside b's shape
+        const ax = a.pos.x + A[p * 3], ay = a.pos.y + A[p * 3 + 1], az = a.pos.z + A[p * 3 + 2], r = a.pts[p * 4 + 3];
+        const pen = grid_contact(b, ax, ay, az, r, nrm); if (pen > 0) pair_add(pr, a, b, ax, ay, az, r, nrm, pen);
+      }
+      if (aG) for (let q = 0; q < b.np; q++) {       // b's spheres inside a's shape
+        const bx = b.pos.x + Bp[q * 3], by = b.pos.y + Bp[q * 3 + 1], bz = b.pos.z + Bp[q * 3 + 2], r = b.pts[q * 4 + 3];
+        const pen = grid_contact(a, bx, by, bz, r, nrm); if (pen > 0) pair_add(pr, b, a, bx, by, bz, r, nrm, pen);
+      }
+      if (!aG && !bG) for (let p = 0; p < a.np; p++) {   // two sphere clouds (boxes, barrels, balls)
         const ax = a.pos.x + A[p * 3], ay = a.pos.y + A[p * 3 + 1], az = a.pos.z + A[p * 3 + 2], ra = a.pts[p * 4 + 3];
         for (let q = 0; q < b.np; q++) {
           const ex = b.pos.x + Bp[q * 3] - ax, ey = b.pos.y + Bp[q * 3 + 1] - ay, ez = b.pos.z + Bp[q * 3 + 2] - az, rr = ra + b.pts[q * 4 + 3], e2 = ex * ex + ey * ey + ez * ez;
           if (e2 >= rr * rr || e2 < 1e-10) continue;
           const e = Math.sqrt(e2), pen = rr - e;
-          let c;
-          if (nc < PC.length) c = PC[nc++];
-          else { let m = 0; for (let t = 1; t < nc; t++) if (PC[t].pen < PC[m].pen) m = t; if (PC[m].pen >= pen) continue; c = PC[m]; }
-          // contact point midway between the sphere surfaces; arms from each centre of mass
-          const mx = ax + ex / e * (ra - pen * 0.5), my = ay + ey / e * (ra - pen * 0.5), mz = az + ez / e * (ra - pen * 0.5);
-          c.ax = mx - a.pos.x; c.ay = my - a.pos.y; c.az = mz - a.pos.z; c.bx = mx - b.pos.x; c.by = my - b.pos.y; c.bz = mz - b.pos.z;
-          c.nx = ex / e; c.ny = ey / e; c.nz = ez / e; c.pen = pen; c.jn = 0; c.jt = 0;
-          pmax = M.max(pmax, pen);
+          nrm.x = -ex / e; nrm.y = -ey / e; nrm.z = -ez / e;          // outward normal of b at the touch point, pointing onto a
+          pair_add(pr, a, b, ax, ay, az, ra, nrm, pen);
         }
       }
-      if (!nc) continue;
-      for (let q = 0; q < nc; q++) { const c = PC[q]; c.vn0 = relVn(a, b, c); }
+      if (!pr.n) continue;
+      nPR++;
+      if (pr.ad) a.touchAge = a.age;                   // resting on another body counts as touching (a pile settles together, not from the bottom up)
+      if (pr.bd) b.touchAge = b.age;
+      if (LOCK) for (let q = pr.start; q < pr.start + pr.n; q++) { const c = CT[q]; const l = M.len2(c.nx, c.ny); if (l < 0.2) { c.nx = 0; c.ny = 1; } else { c.nx /= l; c.ny /= l; } c.nz = 0; c.prz = 0; c.qrz = 0; }
+      for (let q = pr.start; q < pr.start + pr.n; q++) { const c = CT[q]; tangents(c); relv(c); c.vn0 = tq.x * c.nx + tq.y * c.ny + tq.z * c.nz; }
       // a sleeping body joins in only when struck (closing faster than 0.5 m/s); else it is a fixed obstacle
-      let closing = 0; for (let q = 0; q < nc; q++) closing = M.min(closing, PC[q].vn0);
-      if (a.asleep && closing < -0.5) wake(a); if (b.asleep && closing < -0.5) wake(b);
-      const da = !a.asleep, db = !b.asleep, e = M.min(a.e, b.e), mu = Math.sqrt(a.mu * b.mu);
-      for (let it = 0; it < K.ITERS; it++) for (let q = 0; q < nc; q++) {
-        const c = PC[q];
-        const kn = (da ? kEff(a, c.ax, c.ay, c.az, c.nx, c.ny, c.nz) : 0) + (db ? kEff(b, c.bx, c.by, c.bz, c.nx, c.ny, c.nz) : 0);
-        if (kn <= 0) continue;
-        const vn = relVn(a, b, c), target = c.vn0 < -1 ? -e * c.vn0 : 0;
-        let jn = (target - vn) / kn;
-        const acc = M.max(0, c.jn + jn); jn = acc - c.jn; c.jn = acc;
-        if (da) applyImpulse(a, c.ax, c.ay, c.az, -jn * c.nx, -jn * c.ny, -jn * c.nz);
-        if (db) applyImpulse(b, c.bx, c.by, c.bz, jn * c.nx, jn * c.ny, jn * c.nz);
-        // friction
-        const vn2 = relVn(a, b, c); let tx = tq.x - vn2 * c.nx, ty = tq.y - vn2 * c.ny, tz = tq.z - vn2 * c.nz;
-        const vt = M.len3(tx, ty, tz);
-        if (vt > 1e-5) {
-          tx /= vt; ty /= vt; tz /= vt;
-          const kt = (da ? kEff(a, c.ax, c.ay, c.az, tx, ty, tz) : 0) + (db ? kEff(b, c.bx, c.by, c.bz, tx, ty, tz) : 0);
-          if (kt > 0) {
-            let jt = -vt / kt; const lim = mu * c.jn, at = M.clamp(c.jt + jt, -lim, lim); jt = at - c.jt; c.jt = at;
-            if (da) applyImpulse(a, c.ax, c.ay, c.az, -jt * tx, -jt * ty, -jt * tz);
-            if (db) applyImpulse(b, c.bx, c.by, c.bz, jt * tx, jt * ty, jt * tz);
-          }
-        }
-      }
-      // position projection along the mean contact normal, split by inverse mass (no velocity bias)
-      const ex = pmax - K.SLOP;
-      if (ex > 0) {
-        let nx = 0, ny = 0, nz = 0; for (let q = 0; q < nc; q++) { nx += PC[q].nx * PC[q].pen; ny += PC[q].ny * PC[q].pen; nz += PC[q].nz * PC[q].pen; }
-        const nl = M.nz(M.len3(nx, ny, nz), 1), ia = da ? a.invM : 0, ib = db ? b.invM : 0, sum = ia + ib;
-        if (sum > 0) {
-          const mv = M.min(K.BAUMGARTE * ex, K.MAX_PUSH * dt) / sum;
-          if (da) { a.pos.x -= nx / nl * mv * ia; a.pos.y -= ny / nl * mv * ia; a.pos.z -= nz / nl * mv * ia; }
-          if (db) { b.pos.x += nx / nl * mv * ib; b.pos.y += ny / nl * mv * ib; b.pos.z += nz / nl * mv * ib; }
-        }
+      let closing = 0; for (let q = pr.start; q < pr.start + pr.n; q++) closing = M.min(closing, CT[q].vn0);
+      if (closing < -0.5 && (a.asleep || b.asleep)) {
+        if (a.asleep) { wake(a); pr.ad = true; } if (b.asleep) { wake(b); pr.bd = true; }
+        for (let q = pr.start; q < pr.start + pr.n; q++) { CT[q].pd = dyn(pr, CT[q].P); CT[q].qd = dyn(pr, CT[q].Q); }
       }
     }
   }
+  /* position projection of the pairs (along the mean contact normal, split by inverse mass, capped) */
+  function pair_project(dt) {
+    for (let p = 0; p < nPR; p++) {
+      const pr = PR[p], ex = pr.pmax - K.SLOP;
+      if (ex <= 0) continue;
+      let nx = 0, ny = 0, nz = 0;
+      for (let q = pr.start; q < pr.start + pr.n; q++) { const c = CT[q], sg = c.P === pr.b ? 1 : -1; nx += sg * c.nx * c.pen; ny += sg * c.ny * c.pen; nz += sg * c.nz * c.pen; }
+      const nl = M.nz(M.len3(nx, ny, nz), 1), ia = pr.ad ? pr.a.invM : 0, ib = pr.bd ? pr.b.invM : 0, sum = ia + ib;
+      if (sum <= 0) continue;
+      const mv = M.min(K.BAUMGARTE * ex, K.MAX_PUSH * dt) / sum;
+      if (pr.ad) { pr.a.pos.x -= nx / nl * mv * ia; pr.a.pos.y -= ny / nl * mv * ia; if (!LOCK) pr.a.pos.z -= nz / nl * mv * ia; }
+      if (pr.bd) { pr.b.pos.x += nx / nl * mv * ib; pr.b.pos.y += ny / nl * mv * ib; if (!LOCK) pr.b.pos.z += nz / nl * mv * ib; }
+    }
+  }
 
+  /* diagnostics (tools/dev/gen/rigidprobe.cjs): the contacts of the last step */
+  B.last_contacts = () => CT.slice(0, nCT);
   const gdv = { x: 0, y: -1, z: 0 };
   B.step = function (S, dt) {
     if (!S.bodies.length) return;
     const w = W();
+    LOCK = !!w.flat;
+    nCT = 0; ACT.length = 0;
+    // phase 1: sleepers (support re-check, EOW re-bake retry) and the forces + terrain contacts of every awake body
     for (let i = S.bodies.length - 1; i >= 0; i--) {
       const b = S.bodies[i];
       if (b.held) { b.sleepT = 0; continue; }          // P37 W4: a body held by the gravity gun is moved by sim/gadgets.js (kinematic)
@@ -448,24 +550,60 @@
         }
         continue;
       }
-      stepBody(S, b, dt);
+      if (ACT.length >= ACT_MAX) continue;
+      const ai = ACT.length; ACT.push(b); b.ai = ai;
+      aNc[ai] = 0; aN[ai] = 0; aDx[ai] = aDy[ai] = aDz[ai] = 0;
+      if (!prep(S, b, dt, ai)) ACT.pop();
+    }
+    // phase 2: body pairs (contacts go into the same list)
+    pairs(S);
+    // phase 3: sequential impulses over every contact, alternating the sweep direction
+    for (let it = 0; it < K.ITERS; it++) {
+      if (it & 1) for (let q = nCT - 1; q >= 0; q--) solve_contact(CT[q]);
+      else for (let q = 0; q < nCT; q++) solve_contact(CT[q]);
+    }
+    // terrain projection sums (per body) and pair projection
+    for (let q = 0; q < nCT; q++) {
+      const c = CT[q]; if (c.Q || c.ai < 0) continue;
+      const e = c.pen - K.SLOP;
+      if (e > 0) { aDx[c.ai] += c.nx * e; aDy[c.ai] += c.ny * e; aDz[c.ai] += c.nz * e; aN[c.ai]++; }
+    }
+    pair_project(dt);
+    // phase 4: integrate, hit worms, retire (act list is in reverse body order, so splicing is safe)
+    for (let ai = 0; ai < ACT.length; ai++) finish(S, ACT[ai], dt, ai);
+    // sleeping by neighbourhood: a chunk is held awake while another awake chunk that is not ready to sleep is close (bounding spheres
+    // + 0.4 m). A pile freezes as one, and a piece never bakes into the field under / inside a neighbour that is still moving.
+    for (let ai = 0; ai < ACT.length; ai++) aBlk[ai] = 0;
+    for (let pass = 0; pass < 6; pass++) {
+      let ch = false;
+      for (let ai = 0; ai < ACT.length; ai++) {
+        const a = ACT[ai]; if (a.kind !== 'chunk' || aBlk[ai] || a.sleepT <= K.SLEEP) continue;
+        for (let bi = 0; bi < ACT.length; bi++) {
+          const c = ACT[bi]; if (bi === ai || c.kind !== 'chunk' || (c.sleepT > K.SLEEP && !aBlk[bi])) continue;
+          const R = a.rb + c.rb + 0.4, dx = c.pos.x - a.pos.x, dy = c.pos.y - a.pos.y, dz = c.pos.z - a.pos.z;
+          if (dx * dx + dy * dy + dz * dz < R * R) { aBlk[ai] = 1; ch = true; break; }
+        }
+      }
+      if (!ch) break;
+    }
+    for (let ai = 0; ai < ACT.length; ai++) {
+      const b = ACT[ai];
       hitWorms(S, b);
       // gone: fell off the map (dry worlds, D4: the far dunes carry it out to FAR_R) or never settled
       const off = w.dry ? M.len2(b.pos.x - C.DRY.CX, b.pos.z - C.DRY.CZ) > C.DRY.FAR_R : b.pos.x < -10 || b.pos.z < -10 || b.pos.x > w.SX + 10 || b.pos.z > w.SZ + 10;
       if (b.pos.y < -4 || off || (b.age > K.MAX_AGE && !(b.floatT > 1))) {
-        SS.sim.emit(S, 'bodygone', { body: b.id }); S.bodies.splice(i, 1); continue;
+        SS.sim.emit(S, 'bodygone', { body: b.id }); const i = S.bodies.indexOf(b); if (i >= 0) S.bodies.splice(i, 1); continue;
       }
-      if (b.sleepT > K.SLEEP) {
+      if (b.sleepT > K.SLEEP && !aBlk[ai]) {
         b.asleep = true; b.vel.x = b.vel.y = b.vel.z = 0; b.w.x = b.w.y = b.w.z = 0;
         b.seaY = SS.sim.surface_at ? SS.sim.surface_at(S, b.pos.x, b.pos.z) : -99;
         if (b.kind === 'chunk' && SS.collapse && b.grid && !w.outside(b.pos.x, b.pos.z)) {   // beyond the lattice (dry) it stays a body
           const added = S.eow ? SS.eow.rebake(S, b) : SS.collapse.rebake(w, b.grid, b.com0, b.pos, b.q);   // P94: in space a piece that would merge into another body or hang loose stays a rigid body (-1)
-          if (added >= 0) { SS.sim.emit(S, 'rebake', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added }); S.bodies.splice(i, 1); }
+          if (added >= 0) { SS.sim.emit(S, 'rebake', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added }); const i = S.bodies.indexOf(b); if (i >= 0) S.bodies.splice(i, 1); }
           else SS.sim.emit(S, 'bodysleep', { body: b.id });
         } else SS.sim.emit(S, 'bodysleep', { body: b.id });
       }
     }
-    pairs(S, dt);
   };
 
   /* 2D cross-sections on the collision plane (worms and projectiles collide with them, plane.js) */

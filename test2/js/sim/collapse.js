@@ -88,6 +88,45 @@
     return comps;
   };
 
+  /* P105: signed distance (metres, > 0 inside) of a piece's local grid, from its solid mask (d > 0). Two-pass 3-4-5 chamfer distance
+   * transform (error < 6 %) to the nearest voxel of the other phase, with the surface where the density contour is (0.37 cell from
+   * the last solid voxel centre). The density grid saturates a voxel inside the surface (clamp 1.5), so its gradient vanishes there
+   * and a sphere that sank a voxel into a piece lost its contact normal; the distance field keeps a unit gradient everywhere.
+   * Fixed loops over the grid arrays, no allocation besides the output. */
+  K.build_sdf = function (g) {
+    const nx = g.nx, ny = g.ny, nz = g.nz, N = nx * ny * nz, BIG = 30000, sxy = nx * ny;
+    const out = new Float32Array(N), a = new Int32Array(N), b = new Int32Array(N);
+    for (let o = 0; o < N; o++) { const solid = g.d[o] > 0; a[o] = solid ? BIG : 0; b[o] = solid ? 0 : BIG; }   // a: distance to air (solid voxels), b: distance to solid (air voxels)
+    for (let pass = 0; pass < 2; pass++) {
+      const f = pass === 0 ? a : b;
+      for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+        const o = (k * ny + j) * nx + i; let v = f[o];
+        if (v === 0) continue;
+        for (let dk = -1; dk <= 0; dk++) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          if (dk === 0 && (dj > 0 || (dj === 0 && di >= 0))) continue;                       // only the already visited half of the 3x3x3 mask
+          const ii = i + di, jj = j + dj, kk = k + dk; if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny) continue;
+          const w = (di !== 0) + (dj !== 0) + (dk !== 0), c = f[o + dk * sxy + dj * nx + di] + (w === 1 ? 3 : w === 2 ? 4 : 5);
+          if (c < v) v = c;
+        }
+        f[o] = v;
+      }
+      for (let k = nz - 1; k >= 0; k--) for (let j = ny - 1; j >= 0; j--) for (let i = nx - 1; i >= 0; i--) {
+        const o = (k * ny + j) * nx + i; let v = f[o];
+        if (v === 0) continue;
+        for (let dk = 0; dk <= 1; dk++) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          if (dk === 0 && (dj < 0 || (dj === 0 && di <= 0))) continue;
+          const ii = i + di, jj = j + dj, kk = k + dk; if (ii < 0 || jj < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+          const w = (di !== 0) + (dj !== 0) + (dk !== 0), c = f[o + dk * sxy + dj * nx + di] + (w === 1 ? 3 : w === 2 ? 4 : 5);
+          if (c < v) v = c;
+        }
+        f[o] = v;
+      }
+    }
+    const H = SS.world.H;
+    for (let o = 0; o < N; o++) out[o] = g.d[o] > 0 ? (M.min(a[o], 3000) / 3 - 0.37) * H : -(M.min(b[o], 3000) / 3 - 0.37) * H;
+    return out;
+  };
+
   /* Cut a component out of the field and split it into rigid pieces + rubble.
    * Returns { pieces: [ChunkDesc], rubble: [{x,y,z,mat}] }. ChunkDesc carries a local density grid. */
   K.detach = function (W, comp, rng) {
@@ -96,14 +135,14 @@
     if (W.crack) nPieces = SS.cracks.piece_count(W, comp, nPieces);                // P66b: damaged ground shatters into more, smaller pieces
     for (let s = 0; s < nPieces; s++) {
       const o = comp[Math.floor(M.rng_next(rng) * n)];
-      seeds.push([(o % NX) * H, (Math.floor(o / NX) % NY) * H, Math.floor(o / SXY) * H]);
+      seeds.push([(o % NX) * H, (Math.floor(o / NX) % NY) * H, W.flat ? 0 : Math.floor(o / SXY) * H]);   // P105: a 2D piece is cut along the plane only, every piece spans the whole slab (else z-slivers overlapped once pinned to the plane)
     }
     const owner = new Uint8Array(n);
     for (let q = 0; q < n; q++) {
       const o = comp[q], x = (o % NX) * H, y = (Math.floor(o / NX) % NY) * H, z = Math.floor(o / SXY) * H;
       let best = 0, bd = 1e9;
       for (let s = 0; s < nPieces; s++) {
-        const dd = M.len3(x - seeds[s][0], y - seeds[s][1], z - seeds[s][2]) + (M.hash3(o, s, 3) - 0.5) * 1.2;
+        const dd = M.len3(x - seeds[s][0], y - seeds[s][1], W.flat ? 0 : z - seeds[s][2]) + (M.hash3(o, s, 3) - 0.5) * 1.2;
         if (dd < bd) { bd = dd; best = s; }
       }
       owner[q] = best;
@@ -150,9 +189,11 @@
         taken.push(key); pts.push(i * H - cx, j * H - cy, k * H - cz, 0.26);
         if (pts.length >= 48 * 4) break;
       }
+      const grid = { nx: gx, ny: gy, nz: gz, d: gd, mat: gm, i0: i0 - 1, j0: j0 - 1, k0: k0 - 1, s: null };
+      grid.s = K.build_sdf(grid);
       let dom = 0; for (let m = 1; m < C.MATS.length; m++) if (matCount[m] > matCount[dom]) dom = m;
       pieces.push({
-        grid: { nx: gx, ny: gy, nz: gz, d: gd, mat: gm, i0: i0 - 1, j0: j0 - 1, k0: k0 - 1 },
+        grid,
         com: { x: cx, y: cy, z: cz }, mass, inertia: { x: Ixx, y: Iyy, z: Izz }, pts: new Float32Array(pts), mat: dom, voxels: list.length
       });
     }
@@ -171,6 +212,7 @@
     if (!comps.length) return null;
     let vox = 0, rub = 0;
     const made = [];
+    if (SS.trees) SS.trees.foot_mark(S, box);                                      // P105: trees standing on a piece that breaks away fall with it (foot_check below)
     for (const comp of comps) {
       vox += comp.length;
       const r = K.detach(W, comp, S.rng);
@@ -178,6 +220,7 @@
       rub += r.rubble.length;
       if (r.rubble.length) SS.sim.emit(S, 'rubble', { pts: r.rubble.slice(0, 24) });
     }
+    if (SS.trees) SS.trees.foot_check(S);
     const e = S.lastExplosion;
     if (e && made.length) SS.bodies.blast(S, e, M.pow(e.R / 3, 3), made);
     const ev = { voxels: vox, pieces: made.length, rubble: rub, x: 0, y: 0, z: 0 };

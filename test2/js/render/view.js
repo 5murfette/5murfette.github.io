@@ -497,6 +497,7 @@
   }
   function uploadSurface(S) {
     const s = surfaceBuffer(S);
+    s.buf = SS.slab2d.shapeSurf(s.buf, s.n, S);                                   // P113: 2D slab: a render-only copy with the cover varied behind the plane
     view.surf = s.buf; view.surfN = s.n; view.surfVer = S.veg ? S.veg.surfVer : 0; view.surfUploads = (view.surfUploads | 0) + 1;
     surfTex.image.data.set(s.buf.subarray(0, NS * NS * 4)); applyScorch(); surfTex.needsUpdate = true; scorchDirty = false;
     SS.grass.setSurface(s.buf, s.n);
@@ -526,7 +527,7 @@
     V.resizeWorld();
     clearActors();
     applyLook(S);
-    scorchMap = null; scorchY = null; freshMap = null; scorchDirty = false; if (SS.grass) SS.grass.S = S; if (SS.clutterView) SS.clutterView.S = S; uploadSurface(S);
+    scorchMap = null; scorchY = null; freshMap = null; scorchDirty = false; if (SS.grass) SS.grass.S = S; if (SS.clutterView) SS.clutterView.S = S; SS.slab2d.reset(); uploadSurface(S);
     buildHeights();
     V.seaChanged(SS.world.SEA);                           // per world (dry worlds: below the floor): terrain, outer ocean, face
     SS.terrain.uniforms.uCtxSolid.value = 1;   // D3 (dry) + CX1 (all worlds): the far context is drawn solid

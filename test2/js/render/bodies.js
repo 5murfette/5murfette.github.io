@@ -276,7 +276,8 @@
       for (const m of it.ctx) m.visible = ctx;
       if (it.near) it.near.visible = nearOn;
       let shown = true;
-      if (b.kind !== 'chunk') {
+      if (b.kind === 'chunk') { const tc = (b.pos.x - O.x) * n.x + (b.pos.z - O.z) * n.z; shown = insp || SS.section.frontOn || tc >= -back - (b.rb || 1) || ctx; }   // P105: whole-piece culling by its centre (the shader no longer cuts a piece at the back)
+      else {
         const t = (b.pos.x - O.x) * n.x + (b.pos.z - O.z) * n.z, r = b.rb || 0.5;
         shown = insp || SS.section.frontOn || (t <= r && (t >= -back - r || ctx));
       }

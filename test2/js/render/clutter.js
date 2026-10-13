@@ -135,15 +135,16 @@
       const U = (SS.terrain && SS.terrain.uniforms) || FALLBACK_U;
       sh.uniforms.uO = U.uO; sh.uniforms.uN = U.uN; sh.uniforms.uBack = U.uBack; sh.uniforms.uTime = uTime; sh.uniforms.uWind = uWind;
       sh.uniforms.tCover = U.tCover || { value: null }; sh.uniforms.uNL = U.uNL || { value: 193 }; sh.uniforms.uSnowU = U.uSnow || { value: 0 }; sh.uniforms.uKill = { value: kill ? 1 : 0 };
-      sh.uniforms.uEmit = { value: o.emit || 0 };
+      sh.uniforms.uEmit = { value: o.emit || 0 }; Object.assign(sh.uniforms, SS.slab2d.U);      // P113: the 2D slab ground relief lifts every instance with the terrain under it
       if (o.tex) { sh.uniforms.tAlb = ATL.alb; sh.uniforms.tNrm = ATL.nrm; sh.uniforms.uGrid = ATL.grid; sh.uniforms.uNS = { value: o.ns != null ? o.ns : 0.9 }; sh.uniforms.uRK = { value: o.rk != null ? o.rk : 1 }; sh.uniforms.uAO = { value: o.aoK != null ? o.aoK : 0.55 }; sh.uniforms.uTexD = { value: o.dens || 3.4 }; }
       sh.vertexShader = sh.vertexShader
-        .replace('void main() {', 'uniform vec3 uO; uniform vec3 uN; uniform float uBack, uTime, uNL, uSnowU, uKill; uniform vec3 uWind; uniform sampler2D tCover;' + (o.tex ? TRI_VS : '') + '\nvoid main() {')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\n { vec2 cv = texture2D(tCover, (instanceMatrix[3].xz * 2.0 + 0.5) / uNL).rg * 0.4; float sn = max(uSnowU, max(cv.x / 0.05, cv.y / 0.03)); transformed *= mix(1.0, 1.0 - smoothstep(0.35, 0.7, sn), uKill); }\n' + (o.tex ? TRI_VS_BODY : '') + (sway ? `
+        .replace('void main() {', SS.slab2d.GLSL + 'uniform vec3 uO; uniform vec3 uN; uniform float uBack, uTime, uNL, uSnowU, uKill; uniform vec3 uWind; uniform sampler2D tCover;' + (o.tex ? TRI_VS : '') + '\nvoid main() {')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n transformed *= s2Clear(dot(uO - instanceMatrix[3].xyz, uN));\n { vec2 cv = texture2D(tCover, (instanceMatrix[3].xz * 2.0 + 0.5) / uNL).rg * 0.4; float sn = max(uSnowU, max(cv.x / 0.05, cv.y / 0.03)); transformed *= mix(1.0, 1.0 - smoothstep(0.35, 0.7, sn), uKill); }\n' + (o.tex ? TRI_VS_BODY : '') + (sway ? `
           { float ph = instanceMatrix[3].x * 3.1 + instanceMatrix[3].z * 2.3; float hh = transformed.y * transformed.y;
             transformed.x += (uWind.x * 0.5 + sin(uTime * 1.8 + ph) * 0.05) * hh * 4.0; transformed.z += (uWind.z * 0.5 + cos(uTime * 1.3 + ph) * 0.04) * hh * 4.0; }` : ''))
         .replace('#include <project_vertex>', `#include <project_vertex>
-          { vec4 cw = instanceMatrix * vec4(transformed, 1.0); if (dot(cw.xz - uO.xz, uN.xz) < -uBack) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }`);
+          if (uSlab.x > 0.5) { vec3 ip = instanceMatrix[3].xyz; float s2L = s2H(ip.xz, dot(uO - ip, uN), s2K(ip.y, 1.0)); mvPosition.xyz += (viewMatrix * vec4(0.0, s2L, 0.0, 0.0)).xyz; gl_Position = projectionMatrix * mvPosition; }
+          { vec4 cw = instanceMatrix * vec4(transformed, 1.0); if (dot(cw.xz - uO.xz, uN.xz) < -(uSlab.x > 0.5 ? s2Edge(cw.x) : uBack)) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); }`);
       let fs = sh.fragmentShader;
       if (o.emit || o.tex) fs = fs.replace('void main() {', (o.emit ? 'uniform float uEmit;\n' : '') + (o.tex ? TRI_FS : '') + '\nvoid main() {');
       if (o.emit) fs = fs.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vColor.rgb * uEmit;');
@@ -210,7 +211,7 @@
     if (set) { for (const im of set) { scene.remove(im); im.dispose(); } per.delete(ci); }
     if (!geos || !c || !c.data || !(Q.clutter > 0)) return;
     const S = CL.S, W = SS.world, biome = W.eow ? 'eow' : (W.features && W.features.biome) || W.biome || (S && S.biome) || 'temperate', B = BIO[biome] || BIO.temperate, d = c.data, P = d.pos, N = d.nrm, I = d.idx, D = d.depth;
-    const dens = Q.clutter, sea = W.SEA, lists = { stone: [], snow: [], twig: [], tuft: [], flower: [], scrub: [] };
+    const s2 = SS.slab2d.on(), dens = Q.clutter * (s2 ? SS.slab2d.CLUTTER_K : 1), sea = W.SEA, lists = { stone: [], snow: [], twig: [], tuft: [], flower: [], scrub: [] };
     const under = !!W.under, eow = !!W.eow, vents = (W.features && W.features.vents) || [], dd = (window.P96_DECOR != null ? window.P96_DECOR : 1) * 1.7;   // (window.P96_DECOR: a tuning / shot hook, a multiplier of every decor density; 0 = none)
     let total = 0;
     if (SS.grass && SS.grass.hotMap && S) SS.grass.hotMap(S);                                       // P102: heat distance field (lava, vents, burning ground)
@@ -218,6 +219,7 @@
     const snowy = S && S.weather ? S.weather.snowCover || 0 : 0;
     for (let i = 0; i < I.length && total < MAXC; i += 3) {
       const a = I[i], b = I[i + 1], c2 = I[i + 2];
+      if (s2 && !(Math.max(P[a * 3 + 2], P[b * 3 + 2], P[c2 * 3 + 2]) >= SS.slab2d.zlo() && Math.min(P[a * 3 + 2], P[b * 3 + 2], P[c2 * 3 + 2]) <= SS.slab2d.zhi())) continue;      // P113: 2D slab: only the visible band
       const nya = N[a * 3 + 1], nyb = N[b * 3 + 1], nyc = N[c2 * 3 + 1];
       const ceil = under && nya < -0.55 && nyb < -0.55 && nyc < -0.55;
       if (!eow && !ceil && (nya < 0.55 || nyb < 0.55 || nyc < 0.55)) continue;
@@ -226,7 +228,7 @@
       if (!eow && ay < sea + 0.25) continue;
       if (!eow && !under && Math.abs(W.top_at(ax, az) - ay) > 0.7) continue;
       const mt = domMat(d, a);
-      if (mt === MT.LAVA || mt === MT.ICE || mt === MT.BEDROCK || mt === MT.FOAM || mt === MT.CONCRETE || (mt === MT.STEEL && !eow)) continue;
+      if (mt === MT.LAVA || mt === MT.ICE || mt === MT.BEDROCK || mt === MT.FOAM || (mt === MT.CONCRETE && !(s2 && nya + nyb + nyc > 2.55)) || (mt === MT.STEEL && !eow)) continue;
       if (!mt) continue;
       const ux = P[b * 3] - ax, uy = P[b * 3 + 1] - ay, uz = P[b * 3 + 2] - az, vx = P[c2 * 3] - ax, vy = P[c2 * 3 + 1] - ay, vz = P[c2 * 3 + 2] - az;
       const area = 0.5 * M.len3(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
@@ -243,6 +245,8 @@
       } else if (eow) {
         if (mt === MT.STEEL) { kinds.push(['plate', 0.1 * dd, 0]); kinds.push(['wreck', 0.012 * dd * (patch2 > 0.4 ? 1 : 0), 0]); kinds.push(['cable', 0.03 * dd * patch, 0]); kinds.push(['ice', 0.025 * dd * patch2, 0]); kinds.push(['stone', B.stone * 0.2, 0]); }
         else { kinds.push(['stone', B.stone * (0.3 + 1.4 * patch), 0]); kinds.push(['ice', 0.012 * dd * patch2 * patch2 * 3, 0]); }
+      } else if (s2 && mt === MT.CONCRETE) {                                 // P113: a 2D bunker / ruin floor: chips of concrete, a little rubble, dry weeds in the cracks
+        kinds.push(['stone', 0.6 * (0.3 + patch), 0]); kinds.push(['tuft', 0.3 * patch2 * patch2, 2]); if (dd > 0) kinds.push(['rubble', 0.07 * dd * patch, 0]);
       } else {
         if (isSnow) { kinds.push(['snow', B.snow * (0.4 + patch2), 1]); kinds.push(['stone', B.stone * 0.12, 0]); }
         else if (isSoil || isSand || isRock || isDark) kinds.push(['stone', B.stone * (0.3 + 1.4 * patch) * (isSand ? 0.45 : 1) * shore, 0]);

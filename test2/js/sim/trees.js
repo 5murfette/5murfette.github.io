@@ -49,7 +49,7 @@
   function leaf(t, s, x, y, z, r) { t.leaf.push({ x, y, z, r, f: 1, s }); }
   function grow(rg, sp, x, y, z) {
     const R = () => M.rng_next(rg), P = K.SPEC[SPN[sp]];
-    const t = { id: 0, sp, alive: 1, x, y, z, h: 0, crown: 0, top: 0, seg: [], leaf: [], dry: 0, burn: -1, heat: 0, thr: 1, thr0: 1, leaf0: 0, char: 0, emb: 0 };
+    const t = { id: 0, sp, alive: 1, x, y, z, h: 0, crown: 0, top: 0, seg: [], leaf: [], dry: 0, burn: -1, heat: 0, thr: 1, thr0: 1, leaf0: 0, char: 0, emb: 0, ft: 0 };
     const h = P.h[0] + (P.h[1] - P.h[0]) * R(), r = P.r[0] + (P.r[1] - P.r[0]) * R(), la = R() * M.TAU, ln = P.lean * (0.3 + 0.7 * R());
     t.h = h;
     const root = seg(t, -1, v(x, y - 0.4, z), v(x, y + 0.3, z), r * 1.35, r * 1.12, 0);
@@ -201,7 +201,27 @@
     return s / n;
   }
   TR.root_hold = root_hold;
+  /* P105: the roots may hold a tree on a lip (ROOT_HOLD of the plate is enough, a crater beside the trunk leaves it standing on exposed roots), but when the LAND
+   * ITSELF breaks away under the trunk (collapse.detach cut the column the foot stood on) the tree is not "held by its roots in mid-air": it falls with the piece.
+   * foot_mark(box) notes which trees stand with a solid foot before the cut, foot_check() drops those whose foot column was taken. */
+  const foot_solid = t => {
+    const w = W(), y = t.y - K.FOOT_D;
+    return w.sample(t.x, y, t.z) > 0 || w.sample(t.x + 0.35, y, t.z) > 0 || w.sample(t.x - 0.35, y, t.z) > 0 || w.sample(t.x, y, t.z + 0.35) > 0 || w.sample(t.x, y, t.z - 0.35) > 0;
+  };
   const supported = t => root_hold(t) >= K.ROOT_HOLD;
+  TR.foot_mark = function (S, b) {
+    if (!S.trees) return;
+    const H = W().H;
+    for (const t of S.trees) { t.ft = 0; if (t.alive && t.x / H >= b.i0 - 3 && t.x / H <= b.i1 + 3 && t.z / H >= b.k0 - 3 && t.z / H <= b.k1 + 3 && foot_solid(t)) t.ft = 1; }
+  };
+  TR.foot_check = function (S) {
+    if (!S.trees) return;
+    for (const t of S.trees) {
+      if (!t.ft) continue;
+      t.ft = 0;
+      if (t.alive && !foot_solid(t)) { detach(S, t, 0, null, 0, 'uproot'); SS.sim.emit(S, 'uproot', { tree: t.id, x: t.x, y: t.y, z: t.z }); }
+    }
+  };
   const shield = (c, p) => 0.25 + 0.75 * M.exp(-W().solid_len(c.x, c.y, c.z, p.x, p.y, p.z) / BC.SHIELD_L);
   /* T2: slender parts (wood, leaves) are pushed by the blast WIND: drag of the dynamic pressure q, not the side-on
    * pressure. q / p = 2.5 p / (p + 7 p0) (Rankine-Hugoniot, ideal air): ~1.5 next to a 1 kg charge (p ~ 1 MPa),
