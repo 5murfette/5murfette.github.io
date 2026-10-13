@@ -22,11 +22,11 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane, MAT = C.MAT;
+  const EV = C.EV;
   const FF = SS.ffield = {};
   const W = () => SS.world;
   const sim = () => SS.sim;
   const WPN = () => SS.weapons;
-  const hypot3 = (a, b) => M.len3(a.x - b.x, a.y - b.y, a.z - b.z);
   const K = C.TOOLB = C.TOOLB || {};
   K.FIELD = { R: 4.2, HP: 90, LEAK: 0.4, CONTAIN_K: 1.6, CAP: 8, TURNS: 8, MAX: 3, UP: 0.4, MIN_REL: 0.25, REL_K: 1.6, REL_DELAY: 0.22,
     MAX_FREE: 24,
@@ -47,7 +47,7 @@
   FF.centre = centre;
   FF.inside = function (S, p, margin) {
     for (const f of S.ffields)
-      if (f.state === 0 && hypot3(p, centre(f)) < f.R - (margin || 0)) return f;
+      if (f.state === 0 && M.v3_dist(p, centre(f)) < f.R - (margin || 0)) return f;
     return null;
   };
 
@@ -55,7 +55,7 @@
   FF.make = function (S, team, owner, p) {            // (the worm's use and the debug toolbox share it)
     const KF = K.FIELD,
       f = { id: ++S.ffId, team, owner, pos: p, R: KF.R, hp: KF.HP, charge: 0, born: S.time, state: 0, charges: 1, turns: KF.TURNS, vy: 0 };
-    S.ffields.push(f); sim().emit(S, 'ffplant', { x: p.x, y: p.y, z: p.z, R: KF.R, fid: f.id }); return f;
+    S.ffields.push(f); sim().emit(S, EV.FFPLANT, { x: p.x, y: p.y, z: p.z, R: KF.R, fid: f.id }); return f;
   };
   FF.use = function (S, a) {
     const KF = K.FIELD, ap = P.to_plane(S, a.pos);
@@ -94,7 +94,7 @@
     if (sp < 3) return false;
     for (const f of S.ffields) {
       if (f.state !== 0 || f.charges <= 0) continue;
-      const c = centre(f), da = hypot3(a, c), db = hypot3(b, c);
+      const c = centre(f), da = M.v3_dist(a, c), db = M.v3_dist(b, c);
       if (!(da >= f.R && db < f.R)) continue;
       // (P38 R1: no room for another free shell: it goes on as an ordinary 2D shell, no charge spent; before it
       // vanished and the charge was lost)
@@ -136,9 +136,9 @@
         });
       f.charges--; f.hitT = S.time;
       S.forceInspect = S.time + KF.INSPECT_T; S.lastBoom = S.time;
-      sim().emit(S, 'ffripple', { fid: f.id, x: hp.x, y: hp.y, z: hp.z, amp: 1 });
-      sim().emit(S, 'ffbounce', { fid: f.id, x: hp.x, y: hp.y, z: hp.z, dx: d.x, dy: d.y, dz: d.z, type: p.type });
-      sim().emit(S, 'banner', { title: 'Deflected!', sub: 'The force field throws it into 3D' });
+      sim().emit(S, EV.FFRIPPLE, { fid: f.id, x: hp.x, y: hp.y, z: hp.z, amp: 1 });
+      sim().emit(S, EV.FFBOUNCE, { fid: f.id, x: hp.x, y: hp.y, z: hp.z, dx: d.x, dy: d.y, dz: d.z, type: p.type });
+      sim().emit(S, EV.BANNER, { title: 'Deflected!', sub: 'The force field throws it into 3D' });
       sim()
         .log(S, `The force field throws the ${C.WEAPONS[p.type] ? C.WEAPONS[p.type].name.toLowerCase() : 'shell'} off into 3D!`, 0x9fe8ff);
       return true;
@@ -199,7 +199,7 @@
       }
       const surf = sim().surface_at(S, nx, nz);
       if (!q.wet && ny < surf && q.vel.y < 0) {
-        sim().emit(S, 'splash', { x: nx, y: surf, z: nz, size: M.min(1.6, 0.4 + sp * 0.05), proj: 1 });
+        sim().emit(S, EV.SPLASH, { x: nx, y: surf, z: nz, size: M.min(1.6, 0.4 + sp * 0.05), proj: 1 });
         if (imp) {
           burst3(S, q, { x: nx, y: surf - 0.15, z: nz });
           return;
@@ -211,7 +211,7 @@
       }
       if (imp)
         for (const o of S.worms)
-          if (!o.dead && hypot3(o.pos, { x: nx, y: ny, z: nz }) < C.WORM_R + 0.12) {
+          if (!o.dead && M.v3_dist(o.pos, { x: nx, y: ny, z: nz }) < C.WORM_R + 0.12) {
             burst3(S, q, { x: nx, y: ny, z: nz });
             return;
           }
@@ -223,7 +223,7 @@
         const nn = w.normal(nx, ny, nz, { x: 0, y: 1, z: 0 }), vn = q.vel.x * nn.x + q.vel.y * nn.y + q.vel.z * nn.z;
         if (vn < 0) {
           const rest = pd.rest != null ? pd.rest : 0.4, fric = pd.fric != null ? pd.fric : 0.9;
-          if (vn < -2) sim().emit(S, 'bounce', { x: nx, y: ny, z: nz, speed: -vn, mat: w.mat_at(nx, ny, nz) });
+          if (vn < -2) sim().emit(S, EV.BOUNCE, { x: nx, y: ny, z: nz, speed: -vn, mat: w.mat_at(nx, ny, nz) });
           q.vel.x = (q.vel.x - (1 + rest) * vn * nn.x) * fric;
           q.vel.y = (q.vel.y - (1 + rest) * vn * nn.y) * fric;
           q.vel.z = (q.vel.z - (1 + rest) * vn * nn.z) * fric;
@@ -244,7 +244,7 @@
     if (!S.ffields.length || wp.noContain || Wkg < 0.05) return null;
     const KF = K.FIELD;
     for (const f of S.ffields) {
-      if (f.state !== 0 || hypot3(c, centre(f)) >= f.R - 0.15) continue;
+      if (f.state !== 0 || M.v3_dist(c, centre(f)) >= f.R - 0.15) continue;
       f.charge = M.min(KF.CAP, f.charge + Wkg * (1 - KF.LEAK));
       S.ffCtx = f.id;
       return { f, W: Wkg * KF.LEAK };
@@ -257,11 +257,11 @@
     const dmgBase = wp.dmg != null ? wp.dmg : 50 * M.pow(Wkg, 0.28);
     // everything inside takes the contained wave: damage on top of the leak, flung about the dome
     for (const o of S.worms) {
-      if (o.dead || hypot3(o.pos, cc) >= f.R) continue;
+      if (o.dead || M.v3_dist(o.pos, cc) >= f.R) continue;
       // (P38 R3: the field shelters its owner's team (no extra wave for them) and a spent field (its charge used) adds
       // only 0.5x, not CONTAIN_K: a spent dome was a 2.5x damage zone for whoever stood in it: bazooka 50 -> 123,
       // airstrike 59 -> 230)
-      const d = hypot3(o.pos, c),
+      const d = M.v3_dist(o.pos, c),
         fk = 1 - 0.55 * M.min(1, d / f.R),
         kk = o.team === f.team ? 0 : f.charges > 0 ? KF.CONTAIN_K : 0.5,
         extra = Math.round(dmgBase * kk * fk);
@@ -273,10 +273,10 @@
       const l = d || 1, dv = (3 + 8 * (1 - M.min(1, d / f.R))) * M.min(1.5, Wkg + 0.3);
       WPN().shove(S, o, (o.pos.x - c.x) / l * dv, 4 + dv * 0.5, (o.pos.z - c.z) / l * dv);
     }
-    sim().emit(S, 'ffcontain', { fid: f.id, x: c.x, y: c.y, z: c.z, W: Wkg });
-    sim().emit(S, 'ffripple', { fid: f.id, x: c.x, y: c.y, z: c.z, amp: 2 });
+    sim().emit(S, EV.FFCONTAIN, { fid: f.id, x: c.x, y: c.y, z: c.z, W: Wkg });
+    sim().emit(S, EV.FFRIPPLE, { fid: f.id, x: c.x, y: c.y, z: c.z, amp: 2 });
     // the generator takes the full charge
-    const R = 2.83 * M.cbrt(Wkg), fk = SS.blast.poc_factor(hypot3(f.pos, c), R), dP = dmgBase;
+    const R = 2.83 * M.cbrt(Wkg), fk = SS.blast.poc_factor(M.v3_dist(f.pos, c), R), dP = dmgBase;
     if (fk > 0) f.hp -= dP * fk;
     if (f.hp <= 0) drop(S, f, true);
   };
@@ -286,7 +286,7 @@
     const R = 2.83 * M.cbrt(Wkg), dP = dmg != null ? dmg : 50 * M.pow(Wkg, 0.28);
     for (const f of S.ffields.slice()) {
       if (f.state !== 0 || f.id === S.ffCtx) continue;
-      const k = SS.blast.poc_factor(hypot3(f.pos, c), R);
+      const k = SS.blast.poc_factor(M.v3_dist(f.pos, c), R);
       if (k > 0) f.hp -= dP * k;
       if (f.hp <= 0) drop(S, f, true);
     }
@@ -294,7 +294,7 @@
   function drop(S, f, release) {
     if (f.state !== 0) return;
     f.state = 1;
-    sim().emit(S, 'ffbreak', { fid: f.id, x: f.pos.x, y: f.pos.y, z: f.pos.z, R: f.R, charge: f.charge });
+    sim().emit(S, EV.FFBREAK, { fid: f.id, x: f.pos.x, y: f.pos.y, z: f.pos.z, R: f.R, charge: f.charge });
     if (release && f.charge >= K.FIELD.MIN_REL && S.ffRel.length < 4) {
       S.ffRel.push({
         t: S.time + K.FIELD.REL_DELAY,
@@ -352,14 +352,14 @@
         body.vel.x += ex / l * v; body.vel.y += ey / l * v + 3; body.vel.z += ez / l * v;
         body.w.x += rr(S, -3, 3); body.w.y += rr(S, -3, 3); body.w.z += rr(S, -3, 3);
       }
-      if (r.rubble && r.rubble.length) sim().emit(S, 'rubble', { pts: r.rubble.slice(0, 24) });
+      if (r.rubble && r.rubble.length) sim().emit(S, EV.RUBBLE, { pts: r.rubble.slice(0, 24) });
       WPN().edited(S, cx, cy, cz, R + 0.5);
     }
     // nearby rocks split into big pieces
     let rocks = 0;
     for (const b of S.bodies.slice()) {
       if (rocks >= 6 || !(b.prop === 'boulder' || b.kind === 'chunk')) continue;
-      const d = hypot3(b.pos, c);
+      const d = M.v3_dist(b.pos, c);
       if (d > KF.ROCK_R + b.rb) continue;
       const r0 = M.max(0.25, b.rb * 0.62), n = 3;
       SS.bodies.remove(S, b); rocks++;
@@ -372,7 +372,7 @@
         piece.vel.x = ex / l * v + M.cos(a) * 2; piece.vel.y = rr(S, 3, 7); piece.vel.z = ez / l * v + M.sin(a) * 2;
       }
     }
-    sim().emit(S, 'ffcrack', { x: c.x, y: c.y, z: c.z, R: Rc, pieces: made, rocks });
+    sim().emit(S, EV.FFCRACK, { x: c.x, y: c.y, z: c.z, R: Rc, pieces: made, rocks });
   }
 
   /* ---------- per step / turn ---------- */
@@ -395,7 +395,7 @@
         else if (f.pos.y < sim().surface_at(S, f.pos.x, f.pos.z) - 0.1) {
           f.hp = 0;
           drop(S, f, false);
-          sim().emit(S, 'steam', { x: f.pos.x, y: f.pos.y, z: f.pos.z, power: 0.5 });
+          sim().emit(S, EV.STEAM, { x: f.pos.x, y: f.pos.y, z: f.pos.z, power: 0.5 });
         }
       }
     }
@@ -412,7 +412,7 @@
       const r = S.ffRel[i];
       if (S.time < r.t) continue;
       S.ffRel.splice(i, 1);
-      sim().emit(S, 'ffrelease', { x: r.x, y: r.y, z: r.z, W: r.W });
+      sim().emit(S, EV.FFRELEASE, { x: r.x, y: r.y, z: r.z, W: r.W });
       sim().explode(S, { x: r.x, y: r.y, z: r.z }, { W: r.W, dmg: 55, name: 'the force field energy', noContain: 1 }, null);
       crack(S, { x: r.x, y: r.y, z: r.z }, r.W);
       S.lastBoom = S.time;
@@ -423,7 +423,7 @@
     for (let i = S.ffields.length - 1; i >= 0; i--) {
       const f = S.ffields[i];
       if (f.state === 0 && --f.turns <= 0) {
-        sim().emit(S, 'ffbreak', { fid: f.id, x: f.pos.x, y: f.pos.y, z: f.pos.z, R: f.R, charge: 0, expired: 1 });
+        sim().emit(S, EV.FFBREAK, { fid: f.id, x: f.pos.x, y: f.pos.y, z: f.pos.z, R: f.R, charge: 0, expired: 1 });
         S.ffields.splice(i, 1);
       }
     }

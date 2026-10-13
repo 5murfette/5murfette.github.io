@@ -559,10 +559,7 @@
       SS.net.on('start', st => {
         // (P37: the menu's rule / density keys)
         const ok = {},
-          allow = [
-            'biome', 'seed', 'weather', 'lava', 'wind', 'under', 'collapse', 'teams', 'worms', 'hp', 'turnTime', 'skill', 'sd', 'placement',
-            'first', 'volcanoes', 'time', 'shape', 'blood', 'select', 'keepRope', 'rooms'
-          ].concat(SS.menu.NET_KEYS || []);
+          allow = C.setting_keys(C.SF.NET);
         for (const k of allow)
           if (st[k] != null && (typeof st[k] === 'string' || typeof st[k] === 'number' || typeof st[k] === 'boolean')) ok[k] = st[k];
         if (Array.isArray(st.ctl)) ok.ctl = st.ctl.slice(0, 4).map(v => (v === 'cpu' ? 'cpu' : 'human'));
@@ -570,7 +567,7 @@
         // presentation stays the guest's own (a different quality reloads the renderer: it dropped the link mid-match)
         const mine = SS.menu.load() || {}, pres = {};
         // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
-        for (const k of ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine', 'anticCam'])
+        for (const k of C.setting_keys(C.SF.LOOK))
           if (mine[k] != null) pres[k] = mine[k];
         // (P38 R6 R6: the RUNNING quality: a saved one that differs would reload the page and drop the link)
         pres.quality = Q ? Q.name : mine.quality;

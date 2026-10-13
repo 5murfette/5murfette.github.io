@@ -2,8 +2,9 @@
  * default).
  * With every flag off nothing here changes a single number of the simulation (the hooks return neutral values, no RNG
  * draws, no hash input), so a match without the Lab equals the pre-Lab game bit for bit. The mask travels with the
- * match settings (menu NET_KEYS -> the net 'start' message), so both lockstep peers run the same rules. Portable and
- * deterministic: sim time only, its own RNG stream S.lab.rng, no Map / Set, a capped pool (C.LIMITS.LAB_METEORS).
+ * match settings (the NET rows of the settings schema -> the net 'start' message), so both lockstep peers run the same
+ * rules. Portable and deterministic: sim time only, its own RNG stream S.lab.rng, no Map / Set, a capped pool
+ * (C.LIMITS.LAB_METEORS).
  *
  *   BANK      bank shot:  a bouncing shell (grenade, banana, ...) that hit terrain / props with a hard bounce (> 2 m/s)
  *             before it
@@ -50,6 +51,8 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math;
+  const PHASE = C.PHASE;
+  const EV = C.EV;
   const LB = SS.lab = {};
   const F = C.LAB;                      // (the constants live in config.js: sim.js reads BANK_SPEED even where this module is not loaded)
   const rng = S => M.rng_next(S.lab.rng);
@@ -76,19 +79,13 @@
   };
 
   /* strength of a team = HP of its living worms */
-  function teamHp(S, t) {
-    let h = 0;
-    for (const w of S.worms)
-      if (!w.dead && w.team === t) h += w.hp;
-    return h;
-  }
   LB.underdog = function (S, team) {
     if (!LB.on(S, F.FLAG.UNDERDOG) || !S.teams) return false;
-    const mine = teamHp(S, team);
+    const mine = SS.worm.team_hp(S, team);
     if (mine <= 0) return false;
     let best = 0;
     for (let t = 0; t < S.teams.length; t++)
-      if (t !== team) best = M.max(best, teamHp(S, t));
+      if (t !== team) best = M.max(best, SS.worm.team_hp(S, t));
     return mine <= best * F.UNDER_RATIO;
   };
 
@@ -115,7 +112,7 @@
       k *= kb;
       if (S.lab.evTick !== S.tick) {
         S.lab.evTick = S.tick;
-        SS.sim.emit(S, 'labbank', { wormId: ownerId, bounces: S.lab.bankN, k: kb });
+        SS.sim.emit(S, EV.LABBANK, { wormId: ownerId, bounces: S.lab.bankN, k: kb });
         SS.sim.log(S, `Bank shot x${kb.toFixed(1)}!`, 0xffe08a);
       }
     }
@@ -128,8 +125,8 @@
         k *= kl;
         if (S.lab.longTick !== S.tick) {
           S.lab.longTick = S.tick;
-          SS.sim.emit(S, 'lablong', { wormId: ownerId, victim: w.id, dist: d, k: kl });
-          SS.sim.emit(S, 'banner', { title: 'Long shot!', sub: `${Math.round(d)} m: +${Math.round((kl - 1) * 100)} % damage` });
+          SS.sim.emit(S, EV.LABLONG, { wormId: ownerId, victim: w.id, dist: d, k: kl });
+          SS.sim.emit(S, EV.BANNER, { title: 'Long shot!', sub: `${Math.round(d)} m: +${Math.round((kl - 1) * 100)} % damage` });
           SS.sim.log(S, `Long shot, ${Math.round(d)} m: x${kl.toFixed(2)} damage.`, 0xffe08a);
         }
       }
@@ -165,7 +162,7 @@
     const t = LB.tired(S, a.id);
     if (!(t > 0)) return aim;
     const e = (rng(S) * 2 - 1) * F.FAT_RAD * M.min(1, t / F.FAT_M), c = M.cos(e), sn = M.sin(e);
-    SS.sim.emit(S, 'labsway', { wormId: a.id, err: e });
+    SS.sim.emit(S, EV.LABSWAY, { wormId: a.id, err: e });
     return { s: aim.s * c - aim.y * sn * a.facing, y: aim.y * c + aim.s * sn * a.facing };
   };
 
@@ -193,9 +190,9 @@
   const SCORE = [5, 2, 3, 4, 2, 1];
   LB.cpu_pick = function (S, team, opts, n) {
     let best = 0, bs = -1;
-    const mine = teamHp(S, team);
+    const mine = SS.worm.team_hp(S, team);
     let top = 0;
-    for (let t = 0; t < S.teams.length; t++) top = M.max(top, teamHp(S, t));
+    for (let t = 0; t < S.teams.length; t++) top = M.max(top, SS.worm.team_hp(S, t));
     for (let i = 0; i < n; i++) {
       const p = opts[i];
       let sc = SCORE[p] * 10;
@@ -229,11 +226,11 @@
       D.t = F.PERK_T;
       const w = S.worms.find(o => !o.dead && o.hp > 0 && o.team === team);
       if (w) S.active = w;
-      S.phase = 'perk'; S.charging = false; S.power = 0;
-      SS.sim.emit(S, 'labperkoffer', { team, opts: D.opts.slice(0, D.nopt) });
+      S.phase = PHASE.PERK; S.charging = false; S.power = 0;
+      SS.sim.emit(S, EV.LABPERKOFFER, { team, opts: D.opts.slice(0, D.nopt) });
       return;
     }
-    D.on = false; D.team = -1; S.phase = 'play';
+    D.on = false; D.team = -1; S.phase = PHASE.PLAY;
     SS.sim.next_turn(S, D.first);
   }
   /* sim.next_turn, before the team rotation: true = a draft is starting (next_turn is re-entered when it ends) */
@@ -252,7 +249,7 @@
     const ft = S.firstTeam | 0;
     for (let k = 0; k < n; k++) {
       const t = (ft + k) % n;
-      if (S.worms.some(w => !w.dead && w.hp > 0 && w.team === t)) D.order[D.n++] = t;
+      if (SS.worm.team_alive(S, t)) D.order[D.n++] = t;
     }
     if (!D.n) return false;
     S.lab.draftRound = round;
@@ -265,14 +262,14 @@
   function take(S, i) {
     const D = S.lab.draft, perk = D.opts[i], team = D.team, cpu = SS.game.is_cpu(S, team);
     S.lab.perks[team] |= 1 << perk;
-    SS.sim.emit(S, 'labperk', { team, perk, cpu });
+    SS.sim.emit(S, EV.LABPERK, { team, perk, cpu });
     SS.sim.log(S, `${SS.sim.team_name(S, team)} take ${PERK_NAMES[perk]}.`, SS.sim.team_rgb(S, team));
     D.idx++; open_pick(S);
   }
   /* sim.step in phase 'perk': inp.fuse 1..3 picks a card for a human team; the CPU (and a time-out) use cpu_pick */
   LB.perk_step = function (S, inp, dt) {
     const D = S.lab && S.lab.draft;
-    if (!D || !D.on || S.phase !== 'perk') return;
+    if (!D || !D.on || S.phase !== PHASE.PERK) return;
     D.t -= dt;
     if (SS.game.is_cpu(S, D.team)) {
       if (D.t <= F.PERK_T - F.PERK_CPU_T) take(S, LB.cpu_pick(S, D.team, D.opts, D.nopt));
@@ -303,7 +300,7 @@
       if (moon !== L.moon) {
         L.moon = moon;
         if (moon) {
-          sim.emit(S, 'banner', { title: 'Moon phase', sub: 'Low gravity this round' });
+          sim.emit(S, EV.BANNER, { title: 'Moon phase', sub: 'Low gravity this round' });
           sim.log(S, 'Moon phase: low gravity this round.', 0xb8c8ff);
         }
       }
@@ -317,7 +314,7 @@
           if (L.dealt & (1 << p)) L.streak[p] = M.min(F.STREAK_MAX, was + 1);
           else L.streak[p] = 0;
           if (L.streak[p] !== was) {
-            sim.emit(S, 'labstreak', { team: p, streak: L.streak[p] });
+            sim.emit(S, EV.LABSTREAK, { team: p, streak: L.streak[p] });
             if (L.streak[p] > 0)
               sim.log(
                 S,
@@ -349,10 +346,10 @@
     L.gustT = rr(S, F.GUST_T0, F.GUST_T1) * ((fl & F.FLAG.GUSTS) ? 1 : 0);
     if ((fl & F.FLAG.UNDERDOG) && S.active && LB.underdog(S, S.active.team) && L.underAnn !== S.turnNo) {
       L.underAnn = S.turnNo;
-      sim.emit(S, 'labunder', { team: S.active.team });
+      sim.emit(S, EV.LABUNDER, { team: S.active.team });
       sim.log(S, `${sim.team_name(S, S.active.team)} are the underdogs: +${Math.round((F.UNDER_K - 1) * 100)} % blast damage.`, 0xffc08a);
     }
-    if ((fl & F.FLAG.METEORS) && !first && S.turnNo % F.MET_EVERY === 0 && S.phase !== 'place') spawn_meteors(S);
+    if ((fl & F.FLAG.METEORS) && !first && S.turnNo % F.MET_EVERY === 0 && S.phase !== PHASE.PLACE) spawn_meteors(S);
     if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.turn_start(S, first);        // P79: lightning, quake, scavenge
   };
 
@@ -365,7 +362,7 @@
           y = wd.topHeight(x, z);
         if (y <= wd.SEA + 0.3 || !SS.sim.in_play(S, x, z)) continue;
         SS.sim.pool_push(L.met, C.LIMITS.LAB_METEORS, { id: ++L.metN, t: S.time + F.MET_WARN, t0: S.time, x, y, z });
-        SS.sim.emit(S, 'labmeteor', { x, y, z, warn: F.MET_WARN });
+        SS.sim.emit(S, EV.LABMETEOR, { x, y, z, warn: F.MET_WARN });
         break;
       }
     }
@@ -375,10 +372,10 @@
   /* per step: gusts (while the worm is aiming) and the meteors' impacts */
   LB.step = function (S, dt) {
     const fl = LB.flags(S);
-    if (!fl || !S.lab || S.phase === 'over') return;
+    if (!fl || !S.lab || S.phase === PHASE.OVER) return;
     const L = S.lab;
     if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.step(S, dt);                    // P79: lightning strikes, slick slopes, the quake
-    if ((fl & F.FLAG.FATIGUE) && S.phase === 'play' && S.active && !S.active.dead) {
+    if ((fl & F.FLAG.FATIGUE) && S.phase === PHASE.PLAY && S.active && !S.active.dead) {
       const a = S.active;
       if (L.lid !== a.id) {
         L.lid = a.id;
@@ -390,7 +387,7 @@
       L.lx = a.pos.x; L.ly = a.pos.y; L.lz = a.pos.z;
       L.moved[a.id] = M.min(F.FAT_M, L.moved[a.id] + M.min(d, F.FAT_STEP));
     }
-    if ((fl & F.FLAG.GUSTS) && S.phase === 'play' && S.wind && SS.weather) {
+    if ((fl & F.FLAG.GUSTS) && S.phase === PHASE.PLAY && S.wind && SS.weather) {
       L.gustT -= dt;
       if (L.gustT <= 0) {
         L.gustT = rr(S, F.GUST_T0, F.GUST_T1);
@@ -400,7 +397,7 @@
         else if (dir < -M.PI) dir += M.TAU;
         const sp = M.clamp(w.speed + rr(S, F.GUST_V0, F.GUST_V1), 0, F.GUST_MAX);
         SS.weather.set_wind(S, dir, sp, ga); w.lo = lo; w.hi = hi;
-        SS.sim.emit(S, 'labgust', { speed: sp, dir });
+        SS.sim.emit(S, EV.LABGUST, { speed: sp, dir });
         SS.sim.log(S, `A gust shifts the wind (${sp.toFixed(1)} m/s).`, 0xb8d8ff);
       }
     }
@@ -408,7 +405,7 @@
       const m = L.met[i];
       if (S.time >= m.t) {
         L.met.splice(i, 1);
-        SS.sim.emit(S, 'labmeteorhit', { x: m.x, y: m.y, z: m.z });
+        SS.sim.emit(S, EV.LABMETEORHIT, { x: m.x, y: m.y, z: m.z });
         SS.sim.explode(S, { x: m.x, y: m.y + 0.1, z: m.z }, { W: F.MET_W, dmg: F.MET_DMG, name: 'meteor' }, null);
       }
     }

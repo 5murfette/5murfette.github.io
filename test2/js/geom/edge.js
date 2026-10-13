@@ -1,4 +1,4 @@
-/* sim/edge.js — what the section's surface is made of (Step E2), for the material edge that replaces the bright
+/* geom/edge.js — what the section's surface is made of (Step E2), for the material edge that replaces the bright
  * outline once the section stops rotating (render/edge.js draws it).
  * ED.build(S, sec) chains the section's marching-squares outline (sec.outline: unordered segments s0,y0,s1,y1 on the
  * plane) into polylines and labels every chain point:

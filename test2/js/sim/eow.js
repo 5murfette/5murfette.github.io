@@ -21,6 +21,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, MAT = C.MAT, P = SS.plane;
+  const EV = C.EV;
   const E = SS.eow = {};
   const W = () => SS.world;
   const K = E.K = {
@@ -1053,7 +1054,7 @@
         w.eBurn = (w.eBurn || 0) + dt;
         if (w.eBurn >= K.BURN_DT) {
           w.eBurn -= K.BURN_DT;
-          sim.emit(S, 'eowburn', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
+          sim.emit(S, EV.EOWBURN, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
           w.burnT = S.time;
           sim.hurt(S, w, K.BURN_HP, C.DS.LAVA);
           if (w.dead) return;
@@ -1071,7 +1072,7 @@
     if (out || far) w.eVoid += dt;
     else if (w.eVoid > 0) w.eVoid = M.max(0, w.eVoid - 2 * dt);
     if (w.eVoid > (out ? 0.3 : K.VOID_T)) {
-      SS.sim.emit(S, 'eowvoid', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
+      SS.sim.emit(S, EV.EOWVOID, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
       sim.log(S, `${w.name} drifted off into the void.`, 0xffb27a);
       e.lost++; sim.kill(S, w, 'lost'); w.grave = null;
     }
@@ -1299,7 +1300,7 @@
       if (imp > K.SAFE) {                                              // a blast threw it into rock: it hurts, bounces
         const dmg = M.min(WD.GLANCE_MAX, Math.round((imp - K.SAFE) * WD.GLANCE_K));
         a.vs = ts * vt * WD.FRIC - wn.s * vn * WD.BOUNCE; a.vy = ty * vt * WD.FRIC - wn.y * vn * WD.BOUNCE;
-        SS.sim.emit(S, 'land', {
+        SS.sim.emit(S, EV.LAND, {
           wormId: a.id,
           x: a.pos.x,
           y: a.pos.y,
@@ -1343,7 +1344,7 @@
     a.eFlipC = false;
     set_up(S, a, n.s, n.y);
     if (imp > 2)
-      SS.sim.emit(S, 'land', {
+      SS.sim.emit(S, EV.LAND, {
         wormId: a.id,
         x: a.pos.x,
         y: a.pos.y - 0.45,
@@ -1426,7 +1427,7 @@
       const imp = -vn, tx = b.vel.x - vn * nv.x, ty = b.vel.y - vn * nv.y, tz = b.vel.z - vn * nv.z;
       if (imp > WD.FALL_SAFE) {
         const dmg = M.min(WD.GLANCE_MAX, Math.round((imp - WD.FALL_SAFE) * WD.GLANCE_K));
-        SS.sim.emit(S, 'land', {
+        SS.sim.emit(S, EV.LAND, {
           wormId: b.id,
           x: b.pos.x,
           y: b.pos.y,
@@ -1442,7 +1443,7 @@
         sim.hurt(S, b, dmg, C.DS.LANDING);
       } else if (!b.slide && imp < WD.SOFT_V * 2) {
         if (imp > 3)
-          SS.sim.emit(S, 'land', {
+          SS.sim.emit(S, EV.LAND, {
             wormId: b.id,
             x: b.pos.x,
             y: b.pos.y,
@@ -1852,7 +1853,7 @@
     const c = WP.crate_make(S, kind, weapon, null, p);
     E.crate_drift(S, c);
     S.crates.push(c);
-    SS.sim.emit(S, 'banner', { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
+    SS.sim.emit(S, EV.BANNER, { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
   };
   // P84 x P86: the round's crate plan (skills.crate_plan) chose this turn and the kind; in space it appears at a random
   // spot and drifts
@@ -1867,7 +1868,7 @@
     const c = WP.crate_make(S, kind, w0 && E.no_air(w0) ? 'bazooka' : w0, null, p);
     E.crate_drift(S, c);
     S.crates.push(c);
-    SS.sim.emit(S, 'banner', { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
+    SS.sim.emit(S, EV.BANNER, { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
   };
   // a tool delivery / the overload at a random spot (skills.js hooks)
   E.crate_add = function (S, kind, weapon, tool) {
@@ -1963,7 +1964,7 @@
         c.pos.y += cn.y * 0.05;
         c.pos.z += cn.z * 0.05;
       }
-      if (vn > 3) SS.sim.emit(S, 'cratedrop', { x: c.pos.x, y: c.pos.y, z: c.pos.z, v: vn });
+      if (vn > 3) SS.sim.emit(S, EV.CRATEDROP, { x: c.pos.x, y: c.pos.y, z: c.pos.z, v: vn });
       return true;
     }
     const e = esc3(S, c.pos.x, c.pos.y, c.pos.z, v.x, v.y, v.z, c.eEsc || 0, dt, CRK.ESC_T, CRK.ESC_T);
@@ -1977,7 +1978,7 @@
       || c.pos.y > w.SY + K.OUT_M * 2
       || c.pos.y < 0
     ) {
-      SS.sim.emit(S, 'cratelost', { x: c.pos.x, y: c.pos.y, z: c.pos.z });
+      SS.sim.emit(S, EV.CRATELOST, { x: c.pos.x, y: c.pos.y, z: c.pos.z });
       SS.sim.log(S, 'A supply crate drifted off into space.', 0x9fd0ff); return false;
     }
     c.eEsc = e; return true;
@@ -2072,7 +2073,7 @@
       }
       if (p.hopT <= 0) {
         p.vs = fs * pd.hopVx + us * pd.hopVy; p.vy = fy * pd.hopVx + uy * pd.hopVy; p.hopT = M.rng_range(S.armRng, pd.hop0, pd.hop1);
-        if (M.rng_next(S.armRng) < 0.4) sim.emit(S, 'baa', { x: wl.x, y: p.y, z: wl.z });
+        if (M.rng_next(S.armRng) < 0.4) sim.emit(S, EV.BAA, { x: wl.x, y: p.y, z: wl.z });
       }
     }
     // never sink into the ground
@@ -2211,7 +2212,7 @@
         vu = Math.sqrt(2 * g * (need + 0.35));
         d.hop = 0.3;
         d.state = 2;
-        SS.sim.emit(S, 'doghop', { x: wp.x, y: wp.y, z: wp.z });
+        SS.sim.emit(S, EV.DOGHOP, { x: wp.x, y: wp.y, z: wp.z });
       }
       else {
         vt = 0;
@@ -2330,7 +2331,7 @@
       t0: S.time
     });
     if (S.eow.shots.length > 8) S.eow.shots.shift();
-    SS.sim.emit(S, 'eowlost', { x: wl.x, y: p.y, z: wl.z, type: p.type, owner: p.owner, speed: M.len2(p.vs, p.vy) });
+    SS.sim.emit(S, EV.EOWLOST, { x: wl.x, y: p.y, z: wl.z, type: p.type, owner: p.owner, speed: M.len2(p.vs, p.vy) });
     SS.sim.log(S, `${(C.WEAPONS[p.type] || {}).name || p.type} escaped into space.`, 0x9fd0ff);
     return true;
   };
@@ -2438,7 +2439,7 @@
     if (!j.on)
       for (const w of S.worms)
         if (w.team === a.team) w.eJet = 0;
-    SS.sim.emit(S, 'eowjetmode', { team: a.team, on: j.on ? 1 : 0, n: j.n });
+    SS.sim.emit(S, EV.EOWJETMODE, { team: a.team, on: j.on ? 1 : 0, n: j.n });
     SS.sim.log(S, 'Jetpacks ' + (j.on ? 'ARMED' : 'OFF') + ' (' + j.n + ' left).', j.on ? 0x9fd0ff : 0xffb27a);
   };
   const pv = { x: 0, y: 0, z: 0 };
@@ -2550,7 +2551,7 @@
     w.eJet -= dt; w.eJh -= dt;
     if (w.eJh <= 0) {
       w.eJh = 0.5;
-      SS.sim.emit(S, 'eowjet', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, n: S.eow.jet[w.team].n, phase: 1 });
+      SS.sim.emit(S, EV.EOWJET, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, n: S.eow.jet[w.team].n, phase: 1 });
     }
   }
   function jet_tick(S, dt) {
@@ -2572,7 +2573,7 @@
       if (w.drowning || w.swim || (act ? (!w.air || S.rope) : w.rest)) continue;
       if (!escapes(S, w, w.pos, vel3(S, w, pv))) continue;
       j.n--; w.eJet = JK.T; w.eJh = 0;
-      SS.sim.emit(S, 'eowjet', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, n: j.n, phase: 0 });
+      SS.sim.emit(S, EV.EOWJET, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, n: j.n, phase: 0 });
       SS.sim.log(S, w.name + "'s jetpack kicks in (" + j.n + ' left).', 0x9fd0ff);
       jet_thrust(S, w, dt);
     }

@@ -16,6 +16,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane, A = C.ARMS;
+  const PHASE = C.PHASE;
   const WA = SS.weaponsA;
   if (!WA) return;
   const OWN_K = 1.6;
@@ -170,7 +171,7 @@
     }
     if (k === 'handgun') {
       S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5); SS.weapons.use(S, 0);
-      if (S.phase === 'play') {
+      if (S.phase === PHASE.PLAY) {
         S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5);
         SS.weapons.use(S, 0);
       }

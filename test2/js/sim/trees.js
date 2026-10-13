@@ -35,6 +35,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.TREES, BC = C.BLAST;
+  const EV = C.EV;
   const TR = SS.trees = {};
   const W = () => SS.world;
   const SPN = ['oak', 'spruce', 'juniper', 'snag', 'palm'];
@@ -308,7 +309,7 @@
       leaves: lvs.map(l => Object.assign(rel(l), { r: l.r, f: l.f }))
     };
     if (c) SS.bodies.blast(S, c, Wkg, [b]);
-    SS.sim.emit(S, 'treebreak', { tree: t.id, seg: s, body: b.id, why, x: com.x, y: com.y, z: com.z, mass });
+    SS.sim.emit(S, EV.TREEBREAK, { tree: t.id, seg: s, body: b.id, why, x: com.x, y: com.y, z: com.z, mass });
     return b;
   }
   /* T1: the root system holds the tree. Roots spread over a plate of radius ROOT_R_K x crown (>= ROOT_R_MIN) and
@@ -528,12 +529,12 @@
             l.f = 0;
             l.s = -1;
           }
-        SS.sim.emit(S, 'treeshatter', { tree: t.id, x: t.x, y: t.y, z: t.z, r: g.r0 });
+        SS.sim.emit(S, EV.TREESHATTER, { tree: t.id, x: t.x, y: t.y, z: t.z, r: g.r0 });
       }
-      if (stripped > 0.02) SS.sim.emit(S, 'leafstrip', { tree: t.id, x: t.x, y: t.y + t.h * 0.7, z: t.z, amount: stripped });
+      if (stripped > 0.02) SS.sim.emit(S, EV.LEAFSTRIP, { tree: t.id, x: t.x, y: t.y + t.h * 0.7, z: t.z, amount: stripped });
       if (t.alive && !supported(t)) {
         detach(S, t, 0, c, Wkg, 'uproot');
-        SS.sim.emit(S, 'uproot', { tree: t.id, x: t.x, y: t.y, z: t.z });
+        SS.sim.emit(S, EV.UPROOT, { tree: t.id, x: t.x, y: t.y, z: t.z });
       }
     }
   };
@@ -547,7 +548,7 @@
       if (i < i0 - 2 || i > i1 + 2 || k < k0 - 2 || k > k1 + 2) continue;
       if (!supported(t)) {
         detach(S, t, 0, null, 0, 'uproot');
-        SS.sim.emit(S, 'uproot', { tree: t.id, x: t.x, y: t.y, z: t.z });
+        SS.sim.emit(S, EV.UPROOT, { tree: t.id, x: t.x, y: t.y, z: t.z });
       }
     }
   };
@@ -556,7 +557,7 @@
   function ignite(S, t, why) {
     if (t.burn >= 0 || t.char >= 1 || !t.alive) return;
     t.burn = 0; t.heat = 0;
-    SS.sim.emit(S, 'treefire', { tree: t.id, x: t.x, y: t.y + t.h * 0.6, z: t.z, why });
+    SS.sim.emit(S, EV.TREEFIRE, { tree: t.id, x: t.x, y: t.y + t.h * 0.6, z: t.z, why });
     if (!S._treeLogT || S.time - S._treeLogT > 5) {
       S._treeLogT = S.time;
       SS.sim.log(S, 'A tree goes up in flames!', 0xffb060);
@@ -594,7 +595,7 @@
       for (const l of t.leaf)
         if (l.s >= 0 && l.f > 0) l.f = M.max(0, l.f * (1 - AK.WITHER * dt));
       if (t.acid >= AK.T * M.clamp(g0.r0 / AK.REF_R, 0.6, 2)) {
-        SS.sim.emit(S, 'treeacid', { tree: t.id, x: t.x, y: t.y + 0.4, z: t.z });
+        SS.sim.emit(S, EV.TREEACID, { tree: t.id, x: t.x, y: t.y + 0.4, z: t.z });
         detach(S, t, 1, null, 0, 'acid');
         SS.sim.log(S, 'Acid eats through a tree trunk!', 0xa6ff3a);
       }
@@ -619,7 +620,7 @@
       if (l.s >= 0) l.f *= 1 - K.STRIKE_STRIP;
     if (o && o.breakTop && p.s > 0 && t.seg[p.s].r0 < K.STRIKE_BREAK_R) detach(S, t, p.s, p, 0.25, 'lightning');
     ignite(S, t, 'lightning');
-    SS.sim.emit(S, 'treestrike', { tree: t.id, x: p.x, y: p.y, z: p.z });
+    SS.sim.emit(S, EV.TREESTRIKE, { tree: t.id, x: p.x, y: p.y, z: p.z });
     return p;
   };
   function leafLeft(t) {
@@ -639,7 +640,7 @@
         if (S.water && S.water.h[rc] > 0.05) {
           t.burn = -1;
           t.heat = 0;
-          SS.sim.emit(S, 'steam', { x: t.x, y: t.y + 0.5, z: t.z, power: 0.6 });
+          SS.sim.emit(S, EV.STEAM, { x: t.x, y: t.y + 0.5, z: t.z, power: 0.6 });
           continue;
         }
         t.burn += TK;
@@ -660,7 +661,7 @@
         if (t.char >= 1) {
           t.burn = -2;
           for (const l of t.leaf) l.f = 0;
-          SS.sim.emit(S, 'treeburnt', { tree: t.id, x: t.x, y: t.y + t.h * 0.5, z: t.z });
+          SS.sim.emit(S, EV.TREEBURNT, { tree: t.id, x: t.x, y: t.y + t.h * 0.5, z: t.z });
         }
         continue;
       }

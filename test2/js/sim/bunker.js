@@ -19,31 +19,33 @@
   const C = SS.CFG, M = SS.math, MAT = C.MAT, K = C.BUNKER;
   const BK = SS.bunker = {};
   const W = () => SS.world;
-  const smin = (a, b) => (a < b ? a : b), smax = (a, b) => (a > b ? a : b);
 
   /* signed distances of one bunker at local (dx, y, dz) (y above the floor y0): concrete > 0, the air it cuts > 0 */
   function shape(b, dx, y, dz, out) {
     const r = M.len2(dx, dz), Rin = K.R_OUT - K.WALL, cyD = K.H_WALL - K.DOME_K * K.R_OUT, Rd = M.len2(K.R_OUT, K.DOME_K * K.R_OUT);
     const dd = M.len3(dx, y - cyD, dz);
-    const sCyl = smin(smin(K.R_OUT - r, y + b.foot), K.H_WALL - y);
-    const sDome = smin(Rd - dd, y - K.H_WALL + 0.01);
-    const sOuter = smax(sCyl, sDome);
-    const sCav = smax(smin(smin(Rin - r, y), K.H_WALL - y), smin(Rd - K.WALL - dd, y - K.H_WALL + 0.01));
+    const sCyl = M.fast_min(M.fast_min(K.R_OUT - r, y + b.foot), K.H_WALL - y);
+    const sDome = M.fast_min(Rd - dd, y - K.H_WALL + 0.01);
+    const sOuter = M.fast_max(sCyl, sDome);
+    const sCav = M.fast_max(M.fast_min(M.fast_min(Rin - r, y), K.H_WALL - y), M.fast_min(Rd - K.WALL - dd, y - K.H_WALL + 0.01));
     // door (rear) and window (front): local axes along the opening (a) and across it (c)
     const ux = M.cos(b.phi), uz = M.sin(b.phi);
     const aD = (b.flat ? 1 : -1) * (dx * ux + dz * uz), cD = -dx * uz + dz * ux;                     // rear: phi + pi
-    const sDoor = smin(smin(smin(K.DOOR_W / 2 - Math.abs(cD), y), K.DOOR_H - y), smin(aD - (Rin - 0.4), K.R_OUT + 2.5 - aD));
+    const sDoor = M.fast_min(
+      M.fast_min(M.fast_min(K.DOOR_W / 2 - Math.abs(cD), y), K.DOOR_H - y),
+      M.fast_min(aD - (Rin - 0.4), K.R_OUT + 2.5 - aD)
+    );
     const aW = dx * ux + dz * uz, cW = -dx * uz + dz * ux, kW = M.clamp((aW - Rin) / K.WALL, 0, 1.5);
     const half = K.SLIT_W_IN / 2 + kW * (K.SLIT_W_OUT - K.SLIT_W_IN) / 2;
-    const sWin = smin(
-      smin(smin(half - Math.abs(cW), y - K.SLIT_Y0 + kW * 0.12), K.SLIT_Y1 + kW * 0.2 - y),
-      smin(aW - (Rin - 0.4), K.R_OUT + 0.6 - aW)
+    const sWin = M.fast_min(
+      M.fast_min(M.fast_min(half - Math.abs(cW), y - K.SLIT_Y0 + kW * 0.12), K.SLIT_Y1 + kW * 0.2 - y),
+      M.fast_min(aW - (Rin - 0.4), K.R_OUT + 0.6 - aW)
     );
     // P72: 2D: the plane cuts the whole section open where an opening is, so the door sits in the FRONT wall (the rear
     // wall stays whole and carries the roof down to the footing: a door in the rear and a slit in the front left the
     // dome hanging in the air); the slit is part of the opening
-    const sAir = b.flat ? smax(sCav, sDoor) : smax(smax(sCav, sDoor), sWin);
-    out.conc = smin(sOuter, -sAir); out.air = sAir;
+    const sAir = b.flat ? M.fast_max(sCav, sDoor) : M.fast_max(M.fast_max(sCav, sDoor), sWin);
+    out.conc = M.fast_min(sOuter, -sAir); out.air = sAir;
     return out;
   }
   const tmp = { conc: 0, air: 0 };

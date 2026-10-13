@@ -91,6 +91,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math;
+  const EV = C.EV;
   const AL = SS.alien = {};
   const W = () => SS.world;
   const K = AL.K = {
@@ -116,7 +117,6 @@
   };
   // why a hugger died (hugger_die.why)
   const WHY = AL.WHY = { DETACH: 0, BLAST: 1, HOST_DIED: 2, STUCK: 3, ACID: 4, FIRE: 5, SHOT: 6, HIT: 7 };
-  const smin = (a, b) => (a < b ? a : b);
   // (the Lab's moon makes the hugger's leap, the falling egg and the acid drops floaty too)
   const grav = S => C.G * SS.sim.gravity_k(S, null);
   const rnd = S => M.rng_next(S.alien.rng);
@@ -172,7 +172,7 @@
       if (noWater && !inF && fieldAt(S, nx, gy, nz)) continue;
       p.x = nx;
       p.z = nz;
-      p.y += (gy - p.y) * smin(1, 24 * dt);
+      p.y += (gy - p.y) * M.fast_min(1, 24 * dt);
       p.yaw = a;
       return true;
     }
@@ -296,13 +296,13 @@
 
   /* ---------- eggs ---------- */
   function wake(S, e) {
-    e.st = 1; e.t0 = S.time; SS.sim.emit(S, 'egg_open', { id: e.id, x: e.x, y: e.y + 0.5, z: e.z });
+    e.st = 1; e.t0 = S.time; SS.sim.emit(S, EV.EGG_OPEN, { id: e.id, x: e.x, y: e.y + 0.5, z: e.z });
     SS.sim.log(S, `An egg stirs and starts to open (${K.OPEN_T} s).`, 0xa6ff3a);
   }
   /* an egg breaks: released = the hugger inside spills out (it was nearly ripe) */
   function breakEgg(S, e, released) {
     const p = AL.egg_progress(S, e);
-    e.st = 4; SS.sim.emit(S, 'egg_break', { id: e.id, x: e.x, y: e.y + 0.4, z: e.z, p });
+    e.st = 4; SS.sim.emit(S, EV.EGG_BREAK, { id: e.id, x: e.x, y: e.y + 0.4, z: e.z, p });
     if (released) {
       const h = AL.spawn_hugger(S, e.x, e.y + 0.5, e.z, 0);
       if (h) h.yaw = e.yaw;
@@ -348,7 +348,7 @@
           }
       } else if (e.st === 1 && S.time - e.t0 >= K.OPEN_T) {
         e.st = 3;
-        SS.sim.emit(S, 'egg_hatch', { id: e.id, x: e.x, y: e.y + 0.7, z: e.z });
+        SS.sim.emit(S, EV.EGG_HATCH, { id: e.id, x: e.x, y: e.y + 0.7, z: e.z });
         const h = AL.spawn_hugger(S, e.x, e.y + 0.7, e.z, 0);
         if (h) h.yaw = e.yaw;
       }
@@ -381,7 +381,7 @@
     h.t0 = S.time;
     h.why = why;
     h.bt = null;
-    SS.sim.emit(S, 'hugger_die', { id: h.id, x: h.x, y: h.y, z: h.z, host: hostId, why });
+    SS.sim.emit(S, EV.HUGGER_DIE, { id: h.id, x: h.x, y: h.y, z: h.z, host: hostId, why });
   }
   /* it lands dead on the ground beside its host (0.7 m ahead of it along the section: not under the body that would
    * hide it) */
@@ -427,7 +427,7 @@
         // a round has passed: it lets go and dies (P84: the host has been infected since the latch)
         if ((S.turnNo | 0) - h.turn0 >= teamsLeft(S) || S.time - h.t > K.HUG_MAX_T) {
           o.hug = -1;
-          SS.sim.emit(S, 'hugger_detach', { id: h.id, wormId: o.id, x: h.x, y: h.y, z: h.z });
+          SS.sim.emit(S, EV.HUGGER_DETACH, { id: h.id, wormId: o.id, x: h.x, y: h.y, z: h.z });
           SS.sim.log(S, `The face hugger lets go of ${o.name}, who is still infected: only a health crate cures it.`, 0xa6ff3a);
           spot(S, 1, o.id, h.x, h.y, h.z, K.SPOT_DETACH, 400, 0.5, 8);
           h.y = o.pos.y - 0.2; settleDead(S, h, o); huggerDie(S, h, WHY.DETACH, o.id);
@@ -443,8 +443,8 @@
         h.vy -= g * dt;
         if (o && livingWorm(o) && tl > 0.02) {
           AL.face_target(o, FT);
-          h.vx += ((FT.x - h.x) / tl - h.vx) * smin(1, 18 * dt); h.vz += ((FT.z - h.z) / tl - h.vz) * smin(1, 18 * dt);
-          h.vy += ((FT.y - h.y + 0.5 * g * tl * tl) / tl - h.vy) * smin(1, 10 * dt);
+          h.vx += ((FT.x - h.x) / tl - h.vx) * M.fast_min(1, 18 * dt); h.vz += ((FT.z - h.z) / tl - h.vz) * M.fast_min(1, 18 * dt);
+          h.vy += ((FT.y - h.y + 0.5 * g * tl * tl) / tl - h.vy) * M.fast_min(1, 10 * dt);
         }
         h.x += h.vx * dt; h.y += h.vy * dt; h.z += h.vz * dt;
         if (o && livingWorm(o) && (o.hug == null || o.hug === -1) && !o.embryo) {
@@ -460,7 +460,7 @@
             h.y = FT.y;
             h.z = FT.z;
             o.embryo = true; o.embT = S.time; o.embNext = S.time + K.PARA_T;                  // P84: infected the moment it latches on
-            SS.sim.emit(S, 'hugger_attach', { id: h.id, wormId: o.id, x: h.x, y: h.y, z: h.z });
+            SS.sim.emit(S, EV.HUGGER_ATTACH, { id: h.id, wormId: o.id, x: h.x, y: h.y, z: h.z });
             SS.sim.log(S, `${o.name} was face-hugged and is infected! The parasite takes ${K.PARA_HP} HP every ${K.PARA_T} s.`, 0xa6ff3a);
             spot(S, 1, o.id, h.x, h.y, h.z, K.SPOT_ATTACH, 360, 0.42, 9.2);
             S.slowUntil = S.time + K.SLOW_T;
@@ -505,7 +505,7 @@
         h.t = S.time;
         h.host = o.id;
         h.yaw = M.atan2(FT.z - h.z, FT.x - h.x);
-        SS.sim.emit(S, 'hugger_leap', { id: h.id, wormId: o.id, x: h.x, y: h.y, z: h.z });
+        SS.sim.emit(S, EV.HUGGER_LEAP, { id: h.id, wormId: o.id, x: h.x, y: h.y, z: h.z });
         spot(S, 2, h.id, h.x, h.y, h.z, K.SPOT_LEAP, 420, 0.55, 8.6);
         continue;
       }
@@ -530,7 +530,7 @@
       if (S.time < o.embNext) continue;
       o.embNext += K.PARA_T;
       const lethal = o.hp <= K.PARA_HP;
-      SS.sim.emit(S, 'parasite_pulse', {
+      SS.sim.emit(S, EV.PARASITE_PULSE, {
         wormId: o.id,
         amount: K.PARA_HP,
         left: M.max(0, o.hp - K.PARA_HP),
@@ -571,7 +571,7 @@
   AL.cure = function (S, w) {
     if (!w || !w.embryo || (w.hug != null && w.hug >= 0)) return false;
     w.embryo = false; w.embNext = 0;
-    SS.sim.emit(S, 'cure', { wormId: w.id });
+    SS.sim.emit(S, EV.CURE, { wormId: w.id });
     SS.sim.log(S, `${w.name} is cured of the parasite.`, 0x79d98b);
     return true;
   };
@@ -643,7 +643,7 @@
     for (let i = 0; i < K.NN; i++) X.n.push({ x, y, z });
     for (let i = 0; i < K.TRN * 2; i++) X.tr.push(i & 1 ? z : x);
     A.xenos.push(X);
-    SS.sim.emit(S, 'alien_born', { id: X.id, x, y, z });
+    SS.sim.emit(S, EV.ALIEN_BORN, { id: X.id, x, y, z });
     return X;
   };
   /* a dry spot for a newborn at (x, z): the ground there, else a ring of tries round it */
@@ -671,15 +671,15 @@
     const d = SS.plane.dir(S), f = w.facing || 1, sp = bornSpot(S, w.pos.x + d.x * f * 0.6, w.pos.y, w.pos.z + d.z * f * 0.6);
     const X = sp && SS.sim.in_play(S, sp.x, sp.z) ? AL.spawn_xeno(S, sp.x, sp.y, sp.z, K.XENO_HP) : null;
     if (!X) {
-      SS.sim.emit(S, 'embryo_lost', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
+      SS.sim.emit(S, EV.EMBRYO_LOST, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
       SS.sim.log(S, `The embryo in ${w.name} does not survive.`, 0xa6ff3a);
       return;
     }
-    SS.sim.emit(S, 'chest_burst', { wormId: w.id, xenoId: X.id, x: w.pos.x, y: w.pos.y + 0.1, z: w.pos.z, cause: w.cause | 0 });
+    SS.sim.emit(S, EV.CHEST_BURST, { wormId: w.id, xenoId: X.id, x: w.pos.x, y: w.pos.y + 0.1, z: w.pos.z, cause: w.cause | 0 });
     SS.sim.log(S, `Something bursts out of ${w.name}!`, 0xa6ff3a);
     // (the chest bursts: the gore of the blood setting)
     if (S.settings.blood && !SS.sim.cause_gibs(w.cause))
-      SS.sim.emit(S, 'gib', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, dir: null });
+      SS.sim.emit(S, EV.GIB, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, dir: null });
     spot(S, 3, X.id, X.n[0].x, X.n[0].y + 0.4, X.n[0].z, K.SPOT_BORN, 380, 0.5, 9.4);
     S.slowUntil = S.time + K.SLOW_T;
   };
@@ -806,7 +806,7 @@
   function slither(S, X, want, v, wa, lam, turn, dt, noWater) {
     const h = xhead(X), step = v * dt, da = M.wrap_angle(want - X.yaw), tmax = turn * dt;
     X.yaw += da > tmax ? tmax : da < -tmax ? -tmax : da;
-    X.wa += (wa - X.wa) * smin(1, 5 * dt);
+    X.wa += (wa - X.wa) * M.fast_min(1, 5 * dt);
     const inF = fieldAt(S, h.x, h.y, h.z), w0 = X.wa * M.sin(X.ph), g0 = h.y - K.HOVER * X.size;
     for (let q = 0; q < ANG.length; q++) {
       const a = X.yaw + w0 + ANG[q], nx = h.x + M.cos(a) * step, nz = h.z + M.sin(a) * step, gy = ground_y(nx, h.y, nz);
@@ -832,7 +832,7 @@
           tx = coilAt.x + M.cos(a) * r,
           tz = coilAt.z + M.sin(a) * r,
           ty = coilAt.y + 0.38 - i * 0.055;
-        const k = smin(1, 14 * dt);
+        const k = M.fast_min(1, 14 * dt);
         n[i].x += (tx - n[i].x) * k;
         n[i].y += (ty - n[i].y) * k;
         n[i].z += (tz - n[i].z) * k;
@@ -885,7 +885,7 @@
       X.hp -= dmg;
       if (S.time - X.hurtT > K.HURT_GATE) {
         X.hurtT = S.time;
-        SS.sim.emit(S, 'alien_hurt', { id: X.id, x: h.x, y: h.y, z: h.z, amount: dmg });
+        SS.sim.emit(S, EV.ALIEN_HURT, { id: X.id, x: h.x, y: h.y, z: h.z, amount: dmg });
       }
     }
   }
@@ -974,7 +974,7 @@
     const fy = sf - K.SWIM_FLOAT * X.size;
     const want = X.sf ? M.atan2(X.sz - h.z, X.sx - h.x) : X.yaw, da = M.wrap_angle(want - X.yaw), tmax = K.TURN_S * dt;
     X.yaw += da > tmax ? tmax : da < -tmax ? -tmax : da;
-    X.wa += (K.WAVE_RUN - X.wa) * smin(1, 5 * dt);
+    X.wa += (K.WAVE_RUN - X.wa) * M.fast_min(1, 5 * dt);
     const step = K.SWIM_V * dt, w0 = X.wa * M.sin(X.ph);
     for (let q = 0; q < ANG.length; q++) {
       const a = X.yaw + w0 + ANG[q], nx = h.x + M.cos(a) * step, nz = h.z + M.sin(a) * step;
@@ -1002,10 +1002,10 @@
       break;
     }
     const sf2 = surfOf(S, h.x, h.z), fy2 = (sf2 > -50 ? sf2 : sf) - K.SWIM_FLOAT * X.size;
-    h.y += (fy2 - h.y) * smin(1, 12 * dt);
+    h.y += (fy2 - h.y) * M.fast_min(1, 12 * dt);
     bodyFollow(S, X);
     for (let i = 1; i < X.n.length; i++)
-      X.n[i].y = X.n[i].y > fy2 + 0.5 || X.n[i].y < fy2 - 3 ? fy2 : X.n[i].y + (fy2 - X.n[i].y) * smin(1, 12 * dt);
+      X.n[i].y = X.n[i].y > fy2 + 0.5 || X.n[i].y < fy2 - 3 ? fy2 : X.n[i].y + (fy2 - X.n[i].y) * M.fast_min(1, 12 * dt);
   }
   /* ---------- sleep (P51) ---------- */
   const sm01 = (u, a, b) => {
@@ -1041,7 +1041,7 @@
   const SLP = new Array(K.NN * 3).fill(0);
   // the sim nodes follow the curl / stretch (they ease in: it curls up over ~0.5 s)
   function sleepNodes(S, X, e, dt) {
-    const n = X.n, k = smin(1, 6 * dt);
+    const n = X.n, k = M.fast_min(1, 6 * dt);
     AL.sleep_fill(X, K.SEG * X.size, n.length, SLP, e);
     for (let i = 0; i < n.length; i++) {
       const nd = n[i], tx = SLP[i * 3], tz = SLP[i * 3 + 1], gy = ground_y(tx, nd.y, tz, 40);
@@ -1072,7 +1072,7 @@
         }
       }
     }
-    SS.sim.emit(S, 'alien_sleep', { id: X.id, x: h.x, y: h.y, z: h.z });
+    SS.sim.emit(S, EV.ALIEN_SLEEP, { id: X.id, x: h.x, y: h.y, z: h.z });
     SS.sim.log(S, 'The alien is full and curls up to sleep...', 0xa6ff3a);
   }
   function wakeStart(S, X, h) {
@@ -1084,8 +1084,8 @@
       X.szT = X.size * K.GROW_SIZE;
     }
     X.hpL = X.hp;
-    SS.sim.emit(S, 'alien_wake', { id: X.id, x: h.x, y: h.y + 0.3, z: h.z, grown: X.gp });
-    SS.sim.emit(S, 'alien_hiss', { id: X.id, x: h.x, y: h.y + 0.3, z: h.z });
+    SS.sim.emit(S, EV.ALIEN_WAKE, { id: X.id, x: h.x, y: h.y + 0.3, z: h.z, grown: X.gp });
+    SS.sim.emit(S, EV.ALIEN_HISS, { id: X.id, x: h.x, y: h.y + 0.3, z: h.z });
     SS.sim.log(S, X.gp ? 'The alien wakes up bigger and stronger!' : 'The alien is woken, furious!', X.gp ? 0xa6ff3a : 0xff8a5a);
   }
   function stepXenos(S, dt) {
@@ -1133,7 +1133,7 @@
           if (S.time >= X.hiss) {
             X.hiss = S.time + K.HISS0 + rnd(S) * (K.HISS1 - K.HISS0);
             X.pauseT = S.time + K.HISS_T;
-            SS.sim.emit(S, 'alien_hiss', { id: X.id, x: h.x, y: h.y + 0.3, z: h.z });
+            SS.sim.emit(S, EV.ALIEN_HISS, { id: X.id, x: h.x, y: h.y + 0.3, z: h.z });
           }
           const o = S.time >= (X.coolT || 0) ? foeInRange(S, X) : null;
           if (o) {
@@ -1142,7 +1142,7 @@
             X.lastSee = S.time;
             X.t0 = S.time;
             X.bt = null;
-            SS.sim.emit(S, 'alien_strike', { id: X.id, x: h.x, y: h.y + 0.3, z: h.z, wormId: o.id });
+            SS.sim.emit(S, EV.ALIEN_STRIKE, { id: X.id, x: h.x, y: h.y + 0.3, z: h.z, wormId: o.id });
             SS.sim.log(S, 'The alien hisses and strikes!', 0xa6ff3a);
           }
           break;
@@ -1182,7 +1182,7 @@
           if (M.len2(h.x - target.pos.x, h.z - target.pos.z) < 0.9 && Math.abs(h.y - target.pos.y) < 1.8) {
             X.st = 2;
             X.t0 = S.time;
-            SS.sim.emit(S, 'alien_wrap', { id: X.id, x: target.pos.x, y: target.pos.y, z: target.pos.z, wormId: target.id });
+            SS.sim.emit(S, EV.ALIEN_WRAP, { id: X.id, x: target.pos.x, y: target.pos.y, z: target.pos.z, wormId: target.id });
           }
           break;
         }
@@ -1200,7 +1200,7 @@
             X.st = 3; X.t0 = S.time;
             target.embryo = false; target.eaten = true;        // (eaten with it: no second alien, no tombstone, not drawn any more)
             S.hitDir = { x: M.cos(X.yaw), y: 0.3, z: M.sin(X.yaw) };
-            SS.sim.emit(S, 'alien_bite', { id: X.id, wormId: target.id, x: target.pos.x, y: target.pos.y + 0.3, z: target.pos.z });
+            SS.sim.emit(S, EV.ALIEN_BITE, { id: X.id, wormId: target.id, x: target.pos.x, y: target.pos.y + 0.3, z: target.pos.z });
             SS.sim.hurt(S, target, M.max(1, target.hp), C.DS.ALIEN_BITE);
             SS.sim.log(S, `The alien bites ${target.name}'s head off!`, 0xff6a6a);
           }
@@ -1213,7 +1213,7 @@
           if (X.st === 3 && S.time - X.t0 > 0.35) {
             X.st = 4;
             X.t0 = S.time;
-            SS.sim.emit(S, 'alien_eat', { id: X.id, x, y, z });
+            SS.sim.emit(S, EV.ALIEN_EAT, { id: X.id, x, y, z });
           }
           if (X.st === 4 && S.time - X.t0 >= K.EAT_T) {
             X.kills++; X.gp = 1;                                 // (the growth is applied when it WAKES: a full sleep digests the meal)
@@ -1290,7 +1290,7 @@
       if (e.dmg >= 1) {
         X.hp -= e.dmg;
         X.hurtT = S.time;
-        SS.sim.emit(S, 'alien_hurt', { id: X.id, x: bp.x, y: bp.y, z: bp.z, amount: e.dmg });
+        SS.sim.emit(S, EV.ALIEN_HURT, { id: X.id, x: bp.x, y: bp.y, z: bp.z, amount: e.dmg });
       }
     }
     // (clamped on a face the host's body shields it: a third of the reach)
@@ -1308,7 +1308,7 @@
   /* ---------- acid blood ---------- */
   function acidBurst(S, X) {
     const A = S.alien, h = xhead(X);
-    SS.sim.emit(S, 'alien_burst', { id: X.id, x: h.x, y: h.y + 0.3, z: h.z, size: X.size });
+    SS.sim.emit(S, EV.ALIEN_BURST, { id: X.id, x: h.x, y: h.y + 0.3, z: h.z, size: X.size });
     SS.sim.log(S, 'The alien explodes in a fountain of acid!', 0xa6ff3a);
     for (let q = 0; q < K.N_ACID && A.acid.length < K.MAX_ACID; q++) {
       const nd = X.n[q % X.n.length], a = rnd(S) * M.TAU, up = 2 + rnd(S) * 6, out = 1.5 + rnd(S) * 4.5 * M.pow(X.size, 0.5);
@@ -1346,7 +1346,7 @@
           if (livingWorm(o) && M.len3(o.pos.x - a.x, o.pos.y - a.y, o.pos.z - a.z) < 0.6) {
             S.hitDir = { x: a.vx * 0.1, y: 0.2, z: a.vz * 0.1 };
             SS.sim.hurt(S, o, K.ACID_HIT, C.DS.ACID_BLOOD); o.acidT = S.time + K.ACID_BURN; hit = true;
-            SS.sim.emit(S, 'acid_hit', { x: a.x, y: a.y, z: a.z, wormId: o.id }); break;
+            SS.sim.emit(S, EV.ACID_HIT, { x: a.x, y: a.y, z: a.z, wormId: o.id }); break;
           }
         if (hit) {
           A.acid.splice(i, 1);
@@ -1367,7 +1367,7 @@
             }
           if (m) {
             m.life = M.max(m.life, S.time - m.t0 + K.ACID_LIFE * 0.6);
-            m.r = smin(0.8, m.r + 0.03);
+            m.r = M.fast_min(0.8, m.r + 0.03);
             A.acid.splice(i, 1);
             continue;
           }
@@ -1377,7 +1377,7 @@
           a.vx = a.vy = a.vz = 0;
           a.tick = S.time + rnd(S) * K.ACID_TICK;
           a.depth = 0;
-          SS.sim.emit(S, 'acid_land', { x: a.x, y: a.y, z: a.z });
+          SS.sim.emit(S, EV.ACID_LAND, { x: a.x, y: a.y, z: a.z });
           continue;
         }
         if (S.time - a.t0 > a.life) A.acid.splice(i, 1);
@@ -1404,7 +1404,7 @@
           const step = K.ACID_EAT * K.ACID_TICK;
           a.depth += step;
           a.y -= step;
-          a.r = smin(0.7, a.r + 0.004);
+          a.r = M.fast_min(0.7, a.r + 0.004);
           const rem = w.carve(a.x, a.y, a.z, a.r);
           if (rem > 0 && S.settings.collapse && SS.collapse_hook) {
             const H = w.H, r = a.r + 1;

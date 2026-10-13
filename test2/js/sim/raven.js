@@ -17,6 +17,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane, A = C.ARMS;
+  const EV = C.EV;
   const WA = SS.weaponsA;
   if (!WA) return;
   const sim = () => SS.sim, WPm = () => SS.weapons, W = () => SS.world;
@@ -67,19 +68,19 @@
     b.s0 = ap.s;
     b.y0 = a.pos.y;
     wa.boom.push(b);
-    sim().emit(S, 'boomthrow', { wormId: a.id});
+    sim().emit(S, EV.BOOMTHROW, { wormId: a.id});
     return true;
   };
   function endBoom(S, i, why) {
     const b = S.wa.boom[i];
     S.wa.boom.splice(i, 1);
-    sim().emit(S, 'boomend', { x: P.to_world(S, b.s, b.y).x, y: b.y, z: P.to_world(S, b.s, b.y).z, why });
+    sim().emit(S, EV.BOOMEND, { x: P.to_world(S, b.s, b.y).x, y: b.y, z: P.to_world(S, b.s, b.y).z, why });
   }
   // the blast of ONE cluster bomblet (C.PROJ.clusterlet: W, dmg); a worm hit head-on is also punched along the flight
   function boomBlast(S, i, wp, hitWorm, dx, dy) {
     const b = S.wa.boom[i], pd = C.PROJ.clusterlet, K = A.BOOM;
     S.wa.boom.splice(i, 1);
-    sim().emit(S, 'boomhit', { wormId: hitWorm ? hitWorm.id : -1, x: wp.x, y: wp.y, z: wp.z });
+    sim().emit(S, EV.BOOMHIT, { wormId: hitWorm ? hitWorm.id : -1, x: wp.x, y: wp.y, z: wp.z });
     if (hitWorm && !hitWorm.dead) {
       const v = pw(S, dx * K.PUSH, dy * K.PUSH + K.PUSH_UP);
       WPm().shove(S, hitWorm, v.x, v.y, v.z);
@@ -109,7 +110,7 @@
         // audio: one whoosh per WHOOSH s, pitched by the speed
         if (Math.floor(b.age / K.WHOOSH) !== Math.floor((b.age - dt) / K.WHOOSH)) {
           const wq = P.to_world(S, b.s, b.y);
-          sim().emit(S, 'boomwhoosh', { x: wq.x, y: b.y, z: wq.z, speed: M.len2(b.vs, b.vy) });
+          sim().emit(S, EV.BOOMWHOOSH, { x: wq.x, y: b.y, z: wq.z, speed: M.len2(b.vs, b.vy) });
         }
         if (b.age > K.T * K.END) b.dead = true;                        // the flight is over: a spent piece of wood, it drops
       } else {
@@ -121,7 +122,7 @@
       for (let q = 0; q < n && !gone; q++) {
         const ns = b.s + b.vs * hh, ny = b.y + b.vy * hh, wp = P.to_world(S, ns, ny);
         if (ny < sim().surface_at(S, wp.x, wp.z) || ny < 0.3) {
-          sim().emit(S, 'splash', { x: wp.x, y: sim().surface_at(S, wp.x, wp.z), z: wp.z, size: 0.5 });
+          sim().emit(S, EV.SPLASH, { x: wp.x, y: sim().surface_at(S, wp.x, wp.z), z: wp.z, size: 0.5 });
           endBoom(S, i, 'water');
           gone = true;
           break;
@@ -138,7 +139,7 @@
             const d = hyp3(o.pos, wp);
             if (o === owner) {
               if (b.age > K.ARM_OWN && d < K.CATCH_R) {
-                sim().emit(S, 'boomcatch', { wormId: o.id});
+                sim().emit(S, EV.BOOMCATCH, { wormId: o.id});
                 sim().log(S, `${o.name} catches the boomerang.`, sim().team_rgb(S, o.team));
                 endBoom(S, i, 'caught');
                 gone = true;
@@ -175,7 +176,7 @@
           if (!b.dead) {
             // back home: it fizzles next to its own thrower (a thud, no blast)
             if (owner && !owner.dead && b.age > K.ARM_OWN && hyp3(owner.pos, wp) < K.SAFE_R) {
-              sim().emit(S, 'boombounce', { x: wp.x, y: wp.y, z: wp.z, speed: sp });
+              sim().emit(S, EV.BOOMBOUNCE, { x: wp.x, y: wp.y, z: wp.z, speed: sp });
               S.lastBoom = S.time;
               endBoom(S, i, 'dud');
               gone = true;
@@ -192,7 +193,7 @@
             b.vs *= 0.7;
             b.vy *= 0.7;
             b.bounces++;
-            sim().emit(S, 'boombounce', { x: wp.x, y: wp.y, z: wp.z, speed: spd });
+            sim().emit(S, EV.BOOMBOUNCE, { x: wp.x, y: wp.y, z: wp.z, speed: spd });
             S.lastBoom = S.time;
           }
           if (P.solid2(S, b.s + nn.s * 0.05, b.y + nn.y * 0.05) === false) {
@@ -236,7 +237,7 @@
     if (gy < -1e8) gy = S.tgt.y;
     wa.ravens[wa.ravens.length - 1].gy = gy;
     S.tgt = null;
-    sim().emit(S, 'ravenrelease', { wormId: a.id});
+    sim().emit(S, EV.RAVENRELEASE, { wormId: a.id});
     sim().log(S, `${a.name} releases the mail raven.`, sim().team_rgb(S, a.team));
     WPm().used(S, 'raven');
     return true;
@@ -252,7 +253,7 @@
     r.phase = 3; r.fuse = A.RAVEN.CRASH_FUSE; r.rest = false;
     r.vs = -M.cos(r.ang) * r.v * 0.25; r.vy = 3.5; r.v = 0;
     const wp = P.to_world(S, r.s, r.y);
-    sim().emit(S, 'ravencrash', { x: wp.x, y: r.y, z: wp.z });
+    sim().emit(S, EV.RAVENCRASH, { x: wp.x, y: r.y, z: wp.z });
     sim().log(S, 'The raven smashes into the wall!', 0xffb27a);
   }
   /* phase 0 (the flight to the target), one step: returns 0 flying, 1 enters the orbit (r.phase = 1), 2 smashed into
@@ -345,7 +346,7 @@
       const owner = S.worms[r.owner];
       const wp = P.to_world(S, r.s, r.y);
       if (r.age > K.LIFE || wp.x < -40 || wp.z < -40 || wp.x > w.SX + 40 || wp.z > w.SZ + 40 || r.y > w.SY + 30) {
-        sim().emit(S, 'ravenend', { x: wp.x, y: r.y, z: wp.z });
+        sim().emit(S, EV.RAVENEND, { x: wp.x, y: r.y, z: wp.z });
         wa.ravens.splice(i, 1);
         continue;
       }
@@ -356,7 +357,7 @@
           if (r.vy < -1.5) {
             r.vy *= -0.3;
             r.vs *= 0.6;
-            sim().emit(S, 'ravenbump', { x: wp.x, y: r.y, z: wp.z });
+            sim().emit(S, EV.RAVENBUMP, { x: wp.x, y: r.y, z: wp.z });
           } else {
             r.vy = 0;
             r.vs *= 0.5;
@@ -369,7 +370,7 @@
         r.spin = (r.spin || 0) + dt * 9;
         if (r.rest || r.age > 4) r.fuse -= dt;
         if (r.fuse <= 0) {
-          sim().emit(S, 'ravenend', { x: wp.x, y: r.y, z: wp.z, boom: 1 });
+          sim().emit(S, EV.RAVENEND, { x: wp.x, y: r.y, z: wp.z, boom: 1 });
           sim().explode(S, { x: wp.x, y: r.y + 0.1, z: wp.z }, { W: K.CRASH_W, dmg: K.CRASH_DMG, name: 'the mail raven' }, r.owner);
           wa.ravens.splice(i, 1);
         }
@@ -381,7 +382,7 @@
         r.ang = ang;
         r.s += M.cos(ang) * r.v * dt; r.y += M.sin(ang) * r.v * dt;
         if (r.leaveT > 1.4) {
-          sim().emit(S, 'ravenend', { x: wp.x, y: r.y, z: wp.z });
+          sim().emit(S, EV.RAVENEND, { x: wp.x, y: r.y, z: wp.z });
           wa.ravens.splice(i, 1);
         }
         continue;
@@ -403,7 +404,7 @@
             ph: rr(S, 0, 6.28),
             owner: r.owner
           });
-          sim().emit(S, 'letterdrop', { x: wp.x, y: r.y, z: wp.z, n: r.dropped });
+          sim().emit(S, EV.LETTERDROP, { x: wp.x, y: r.y, z: wp.z, n: r.dropped });
         }
         if (r.dropped >= K.N && r.dropT < -0.3) {
           r.phase = 2;
@@ -440,7 +441,7 @@
       const sea = sim().surface_at(S, np.x, np.z);
       let boom = false;
       if (l.y < sea || l.y < 0.3) {
-        sim().emit(S, 'splash', { x: np.x, y: sea, z: np.z, size: 0.3 });
+        sim().emit(S, EV.SPLASH, { x: np.x, y: sea, z: np.z, size: 0.3 });
         wa.letters.splice(i, 1);
         continue;
       }
@@ -456,7 +457,7 @@
       if (l.age > 40) boom = true;
       if (boom) {
         wa.letters.splice(i, 1);
-        sim().emit(S, 'letterboom', { x: np.x, y: np.y, z: np.z });
+        sim().emit(S, EV.LETTERBOOM, { x: np.x, y: np.y, z: np.z });
         sim().explode(S, np, { W: K.LETTER_W, dmg: K.LETTER_DMG, name: 'an explosive letter' }, l.owner);
       }
     }

@@ -22,6 +22,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.STRUCT;
+  const EV = C.EV;
   const ST = SS.struct = {};
   const W = () => SS.world;
   const IN2 = 1 / 0.00064516;                       // m² -> in²
@@ -377,7 +378,7 @@
         m.gone = 1;
       }
     st.fallen = true; st.ver++;
-    SS.sim.emit(S, 'bridgefall', { id: st.id, pieces: pieces.length, x: (st.A.x + st.B.x) / 2, y: st.A.y, z: (st.A.z + st.B.z) / 2 });
+    SS.sim.emit(S, EV.BRIDGEFALL, { id: st.id, pieces: pieces.length, x: (st.A.x + st.B.x) / 2, y: st.A.y, z: (st.A.z + st.B.z) / 2 });
     SS.sim.log(S, 'The steel bridge collapses!', 0xffc070);
   }
 
@@ -403,7 +404,7 @@
         m.dmg += Wkg * eff / P;
         if (m.dmg >= 1) {
           m.on = 0; m.cut = 1; changed = true;
-          SS.sim.emit(S, 'steelcut', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2, kind: m.kind, id: st.id });
+          SS.sim.emit(S, EV.STEELCUT, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2, kind: m.kind, id: st.id });
         }
       }
       if (changed) st.ver++;
@@ -429,7 +430,7 @@
         m.dmg += dt * M.clamp(1 - M.max(0, ds) / AC.REACH, 0, 1) / (WALL_MM[m.kind] * AC.S_PER_MM);
         if (m.dmg >= 1) {
           m.on = 0; m.cut = 1; changed = true;
-          SS.sim.emit(S, 'steelcut', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2, kind: m.kind, id: st.id, acid: 1 });
+          SS.sim.emit(S, EV.STEELCUT, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2, kind: m.kind, id: st.id, acid: 1 });
         }
       }
       if (changed) {

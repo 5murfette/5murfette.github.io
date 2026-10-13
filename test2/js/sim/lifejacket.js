@@ -44,6 +44,8 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane;
+  const PHASE = C.PHASE;
+  const EV = C.EV;
   const JK = SS.jacket = {};
   const K = JK.K = {
     HP_LOSS: 6, MIN_DEPTH: 0.6, HOLD_T: 5, SWIM_V: 1.0, DRIFT_K: 0.5, DRIFT_MAX: 0.3, RETARGET_T: 1.2, RETARGET_T_LONG: 3, CLIMB: 1.4,
@@ -199,7 +201,7 @@
     sw.rt = S.time;
     sw.acc = 0;
     retarget(S, w, sw);
-    sim().emit(S, 'jacket', { wormId: w.id, x: w.pos.x, y: surf, z: w.pos.z, land: sw.land, hp: loss, sea: isSea(S, w.pos.x, w.pos.z) });
+    sim().emit(S, EV.JACKET, { wormId: w.id, x: w.pos.x, y: surf, z: w.pos.z, land: sw.land, hp: loss, sea: isSea(S, w.pos.x, w.pos.z) });
     sim().log(
       S,
       `${w.name}'s life jacket inflates${loss > 0 ? ` (-${loss} HP)` : ''}: ${sw.land ? 'swimming for the shore.' : 'no shore in reach, floating.'}`,
@@ -211,7 +213,7 @@
   JK.holds = (S, w) => !!w.swim && !(w.swim.jk && S.time - w.swim.t0 > K.HOLD_T);
 
   function lose(S, w, why) {
-    w.swim = null; sim().emit(S, 'jacketend', { wormId: w.id, why: 'lost' });
+    w.swim = null; sim().emit(S, EV.JACKETEND, { wormId: w.id, why: 'lost' });
     sim().drown(S, w);
   }
   /* the worm leaves the water at the column (x, z) whose ground is at height t: the common end of a swim (climb-out,
@@ -224,7 +226,7 @@
     w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0;
     if (w === S.active) w.air = true;
     else w.rest = false;
-    sim().emit(S, 'swimout', { wormId: w.id }); sim().emit(S, 'jacketend', { wormId: w.id, why: why });
+    sim().emit(S, EV.SWIMOUT, { wormId: w.id }); sim().emit(S, EV.JACKETEND, { wormId: w.id, why: why });
     sim().log(S, `${w.name} climbs out and the life jacket deflates.`, 0xffa24a);
   }
   /* P107: the jacket comes off at once (the rope bit, the teleport landed): the worm is an ordinary airborne worm, no
@@ -238,7 +240,7 @@
     w.air = true;
     w.rest = false;
     w.ropeWet = null;
-    sim().emit(S, 'jacketend', { wormId: w.id, why: why });
+    sim().emit(S, EV.JACKETEND, { wormId: w.id, why: why });
     sim().log(S, `${w.name} slips the life jacket off (${why}).`, 0xffa24a);
     return true;
   };
@@ -299,7 +301,7 @@
     }
     const key = S.weapon, why = JK.no_weapon(S, key), tele = S.teleT > 0;
     if (why) {
-      if (inp.fire_pressed && S.phase === 'play') sim().log(S, `${C.ARSENAL[key].name}: ${why}.`, 0xffb27a);
+      if (inp.fire_pressed && S.phase === PHASE.PLAY) sim().log(S, `${C.ARSENAL[key].name}: ${why}.`, 0xffb27a);
       return;
     }
     sim().control_fire(S, a, dt, inp, false);

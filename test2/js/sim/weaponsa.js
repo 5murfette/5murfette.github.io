@@ -20,6 +20,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane, MAT = C.MAT, A = C.ARMS;
+  const EV = C.EV;
   const WA = SS.weaponsA = {};
   const W = () => SS.world;
   const sim = () => SS.sim;
@@ -189,7 +190,7 @@
       const K = key === 'minigun' ? A.MINIGUN : A.FLAME;
       if (wa.stream) return false;
       wa.stream = { key, owner: a.id, t: 0, dur: K.DUR, acc: 0, n: 0 };
-      sim().emit(S, 'streamstart', { weapon: key, wormId: a.id});
+      sim().emit(S, EV.STREAMSTART, { weapon: key, wormId: a.id});
       sim().log(S, `${a.name} opens up the ${C.ARSENAL[key].name.toLowerCase()}.`, sim().team_rgb(S, a.team));
       WPm().used(S, key, null);     // (P38 R1: the retreat window is the arsenal entry's `retreat`, one source of truth)
       return true;
@@ -242,7 +243,7 @@
       }
     }
     const from = P.to_world(S, ap.s + aim.s * K.MUZZLE, a.pos.y + aim.y * K.MUZZLE), end = hit ? hit.wp : P.to_world(S, s, y);
-    sim().emit(S, 'shot', { weapon: 'handgun', from, to: end, hit: !!hit });
+    sim().emit(S, EV.SHOT, { weapon: 'handgun', from, to: end, hit: !!hit });
     if (hit) {
       S.hitDir = pw(S, aim.s, aim.y);
       sim().explode(S, end, { W: K.W, dmg: K.BLAST_DMG, name: 'an explosive round' }, a.id);
@@ -284,7 +285,7 @@
         st.n++;
       }
       if (S.tick % 6 === 0)
-        sim().emit(S, 'flamejet', { x: a.pos.x, y: a.pos.y, z: a.pos.z, ds: aim.s, dy: aim.y, t: st.t / K.DUR, wormId: a.id});
+        sim().emit(S, EV.FLAMEJET, { x: a.pos.x, y: a.pos.y, z: a.pos.z, ds: aim.s, dy: aim.y, t: st.t / K.DUR, wormId: a.id});
       S.lastBoom = S.time;
       if (st.t >= K.DUR) endStream(S);
     } else {
@@ -311,7 +312,7 @@
       }
       if (fired) {
         S.lastBoom = S.time;
-        sim().emit(S, 'mgfire', { x: o.x, y: o.y, z: o.z, dx: base.x, dy: base.y, dz: base.z, n: fired, k, wormId: a.id});
+        sim().emit(S, EV.MGFIRE, { x: o.x, y: o.y, z: o.z, dx: base.x, dy: base.y, dz: base.z, n: fired, k, wormId: a.id});
       }
       if (S.tick % 12 === 0) flush_edit(S);
       if (st.t >= K.DUR) endStream(S);
@@ -321,7 +322,7 @@
     const st = S.wa.stream;
     S.wa.stream = null;
     flush_edit(S);
-    if (st) sim().emit(S, 'streamend', { weapon: st.key, wormId: st.owner});
+    if (st) sim().emit(S, EV.STREAMEND, { weapon: st.key, wormId: st.owner});
   }
 
   /* One minigun round (also used by W4's sentry): a hitscan from origin along dir (unit, world) to the first worm, prop
@@ -360,7 +361,7 @@
         S.hitDir = { x: dir.x, y: dir.y, z: dir.z };
         const lethal = hw.hp <= dmg;
         if (lethal) hw.mgKill = S.time;
-        sim().emit(S, 'bloodhit', { x, y, z, dx: dir.x, dy: dir.y, dz: dir.z, wormId: hw.id, team: hw.team, hp: hw.hp, lethal });
+        sim().emit(S, EV.BLOODHIT, { x, y, z, dx: dir.x, dy: dir.y, dz: dir.z, wormId: hw.id, team: hw.team, hp: hw.hp, lethal });
         sim().hurt(S, hw, dmg, (opts && opts.src) || C.DS.MINIGUN);
         const sc = K.PUSH;
         if (!hw.dead) {
@@ -398,7 +399,7 @@
         hitOut.x = x;
         hitOut.y = y;
         hitOut.z = z;
-        sim().emit(S, 'mgimpact', { x, y, z, nx: -dir.x, ny: -dir.y, nz: -dir.z, mat: 0 });
+        sim().emit(S, EV.MGIMPACT, { x, y, z, nx: -dir.x, ny: -dir.y, nz: -dir.z, mat: 0 });
         return hitOut;
       }
       const sea = sim().surface_at(S, x, z);
@@ -407,7 +408,7 @@
         hitOut.x = x;
         hitOut.y = sea;
         hitOut.z = z;
-        if ((wa.n++ & 3) === 0) sim().emit(S, 'splash', { x, y: sea, z, size: 0.25 });
+        if ((wa.n++ & 3) === 0) sim().emit(S, EV.SPLASH, { x, y: sea, z, size: 0.25 });
         return hitOut;
       }
       if (y < 0.2 || x < 0 || z < 0 || x > w.SX || z > w.SZ) {
@@ -433,7 +434,7 @@
             nz /= nl;
           }
         }
-        sim().emit(S, 'mgimpact', { x: px, y: py, z: pz, nx, ny, nz, mat });
+        sim().emit(S, EV.MGIMPACT, { x: px, y: py, z: pz, nx, ny, nz, mat });
         if (strength < 1e8) {
           const R = K.CHIP * M.clamp(M.sqrt ? M.sqrt(140 / strength) : Math.sqrt(140 / strength), 0.2, 1.25);
           if (w.carve(x, y, z, R) > 0) mark_edit(S, x, y, z, R);
@@ -471,7 +472,7 @@
   function gelPatch(S, pos) {
     const K = A.FLAME, y = firePatchY(S, pos.x, pos.z, pos.y);
     if (y < sim().surface_at(S, pos.x, pos.z) + 0.05) {
-      sim().emit(S, 'steam', { x: pos.x, y, z: pos.z, power: 0.25 });
+      sim().emit(S, EV.STEAM, { x: pos.x, y, z: pos.z, power: 0.25 });
       return;
     }
     const life = rr(S, K.LIFE0, K.LIFE1), t1 = S.time + life;
@@ -505,7 +506,7 @@
   }
   function stickWorm(S, w) {
     const K = A.FLAME, t = S.time + rr(S, K.STICK0, K.STICK1);
-    if (!(w.stickT > S.time)) { sim().emit(S, 'stick', { wormId: w.id}); }
+    if (!(w.stickT > S.time)) { sim().emit(S, EV.STICK, { wormId: w.id}); }
     w.stickT = M.max(w.stickT || 0, M.min(t, S.time + K.STICK1 + 1));
   }
   WA.detonate = function (S, p, pos) {      // returns true when handled completely (no generic blast)
@@ -543,11 +544,11 @@
   };
   WA.water = function (S, p, pd, wp, surf) {
     if (pd.flamedrop) {
-      sim().emit(S, 'steam', { x: wp.x, y: surf, z: wp.z, power: 0.15 });
+      sim().emit(S, EV.STEAM, { x: wp.x, y: surf, z: wp.z, power: 0.15 });
       return 'gone';
     }
     if (pd.acid) {
-      sim().emit(S, 'splash', { x: wp.x, y: surf, z: wp.z, size: 0.5 });
+      sim().emit(S, EV.SPLASH, { x: wp.x, y: surf, z: wp.z, size: 0.5 });
       return 'gone';
     }
     return pd.impact ? 'burst' : 'keep';
@@ -565,8 +566,8 @@
   };
   function mortarBurst(S, p) {
     const K = A.MORTAR, wp = P.to_world(S, p.s, p.y), H = M.max(0.6, p.burstH || 3);
-    sim().emit(S, 'airburst', { x: wp.x, y: p.y, z: wp.z });
-    sim().emit(S, 'mortarburst', { x: wp.x, y: p.y, z: wp.z, H });
+    sim().emit(S, EV.AIRBURST, { x: wp.x, y: p.y, z: wp.z });
+    sim().emit(S, EV.MORTARBURST, { x: wp.x, y: p.y, z: wp.z, H });
     // the fall time from the burst: bomblets leave with +-JY m/s; lateral speed so they land within SPREAD m
     const tf = M.sqrt ? M.sqrt(2 * H / C.G) : Math.sqrt(2 * H / C.G), vl = K.SPREAD / M.max(0.35, tf);
     for (let i = 0; i < K.N; i++) {
@@ -580,7 +581,7 @@
   function acidBurst(S, p, pos) {
     const K = A.ACID, ap = P.to_plane(S, pos);
     sim().explode(S, pos, { W: K.BLAST_W, dmg: C.PROJ.acid.dmg, name: 'an acid bomb' }, p.owner);
-    sim().emit(S, 'acidburst', { x: pos.x, y: pos.y, z: pos.z });
+    sim().emit(S, EV.ACIDBURST, { x: pos.x, y: pos.y, z: pos.z });
     const wa = ens(S);
     for (let i = 0; i < K.N; i++) {
       const a = rr(S, 0.15, M.wrap_angle(Math.PI - 0.15)), v = rr(S, K.V0, K.V1), sgn = i % 2 ? 1 : -1;
@@ -637,7 +638,7 @@
       for (let q = 0; q < n && !gone; q++) {
         const ns = d.s + d.vs * h, ny = d.y + d.vy * h, wp = P.to_world(S, ns, ny);
         if (ny < sim().surface_at(S, wp.x, wp.z) || ny < 0.3) {
-          sim().emit(S, 'splash', { x: wp.x, y: sim().surface_at(S, wp.x, wp.z), z: wp.z, size: 0.25 });
+          sim().emit(S, EV.SPLASH, { x: wp.x, y: sim().surface_at(S, wp.x, wp.z), z: wp.z, size: 0.25 });
           gone = true;
           break;
         }
@@ -664,7 +665,7 @@
       s.tick -= dt;
       const surf = sim().surface_at(S, s.x, s.z);
       if (s.t > s.life || s.y < surf - 0.1 || s.y < 0.4) {
-        sim().emit(S, 'acidend', { x: s.x, y: s.y, z: s.z });
+        sim().emit(S, EV.ACIDEND, { x: s.x, y: s.y, z: s.z });
         wa.spots.splice(i, 1);
         continue;
       }
@@ -703,7 +704,7 @@
             const R = K.CARVE_R * (1 - 0.3 * s.t / s.life);
             if (w.carve(s.x, sy - 0.1, s.z, R) > 0) {
               mark_edit(S, s.x, sy, s.z, R);
-              sim().emit(S, 'acideat', { x: s.x, y: sy, z: s.z });
+              sim().emit(S, EV.ACIDEAT, { x: s.x, y: sy, z: s.z });
             }
           } else if (str >= 1e8) s.tick += 1;
         }
@@ -739,7 +740,7 @@
         // eaten through
         if (b.prop === 'girder') {
           SS.bodies.remove(S, b);
-          sim().emit(S, 'propbreak', { x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: 'girder', why: 'acid' });
+          sim().emit(S, EV.PROPBREAK, { x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: 'girder', why: 'acid' });
         }
         else if (b.prop === 'car') {
           if (SS.scatter && b.burn < 0) {
@@ -749,7 +750,7 @@
         }
         else if (b.prop === 'crate') {
           SS.bodies.remove(S, b);
-          sim().emit(S, 'propbreak', { x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: 'crate', why: 'acid' });
+          sim().emit(S, EV.PROPBREAK, { x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: 'crate', why: 'acid' });
         }
         else if (b.prop === 'barrel' && SS.scatter && b.burn < 0) SS.scatter.ignite(S, b);
         else if (b.prop === 'mine' && !b.disarmed && b.det < 0) {
@@ -782,7 +783,7 @@
           o.vel.z = d.z * vs;
           o.vel.y = K.HOP_VY;
         }
-        sim().emit(S, 'ouch', { wormId: o.id, x: o.pos.x, y: o.pos.y, z: o.pos.z, acid: 1 });
+        sim().emit(S, EV.OUCH, { wormId: o.id, x: o.pos.x, y: o.pos.y, z: o.pos.z, acid: 1 });
       }
     }
   }
@@ -837,7 +838,7 @@
       pf.push(px, py, pz, sr * M.cos(a) * sp, cz * sp, sr * M.sin(a) * sp);
     }
     wa.clouds.push({ x, y, z, r: K.R0, t: 0, vx: 0, vz: 0, id, pf });
-    sim().emit(S, 'gasburst', { x: pos.x, y: pos.y, z: pos.z });
+    sim().emit(S, EV.GASBURST, { x: pos.x, y: pos.y, z: pos.z });
     S.lastBoom = S.time;
   }
   WA.gas_burst = gasBurst;                          // (tests / scripted events)
@@ -925,7 +926,7 @@
           if (w.dead || w.gas) continue;
           if (puffsNear(c, w.pos.x, w.pos.y + 0.4, w.pos.z, K.INF_R) >= K.INF_N) {
             w.gas = 1; w.coughT = S.time + rr(S, 0.3, 1.2);
-            sim().emit(S, 'infect', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
+            sim().emit(S, EV.INFECT, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
             sim().log(S, `${w.name} breathes the gas and starts coughing.`, 0xb8e07a);
           }
         }
@@ -938,7 +939,7 @@
       if (S.time >= w.coughT) {
         const inGas = WA.gas_at(S, w.pos.x, w.pos.y + 0.4, w.pos.z) >= K.INF_N;
         w.coughT = S.time + rr(S, K.COUGH0, K.COUGH1) * (inGas ? 0.45 : 1);
-        w.coughAt = S.time; sim().emit(S, 'cough', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
+        w.coughAt = S.time; sim().emit(S, EV.COUGH, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
       }
     }
   }
@@ -956,7 +957,7 @@
       if (w.dead || !w.gas) continue;
       const dmg = K.DMG0 + Math.floor(rng(S) * (K.DMG1 - K.DMG0 + 1));
       w.coughAt = S.time; S.hitDir = null;
-      sim().emit(S, 'cough', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, poison: 1 });
+      sim().emit(S, EV.COUGH, { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, poison: 1 });
       sim().log(S, `${w.name} is poisoned: -${dmg} HP.`, 0xb8e07a);
       sim().hurt(S, w, dmg, C.DS.GAS, C.HF.QUIET | C.HF.DOT);
     }
@@ -965,7 +966,7 @@
     if (w.gas) {
       w.gas = 0;
       w.coughT = null;
-      sim().emit(S, 'cure', { wormId: w.id});
+      sim().emit(S, EV.CURE, { wormId: w.id});
     }
   };
 

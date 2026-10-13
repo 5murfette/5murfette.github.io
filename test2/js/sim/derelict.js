@@ -28,7 +28,6 @@
       RM: 10, R: 3.3, EX: 1.25, EY: 0.85, WALL: 0.9, ARC: 4.1, NR: 13, RIB_O: 0.2, RIB_I: 0.5, FLOOR: 0.5, FLAT: 6.5, FLAT_ROUGH: 11,
       EDGE: 17
     };
-  const smin = (a, b) => (a < b ? a : b);
   const wrap = a => {
     while (a > M.PI) a -= M.TAU;
     while (a < -M.PI) a += M.TAU;
@@ -80,10 +79,10 @@
     const ro = d.r * (1 + K.RIB_O * rib), sOut = (1 - M.len2(a / (K.EX * ro), py / (K.EY * ro))) * ro * K.EY;
     const sArc = (d.arc / 2 - Math.abs(wrap(th - d.thm))) * rho;
     const rc = (d.r - K.WALL) - K.RIB_I * rp * rp * rp, qc = (1 - M.len2(a / (K.EX * rc), py / (K.EY * rc))) * rc * K.EY;
-    const air = smin(smin(qc, py + K.FLOOR * ro * K.EY), sArc + 3);
-    out.solid = smin(smin(sOut, sArc), -air);
+    const air = M.fast_min(M.fast_min(qc, py + K.FLOOR * ro * K.EY), sArc + 3);
+    out.solid = M.fast_min(M.fast_min(sOut, sArc), -air);
     out.air = air;
-    out.skirt = smin(smin(K.EX * d.r * 0.8 - Math.abs(a), sArc), -K.EY * d.r * 0.85 - py);
+    out.skirt = M.fast_min(M.fast_min(K.EX * d.r * 0.8 - Math.abs(a), sArc), -K.EY * d.r * 0.85 - py);
     return out;
   };
 
@@ -93,7 +92,7 @@
     let lo = w.top_at(x, z), hi = lo, sum = lo, n = 1;
     for (let q = 0; q < 16; q++) {
       const a = q / 16 * M.TAU, t = w.top_at(x + M.cos(a) * Rm, z + M.sin(a) * Rm);
-      lo = smin(lo, t);
+      lo = M.fast_min(lo, t);
       hi = hi > t ? hi : t;
       sum += t;
       n++;
@@ -175,7 +174,7 @@
           let s = o.solid;
           for (let b = 0; b < bites.length; b++) {                                          // the crash breaches (hull only)
             const t = bites[b], c = d.Rm * M.cos(t.th), e = d.Rm * M.sin(t.th);
-            frame(d, x, y, z, FR); s = smin(s, M.len3(FR.px - c, FR.py - t.y, FR.pz - e) - t.r);
+            frame(d, x, y, z, FR); s = M.fast_min(s, M.len3(FR.px - c, FR.py - t.y, FR.pz - e) - t.r);
           }
           if (o.air > 0 && w.d[q] > -o.air) {
             w.d[q] = -M.clamp(o.air, 0.05, 1.5);

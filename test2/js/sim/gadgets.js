@@ -28,11 +28,12 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane, MAT = C.MAT;
+  const PHASE = C.PHASE;
+  const EV = C.EV;
   const GD = SS.gadgets = {};
   const W = () => SS.world;
   const sim = () => SS.sim;
   const WPN = () => SS.weapons;
-  const hypot3 = (a, b) => M.len3(a.x - b.x, a.y - b.y, a.z - b.z);
 
   /* ---------- constants ---------- */
   const K = C.TOOLB = C.TOOLB || {};
@@ -122,14 +123,14 @@
     const SK = K.SENTRY;
     if (SS.weaponsA && SS.weaponsA.minigun_round) {
       SS.weaponsA.minigun_round(S, o, d, owner, { dmg: dmg != null ? dmg : SK.DMG, range: SK.ROUND_RANGE, src: C.DS.SENTRY });
-      sim().emit(S, 'sgshot', { x: o.x, y: o.y, z: o.z, dx: d.x, dy: d.y, dz: d.z, len: 18 });
+      sim().emit(S, EV.SGSHOT, { x: o.x, y: o.y, z: o.z, dx: d.x, dy: d.y, dz: d.z, len: 18 });
       return;
     }
     const h = GD.ray(S, o, d, SK.ROUND_RANGE, { skip: -1, team: -1 });
     const end = h
       ? { x: h.x, y: h.y, z: h.z }
       : { x: o.x + d.x * SK.ROUND_RANGE, y: o.y + d.y * SK.ROUND_RANGE, z: o.z + d.z * SK.ROUND_RANGE };
-    sim().emit(S, 'sgshot', { x: o.x, y: o.y, z: o.z, dx: d.x, dy: d.y, dz: d.z, len: h ? h.t : SK.ROUND_RANGE, hit: h ? 1 : 0 });
+    sim().emit(S, EV.SGSHOT, { x: o.x, y: o.y, z: o.z, dx: d.x, dy: d.y, dz: d.z, len: h ? h.t : SK.ROUND_RANGE, hit: h ? 1 : 0 });
     if (!h) return;
     if (h.worm) {
       S.hitDir = { x: d.x, y: d.y, z: d.z };
@@ -137,7 +138,7 @@
       WPN().shove(S, h.worm, d.x * SK.PUSH, d.y * SK.PUSH + 0.1, d.z * SK.PUSH);
     } else {
       W().carve(h.x + d.x * 0.05, h.y + d.y * 0.05, h.z + d.z * 0.05, 0.13); S.sectionDirty = true;
-      sim().emit(S, 'sparks', { x: h.x, y: h.y, z: h.z, mode: 'torch' });
+      sim().emit(S, EV.SPARKS, { x: h.x, y: h.y, z: h.z, mode: 'torch' });
     }
   };
   // the support under a point (ground voxels or a bridge deck)
@@ -223,7 +224,7 @@
       hop: 0,
       state: 0
     });
-    sim().emit(S, 'dogstart', { wormId: a.id, x: a.pos.x, y: a.pos.y, z: a.pos.z });
+    sim().emit(S, EV.DOGSTART, { wormId: a.id, x: a.pos.x, y: a.pos.y, z: a.pos.z });
     sim().log(S, `${a.name} lets the robo dog off the leash.`, sim().team_rgb(S, a.team));
     WPN().used(S, 'dog'); return true;
   }
@@ -231,7 +232,7 @@
     const KD = K.DOG, wp = P.to_world(S, d.s, d.y);
     const i = S.dogs.indexOf(d);
     if (i >= 0) S.dogs.splice(i, 1);
-    sim().emit(S, 'dogboom', { x: wp.x, y: wp.y, z: wp.z, why: why || '' });
+    sim().emit(S, EV.DOGBOOM, { x: wp.x, y: wp.y, z: wp.z, why: why || '' });
     sim().explode(S, { x: wp.x, y: wp.y + 0.1, z: wp.z }, { W: KD.W, dmg: KD.DMG, name: 'a robo dog' }, d.owner);
     S.lastBoom = S.time;
   }
@@ -252,7 +253,7 @@
       d.retarget = 0.25;
       let best = null, bd = 1e9;
       for (const o of foesOf(S, d.team)) {
-        const q = P.to_plane(S, o.pos), dd = hypot3(o.pos, wp) + (Math.abs(q.t) > C.HALF + 0.3 ? 40 : 0);
+        const q = P.to_plane(S, o.pos), dd = M.v3_dist(o.pos, wp) + (Math.abs(q.t) > C.HALF + 0.3 ? 40 : 0);
         if (dd < bd) {
           bd = dd;
           best = o;
@@ -267,7 +268,7 @@
     // reached a foe: explode
     if (d.armed)
       for (const o of foesOf(S, d.team))
-        if (hypot3(o.pos, wp) < KD.REACH + C.WORM_R * 0.5) {
+        if (M.v3_dist(o.pos, wp) < KD.REACH + C.WORM_R * 0.5) {
           dogBoom(S, d, 'reached');
           return;
         }
@@ -281,7 +282,7 @@
     }
     if (d.bark <= 0) {
       d.bark = rr(S, KD.BARK0, KD.BARK1);
-      sim().emit(S, 'dogbark', { x: wp.x, y: wp.y, z: wp.z });
+      sim().emit(S, EV.DOGBARK, { x: wp.x, y: wp.y, z: wp.z });
     }
     // P68g: any side of a chunk
     if (S.eow) {
@@ -311,7 +312,7 @@
       }
       else if (need <= KD.HOP_MAX) {                                                    // hop it
         d.vy = Math.sqrt(2 * G * (need + 0.35)); d.hop = 0.3; d.state = 2;
-        sim().emit(S, 'doghop', { x: wp.x, y: wp.y, z: wp.z });
+        sim().emit(S, EV.DOGHOP, { x: wp.x, y: wp.y, z: wp.z });
       } else {
         // too high: stuck until the timer ends
         d.vs = 0;
@@ -365,7 +366,7 @@
     a.slide = false;
     a.squash = S.time;
     if (S.rope) S.rope = null;
-    sim().emit(S, 'punch', { wormId: a.id, victimId: best.id, dir: a.facing });
+    sim().emit(S, EV.PUNCH, { wormId: a.id, victimId: best.id, dir: a.facing });
     sim().log(S, `${a.name} winds up an uppercut at ${best.name}.`, sim().team_rgb(S, a.team));
     WPN().used(S, 'punch'); return true;
   }
@@ -384,7 +385,7 @@
       const ap = P.to_plane(S, a.pos), q = P.to_plane(S, v.pos), ds = (q.s - ap.s) * p.dir;
       // it moved away
       if (ds < -0.6 || ds > KP.REACH + 0.5 || Math.abs(q.t) > KP.DT + 0.3) {
-        sim().emit(S, 'punchmiss', { wormId: a.id});
+        sim().emit(S, EV.PUNCHMISS, { wormId: a.id});
         continue;
       }
       const d = P.dir(S), n = { x: d.x * p.dir, y: 0, z: d.z * p.dir };
@@ -393,7 +394,7 @@
       // flung away in the punch direction (and up), tumbling
       v.slide = true; v.flip = false;
       WPN().shove(S, v, n.x * KP.V_OUT, KP.V_UP, n.z * KP.V_OUT);
-      sim().emit(S, 'punchhit', {
+      sim().emit(S, EV.PUNCHHIT, {
         wormId: a.id,
         victimId: v.id,
         x: v.pos.x,
@@ -436,7 +437,7 @@
     const w = P.to_world(S, ap.s + a.facing * 0.9, a.pos.y - 0.45), p = { x: w.x, y: w.y, z: w.z };
     if (!liftOut(S, p, 0.7)) return refuse(S, 'No room for the sentry gun here.');
     GD.make_sentry(S, a.team, a.id, p);
-    sim().emit(S, 'sentryplant', { x: p.x, y: p.y, z: p.z });
+    sim().emit(S, EV.SENTRYPLANT, { x: p.x, y: p.y, z: p.z });
     sim().log(S, `${a.name} sets up a sentry gun.`, sim().team_rgb(S, a.team));
     WPN().used(S, 'sentry'); return true;
   }
@@ -446,13 +447,13 @@
     s.burst.left = 0;
     s.tiltAz = M.atan2(dir.z, dir.x);
     s.erT = 0.15;
-    sim().emit(S, 'sentrydown', { x: s.pos.x, y: s.pos.y, z: s.pos.z });
+    sim().emit(S, EV.SENTRYDOWN, { x: s.pos.x, y: s.pos.y, z: s.pos.z });
     sim().log(S, 'A sentry gun is knocked over and fires wildly!', 0xffb27a);
   }
   function sentryBreak(S, s) {
     const i = S.sentries.indexOf(s);
     if (i >= 0) S.sentries.splice(i, 1);
-    sim().emit(S, 'devbreak', { x: s.pos.x, y: s.pos.y, z: s.pos.z, kind: 'sentry' });
+    sim().emit(S, EV.DEVBREAK, { x: s.pos.x, y: s.pos.y, z: s.pos.z, kind: 'sentry' });
     sim().explode(S, { x: s.pos.x, y: s.pos.y + 0.3, z: s.pos.z }, { W: 0.06, dmg: 6, name: 'a sentry gun' }, null);
   }
   const wrapA = a => M.wrap_angle(a);
@@ -493,7 +494,7 @@
     }
     if (inWater(S, { x: s.pos.x, y: s.pos.y + 0.2, z: s.pos.z }) && s.state !== 2) {
       s.state = 2;
-      sim().emit(S, 'steam', { x: s.pos.x, y: s.pos.y, z: s.pos.z, power: 0.4 });
+      sim().emit(S, EV.STEAM, { x: s.pos.x, y: s.pos.y, z: s.pos.z, power: 0.4 });
     }
     s.tilt += ((s.state === 1 || s.state === 2 && s.tilt > 0.1 ? 1.45 : 0) - s.tilt) * M.min(1, dt / KS.FALL_T * 3);
     if (s.hp <= 0) {
@@ -506,7 +507,7 @@
         if (b.asleep || b.held || b.mass < 15) continue;
         const sp = M.len3(b.vel.x, b.vel.y, b.vel.z);
         if (sp < 3) continue;
-        if (hypot3(b.pos, { x: s.pos.x, y: s.pos.y + 0.4, z: s.pos.z }) < b.rb + 0.5) {
+        if (M.v3_dist(b.pos, { x: s.pos.x, y: s.pos.y + 0.4, z: s.pos.z }) < b.rb + 0.5) {
           knock(S, s, { x: b.vel.x, y: 0, z: b.vel.z });
           s.hp -= M.min(30, b.mass * sp * 0.02);
           break;
@@ -533,7 +534,7 @@
           ? SS.eow.fdir(F, s.yaw, s.pitch, { x: 0, y: 0, z: 0 })
           : { x: M.cos(s.yaw) * M.cos(s.pitch), y: M.sin(s.pitch), z: M.sin(s.yaw) * M.cos(s.pitch) };
         GD.round(S, { x: o.x, y: o.y - 0.25, z: o.z }, d, s.owner, KS.DMG); s.ammo--;
-        sim().emit(S, 'sentryshot', { x: o.x, y: o.y, z: o.z });
+        sim().emit(S, EV.SENTRYSHOT, { x: o.x, y: o.y, z: o.z });
         if (s.ammo <= 0) {
           s.state = 2;
           sim().log(S, 'The toppled sentry gun runs out of rounds.', 0xdfe8f1);
@@ -562,7 +563,7 @@
           const sp = KS.SPREAD,
             d = norm3({ x: tp.x - o.x + rr(S, -sp, sp) * 6, y: tp.y - o.y + rr(S, -sp, sp) * 4, z: tp.z - o.z + rr(S, -sp, sp) * 6 });
           GD.round(S, o, d, s.owner, KS.DMG);
-          sim().emit(S, 'sentryshot', { x: o.x, y: o.y, z: o.z });
+          sim().emit(S, EV.SENTRYSHOT, { x: o.x, y: o.y, z: o.z });
           if (b.left <= 0) s.cool = KS.COOL;
           if (s.ammo <= 0) {
             s.state = 2;
@@ -589,7 +590,7 @@
       if (diff > half) continue;
       if (w.solid_len(o.x, o.y, o.z, f.pos.x, f.pos.y, f.pos.z) > 0.3) continue;          // behind cover
       b.left = KS.BURST; b.t = 0; b.target = f.id;
-      sim().emit(S, 'sentrydetect', { x: o.x, y: o.y, z: o.z, wormId: f.id});
+      sim().emit(S, EV.SENTRYDETECT, { x: o.x, y: o.y, z: o.z, wormId: f.id});
       break;
     }
   }
@@ -667,7 +668,7 @@
     S.claymores.push({ id: nextId(S), team: a.team, owner: a.id, pos, dir, nrm: { x: nrm.x, y: nrm.y, z: nrm.z },
       pdir: { x: d3.x, z: d3.z }, pn: { x: nn.x, z: nn.z }, armAt: S.time + KC.ARM, hp: KC.HP, vy: 0, attach, tree, seg,
       turns: KC.TURNS, planted: S.time, armed: 0 });
-    sim().emit(S, 'claymoreplant', { x: pos.x, y: pos.y, z: pos.z });
+    sim().emit(S, EV.CLAYMOREPLANT, { x: pos.x, y: pos.y, z: pos.z });
     sim().log(S, `${a.name} plants a claymore.`, sim().team_rgb(S, a.team));
     WPN().used(S, 'claymore'); return true;
   }
@@ -675,7 +676,7 @@
     const KC = K.CLAY, w = W(), i = S.claymores.indexOf(c);
     if (i >= 0) S.claymores.splice(i, 1);
     const o = { x: c.pos.x + c.dir.x * 0.15, y: c.pos.y + c.dir.y * 0.15, z: c.pos.z + c.dir.z * 0.15 };
-    sim().emit(S, 'claymoreblast', { x: o.x, y: o.y, z: o.z, dx: c.dir.x, dy: c.dir.y, dz: c.dir.z, why: why || '' });
+    sim().emit(S, EV.CLAYMOREBLAST, { x: o.x, y: o.y, z: o.z, dx: c.dir.x, dy: c.dir.y, dz: c.dir.z, why: why || '' });
     // a cone of pellets: random directions within CONE of the blast direction (deterministic stream), each stopped by
     // the first worm or surface it meets; worms take the sum of their hits, the ground is pitted
     const up = Math.abs(c.dir.y) > 0.95 ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
@@ -778,12 +779,12 @@
     // (P38 R1) electronics short out in the water like the sentry: a claymore under the surface is a dud (it is
     // removed, steam, no blast)
     if (inWater(S, { x: c.pos.x, y: c.pos.y + 0.1, z: c.pos.z })) {
-      sim().emit(S, 'steam', { x: c.pos.x, y: c.pos.y, z: c.pos.z, power: 0.4 });
+      sim().emit(S, EV.STEAM, { x: c.pos.x, y: c.pos.y, z: c.pos.z, power: 0.4 });
       S.claymores.splice(S.claymores.indexOf(c), 1); return;
     }
     if (!c.armed && S.time >= c.armAt) {
       c.armed = 1;
-      sim().emit(S, 'claymorearm', { x: c.pos.x, y: c.pos.y, z: c.pos.z });
+      sim().emit(S, EV.CLAYMOREARM, { x: c.pos.x, y: c.pos.y, z: c.pos.z });
     }
     if (!c.armed) return;
     // the laser: a segment LASER m long along dir, in the section of the planting. A worm's body (sphere) on it fires
@@ -849,7 +850,7 @@
         c.by = a.id;
         c.pickT = S.time + KG.CRATE_LOCK;
         c.vel = { x: d3.x * ad.s * v, y: ad.y * v, z: d3.z * ad.s * v }; c.spin = rr(S, -4, 4);
-        sim().emit(S, 'gravthrow', { wormId: a.id, x: c.pos.x, y: c.pos.y, z: c.pos.z, power: pw, crate: 1 });
+        sim().emit(S, EV.GRAVTHROW, { wormId: a.id, x: c.pos.x, y: c.pos.y, z: c.pos.z, power: pw, crate: 1 });
         sim().log(S, `${a.name} hurls a supply crate with the gravity gun.`, sim().team_rgb(S, a.team));
       }
       WPN().used(S, 'gravgun'); return true;
@@ -865,7 +866,7 @@
           v = 4 + (C.ARSENAL.gravgun.vmax || 24) * pw;
         b.vel.x = d3.x * ad.s * v; b.vel.y = ad.y * v; b.vel.z = d3.z * ad.s * v;
         b.w.x = rr(S, -3, 3); b.w.y = rr(S, -3, 3); b.w.z = rr(S, -3, 3);
-        sim().emit(S, 'gravthrow', { wormId: a.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, power: pw });
+        sim().emit(S, EV.GRAVTHROW, { wormId: a.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, power: pw });
         sim().log(S, `${a.name} hurls it with the gravity gun.`, sim().team_rgb(S, a.team));
       }
       WPN().used(S, 'gravgun'); return true;
@@ -884,7 +885,7 @@
       b.vel = null;
       b.by = -1;
       S.grab = { body: b.id, wid: a.id, crate: 1 }; S.charging = false; S.power = 0;
-      sim().emit(S, 'grab', { wormId: a.id, body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, crate: 1 });
+      sim().emit(S, EV.GRAB, { wormId: a.id, body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, crate: 1 });
       return true;
     }
     b.held = true; b.asleep = false; b.sleepT = 0;
@@ -892,12 +893,12 @@
       const mf = S.settings.mineFuse, fuse = typeof mf === 'number' ? mf : (mf === 'random' ? rr(S, 1, 3) : KG.MINE_FUSE);
       b.armed = true;
       if (b.det < 0 || b.det > S.time + fuse) b.det = S.time + fuse;
-      sim().emit(S, 'minearm', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, fuse });
+      sim().emit(S, EV.MINEARM, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, fuse });
       sim().log(S, 'The mine is live: throw it!', 0xff8060);
     }
     S.grab = { body: b.id, wid: a.id, crate: 0 };
     S.charging = false; S.power = 0;
-    sim().emit(S, 'grab', { wormId: a.id, body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z });
+    sim().emit(S, EV.GRAB, { wormId: a.id, body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z });
     return true;                                                               // (free: no ammo, the turn goes on)
   }
   // let go of what the gun holds without throwing it (turn over / worm dead): a body falls, a crate drops (and lands:
@@ -924,7 +925,7 @@
     const KG = K.GRAV,
       a = S.worms.find(q => q.id === g.wid),
       b = g.crate ? S.crates.find(q => q.id === g.body) : S.bodies.find(q => q.id === g.body);
-    if (!a || !b || a.dead || S.active !== a || S.phase !== 'play') {
+    if (!a || !b || a.dead || S.active !== a || S.phase !== PHASE.PLAY) {
       if (b) releaseHeld(S, b, g.crate);
       S.grab = null;
       return;
@@ -991,14 +992,14 @@
       const s = S.sentries[i];
       if (--s.turns <= 0 || (s.state === 2 && s.deadT > 8)) {
         S.sentries.splice(i, 1);
-        sim().emit(S, 'devbreak', { x: s.pos.x, y: s.pos.y, z: s.pos.z, kind: 'sentry', expired: 1 });
+        sim().emit(S, EV.DEVBREAK, { x: s.pos.x, y: s.pos.y, z: s.pos.z, kind: 'sentry', expired: 1 });
       }
     }
     for (let i = S.claymores.length - 1; i >= 0; i--) {
       const c = S.claymores[i];
       if (--c.turns <= 0) {
         S.claymores.splice(i, 1);
-        sim().emit(S, 'devbreak', { x: c.pos.x, y: c.pos.y, z: c.pos.z, kind: 'claymore', expired: 1 });
+        sim().emit(S, EV.DEVBREAK, { x: c.pos.x, y: c.pos.y, z: c.pos.z, kind: 'claymore', expired: 1 });
       }
     }
   };
@@ -1006,17 +1007,17 @@
   GD.blast = function (S, c, Wkg, dmg) {
     const BL = SS.blast, R = 2.83 * M.cbrt(Wkg), dP = dmg != null ? dmg : 50 * M.pow(Wkg, 0.28);
     for (const s of S.sentries.slice()) {
-      const d = hypot3({ x: s.pos.x, y: s.pos.y + 0.3, z: s.pos.z }, c), f = BL.poc_factor(d, R);
+      const d = M.v3_dist({ x: s.pos.x, y: s.pos.y + 0.3, z: s.pos.z }, c), f = BL.poc_factor(d, R);
       if (f <= 0) continue;
       s.hp -= dP * f * 0.6;
       if (f >= K.SENTRY.KNOCK_F) knock(S, s, { x: s.pos.x - c.x, y: 0, z: s.pos.z - c.z });
     }
     for (const q of S.claymores.slice()) {
-      const f = BL.poc_factor(hypot3(q.pos, c), R);
+      const f = BL.poc_factor(M.v3_dist(q.pos, c), R);
       if (f > 0) q.hp -= dP * f;
     }
     for (const d of S.dogs.slice()) {
-      const wp = P.to_world(S, d.s, d.y), f = BL.poc_factor(hypot3(wp, c), R);
+      const wp = P.to_world(S, d.s, d.y), f = BL.poc_factor(M.v3_dist(wp, c), R);
       if (f > 0.4) d.life = M.min(d.life, 0.05);
     }
   };

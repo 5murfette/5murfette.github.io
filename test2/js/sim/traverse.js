@@ -39,6 +39,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane;
+  const EV = C.EV;
   const T = SS.traverse = {};
   const PX = 0.0643;                                    // 1 PoC px in metres
   const R = C.TRAV = {
@@ -90,7 +91,7 @@
     const ap = P.to_plane(S, a.pos), d = sim().aim_dir(S);
     S.hook = { s: ap.s + d.s * 0.4, y: a.pos.y + d.y * 0.4, ds: d.s, dy: d.y, dist: 0.4 };
     m.aim = S.aim;
-    emit(S, 'rope_fire', P.to_world(S, S.hook.s, S.hook.y));
+    emit(S, EV.ROPE_FIRE, P.to_world(S, S.hook.s, S.hook.y));
   };
   T.hook_step = function (S, a, dt) {
     const k = S.hook, step = 0.1, n = Math.ceil(RP.HOOK_V * dt / step);
@@ -101,7 +102,7 @@
         S.rope = T.rope_make(k.s, k.y, M.max(C.ROPE_MIN, L), true); a.air = true; S.hook = null;
         a.flip = false; a.hop = false;                    // the tumble ends: it hangs now
         log(S, `Rope attached ${L.toFixed(1)} m away.`);
-        emit(S, 'rope_hook', P.to_world(S, k.s, k.y));
+        emit(S, EV.ROPE_HOOK, P.to_world(S, k.s, k.y));
         return;
       }
       if (k.dist >= C.ROPE_MAX || k.y < 0.2 || k.y > SS.world.SY + 2) {
@@ -130,7 +131,7 @@
       a.flipW = M.clamp(sp * 0.45, RP.SPIN_W0, RP.SPIN_W1);
       a.hop = false;
     }
-    emit(S, 'rope_release', { wormId: a.id, speed: sp });
+    emit(S, EV.ROPE_RELEASE, { wormId: a.id, speed: sp });
   };
 
   function lineBlocked(S, s0, y0, s1, y1, skip0, skip1) {
@@ -173,7 +174,7 @@
         r.pins = [];
         r.fixed = 0;
         log(S, `Rope re-hooked on the new section (${q.toFixed(1)} m).`, 0xfff3b0);
-        emit(S, 'rope_hook', P.to_world(S, s, y));
+        emit(S, EV.ROPE_HOOK, P.to_world(S, s, y));
         return;
       }
     }
@@ -201,7 +202,7 @@
       o.shoveT = S.time + RP.KNOCK_COOL;
       if (o.rope) o.rope = null;
       a.vs -= ns * vn * RP.KNOCK_SELF; a.vy -= ny * vn * RP.KNOCK_SELF;
-      emit(S, 'rope_knock', { wormId: o.id, speed: vn });
+      emit(S, EV.ROPE_KNOCK, { wormId: o.id, speed: vn });
     }
   }
   function rope_step(S, a, dt, mv, up, down) {
@@ -295,7 +296,7 @@
           r.len -= seg;
           r.s = c.s;
           r.y = c.y;
-          emit(S, 'rope_wrap', P.to_world(S, c.s, c.y));
+          emit(S, EV.ROPE_WRAP, P.to_world(S, c.s, c.y));
         }
       }
     }
@@ -338,7 +339,7 @@
       S.ropeHopT = S.time;
       a.squash = S.time;
       S.rope.len = M.min(M.max(C.ROPE_MIN, C.ROPE_MAX - (S.rope.fixed || 0)), S.rope.len + RP.HOP_PAY);
-      emit(S, 'jump', M.v3_copy(a.pos));
+      emit(S, EV.JUMP, M.v3_copy(a.pos));
       return;
     }
     if (!S.rope.hooked && S.time - S.lastRotate > 0.25 && S.thetaGoal == null) reseat(S);
@@ -363,7 +364,7 @@
     a.flip = false;
     a.hop = false;
     SS.weapons.used(S, 'parachute', 0, true);
-    emit(S, 'chute_open', { wormId: a.id, why });
+    emit(S, EV.CHUTE_OPEN, { wormId: a.id, why });
     log(S, `${a.name} pulls the ripcord.`, sim().team_rgb(S, a.team));
   }
   // before the worm's air flight: auto-open while the parachute is the selected tool and the fall is fast, then the
@@ -419,7 +420,7 @@
     z.as = ap.s;
     z.ay = a.pos.y + ZP.HANG;
     z.bolt = { s: ap.s + d.s * 0.4, y: a.pos.y + d.y * 0.4, ds: d.s, dy: d.y, dist: 0.4 };
-    emit(S, 'zip_fire', P.to_world(S, z.bolt.s, z.bolt.y));
+    emit(S, EV.ZIP_FIRE, P.to_world(S, z.bolt.s, z.bolt.y));
   }
   function zipBolt(S, a, dt) {
     const z = S.zip, k = z.bolt, step = 0.1, n = Math.ceil(ZP.BOLT_V * dt / step);
@@ -454,7 +455,7 @@
         a.hop = false;
         a.facing = bs > z.as ? 1 : -1;
         SS.weapons.used(S, 'zipline', 0, true);
-        emit(S, 'zip_hook', P.to_world(S, bs, by));
+        emit(S, EV.ZIP_HOOK, P.to_world(S, bs, by));
         log(S, `${a.name} rides a ${L.toFixed(0)} m zipline.`, sim().team_rgb(S, a.team));
         return;
       }
@@ -474,7 +475,7 @@
     a.vy = z.v * uy * k + (up || 0);
     z.state = 3;
     z.age = 0;
-    emit(S, 'zip_leave', { wormId: a.id, speed: z.v });
+    emit(S, EV.ZIP_LEAVE, { wormId: a.id, speed: z.v });
   }
   T.zip_control = function (S, a, dt, inp, mv) {
     const z = S.zip;
@@ -520,7 +521,7 @@
       // fire again: cut it away
       if (S.chute && S.chute.open) {
         chute_close(S);
-        emit(S, 'chute_cut', { wormId: a.id});
+        emit(S, EV.CHUTE_CUT, { wormId: a.id});
       }
       else if (!SS.weapons.can_use(S, 'parachute')) return;
       else if (a.air) chute_open(S, a, 'manual');

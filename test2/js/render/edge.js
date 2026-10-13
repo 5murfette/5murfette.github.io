@@ -1,7 +1,7 @@
 /* render/edge.js — the section's material edge (Step E3, user request 2026-10-06).
  * While the section rotates, view.js draws the bright outline ribbon. Once rotation stops (S.lastRotate older than
  * SHOW_DELAY 0.45 s, no auto-align running) this module builds a procedural edge along the labelled chains of
- * SS.edge (sim/edge.js) and the outline cross-fades out over FADE 0.5 s:
+ * SS.edge (geom/edge.js) and the outline cross-fades out over FADE 0.5 s:
  *   - a band per class with 4 rows: shadow feather inside the cut face, drape bottom / ink line, surface line, lit
  *     outer lip. Drape classes hang an opaque lip over the cut face (scalloped turf, snow cornice, glassy ice rim,
  *     hot lava contact); the others draw a thin dark ink line. Lip/drape thickness from 2D value noise in (s, y):

@@ -12,6 +12,8 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math;
+  const PHASE = C.PHASE;
+  const EV = C.EV;
   const G = SS.game = {};
   const K = C.GAME;
 
@@ -88,7 +90,7 @@
     // (= sim.living: a 0-HP worm is dying: no turn)
     for (let k = 1; k <= n; k++) {
       const t = (from + k) % n;
-      if (S.worms.some(w => !w.dead && w.hp > 0 && w.team === t)) return t;
+      if (SS.worm.team_alive(S, t)) return t;
     }
     return -1;
   };
@@ -129,7 +131,7 @@
       S.sdStart = S.round;
       S.sdAcc = 0;
       S.sdRise = 0;
-      SS.sim.emit(S, 'banner', {
+      SS.sim.emit(S, EV.BANNER, {
         title: 'Sudden death',
         sub: SS.world.dry ? 'The hot sand closes in' : SS.world.under || SS.world.eow ? 'The air turns foul' : 'The water keeps rising'
       });
@@ -152,7 +154,7 @@
       const spent = d.under || d.eow || late || (d.dry ? S.playR <= K.SD_DRY_MIN + 1e-6 : d.SEA >= d.SY - K.SD_SEA_GAP - 1e-6);
       if (spent) {
         if (S.sdFinal === 0) {
-          SS.sim.emit(S, 'banner', {
+          SS.sim.emit(S, EV.BANNER, {
             title: 'Final stand',
             sub: d.eow
               ? 'The planet\'s radiation floods the wreck'
@@ -179,7 +181,7 @@
   /* one sim step of sudden death: the sea (or, in dry worlds, the play circle) moves a hair; the sea level is handed to
    * water.raise in SD_QUANT quanta */
   G.sd_step = function (S, dt) {
-    if (!S.sudden || S.phase === 'over' || S.phase === 'place' || S.phase === 'perk') return;
+    if (!S.sudden || S.phase === PHASE.OVER || S.phase === PHASE.PLACE || S.phase === PHASE.PERK) return;
     const d = SS.world;
     if (d.dry) {
       S.playR = M.max(K.SD_DRY_MIN, S.playR - K.SD_DRY_RATE * dt);
@@ -202,7 +204,7 @@
    * turn, +SD_DRAIN_RAMP per
    * further turn, at most SD_DRAIN_MAX. Called from sim.js hazards. */
   G.final_drain = function (S) {
-    if (!(S.sdFinal > 0) || S.phase === 'over') return 0;
+    if (!(S.sdFinal > 0) || S.phase === PHASE.OVER) return 0;
     return M.min(K.SD_DRAIN_MAX, K.SD_DRAIN + K.SD_DRAIN_RAMP * (S.sdFinal - 1));
   };
 
@@ -232,7 +234,7 @@
       w.grave = null;
     }
     S.placeIdx = 0;
-    S.phase = 'place';
+    S.phase = PHASE.PLACE;
     S.placeT = PL.T;
     S.placeDone = -1;
     nextPlace(S);
@@ -242,13 +244,13 @@
     if (!w) {
       S.placeDone = S.time;
       S.active = null;
-      SS.sim.emit(S, 'banner', { title: 'Deployment complete', sub: 'Brace yourselves' });
+      SS.sim.emit(S, EV.BANNER, { title: 'Deployment complete', sub: 'Brace yourselves' });
       return;
     }
     S.active = w; S.placeT = PL.T; S.target = null;
     // the reserve sits at the section origin (the last placed worm / the map centre): rotation turns about it
     w.pos.x = S.O.x; w.pos.z = S.O.z;
-    SS.sim.emit(S, 'banner', {
+    SS.sim.emit(S, EV.BANNER, {
       title: `${SS.sim.team_name(S, w.team)} · ${w.name}`,
       sub: G.is_cpu(S, w.team) ? 'CPU places its worm' : 'Click a spot on the section to place this worm'
     });
@@ -279,10 +281,13 @@
     w.vy = 0;
     // the section jumps to the new worm: rebuild it and treat the jump like a turn of the section (the material edge
     // fades out and is rebuilt here; user 2026-10-08: the old outline stayed while a CPU placed elsewhere)
-    S.O = { x: p.x, z: p.z }; S.sectionDirty = true; S.lastRotate = S.time;
+    S.O.x = p.x;
+    S.O.z = p.z;
+    S.sectionDirty = true;
+    S.lastRotate = S.time;
     // hangs until the beam has built it (user 2026-10-11)
     if (SS.weapons && SS.weapons.tele_hold) SS.weapons.tele_hold(w, p.x, p.y, p.z);
-    SS.sim.emit(S, 'teleport', { wormId: w.id, from: { x: p.x, y: p.y + 30, z: p.z }, to: { x: p.x, y: p.y, z: p.z }, deploy: 1 });
+    SS.sim.emit(S, EV.TELEPORT, { wormId: w.id, from: { x: p.x, y: p.y + 30, z: p.z }, to: { x: p.x, y: p.y, z: p.z }, deploy: 1 });
     SS.sim.log(S, `${w.name} ${how}.`, SS.sim.team_rgb(S, w.team));
     S.placeIdx++; nextPlace(S);
   }
@@ -317,7 +322,7 @@
   G.place_step = function (S, inp, dt) {
     if (S.placeDone >= 0) {
       if (S.time - S.placeDone >= PL.AFTER) {
-        S.phase = 'play';
+        S.phase = PHASE.PLAY;
         for (const w of S.worms) { w.reserve = false; }
         SS.sim.next_turn(S, true);
       }
@@ -405,7 +410,7 @@
   /* per step: the turn clock (play phase only; 0 = no limit) and the retreat window */
   G.step = function (S, dt) {
     G.sd_step(S, dt);                                                 // P84: sudden death, every step
-    if (S.phase === 'play' && S.settings.turnTime > 0 && S.active && !S.active.dead) {
+    if (S.phase === PHASE.PLAY && S.settings.turnTime > 0 && S.active && !S.active.dead) {
       S.turnT -= dt;
       if (S.turnT <= 0) {
         S.turnT = 0;
@@ -416,7 +421,7 @@
         }
       }
     }
-    if (S.phase === 'attack' && S.retreatT > 0 && !S.dig) {               // (the torch / drill runs first)
+    if (S.phase === PHASE.ATTACK && S.retreatT > 0 && !S.dig) {               // (the torch / drill runs first)
       S.retreatT -= dt;
       if (S.retreatT <= 0 || !S.active || S.active.dead) SS.sim.end_retreat(S);
     }

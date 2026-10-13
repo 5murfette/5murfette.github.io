@@ -379,10 +379,20 @@
             + (o.tex ? TRI_VS_BODY : '')
             + (sway ? /* glsl */`
           {
+            // the wind bends a plant about its base: every vertex turns about the base, in the vertical plane of the
+            // wind, by an angle that grows from 0 at the ground to the full lean at 0.3 m (the plants' height) and
+            // above; the full lean is 0.11 rad per m/s of wind plus a little flutter, at most 0.9 rad. A turn keeps
+            // each vertex's distance from the base, so a plant bends and never stretches into a streak
             float ph = instanceMatrix[3].x * 3.1 + instanceMatrix[3].z * 2.3;
-            float hh = transformed.y * transformed.y;
-            transformed.x += (uWind.x * 0.5 + sin(uTime * 1.8 + ph) * 0.05) * hh * 4.0;
-            transformed.z += (uWind.z * 0.5 + cos(uTime * 1.3 + ph) * 0.04) * hh * 4.0;
+            vec2 w = uWind.xz * 0.11 + vec2(sin(uTime * 1.8 + ph) * 0.05, cos(uTime * 1.3 + ph) * 0.04);
+            float wl = length(w), y = transformed.y;
+            if (wl > 1e-4) {
+              vec2 d = w / wl;
+              float a = min(wl, 0.9) * smoothstep(0.0, 0.3, y), sa = sin(a), ca = cos(a);
+              float h = dot(transformed.xz, d), h2 = h * ca + y * sa;
+              transformed.xz += d * (h2 - h);
+              transformed.y = y * ca - h * sa;
+            }
           }` : '')
         )
         .replace('#include <project_vertex>', `#include <project_vertex>

@@ -47,6 +47,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.WIND;
+  const EV = C.EV;
   const WE = SS.weather = {};
   const W = () => SS.world;
 
@@ -633,8 +634,8 @@
     }
     let p = { x: tg.x, y: tg.y, z: tg.z };
     if (tg.kind === 'tree') p = SS.trees.strike(S, tg.ref, { breakTop: brk }) || p;
-    SS.sim.emit(S, 'lightning', { x: p.x, y: p.y, z: p.z, kind: tg.kind, id: tg.id, seed });
-    SS.sim.emit(S, 'thunder', { x: p.x, y: p.y, z: p.z });
+    SS.sim.emit(S, EV.LIGHTNING, { x: p.x, y: p.y, z: p.z, kind: tg.kind, id: tg.id, seed });
+    SS.sim.emit(S, EV.THUNDER, { x: p.x, y: p.y, z: p.z });
     S.lightning = 1;                                  // P37 W4: a tinfoil hat grounds it (sim.hurt takes 10 %)
     SS.sim.explode(S, { x: p.x, y: p.y, z: p.z }, { W: L.W, dmg: 10, name: 'lightning' }, null);   // PoC strike explode(.., 24, 10)
     if (SS.weapons && SS.weapons.electrocute) SS.weapons.electrocute(S, p, L.ZAP_R, L.ZAP_D, null);   // PoC electrocute(60, 16)
@@ -726,7 +727,7 @@
     const w = S.wind, r = S.weather && S.weather.rng;
     if (!w || !r) return;
     if (S.turnNo > 1 && (!S.settings.weather || S.settings.weather === 'auto') && changeKind(S)) {
-      SS.sim.emit(S, 'weather', { kind: S.weather.kind });
+      SS.sim.emit(S, EV.WEATHER, { kind: S.weather.kind });
       SS.sim.log(S, `The weather turns: ${C.WEATHER_NAME[S.weather.kind] || S.weather.kind}.`, 0xb8d8ff);
     }
     if (S.turnNo > 1 && w.hi > 0) {

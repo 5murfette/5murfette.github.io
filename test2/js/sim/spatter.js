@@ -25,6 +25,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.SPATTER, NS = K.NS, SIG = 5.670e-8;
+  const EV = C.EV;
   const SP = SS.spatter = {};
   const W = () => SS.world;
   const rng = S => M.rng_next(S.spatRng);
@@ -124,13 +125,13 @@
       SP.add(S, x, y, z, v * s * M.cos(az), v * M.cos(th), v * s * M.sin(az), D, T0);
       Vf += vol(r); n++;
     }
-    if (n) SS.sim.emit(S, 'spatter', { x: c.x, y: c.y, z: c.z, n, V: Vf });
+    if (n) SS.sim.emit(S, EV.SPATTER, { x: c.x, y: c.y, z: c.z, n, V: Vf });
     return M.min(Vf, Vs);
   };
 
   /* ---------- landing ---------- */
   function land(S, b, kind, vn) {
-    SS.sim.emit(S, 'spatland', { id: b.id, x: b.x, y: b.y, z: b.z, kind, Ts: b.Ts, D: b.D });
+    SS.sim.emit(S, EV.SPATLAND, { id: b.id, x: b.x, y: b.y, z: b.z, kind, Ts: b.Ts, D: b.D });
     if (kind === 'lava' || kind === 'water') return false;      // caller removes it
     // splat: a hot (fluid) clot hitting fast flattens most; volume kept: a = r flat^(-1/3), c = r flat^(2/3)
     const f = M.clamp((tmean(b) - 900) / 250, 0, 1), flat = 1 - (1 - K.FLAT_MIN) * f * M.clamp(vn / 8, 0.25, 1);
@@ -259,7 +260,7 @@
           const heat = M.clamp((b.Ts - 500) / 650, 0, 1);
           const hp = M.min(K.BURN_MAX, Math.round(K.BURN_HP * heat * M.pow(b.D / K.D50, 1.5)));
           b.hit = wm.id;
-          SS.sim.emit(S, 'spatland', { id: b.id, x: b.x, y: b.y, z: b.z, kind: 'worm', Ts: b.Ts, D: b.D });
+          SS.sim.emit(S, EV.SPATLAND, { id: b.id, x: b.x, y: b.y, z: b.z, kind: 'worm', Ts: b.Ts, D: b.D });
           if (hp >= 1 || heat > 0.2) {
             wm.burnT = S.time;
             SS.sim.hurt(S, wm, M.max(1, hp), C.DS.LAVA_SPATTER);
@@ -294,13 +295,13 @@
             b.ny = 1;
             b.nz = 0;
             land(S, b, 'ice', M.max(0, -b.vy)); b.st = 1; b.y = it + b.c * 0.85;
-            SS.sim.emit(S, 'steam', { x: b.x, y: it, z: b.z, power: M.min(1, 0.1 + b.D * 3) });
+            SS.sim.emit(S, EV.STEAM, { x: b.x, y: it, z: b.z, power: M.min(1, 0.1 + b.D * 3) });
             gone = true; break;
           }
         }
         if (b.y < SS.sim.surface_at(S, b.x, b.z)) {
           land(S, b, 'water', 0);
-          SS.sim.emit(S, 'steam', { x: b.x, y: SS.sim.surface_at(S, b.x, b.z), z: b.z, power: M.min(1, 0.2 + b.D * 4) });
+          SS.sim.emit(S, EV.STEAM, { x: b.x, y: SS.sim.surface_at(S, b.x, b.z), z: b.z, power: M.min(1, 0.2 + b.D * 4) });
           A.splice(i, 1); gone = true; break;
         }
         for (const o of S.bodies) {

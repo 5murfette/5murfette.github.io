@@ -28,6 +28,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.VEG;
+  const EV = C.EV;
   const VG = SS.veg = {};
   const W = () => SS.world;
   const ZERO = { x: 0, y: 0, z: 0 };
@@ -168,7 +169,7 @@
       }
     st.surfVer++;
     if (lit) {
-      SS.sim.emit(S, 'grassfire', { x: c.x, y: w.top_at(c.x, c.z), z: c.z, cells: lit });
+      SS.sim.emit(S, EV.GRASSFIRE, { x: c.x, y: w.top_at(c.x, c.z), z: c.z, cells: lit });
       if (S.time - st.logT > 4) {
         st.logT = S.time;
         SS.sim.log(S, 'The dry grass catches fire!', 0xffb060);

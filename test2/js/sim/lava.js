@@ -21,10 +21,9 @@
   'use strict';
   const M = SS.math;
   const C = SS.CFG, MAT = C.MAT, L = C.LAVA, G = C.G;
+  const EV = C.EV;
   const LV = SS.lava = {};
   const W = () => SS.world;
-  const sat = v => v < 0 ? 0 : v > 1 ? 1 : v;
-  const M_clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
   /* ---------- setup ---------- */
   LV.init = function (S) {
@@ -70,7 +69,7 @@
             rc = o.Rc;
           }
         }
-        st.T[c] = st.vents.length ? 1 - 0.15 * sat((r - rc) / 40) : 1;   // cooler down the rivers (nearest crater)
+        st.T[c] = st.vents.length ? 1 - 0.15 * M.sat((r - rc) / 40) : 1;   // cooler down the rivers (nearest crater)
       }
     }
     bbox(st, 0, NX - 1, 0, NZ - 1);
@@ -333,7 +332,7 @@
       const sx = (steamC % NX) * H,
         sz = Math.floor(steamC / NX) * H,
         sy = S.water && SS.water ? M.max(top[steamC], SS.water.surface(S, sx, sz)) : SEA;
-      if (!st.quiet && SS.sim) SS.sim.emit(S, 'steam', { x: sx, y: sy, z: sz, power: steamP });
+      if (!st.quiet && SS.sim) SS.sim.emit(S, EV.STEAM, { x: sx, y: sy, z: sz, power: steamP });
     }
   }
 
@@ -391,7 +390,7 @@
         continue;
       }
       if (!filling && jp < lvl) continue;                    // backed up: waits (the open lava may flow away and drop)
-      src.acc += L.DRAIN_Q * M_clamp((jp - lvl + 1) * H / L.DRAIN_HEAD, 0.15, 2) * dt;
+      src.acc += L.DRAIN_Q * M.clamp((jp - lvl + 1) * H / L.DRAIN_HEAD, 0.15, 2) * dt;
       let bi0 = 1e9, bi1 = -1, bj0 = 1e9, bj1 = -1, bk0 = 1e9, bk1 = -1, out = 0;
       const box = o => {
         const vi = o % NX, vj = jOf(o), vk = Math.floor(o / SXY);
@@ -538,7 +537,7 @@
       done: false
     });
     if (!st.quiet && SS.sim)
-      SS.sim.emit(S, 'lavabreach', {
+      SS.sim.emit(S, EV.LAVABREACH, {
         x: bi * H,
         y: bestJ * H,
         z: bk * H,
@@ -754,7 +753,7 @@
       }
       if (e.next <= 0) {
         e.next = 0.3;
-        if (!st.quiet && SS.sim) SS.sim.emit(S, 'steam', { x: e.x, y: e.y, z: e.z, power: e.p * (0.3 + 0.7 * e.t / L.STEAM_T) });
+        if (!st.quiet && SS.sim) SS.sim.emit(S, EV.STEAM, { x: e.x, y: e.y, z: e.z, power: e.p * (0.3 + 0.7 * e.t / L.STEAM_T) });
       }
     }
   }
@@ -795,7 +794,7 @@
       for (const q of ring) addLava(st, q, dv, Tin);
       grow(st, i0, i1, k0, k1);
     } else st.stats.lost += Vs;
-    if (!st.quiet && SS.sim) SS.sim.emit(S, 'lavasplash', { x: c.x, y: c.y, z: c.z, volume: Vs, R });
+    if (!st.quiet && SS.sim) SS.sim.emit(S, EV.LAVASPLASH, { x: c.x, y: c.y, z: c.z, volume: Vs, R });
   };
 
   /* LV4: a clot of V m3 at lava temperature Tin falls back into (or is remelted by) the lava at x, z */

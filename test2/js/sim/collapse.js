@@ -8,6 +8,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, MAT = C.MAT, M = SS.math;
+  const EV = C.EV;
   const K = SS.collapse = {};
   let stamp = null, stack = null, visit = null, counter = 1;
   const nb = new Int32Array(6);                         // neighbour scratch (no per-voxel allocation)
@@ -351,7 +352,7 @@
       const r = K.detach(W, comp, S.rng);
       for (const p of r.pieces) made.push(SS.bodies.from_piece(S, p));
       rub += r.rubble.length;
-      if (r.rubble.length) SS.sim.emit(S, 'rubble', { pts: r.rubble.slice(0, 24) });
+      if (r.rubble.length) SS.sim.emit(S, EV.RUBBLE, { pts: r.rubble.slice(0, 24) });
     }
     const e = S.lastExplosion;
     if (e && made.length) SS.bodies.blast(S, e, M.pow(e.R / 3, 3), made);
@@ -361,7 +362,7 @@
       ev.y += b.pos.y / made.length;
       ev.z += b.pos.z / made.length;
     }
-    SS.sim.emit(S, 'collapse', ev);
+    SS.sim.emit(S, EV.COLLAPSE, ev);
     if (made.length)
       SS.sim.log(
         S,

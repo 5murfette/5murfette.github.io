@@ -38,6 +38,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.ICE;
+  const EV = C.EV;
   const IC = SS.ice = {};
   const W = () => SS.world;
 
@@ -90,19 +91,21 @@
    * (S.lava.h) or a vent mouth (world features), rebuilt every
    * turn (lava flows). Only the rim of a lava body is marked (any cell within HOT_R of its inside is within HOT_R of
    * its rim). C: void warm_cells(Game*, Ice*). */
+  // marks the columns within HOT_R of column (ci, ck) warm (rr = HOT_R in cells, H = the cell size)
+  function markWarm(st, ci, ck, rr, H) {
+    const NX = st.NX, NZ = st.NZ, warm = st.warm;
+    for (let dk = -rr; dk <= rr; dk++) {
+      const k = ck + dk;
+      if (k < 0 || k >= NZ) continue;
+      for (let di = -rr; di <= rr; di++) {
+        const i = ci + di;
+        if (i >= 0 && i < NX && M.len2(di * H, dk * H) <= K.HOT_R) warm[k * NX + i] = 1;
+      }
+    }
+  }
   function warmCells(S, st) {
     const w = W(), NX = st.NX, NZ = st.NZ, H = w.H, warm = st.warm, rr = Math.ceil(K.HOT_R / H), lv = S.lava, F = w.features || {};
     warm.fill(0);
-    const mark = (ci, ck) => {
-      for (let dk = -rr; dk <= rr; dk++) {
-        const k = ck + dk;
-        if (k < 0 || k >= NZ) continue;
-        for (let di = -rr; di <= rr; di++) {
-          const i = ci + di;
-          if (i >= 0 && i < NX && M.len2(di * H, dk * H) <= K.HOT_R) warm[k * NX + i] = 1;
-        }
-      }
-    };
     if (lv && lv.i1 >= lv.i0) {
       for (let k = lv.k0; k <= lv.k1; k++)
         for (let i = lv.i0; i <= lv.i1; i++) {
@@ -118,11 +121,12 @@
             && lv.h[c - NX] > 0.02
             && lv.h[c + NX] > 0.02
           ) continue;
-          mark(i, k);
+          markWarm(st, i, k, rr, H);
         }
     }
     const vs = F.vents || [];
-    for (let q = 0; q < vs.length; q++) mark(M.clamp(Math.round(vs[q].x / H), 0, NX - 1), M.clamp(Math.round(vs[q].z / H), 0, NZ - 1));
+    for (let q = 0; q < vs.length; q++)
+      markWarm(st, M.clamp(Math.round(vs[q].x / H), 0, NX - 1), M.clamp(Math.round(vs[q].z / H), 0, NZ - 1), rr, H);
   }
 
   /* one turn: frost (growth, spreading, floes freeze back in) or thaw (melting, floes melt) */
@@ -440,7 +444,7 @@
     if (!any) return;
     if (ring.length) shatter(S, ring, x, z, kick == null ? 1.5 : kick, reg);
     st.ver++;
-    SS.sim.emit(S, 'icebreak', { x, y: SS.water.surface(S, x, z), z, r: rc, why });
+    SS.sim.emit(S, EV.ICEBREAK, { x, y: SS.water.surface(S, x, z), z, r: rc, why });
   }
   IC.break_at = breakAt;
   /* a load at (x, z): breaks the ice if it is more than it carries; true = broke (the load goes into the water) */
@@ -543,7 +547,7 @@
     shatter(S, wv.hit, wv.x, wv.z, 0.9, wv.reg); wv.hit.length = 0;
     if (wv.t - wv.te >= 0.3) {
       wv.te = wv.t;
-      SS.sim.emit(S, 'icebreak', { x: wv.x, y: SS.water.surface(S, wv.x, wv.z), z: wv.z, r: wv.r, why: 'wave' });
+      SS.sim.emit(S, EV.ICEBREAK, { x: wv.x, y: SS.water.surface(S, wv.x, wv.z), z: wv.z, r: wv.r, why: 'wave' });
     }
   }
   function stepWaves(S, st, dt) {

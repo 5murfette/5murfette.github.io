@@ -27,6 +27,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, K = C.WATER;
+  const EV = C.EV;
   const WA = SS.water = {};
   const W = () => SS.world;
   const DRY = -99;
@@ -357,7 +358,7 @@
       if (st.h[c] > 0.01) st.h[c] += dh;
     for (const wm of onIce) wm.pos.y += dh;
     st.bedVer = (st.bedVer || 0) + 1; st.ver++;
-    SS.sim.emit(S, 'searise', { sea: w.SEA, dh });
+    SS.sim.emit(S, EV.SEARISE, { sea: w.SEA, dh });
   };
   /* turn change: this turn's share of the round's groundwater (SEEP / teams); an unreleased rest carries (max 2) */
   WA.new_turn = function (S) {
@@ -477,7 +478,7 @@
     const tJet = under ? 0.3 : 0.2, jetH = M.min(16, M.max(2, (under ? 8 : 5) * s3 * att));
     st.pend.push({ t: st.t + tJet, x: c.x, z: c.z, r: R * 0.42, a: A * (under ? 0.9 : 0.6) });
     st.ver++;
-    SS.sim.emit(S, 'waterblast', { x: c.x, y: surf, z: c.z, R, A, under, depth, tJet, jetH });
+    SS.sim.emit(S, EV.WATERBLAST, { x: c.x, y: surf, z: c.z, R, A, under, depth, tJet, jetH });
   };
 
   WA.stats = function (S) {

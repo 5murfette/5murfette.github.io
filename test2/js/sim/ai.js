@@ -14,6 +14,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane;
+  const PHASE = C.PHASE;
   const AI = SS.ai = {};
   const W = () => SS.world;
   const K = { TURN_MAX: 30, SPECIAL_MIN: 18, THINK: 0.8, TARGETS: 3, EVAL_PER_STEP: 14, OWN_K: 2.2, TAIL_K: 0.7, TAIL_FREE: 6, NEAR_D: 4.5,
@@ -629,13 +630,13 @@
     if (!pl || pl.turn !== S.turnNo || pl.worm !== a.id) { pl = S.aiPlan = newPlan(S, a); }
     if (SS.aib && a.air) SS.aib.air(S, a);
     // P89: a switched-off life jacket goes on once the turn starts near water
-    if (SS.gear && S.phase === 'play' && !pl.gearT) {
+    if (SS.gear && S.phase === PHASE.PLAY && !pl.gearT) {
       pl.gearT = 1;
       const gj = SS.gear.get(S, a.team, SS.gear.JACKET);
       if (gj && !gj.on && gj.n > 0 && nearWater(S, a)) inp.gear = SS.gear.JACKET + 1;
     }
     // P79 LIGHTNING: run from a bolt's tell (1.4 s)
-    if (SS.lab4 && S.settings.labFlags && S.phase === 'play' && !a.air && !S.rope && !S.charging) {
+    if (SS.lab4 && S.settings.labFlags && S.phase === PHASE.PLAY && !a.air && !S.rope && !S.charging) {
       const fd = SS.lab4.zap_flee(S, a);
       if (fd && SS.aib && SS.aib.safe_step(S, a, fd)) {
         inp.move = fd;
@@ -645,7 +646,7 @@
     // P38-R2 safeguard: a plan that has not shot 30 s into the turn ("No limit" turns never time out) ends it
     /* (P38 R3: also a worm stuck swinging / airborne, at twice the limit) */
     if (
-      S.phase === 'play'
+      S.phase === PHASE.PLAY
       && !S.charging
       && S.time - S.turnStart > K.TURN_MAX
       && ((!a.air && !S.rope) || S.time - S.turnStart > 2 * K.TURN_MAX)
@@ -1172,7 +1173,7 @@
     if (b.special === 'shotgun' || b.special === 'bat') {
       S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * (laserOn(a) ? 0.25 : 0.5), -1.5, 1.5);
       WP.use(S, 0);
-      if (b.special === 'shotgun' && S.phase === 'play') {
+      if (b.special === 'shotgun' && S.phase === PHASE.PLAY) {
         S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5);
         WP.use(S, 0);
       }

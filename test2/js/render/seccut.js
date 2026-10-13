@@ -6,7 +6,7 @@
  *   - ONE crisp yellow line along the ground where the plane meets the map: the SKYLINE of the section (the upper
  *     envelope of the solid, column by column, from S.section.V; it stops at the waterline: the sea floor is not part
  *     of it). The full outline also holds every arch, overhang and cave of the cut (a tangle of loops on the canyon, a
- *     squiggle network inside the island through the 45 % copy), so only cave worlds use it (sim/edge.js chains: the
+ *     squiggle network inside the island through the 45 % copy), so only cave worlds use it (geom/edge.js chains: the
  *     cave outline IS the cut there). A strip with shared vertices and mitred corners (no overlap: the old per-segment
  *     quads blended twice at every joint = a bead), sitting on the air side of the profile (the half inside the rock
  *     would be hidden), width follows the camera distance (quantised, geometry rebuilt only when the step or the
@@ -115,7 +115,7 @@
     if (closed && n > 2) G.idx.push(G.nv - 2, G.nv - 1, first + 1, G.nv - 2, first + 1, first);
     G.strips++;
   }
-  /* the cut line of a cave world: every outline chain (sim/edge.js: polylines with the air normal at every point)
+  /* the cut line of a cave world: every outline chain (geom/edge.js: polylines with the air normal at every point)
    * inside the plane's extent, the cave outline IS the cut there */
   function chainLine(G, S, sec, ex) {
     const E = sec.edge || SS.edge.build(S, sec), P = [];

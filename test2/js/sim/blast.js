@@ -20,6 +20,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, B = C.BLAST, MAT = C.MAT;
+  const EV = C.EV;
   const BL = SS.blast = {};
   const W = () => SS.world;
 
@@ -169,7 +170,7 @@
     const cr = BL.crater(c, Wc);
     S.lastCrater = cr.box;
     // pushes: the shove of every worm it threw (render: the per-node wave of the soft body)
-    const ev = sim.emit(S, 'explode', {
+    const ev = sim.emit(S, EV.EXPLODE, {
       x: c.x,
       y: c.y,
       z: c.z,

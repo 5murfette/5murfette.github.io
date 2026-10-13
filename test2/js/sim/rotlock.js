@@ -12,40 +12,35 @@
  * nearest first (input align_step / align_crate; sim.align_next / sim.align_crate); both only while rotation is
  * allowed. Worm select (setting `select`, sim.can_switch) moved off TAB to the backslash key (every letter is taken by
  * a weapon / move key; platform/input.js). API: enabled(S), free(S), allowed(S), left(S) (s of the window left, -1 = no
- *      countdown: free / over), team_hp(S, team), opponents(S, w) (sorted list), pick_start_target(S, w),
+ *      countdown: free / over), opponents(S, w) (sorted list), pick_start_target(S, w),
  * next_opponent(S, step), next_crate(S). C layout: no new state; reads struct Game { f32 time, turnStart; bool acted;
  *   Worm *active, *target; Settings.rotLock }. S.crateSel (i32 crate id, -1 none) is the Shift+TAB cursor. */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math;
+  const PHASE = C.PHASE;
   const RL = SS.rotlock = {};
 
   RL.enabled = S => !SS.world.flat && S.settings.rotLock !== false && S.settings.rotLock !== 0 && S.settings.rotLock !== 'off';
   RL.free = S => !RL.enabled(S) || !!(S.active && S.active.skills && S.active.skills.freerot > 0);
   RL.allowed = S => {
-    if (S.phase === 'place') return true;
+    if (S.phase === PHASE.PLACE) return true;
     if (RL.free(S)) return true;
     return !S.acted && S.time - S.turnStart < C.ROT_WINDOW;
   };
   RL.left = S => {
-    if (S.phase !== 'play' || !S.active || RL.free(S) || S.acted) return -1;
+    if (S.phase !== PHASE.PLAY || !S.active || RL.free(S) || S.acted) return -1;
     const l = C.ROT_WINDOW - (S.time - S.turnStart);
     return l > 0 ? l : -1;
   };
 
-  RL.team_hp = (S, team) => {
-    let h = 0;
-    for (const w of S.worms)
-      if (!w.dead && w.hp > 0 && w.team === team) h += w.hp;
-    return h;
-  };
   // the living enemy worms of w: the team with the highest total HP first, inside it the worm with the highest HP
   RL.opponents = (S, w) => {
     const out = [];
     for (const o of S.worms)
       if (!o.dead && o.hp > 0 && o.team !== w.team) out.push(o);
     const th = [];
-    for (let t = 0; t < S.teams.length; t++) th.push(RL.team_hp(S, t));
+    for (let t = 0; t < S.teams.length; t++) th.push(SS.worm.team_hp(S, t));
     out.sort((p, q) => (th[q.team] - th[p.team]) || (p.team - q.team) || (q.hp - p.hp) || (p.id - q.id));
     return out;
   };

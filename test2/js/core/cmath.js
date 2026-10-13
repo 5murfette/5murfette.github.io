@@ -903,6 +903,10 @@
    * in C): never branch on it. */
   M.min = (a, b) => (a !== a ? b : b !== b ? a : b < a ? b : a);
   M.max = (a, b) => (a !== a ? b : b !== b ? a : b > a ? b : a);
+  // the plain compare (signed-distance-field code, where no NaN occurs): the other argument on a tie (+0 against -0)
+  // and on a NaN; use M.min / M.max wherever a NaN may reach the call
+  M.fast_min = (a, b) => (a < b ? a : b);
+  M.fast_max = (a, b) => (a > b ? a : b);
   /* zero / NaN guard: v if it is a usable non-zero number, else d (what `v || d` did in JS; in C: (v != 0 && v == v) ?
    * v : d). Used for the
    * divisor of a normalisation (M.nz(M.len3(x, y, z), 1)). A NaN here is a bug upstream; the hash shows it (sim.hash

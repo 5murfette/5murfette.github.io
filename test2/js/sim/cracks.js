@@ -43,6 +43,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, MAT = C.MAT, K = C.CRACK, H = 0.5;
+  const EV = C.EV;
   const CR = SS.cracks = {};
   const LAB_BIT = C.LAB.FLAG.CRACKS;
   const NM = C.MATS.length;
@@ -788,7 +789,7 @@
     }
     if (W.flat) SS.dim2d.flatten(W, box.i0, box.j0, box.i1, box.j1);   // P68a 2D: the sheets grew in 3D, keep the slab's slices identical
     CR.bump(W);
-    SS.sim.emit(S, 'crack', { x: c.x, y: c.y, z: c.z, n: st.lastSheets, pts: g.pts });
+    SS.sim.emit(S, EV.CRACK, { x: c.x, y: c.y, z: c.z, n: st.lastSheets, pts: g.pts });
     if (S.settings.collapse) CR.settle(S, c, box);
     return box;
   };

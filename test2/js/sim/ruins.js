@@ -34,7 +34,6 @@
     EDGE_R: 40
   };
   RU.K = K;
-  const smin = (a, b) => (a < b ? a : b), smax = (a, b) => (a > b ? a : b);
   let seedK = 1;
 
   /* ---------- the voxel writers ---------- */
@@ -71,7 +70,7 @@
   /* an irregular blob (ellipsoid + 3D noise): solid union with the terrain */
   const ob = { s: 0, mat: 0, air: 0 };
   function blob(cx, cy, cz, ax, ay, az, mat) {
-    const mn = smin(ax, smin(ay, az)), R = smax(ax, smax(ay, az)) + 0.6;
+    const mn = M.fast_min(ax, M.fast_min(ay, az)), R = M.fast_max(ax, M.fast_max(ay, az)) + 0.6;
     stamp(cx - R, cy - R, cz - R, cx + R, cy + R, cz + R, (x, y, z, o) => {
       const q = M.len3((x - cx) / ax, (y - cy) / ay, (z - cz) / az);
       o.s = (1 - q) * mn + 0.5 * mn * (M.noise3(x * 1.4, y * 1.4, z * 1.4, seedK) - 0.5); o.mat = mat;
@@ -86,8 +85,8 @@
     for (let a = -1; a <= 1; a++)
       for (let b = w.flat ? 0 : -1; b <= (w.flat ? 0 : 1); b++) {
         const t = w.top_at(x + a * r, z + b * r);
-        lo = smin(lo, t);
-        hi = smax(hi, t);
+        lo = M.fast_min(lo, t);
+        hi = M.fast_max(hi, t);
         sum += t;
         n++;
       }
@@ -149,35 +148,39 @@
     stamp(b.x - R, b.y0 - found - 0.5, b.z - R, b.x + R, b.y0 + Ht + 1, b.z + R, (X, Y, Z, o) => {
       const du = X - b.x, dv = Z - b.z, u = ca * du + sa * dv, v = -sa * du + ca * dv, y = Y - b.y0;
       const au = Math.abs(u), av = Math.abs(v);
-      const dOut = smin(b.hx - au, smin(b.hz - av, Ht - y));
+      const dOut = M.fast_min(b.hx - au, M.fast_min(b.hz - av, Ht - y));
       if (dOut < -1.2) return;
-      const dIn = smin(b.hx - T - au, smin(b.hz - T - av, smin(Ht - K.ROOF - y, y)));       // the cavity (air), floor at y = 0
+      // the cavity (air), floor at y = 0
+      const dIn = M.fast_min(b.hx - T - au, M.fast_min(b.hz - T - av, M.fast_min(Ht - K.ROOF - y, y)));
       // broken top: where the noise is low the walls / roof are cut down to a jagged height
       const n = M.noise2(u * 0.22 + b.ox, v * 0.22 + b.oz, seedK), yb = n > thr ? 99 : 1.3 + (Ht - 1.3) * M.pow(n / thr, 1.2);
-      let s = smin(smin(dOut, -dIn), y + found), mat = wm;
+      let s = M.fast_min(M.fast_min(dOut, -dIn), y + found), mat = wm;
       const slabN = M.noise2(u * 0.4 + b.oz, v * 0.4 + b.ox, seedK + 5);
       for (let f = 1; f < b.floors; f++) {                                                    // floor slabs (with holes)
-        const sl = smin(dOut, smin(K.SLAB / 2 - Math.abs(y - f * FH), (slabN - 0.3) * 5));
+        const sl = M.fast_min(dOut, M.fast_min(K.SLAB / 2 - Math.abs(y - f * FH), (slabN - 0.3) * 5));
         if (sl > s) {
           s = sl;
           mat = MAT.CONCRETE;
         }
       }
-      const fs = smin(dOut, smin(-y, y + found));                                             // foundation + ground floor slab
+      const fs = M.fast_min(dOut, M.fast_min(-y, y + found));                                             // foundation + ground floor slab
       if (fs > s) {
         s = fs;
         mat = MAT.CONCRETE;
       }
       if (y > Ht - K.ROOF - 0.01 && s > 0) mat = MAT.CONCRETE;                                // roof slab
-      s = smin(s, yb - y);                                                                    // the collapse
+      s = M.fast_min(s, yb - y);                                                                    // the collapse
       for (let q = 0; q < ops.length; q++) {                                                  // windows / door
         const p = ops[q], odd = p.side & 1, sgn = p.side < 2 ? 1 : -1, along = odd ? u : v, nrm = odd ? v : u, h = odd ? b.hz : b.hx;
-        const op = smin(smin(p.w / 2 - Math.abs(along - p.c), y - p.y0), smin(p.y1 - y, T / 2 + 0.45 - Math.abs(nrm - sgn * (h - T / 2))));
-        if (op > 0) s = smin(s, -op);
+        const op = M.fast_min(
+          M.fast_min(p.w / 2 - Math.abs(along - p.c), y - p.y0),
+          M.fast_min(p.y1 - y, T / 2 + 0.45 - Math.abs(nrm - sgn * (h - T / 2)))
+        );
+        if (op > 0) s = M.fast_min(s, -op);
       }
       for (let q = 0; q < bites.length; q++) {
         const t = bites[q];
-        s = smin(s, M.len3(u - t.u, y - t.y, v - t.v) - t.r);
+        s = M.fast_min(s, M.len3(u - t.u, y - t.y, v - t.v) - t.r);
       }
       o.s = s; o.mat = mat; o.air = dIn;
     });
@@ -222,7 +225,7 @@
         if (u < -2 * L - 2 || u > 2 * L + 2 || v < -1.5 * L - 2 || v > 1.5 * L + 2) continue;
         const ru = Math.abs(u - Math.round(u / L) * L), rv = Math.abs(v - Math.round(v / L) * L);
         const jag = 0.35 * (M.noise2(x * 0.7, z * 0.7, seedK + 3) - 0.5);
-        if (smin(ru, rv) > half + jag) continue;
+        if (M.fast_min(ru, rv) > half + jag) continue;
         const c = k * NX + i, j = w.topJ[c];
         if (j < 2 || !usable(S, x, z, -2)) continue;
         if (M.noise2(u * 1.3, v * 1.3, seedK + 9) > 0.82) continue;                      // a crack: the natural ground shows
@@ -238,7 +241,7 @@
     for (let a = -2 * L; a <= 2 * L; a += 3)
       for (let bq = -1.5 * L; bq <= 1.5 * L; bq += 3) {
         const ru = Math.abs(a - Math.round(a / L) * L), rv = Math.abs(bq - Math.round(bq / L) * L);
-        if (smin(ru, rv) > half - 0.4 || M.rng_next(rg) > 0.2) continue;
+        if (M.fast_min(ru, rv) > half - 0.4 || M.rng_next(rg) > 0.2) continue;
         const x = T.x + ca * a - sa * bq + (M.rng_next(rg) - 0.5) * 2,
           z = w.flat ? w.MZ : T.z + sa * a + ca * bq + (M.rng_next(rg) - 0.5) * 2;
         if (!usable(S, x, z, -2)) continue;

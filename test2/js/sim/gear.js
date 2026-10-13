@@ -20,6 +20,8 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math;
+  const PHASE = C.PHASE;
+  const EV = C.EV;
   const GR = SS.gear = {};
   GR.JACKET = 0;
   /* one row per kind: id, display name, the setting with the start charges (+ max), the setting with the start toggle,
@@ -70,14 +72,14 @@
     const g = GR.get(S, team, kind);
     if (!g || g.n <= 0) return false;
     g.n--; g.ch++;
-    SS.sim.emit(S, 'gear', { team, kind, on: g.on, n: g.n, used: 1 });
+    SS.sim.emit(S, EV.GEAR, { team, kind, on: g.on, n: g.n, used: 1 });
     return true;
   };
   GR.toggle = function (S, team, kind) {
     const g = GR.get(S, team, kind);
     if (!g) return false;
     g.on = g.on ? 0 : 1; g.ch++;
-    SS.sim.emit(S, 'gear', { team, kind, on: g.on, n: g.n, used: 0 });
+    SS.sim.emit(S, EV.GEAR, { team, kind, on: g.on, n: g.n, used: 0 });
     return true;
   };
   /* Input.gear: the active team's toggle (not in the placement / game over; a CPU team only through its own plan) */
@@ -85,8 +87,8 @@
     const k = (inp.gear | 0) - 1;
     if (k < 0 || k >= GR.N) return;
     const a = S.active;
-    if (!a || a.dead || S.phase === 'over' || S.phase === 'place' || S.phase === 'perk') return;
-    if (SS.game.is_cpu(S, a.team) && S.phase !== 'play') return;
+    if (!a || a.dead || S.phase === PHASE.OVER || S.phase === PHASE.PLACE || S.phase === PHASE.PERK) return;
+    if (SS.game.is_cpu(S, a.team) && S.phase !== PHASE.PLAY) return;
     GR.toggle(S, a.team, k);
   };
   GR.hash = function (S, mix) {

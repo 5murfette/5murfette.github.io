@@ -21,6 +21,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane;
+  const EV = C.EV;
   const SK = SS.skills = {};
   const W = () => SS.world;
   const sim = () => SS.sim;
@@ -51,7 +52,6 @@
   KS.LASER_RANGE = 600;
   const rng = S => M.rng_next(S.skRng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
-  const hypot3 = (a, b) => M.len3(a.x - b.x, a.y - b.y, a.z - b.z);
 
   SK.init = function (S) { S.skRng = M.rng_make(((Math.imul(S.settings.seed | 0, 1274126177) + 0x51ed) >>> 0) || 1); };
   const sk = w => w.skills || (w.skills = { freerot: 0, laser: 0, fastwalk: 0, lowgrav: 0, tinfoil: 0 });
@@ -70,18 +70,18 @@
     }
     if (tool === 'tinfoil') s.tinfoil = 1;
     else s[tool] = M.max(s[tool] | 0, KS.TURNS[tool]);
-    sim().emit(S, 'skillget', { wormId: w.id, tool });
+    sim().emit(S, EV.SKILLGET, { wormId: w.id, tool });
     sim().log(S, `${w.name}: ${KS.NAMES[tool]}${tool === 'tinfoil' ? ' (for the rest of the game)' : ` (${s[tool]} turns)`}.`, 0x9fe8ff);
   };
   SK.pickup = function (S, a, c) {
-    sim().emit(S, 'pickup', { wormId: a.id, kind: 'tool', tool: c.tool });
+    sim().emit(S, EV.PICKUP, { wormId: a.id, kind: 'tool', tool: c.tool });
     SK.grant(S, a, c.tool);
   };
   SK.turn_end = function (S, w) {
     const s = w.skills;
     if (!s) return;
     for (const k of ['freerot', 'laser', 'fastwalk', 'lowgrav'])
-      if (s[k] > 0 && --s[k] === 0) sim().emit(S, 'skillend', { wormId: w.id, tool: k });
+      if (s[k] > 0 && --s[k] === 0) sim().emit(S, EV.SKILLEND, { wormId: w.id, tool: k });
   };
 
   /* ---------- tool crates ---------- */
@@ -146,7 +146,7 @@
       }
       let alive = 0;
       for (let t = 0; t < (S.teams ? S.teams.length : 2); t++)
-        if (S.worms.some(o => !o.dead && o.hp > 0 && o.team === t)) alive++;
+        if (SS.worm.team_alive(S, t)) alive++;
       // (P98 x P84: the match's first turn draws nothing, so round 1's plan is drawn one turn late: skip that turn so
       // the slot always lies ahead and round 1 keeps the full chance; every later round starts at n 0)
       const n0 = !S.crPlan && r === 1 ? 1 : 0, span = M.max(1, alive - n0);
@@ -168,14 +168,14 @@
     // P86: random spot in space, no parachute
     if (S.eow) {
       if (SS.eow.crate_add(S, 'tool', null, tool))
-        sim().emit(S, 'banner', { title: 'Tool delivery', sub: 'A crate drifts in from the dark' });
+        sim().emit(S, EV.BANNER, { title: 'Tool delivery', sub: 'A crate drifts in from the dark' });
       return;
     }
     for (let tries = 0; tries < 12; tries++) {
       const s = rr(S, -25, 25), gy = WP.ground_below(S, s, W().SY - 0.5), at = P.to_world(S, s, gy);
       if (gy < -1e8 || gy < sim().surface_at(S, at.x, at.z) + 0.3 || (W().dry && !sim().in_play(S, at.x, at.z))) continue;
       S.crates.push(SS.weapons.crate_make(S, 'tool', null, tool, P.to_world(S, s, M.min(W().SY - 1, gy + 14))));
-      sim().emit(S, 'banner', {
+      sim().emit(S, EV.BANNER, {
         title: 'Tool delivery',
         sub: KS.NAMES[tool] === 'Crate Overload' ? 'Something big is coming' : 'It drifts with the wind'
       });
@@ -226,8 +226,8 @@
           break;
         }
       }
-    sim().emit(S, 'overload', { wormId: a.id, n: made });
-    sim().emit(S, 'banner', {
+    sim().emit(S, EV.OVERLOAD, { wormId: a.id, n: made });
+    sim().emit(S, EV.BANNER, {
       title: 'Crate overload!',
       sub: S.eow ? `${made} crates are adrift in space` : `${made} crates are falling all over the map`
     });
@@ -291,7 +291,7 @@
       }
       let hit = false;
       for (const o of S.worms)
-        if (!o.dead && o !== a && hypot3(o.pos, p) < C.WORM_R) {
+        if (!o.dead && o !== a && M.v3_dist(o.pos, p) < C.WORM_R) {
           kind = 'worm';
           hit = true;
           break;

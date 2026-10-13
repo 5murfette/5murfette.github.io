@@ -19,6 +19,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, MAT = C.MAT;
+  const EV = C.EV;
   const SH = SS.shrapnel = {};
   const K = C.SHRAPNEL;
   const W = () => SS.world;
@@ -71,7 +72,7 @@
         if (add(S, o, ax / al, ay / al, az / al, K.V0 * (1 + (rng(S) * 2 - 1) * K.V_SPREAD), wm.id)) n++;
       }
     }
-    SS.sim.emit(S, 'shrapnel', { x: o.x, y: o.y, z: o.z, n });
+    SS.sim.emit(S, EV.SHRAPNEL, { x: o.x, y: o.y, z: o.z, n });
     return n;
   };
 
@@ -82,7 +83,7 @@
   const DMG_MAX = 32, dmgWorm = new Int32Array(DMG_MAX), dmgHp = new Float64Array(DMG_MAX), dmgCnt = new Int32Array(DMG_MAX);
   let dmgN = 0;
   function stop(S, f, i, kind, mat) {
-    SS.sim.emit(S, 'frag', {
+    SS.sim.emit(S, EV.FRAG, {
       id: f.id,
       x: f.x,
       y: f.y,

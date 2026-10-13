@@ -17,6 +17,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, MAT = C.MAT, P = C.PROPS;
+  const EV = C.EV;
   const SC = SS.scatter = {};
   const KINDS = ['crate', 'barrel', 'mine', 'boulder', 'girder'];
   const rand = S => M.rng_next(S.rng);
@@ -234,7 +235,7 @@
       ? P.CAR.BURN
       : P.BARREL.BURN0 + rand(S) * (P.BARREL.BURN1 - P.BARREL.BURN0);
     b.burnT = 0;
-    SS.sim.emit(S, 'propfire', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop });
+    SS.sim.emit(S, EV.PROPFIRE, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop });
     if (b.prop === 'barrel') SS.sim.log(S, 'A fuel barrel catches fire!', 0xffb060);
   };
   function arm(S, b, delay) {
@@ -242,7 +243,7 @@
   }
   function breakProp(S, b, why) {
     SS.bodies.remove(S, b);
-    SS.sim.emit(S, 'propbreak', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop, why });
+    SS.sim.emit(S, EV.PROPBREAK, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop, why });
   }
   function detonate(S, b) {
     const W = SS.world, c = { x: b.pos.x, y: b.pos.y, z: b.pos.z };
@@ -256,7 +257,7 @@
       for (let k = 0; k < P.CAR.FIRES; k++) {
         const f = { x: c.x + (rand(S) - 0.5) * 3, y: top, z: c.z + (rand(S) - 0.5) * 1.5, r: 1.1, t1: S.time + 5 + rand(S) * 3 };
         S.flames.push(f);
-        SS.sim.emit(S, 'oilfire', { x: f.x, y: f.y, z: f.z, r: f.r, dur: f.t1 - S.time });
+        SS.sim.emit(S, EV.OILFIRE, { x: f.x, y: f.y, z: f.z, r: f.r, dur: f.t1 - S.time });
       }
       SS.sim.log(S, 'A car goes up in flames!', 0xffb060);
       return;
@@ -268,7 +269,7 @@
       if (top > sea && c.y - top < 3) {                       // oil only burns on land (and not after a high-air burst)
         const f = { x: c.x, y: top, z: c.z, r: P.BARREL.OIL_R, t1: S.time + P.BARREL.OIL_T };
         SS.sim.pool_push(S.flames, C.LIMITS.FLAMES, f);
-        SS.sim.emit(S, 'oilfire', { x: f.x, y: f.y, z: f.z, r: f.r, dur: P.BARREL.OIL_T });
+        SS.sim.emit(S, EV.OILFIRE, { x: f.x, y: f.y, z: f.z, r: f.r, dur: P.BARREL.OIL_T });
       }
     } else SS.sim.explode(S, c, { W: P.MINE.W, dmg: P.MINE.DMG, name: 'mine' }, null);
   }
@@ -342,11 +343,11 @@
             b.disarmed = true;
             b.det = -1;
             b.armed = false;
-            sim.emit(S, 'minedisarm', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z });
+            sim.emit(S, EV.MINEDISARM, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z });
           }
           if (b.burn >= 0) {
             b.burn = -1;
-            sim.emit(S, 'steam', { x: b.pos.x, y: sea, z: b.pos.z, power: 0.5 });
+            sim.emit(S, EV.STEAM, { x: b.pos.x, y: sea, z: b.pos.z, power: 0.5 });
           }
         }
         if (sim.lava_contact) {
@@ -367,7 +368,7 @@
             // settings.mineFuse
             const fz = SS.weaponsA ? SS.weaponsA.mine_fuse(S, b, P.MINE.FUSE) : P.MINE.FUSE;
             b.armed = true; arm(S, b, fz);
-            sim.emit(S, 'minearm', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, fuse: fz });
+            sim.emit(S, EV.MINEARM, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, fuse: fz });
             sim.log(S, `${w.name} trips a mine!`, 0xff8060);
             break;
           }

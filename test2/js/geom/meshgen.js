@@ -1,4 +1,4 @@
-/* sim/meshgen.js — engine-agnostic mesh building from the density field.
+/* geom/meshgen.js — engine-agnostic mesh building from the density field.
  * Every function returns plain typed arrays that any engine can upload directly
  * (Three.js BufferAttribute, Unity Mesh.SetVertices/SetUVs, a native vertex buffer).
  *   chunk(cx,cy,cz)  -> {pos, nrm, mA, mB, mC, depth, idx}   full-res surface nets for one 16 m chunk
@@ -423,7 +423,7 @@
    *     linear in y inside a cell, so every sub-cell feature touches a row: none is missed);
    *   - every chord is split where the curve is more than SEC_TOL off it: inside a cell the line is the graph
    *     y(s) = y0 + H·b(s) / (b(s) − t(s)) of the two row values (exact, 2 samples per point; up to SEC_DEPTH levels).
-   * Shared crossings are computed from identical inputs in both cells (bit-identical floats: sim/edge.js chains
+   * Shared crossings are computed from identical inputs in both cells (bit-identical floats: geom/edge.js chains
    * them). */
   const SEC_TOL = 0.003, SEC_DEPTH = 4;
   let secBuf = null;   // per-row-edge scratch (C: static buffers sized once)

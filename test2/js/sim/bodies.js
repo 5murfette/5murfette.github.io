@@ -18,6 +18,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, MAT = C.MAT;
+  const EV = C.EV;
   const B = SS.bodies = {};
   const W = () => SS.world;
   const K = C.BODY;
@@ -415,7 +416,13 @@
           b.splashT = S.time;
           const r = M.max(0.5, b.rb * 1.2), amp = M.min(0.5, 0.02 * sp * M.cbrt(b.mass));
           if (SS.water && SS.water.disturb) SS.water.disturb(S, b.pos.x, b.pos.z, r, -amp);
-          SS.sim.emit(S, 'splash', { x: b.pos.x, y: sea, z: b.pos.z, size: M.min(1.6, 0.3 + 0.08 * sp * M.cbrt(b.mass / 20)), body: b.id });
+          SS.sim.emit(S, EV.SPLASH, {
+            x: b.pos.x,
+            y: sea,
+            z: b.pos.z,
+            size: M.min(1.6, 0.3 + 0.08 * sp * M.cbrt(b.mass / 20)),
+            body: b.id
+          });
         }
       }
       b.vel.y += G * M.min(1.5, 1000 / rho) * sub * dt;
@@ -631,7 +638,7 @@
       // PoC crushWorm (L1997): a big slab of falling ground landing on a worm that stands on something buries it
       const standing = SS.sim.ctl(S, wm) ? !wm.air : wm.rest;
       if (b.kind === 'chunk' && b.mass >= K.CRUSH_KG && b.vel.y < -3 && ny < -0.5 && standing) {
-        SS.sim.emit(S, 'buried', { wormId: wm.id, x: wm.pos.x, y: wm.pos.y, z: wm.pos.z });
+        SS.sim.emit(S, EV.BURIED, { wormId: wm.id, x: wm.pos.x, y: wm.pos.y, z: wm.pos.z });
         SS.sim.log(S, `${wm.name} is buried!`, 0xff9a9a);
         SS.sim.kill_now(S, wm, 'crush');
         continue;
@@ -643,7 +650,7 @@
         if (b.kind === 'chunk') SS.sim.hurt(S, wm, dmg, C.DS.FALLING_ROCK);
         else if (b.prop === 'crate') SS.sim.hurt(S, wm, dmg, C.DS.FLY_CRATE);
         else SS.sim.hurt(S, wm, dmg, C.DS.FLY_PROP, 0, SS.sim.body_name_id(b));
-      SS.sim.emit(S, 'bodyhit', { x: wm.pos.x, y: wm.pos.y, z: wm.pos.z, dmg, body: b.id });
+      SS.sim.emit(S, EV.BODYHIT, { x: wm.pos.x, y: wm.pos.y, z: wm.pos.z, dmg, body: b.id });
       // knock the worm away (and let the body lose a little momentum to it)
       const kv = M.min(8, vc * 0.6);
       if (SS.sim.ctl(S, wm)) {
@@ -920,7 +927,7 @@
         ) {
           const added = SS.eow.rebake(S, b);
           if (added >= 0) {
-            SS.sim.emit(S, 'rebake', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added });
+            SS.sim.emit(S, EV.REBAKE, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added });
             S.bodies.splice(i, 1);
             continue;
           }
@@ -1005,7 +1012,7 @@
         ? M.len2(b.pos.x - C.DRY.CX, b.pos.z - C.DRY.CZ) > C.DRY.FAR_R
         : b.pos.x < -10 || b.pos.z < -10 || b.pos.x > w.SX + 10 || b.pos.z > w.SZ + 10;
       if (b.pos.y < -4 || off || (b.age > K.MAX_AGE && !(b.floatT > 1))) {
-        SS.sim.emit(S, 'bodygone', { body: b.id });
+        SS.sim.emit(S, EV.BODYGONE, { body: b.id });
         const i = S.bodies.indexOf(b);
         if (i >= 0) S.bodies.splice(i, 1);
         continue;
@@ -1017,12 +1024,12 @@
           // P94: in space a piece that would merge into another body or hang loose stays a rigid body (-1)
           const added = S.eow ? SS.eow.rebake(S, b) : SS.collapse.rebake(w, b.grid, b.com0, b.pos, b.q);
           if (added >= 0) {
-            SS.sim.emit(S, 'rebake', { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added });
+            SS.sim.emit(S, EV.REBAKE, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, voxels: added });
             const i = S.bodies.indexOf(b);
             if (i >= 0) S.bodies.splice(i, 1);
           }
-          else SS.sim.emit(S, 'bodysleep', { body: b.id });
-        } else SS.sim.emit(S, 'bodysleep', { body: b.id });
+          else SS.sim.emit(S, EV.BODYSLEEP, { body: b.id });
+        } else SS.sim.emit(S, EV.BODYSLEEP, { body: b.id });
       }
     }
   };

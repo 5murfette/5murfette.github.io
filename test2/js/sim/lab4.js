@@ -35,6 +35,8 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, F = C.LAB, K = F.L4, FL = F.FLAG, MAT = C.MAT;
+  const PHASE = C.PHASE;
+  const EV = C.EV;
   const L4 = SS.lab4 = {};
   const B4 = FL.LIGHTNING | FL.SLICK | FL.QUAKE | FL.RECOIL | FL.SCAVENGE;
   L4.MASK = B4;
@@ -124,7 +126,7 @@
     if (!(ex > 0)) return 0;
     const v = M.min(K.SLIDE_MAX, K.SLIDE_K * ex), L = S.lab.b4;
     if (S.time - L.slipT[a.id] > 1.5) {
-      L.slipT[a.id] = S.time; SS.sim.emit(S, 'labslide', { wormId: a.id, x: q.x, y: top, z: q.z, v });
+      L.slipT[a.id] = S.time; SS.sim.emit(S, EV.LABSLIDE, { wormId: a.id, x: q.x, y: top, z: q.z, v });
       if (L.slipTurn !== S.turnNo) {
         L.slipTurn = S.turnNo;
         SS.sim.log(S, `${a.name} slips on the wet ground.`, 0xb89a72);
@@ -136,7 +138,7 @@
    * slope kinematically
    * (the same speed law as the active worm), over a cliff edge it is released to the normal fall */
   function slick_step(S, dt) {
-    if (S.phase !== 'play' && S.phase !== 'attack' && S.phase !== 'resolve') return;
+    if (S.phase !== PHASE.PLAY && S.phase !== PHASE.ATTACK && S.phase !== PHASE.RESOLVE) return;
     const wet = L4.wet(S);
     if (wet < 0.05) return;
     const wd = W(), L = S.lab.b4;
@@ -164,7 +166,7 @@
       w.pos.x = nx; w.pos.z = nz; w.pos.y = nt + (w.pos.y - top);
       if (S.time - L.slipT[w.id] > 1.5) {
         L.slipT[w.id] = S.time;
-        SS.sim.emit(S, 'labslide', { wormId: w.id, x, y: top, z, v });
+        SS.sim.emit(S, EV.LABSLIDE, { wormId: w.id, x, y: top, z, v });
       }
     }
   }
@@ -273,7 +275,7 @@
     if (!tg) return null;
     const z = { id: ++L.zapN, t0: S.time, t: S.time + K.ZAP_WARN, x: tg.x, y: tg.y, z: tg.z, kind: tg.kind, tid: tg.id };
     SS.sim.pool_push(L.zap, 4, z);
-    SS.sim.emit(S, 'labstatic', { x: z.x, y: z.y, z: z.z, kind: KIND[z.kind], warn: K.ZAP_WARN, id: z.id });
+    SS.sim.emit(S, EV.LABSTATIC, { x: z.x, y: z.y, z: z.z, kind: KIND[z.kind], warn: K.ZAP_WARN, id: z.id });
     return z;
   };
   /* the bolt: re-check that the target is still there (a worm that ran away, a mine that was set off: the bolt hits the
@@ -310,8 +312,8 @@
       if (gy > wd.SEA) p.y = gy;
     }
     const seed = M.rng_int(L.rng, 1 << 30), wet = L4.wet(S), I = M.clamp(1 - K.ZAP_IGN_WET * wet, 0.2, 1);
-    sim.emit(S, 'lightning', { x: p.x, y: p.y, z: p.z, kind: KIND[kind], id: z.tid, seed });
-    sim.emit(S, 'thunder', { x: p.x, y: p.y, z: p.z });
+    sim.emit(S, EV.LIGHTNING, { x: p.x, y: p.y, z: p.z, kind: KIND[kind], id: z.tid, seed });
+    sim.emit(S, EV.THUNDER, { x: p.x, y: p.y, z: p.z });
     sim.log(S, `Lightning strikes ${KIND_TEXT[kind]}!`, 0xbfe0ff);
     S.lightning = 1;                                                                 // a tinfoil hat grounds it (sim.hurt takes 10 %)
     let boom = true;
@@ -347,7 +349,7 @@
   }
   function lightning_step(S) {
     const L = S.lab.b4;
-    if (S.phase !== 'perk' && S.phase !== 'place')
+    if (S.phase !== PHASE.PERK && S.phase !== PHASE.PLACE)
       for (let i = L.zapQ.length - 1; i >= 0; i--)
         if (S.time >= L.zapQ[i]) {
           L.zapQ.splice(i, 1);
@@ -370,8 +372,8 @@
     L.qN++;
     L.qLeft = K.SPOTS;
     L.qBroke = 0;
-    SS.sim.emit(S, 'labquake', { x: O.x, z: O.z, warn: K.WARN, dur: K.DUR });
-    SS.sim.emit(S, 'banner', { title: 'Earthquake', sub: 'The ground is about to shake' });
+    SS.sim.emit(S, EV.LABQUAKE, { x: O.x, z: O.z, warn: K.WARN, dur: K.DUR });
+    SS.sim.emit(S, EV.BANNER, { title: 'Earthquake', sub: 'The ground is about to shake' });
     SS.sim.log(S, 'The ground rumbles: an earthquake is coming.', 0xd8b080);
   }
   const RX = [-4, 4, 0, 0], RZ = [0, 0, -4, 4];
@@ -443,7 +445,7 @@
       wd.mark(box.i0, box.j0, box.k0, box.i1, box.j1, box.k1);
       CR.bump(wd);
     }
-    SS.sim.emit(S, 'labquakehit', { x: bx, y: cy, z: bz, dx: M.cos(ang), dz: M.sin(ang), len: K.FAULT_LEN });
+    SS.sim.emit(S, EV.LABQUAKEHIT, { x: bx, y: cy, z: bz, dx: M.cos(ang), dz: M.sin(ang), len: K.FAULT_LEN });
     return broke;
   };
   /* one window per step, QK_GAP s apart (the load check of a window costs up to ~30 ms: no single long step) */
@@ -483,7 +485,7 @@
   }
   function quake_step(S) {
     const L = S.lab.b4;
-    if (L.qT >= 0 && S.time >= L.qT && S.phase !== 'over') quake_hit(S);
+    if (L.qT >= 0 && S.time >= L.qT && S.phase !== PHASE.OVER) quake_hit(S);
   }
 
   /* ---------- RECOIL ---------- */
@@ -521,7 +523,7 @@
         a.vel.z += d.z * v * dir;
       }
     } else a.rv = (a.rv || 0) + v * dir;
-    sim.emit(S, 'labrecoil', { wormId: a.id, dv: v, dir, weapon: key });
+    sim.emit(S, EV.LABRECOIL, { wormId: a.id, dv: v, dir, weapon: key });
   };
   /* every step: carry the sliding worms along the section, slowed by friction; over an edge they are released into the
    * fall */
@@ -609,7 +611,7 @@
       t.ammo[key] -= 1;
       const g = w.grave, c = WP.crate_make(S, 'weapon', key, null, { x: g.x, y: g.y + 0.55, z: g.z });
       S.crates.push(c);
-      SS.sim.emit(S, 'labscav', { wormId: w.id, weapon: key, x: g.x, y: g.y + 0.3, z: g.z });
+      SS.sim.emit(S, EV.LABSCAV, { wormId: w.id, weapon: key, x: g.x, y: g.y + 0.3, z: g.z });
       SS.sim.log(S, `${w.name}'s pack: a ${C.ARSENAL[key].name} lies by the grave.`, 0xffd890);
     }
   }
@@ -619,12 +621,12 @@
     const fl = flags(S);
     if (!fl || !S.lab.b4) return;
     if (fl & FL.LIGHTNING) lightning_turn(S, first);
-    if ((fl & FL.QUAKE) && !first && S.turnNo % K.EVERY === 0 && S.phase !== 'place') quake_start(S);
+    if ((fl & FL.QUAKE) && !first && S.turnNo % K.EVERY === 0 && S.phase !== PHASE.PLACE) quake_start(S);
     if (fl & FL.SCAVENGE) scavenge(S);
   };
   L4.step = function (S, dt) {
     const fl = flags(S);
-    if (!fl || !S.lab.b4 || S.phase === 'over') return;
+    if (!fl || !S.lab.b4 || S.phase === PHASE.OVER) return;
     if (fl & FL.LIGHTNING) lightning_step(S);
     if (fl & FL.SLICK) slick_step(S, dt);
     if (fl & FL.QUAKE) quake_step(S);

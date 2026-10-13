@@ -9,7 +9,7 @@
    * granular: loose material that slides when unsupported/steeper than its angle of repose.
    * liquid: flows under gravity (lava).  buoyant: floats on sea water (ice).
    * layer: texture-array slot in the renderer (render may map it to a texture + tint).
-   * veg (THE organic-top table; sim/veg.js, sim/edge.js, sim/meshgen.js, sim/trees.js and every renderer read it,
+   * veg (THE organic-top table; sim/veg.js, geom/edge.js, geom/meshgen.js, sim/trees.js and every renderer read it,
    *   nothing keeps a list of its own): what a TOP of this material can carry. 0 = nothing grows on it: built (steel,
    *   foam, concrete), glass (obsidian), frozen (ice, snow), molten (lava) and bare bedrock tops show no grass, tufts,
    *   flowers, ferns or bushes, and cover that lay under one of them is gone for good; 1 = rooted growth only: the arid
@@ -107,7 +107,14 @@
       // a blast launches ~30-45); a worm that is airborne and has not moved vertically for PIN_T s while it "falls"
       // (wedged in rock: gravity built up a runaway speed against a contact the solver treats as leaving) is moved to
       // the nearest free spot within PIN_R m (cube shells of PIN_STEP m), else crushed
-      V_MAX: 80, PIN_T: 0.5, PIN_R: 12, PIN_STEP: 0.5
+      V_MAX: 80, PIN_T: 0.5, PIN_R: 12, PIN_STEP: 0.5,
+      // a worm on or in a sleeping prop (worm.js propDepth / pinDepth): the collision spheres are padded by PROP_PAD
+      // for the feet (the shells are sparse: a worm must not slip between two touching spheres); spheres thinner than
+      // PROP_RMIN (sticks, twigs, barrels, mines) are neither ground nor pin; PIN_RAD is the core of the body that a
+      // prop must not overlap; the worm under control stands with its feet PLANE_SINK deep in a surface (its disc,
+      // radius WORM_R - PX = 0.434, touches 0.066 above them); a crate's box is BOX_SHRINK smaller for the pin test
+      // (the padded spheres dip that far under its top face between two of them)
+      PROP_PAD: 0.06, PROP_RMIN: 0.13, PIN_RAD: 0.1, PLANE_SINK: 0.075, BOX_SHRINK: 0.03
     },
     ROPE_MAX: 33.4, ROPE_MIN: 0.9,       // PoC ROPE_MAX 520 px, attach min 14 px
     FALL_SAFE: 30.2,        // (= WORM_DYN.FALL_SAFE; kept for older readers)
@@ -908,12 +915,15 @@
    *   convert one value. ---------- */
   SS.CFG.PH = { PLAY: 0, ATTACK: 1, RESOLVE: 2, DYING: 3, PLACE: 4, OVER: 5, PERK: 6 };
   SS.CFG.PHASE_NAME = ['play', 'attack', 'resolve', 'dying', 'place', 'over', 'perk'];
+  // the phase names as constants: the sim compares S.phase with C.PHASE.PLAY (the string 'play'); a port compiles
+  // C.PHASE.X to the int C.PH.X (portabilitytest checks that the three tables agree)
+  SS.CFG.PHASE = { PLAY: 'play', ATTACK: 'attack', RESOLVE: 'resolve', DYING: 'dying', PLACE: 'place', OVER: 'over', PERK: 'perk' };
   SS.CFG.SETTING_ENUMS = {
     weather: ['clear', 'cloudy', 'rain', 'storm', 'snow', 'blizzard', 'ashfall', 'fog'], wind: ['calm', 'breeze', 'strong', 'gale'],
     lava: ['off', 'on'], skill: ['easy', 'normal', 'hard'],
     time: ['day', 'dusk', 'night'], shape: ['islands', 'hills', 'caverns', 'canyon'], mapSize: ['normal', 'large'],
     placement: ['random', 'user'], toolCrates: ['off', 'low', 'normal', 'high'], dim: ['3d', '2d'],
-    ctl: ['human', 'cpu'], art: ['painted', 'vector'], slice: ['thin', 'thick'], biome: SS.CFG.BIOMES.map(b => b.id),
+    ctl: ['human', 'cpu'], art: ['painted', 'procedural'], slice: ['thin', 'thick', 'full'], biome: SS.CFG.BIOMES.map(b => b.id),
     density: SS.CFG.DENSITY.LEVELS };
   SS.CFG.setting_enc = (key, v) => {
     const L = SS.CFG.SETTING_ENUMS[key];
@@ -925,5 +935,313 @@
     const L = SS.CFG.SETTING_ENUMS[key];
     return L && i >= 0 && i < L.length ? L[i] : auto;
   };
+  /* ---------- the settings schema: one row per setting, the single source of every list of setting keys ----------
+   * [key, kind, range, flags, extra]. kind: 'int' (range [lo, hi]), 'bool', 'enum' (range: its list in SETTING_ENUMS,
+   * or the list itself; extra: the words besides it, 'auto' / 'random'), 'mask' (an int of bit flags, range [0, hi]),
+   * 'any' (a mixed form that its module reads itself: a number or a word). The default is C.SETTINGS[key] (the
+   * look-only rows the menu adds have none here). flags:
+   *   HASH  mixed into sim.hash in the order of these rows (never reorder or insert before the last HASH row)
+   *   NET   a host sends it to its guests; a guest takes exactly these from the host's start message
+   *   LOOK  presentation only (the sim never reads it): every player keeps their own
+   * Derived: C.setting_keys(flag); the text form C.settings_text / C.settings_parse (one key=value per line, row
+   * order). */
+  const SF = SS.CFG.SF = { HASH: 1, NET: 2, LOOK: 4 };
+  SS.CFG.SETTING_SCHEMA = [
+    ['biome', 'enum', 'biome', SF.HASH | SF.NET, ['random']],
+    ['seed', 'int', [0, 99999999], SF.HASH | SF.NET],
+    ['weather', 'enum', 'weather', SF.HASH | SF.NET, ['auto']],
+    ['lava', 'enum', 'lava', SF.HASH | SF.NET, ['auto']],
+    ['wind', 'enum', 'wind', SF.HASH | SF.NET, ['auto']],
+    ['under', 'enum', ['off', 'on'], SF.HASH | SF.NET],
+    ['collapse', 'bool', null, SF.HASH | SF.NET],
+    ['teams', 'int', [2, 4], SF.HASH | SF.NET],
+    ['worms', 'int', [1, 4], SF.HASH | SF.NET],
+    ['hp', 'int', [1, 999], SF.HASH | SF.NET],
+    ['turnTime', 'int', [0, 600], SF.HASH | SF.NET],
+    ['skill', 'enum', 'skill', SF.HASH | SF.NET],
+    ['sd', 'bool', null, SF.HASH | SF.NET],
+    ['placement', 'enum', 'placement', SF.HASH | SF.NET],
+    ['first', 'any', [0, 3], SF.HASH | SF.NET, ['random']],
+    ['volcanoes', 'any', [0, 3], SF.HASH | SF.NET, ['auto']],
+    ['time', 'enum', 'time', SF.HASH | SF.NET, ['random']],
+    ['shape', 'enum', 'shape', SF.HASH | SF.NET, ['random']],
+    ['blood', 'bool', null, SF.HASH | SF.NET],
+    ['select', 'bool', null, SF.HASH | SF.NET],
+    ['keepRope', 'bool', null, SF.HASH | SF.NET],
+    ['rooms', 'bool', null, SF.HASH | SF.NET],
+    ['rotLock', 'bool', null, SF.HASH | SF.NET],
+    ['mineFuse', 'any', [0, 3], SF.HASH | SF.NET, ['default', 'random']],
+    ['teamBlood', 'bool', null, SF.HASH | SF.NET],
+    ['toolCrates', 'enum', 'toolCrates', SF.HASH | SF.NET],
+    ['mapSize', 'enum', 'mapSize', SF.HASH | SF.NET, ['auto']],
+    ['dTrees', 'enum', 'density', SF.HASH | SF.NET],
+    ['dRocks', 'enum', 'density', SF.HASH | SF.NET],
+    ['dBarrels', 'enum', 'density', SF.HASH | SF.NET],
+    ['dProps', 'enum', 'density', SF.HASH | SF.NET],
+    ['dCrates', 'enum', 'density', SF.HASH | SF.NET],
+    ['dMines', 'enum', 'density', SF.HASH | SF.NET],
+    ['dBunkers', 'enum', 'density', SF.HASH | SF.NET],
+    ['dTown', 'enum', 'density', SF.HASH | SF.NET],
+    ['dEggs', 'enum', 'density', SF.HASH | SF.NET],
+    // the rest is not mixed into the hash as values (sim.hash mixes the crate levels, fort and 2D only off their
+    // defaults)
+    ['dim', 'enum', 'dim', SF.NET],
+    ['fort', 'bool', null, SF.NET],
+    ['labFlags', 'mask', [0, SS.CFG.LAB.ALL], SF.NET],
+    ['jackets', 'int', [0, 9], SF.NET],
+    ['jacketOn', 'bool', null, SF.NET],
+    ['jetpacks', 'int', [0, 9], SF.NET],
+    ['crateW', 'int', [0, SS.CFG.CRATES.MAX], SF.NET],
+    ['crateH', 'int', [0, SS.CFG.CRATES.MAX], SF.NET],
+    ['crateT', 'int', [0, SS.CFG.CRATES.MAX], SF.NET],
+    ['ctl', 'any', 'ctl', 0],
+    ['names', 'any', null, 0],
+    ['cpu', 'any', 'skill', 0, ['off']],
+    ['quality', 'any', null, SF.LOOK, ['auto']],
+    ['slice', 'enum', 'slice', SF.LOOK],
+    ['art', 'enum', 'art', SF.LOOK],
+    ['ghost', 'int', [0, 100], SF.LOOK],
+    ['ghostAuto', 'bool', null, SF.LOOK],
+    ['idle', 'bool', null, SF.LOOK],
+    ['cine', 'bool', null, SF.LOOK],
+    ['anticCam', 'bool', null, SF.LOOK]
+  ];
+  // the keys of the rows with this flag, in row order
+  SS.CFG.setting_keys = flag => SS.CFG.SETTING_SCHEMA.filter(r => (r[3] & flag) !== 0).map(r => r[0]);
+  // the settings as text, one key=value per line in row order (lists: ctl and names joined by ','); a port reads and
+  // writes its settings file in this form, and C.SETTINGS is the defaults table
+  SS.CFG.settings_text = function (st) {
+    const out = [];
+    for (const r of SS.CFG.SETTING_SCHEMA) {
+      const v = st[r[0]];
+      if (v === undefined || v === null) continue;
+      out.push(r[0] + '=' + (Array.isArray(v) ? v.join(',') : String(v)));
+    }
+    return out.join('\n');
+  };
+  // the text form back: numbers for int / mask rows and numeric words of any rows, true / false for bool rows, lists
+  // for ctl and names, words for the rest; unknown keys and malformed lines are skipped
+  SS.CFG.settings_parse = function (text) {
+    const st = {}, rows = {};
+    for (const r of SS.CFG.SETTING_SCHEMA) rows[r[0]] = r;
+    for (const line of String(text).split('\n')) {
+      const i = line.indexOf('='), k = i > 0 ? line.slice(0, i).trim() : '', r = rows[k];
+      if (!r) continue;
+      const v = line.slice(i + 1).trim();
+      if (k === 'ctl' || k === 'names') st[k] = v.split(',');
+      else if (r[1] === 'int' || r[1] === 'mask') st[k] = +v | 0;
+      else if (r[1] === 'bool') st[k] = v === 'true';
+      else if (r[1] === 'any' && v !== '' && String(+v) === v) st[k] = +v;
+      else st[k] = v;
+    }
+    return st;
+  };
   SS.CFG.css = rgb => '#' + rgb.toString(16).padStart(6, '0');
+  // EVENTS:BEGIN (generated by tools/dev/gen/eventdoc.cjs --write: one name per emitted event type)
+  SS.CFG.EV = {
+    ACID_HIT: 'acid_hit',
+    ACID_LAND: 'acid_land',
+    ACIDBURST: 'acidburst',
+    ACIDEAT: 'acideat',
+    ACIDEND: 'acidend',
+    AIRBURST: 'airburst',
+    ALIEN_BITE: 'alien_bite',
+    ALIEN_BORN: 'alien_born',
+    ALIEN_BURST: 'alien_burst',
+    ALIEN_EAT: 'alien_eat',
+    ALIEN_HISS: 'alien_hiss',
+    ALIEN_HURT: 'alien_hurt',
+    ALIEN_SLEEP: 'alien_sleep',
+    ALIEN_STRIKE: 'alien_strike',
+    ALIEN_WAKE: 'alien_wake',
+    ALIEN_WRAP: 'alien_wrap',
+    BAA: 'baa',
+    BANNER: 'banner',
+    BATFLY: 'batfly',
+    BLOODHIT: 'bloodhit',
+    BLOW: 'blow',
+    BODYGONE: 'bodygone',
+    BODYHIT: 'bodyhit',
+    BODYSLEEP: 'bodysleep',
+    BOOMBOUNCE: 'boombounce',
+    BOOMCATCH: 'boomcatch',
+    BOOMEND: 'boomend',
+    BOOMHIT: 'boomhit',
+    BOOMTHROW: 'boomthrow',
+    BOOMWHOOSH: 'boomwhoosh',
+    BOUNCE: 'bounce',
+    BRIDGEFALL: 'bridgefall',
+    BURIED: 'buried',
+    CHARGE: 'charge',
+    CHEST_BURST: 'chest_burst',
+    CHUTE_CUT: 'chute_cut',
+    CHUTE_OPEN: 'chute_open',
+    CLAYMOREARM: 'claymorearm',
+    CLAYMOREBLAST: 'claymoreblast',
+    CLAYMOREPLANT: 'claymoreplant',
+    COLLAPSE: 'collapse',
+    CONSUMED: 'consumed',
+    COUGH: 'cough',
+    CRACK: 'crack',
+    CRATEDROP: 'cratedrop',
+    CRATEHIT: 'cratehit',
+    CRATELOST: 'cratelost',
+    CURE: 'cure',
+    DEVBREAK: 'devbreak',
+    DIG: 'dig',
+    DIGEND: 'digend',
+    DIZZY: 'dizzy',
+    DOGBARK: 'dogbark',
+    DOGBOOM: 'dogboom',
+    DOGHOP: 'doghop',
+    DOGSTART: 'dogstart',
+    DROWN: 'drown',
+    DYING: 'dying',
+    EGG_BREAK: 'egg_break',
+    EGG_HATCH: 'egg_hatch',
+    EGG_OPEN: 'egg_open',
+    EMBRYO_LOST: 'embryo_lost',
+    EOWBURN: 'eowburn',
+    EOWJET: 'eowjet',
+    EOWJETMODE: 'eowjetmode',
+    EOWLOST: 'eowlost',
+    EOWVOID: 'eowvoid',
+    EXPLODE: 'explode',
+    FFBOUNCE: 'ffbounce',
+    FFBREAK: 'ffbreak',
+    FFCONTAIN: 'ffcontain',
+    FFCRACK: 'ffcrack',
+    FFPLANT: 'ffplant',
+    FFRELEASE: 'ffrelease',
+    FFRIPPLE: 'ffripple',
+    FIRE: 'fire',
+    FLAMEJET: 'flamejet',
+    FOAM: 'foam',
+    FRAG: 'frag',
+    FUSE: 'fuse',
+    GAMEOVER: 'gameover',
+    GASBURST: 'gasburst',
+    GEAR: 'gear',
+    GIB: 'gib',
+    GIRDER: 'girder',
+    GRAB: 'grab',
+    GRASSFIRE: 'grassfire',
+    GRAVTHROW: 'gravthrow',
+    HOLE: 'hole',
+    HOLEBREAK: 'holebreak',
+    HOLY: 'holy',
+    HOTSAND: 'hotsand',
+    HUGGER_ATTACH: 'hugger_attach',
+    HUGGER_DETACH: 'hugger_detach',
+    HUGGER_DIE: 'hugger_die',
+    HUGGER_LEAP: 'hugger_leap',
+    HURT: 'hurt',
+    ICEBREAK: 'icebreak',
+    INFECT: 'infect',
+    JACKET: 'jacket',
+    JACKETEND: 'jacketend',
+    JUMP: 'jump',
+    KILL: 'kill',
+    LABBANK: 'labbank',
+    LABGUST: 'labgust',
+    LABLONG: 'lablong',
+    LABMETEOR: 'labmeteor',
+    LABMETEORHIT: 'labmeteorhit',
+    LABPERK: 'labperk',
+    LABPERKOFFER: 'labperkoffer',
+    LABQUAKE: 'labquake',
+    LABQUAKEHIT: 'labquakehit',
+    LABRECOIL: 'labrecoil',
+    LABSCAV: 'labscav',
+    LABSLIDE: 'labslide',
+    LABSTATIC: 'labstatic',
+    LABSTREAK: 'labstreak',
+    LABSWAY: 'labsway',
+    LABUNDER: 'labunder',
+    LAND: 'land',
+    LAVABREACH: 'lavabreach',
+    LAVAPLOP: 'lavaplop',
+    LAVASPLASH: 'lavasplash',
+    LEAFSTRIP: 'leafstrip',
+    LETTERBOOM: 'letterboom',
+    LETTERDROP: 'letterdrop',
+    LIGHTNING: 'lightning',
+    MGFIRE: 'mgfire',
+    MGIMPACT: 'mgimpact',
+    MINEARM: 'minearm',
+    MINEDISARM: 'minedisarm',
+    MOAI: 'moai',
+    MORTARBURST: 'mortarburst',
+    OILFIRE: 'oilfire',
+    OUCH: 'ouch',
+    OVERLOAD: 'overload',
+    PARASITE_PULSE: 'parasite_pulse',
+    PICKUP: 'pickup',
+    PLANE: 'plane',
+    PROPBREAK: 'propbreak',
+    PROPFIRE: 'propfire',
+    PUNCH: 'punch',
+    PUNCHHIT: 'punchhit',
+    PUNCHMISS: 'punchmiss',
+    RAVENBUMP: 'ravenbump',
+    RAVENCRASH: 'ravencrash',
+    RAVENEND: 'ravenend',
+    RAVENRELEASE: 'ravenrelease',
+    REBAKE: 'rebake',
+    RECOVER: 'recover',
+    RESET: 'reset',
+    ROPE_FIRE: 'rope_fire',
+    ROPE_HOOK: 'rope_hook',
+    ROPE_KNOCK: 'rope_knock',
+    ROPE_RELEASE: 'rope_release',
+    ROPE_WRAP: 'rope_wrap',
+    RUBBLE: 'rubble',
+    SALTO: 'salto',
+    SCRAMBLE: 'scramble',
+    SEARISE: 'searise',
+    SENTRYDETECT: 'sentrydetect',
+    SENTRYDOWN: 'sentrydown',
+    SENTRYPLANT: 'sentryplant',
+    SENTRYSHOT: 'sentryshot',
+    SGSHOT: 'sgshot',
+    SHATTER: 'shatter',
+    SHOT: 'shot',
+    SHRAPNEL: 'shrapnel',
+    SKILLEND: 'skillend',
+    SKILLGET: 'skillget',
+    SPARKS: 'sparks',
+    SPATLAND: 'spatland',
+    SPATTER: 'spatter',
+    SPLASH: 'splash',
+    SPRING: 'spring',
+    STEAM: 'steam',
+    STEELCUT: 'steelcut',
+    STICK: 'stick',
+    STREAMEND: 'streamend',
+    STREAMSTART: 'streamstart',
+    SWIM: 'swim',
+    SWIMOUT: 'swimout',
+    SWING: 'swing',
+    SWITCH: 'switch',
+    TELEPORT: 'teleport',
+    THUNDER: 'thunder',
+    TREEACID: 'treeacid',
+    TREEBREAK: 'treebreak',
+    TREEBURNT: 'treeburnt',
+    TREEFIRE: 'treefire',
+    TREESHATTER: 'treeshatter',
+    TREESTRIKE: 'treestrike',
+    TURN: 'turn',
+    UNWEDGE: 'unwedge',
+    UPROOT: 'uproot',
+    USE: 'use',
+    WASH: 'wash',
+    WATERBLAST: 'waterblast',
+    WEATHER: 'weather',
+    ZAP: 'zap',
+    ZIP_FIRE: 'zip_fire',
+    ZIP_HOOK: 'zip_hook',
+    ZIP_LEAVE: 'zip_leave'
+  };
+  // EVENTS:END
 })(window.SS = window.SS || {});
