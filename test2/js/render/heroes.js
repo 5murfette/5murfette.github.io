@@ -1,11 +1,13 @@
-/* render/heroes.js (P101) — biome hero set pieces: a ruined stone well (temperate), a half-buried wagon wheel (desert, canyon), a lava-cracked
- * basalt monolith (volcanic). Baked Blender models with PBR maps (assets/models.js hero_*), RENDER ONLY: no sim body, so the layouts and hashes
- * of every match are unchanged, but they also do not block a worm (like the pebbles / cacti of the decor kit they are scenery).
- * Sites are chosen deterministically from the match seed and the lattice (hash only, no random, no clock): flat ground of the right material, above
- * the sea, away from the worms and from each other. A hero stands where it was placed until the ground under it changes (a blast, a collapse):
- * then it breaks with its baked chunks (SS.models.shatter), so nothing floats. Contact shadow via groundView.blob. The monolith's baked glow
- * breathes slowly (a low-passed sum of two slow sines, never a jump). Nothing is placed on End of the World, in caves or under snow weather.
- * API (W4V module): init(scene), clear(), onEvent(), frame(S, view, camera, dt), info().
+/* render/heroes.js (P101) — biome hero set pieces: a ruined stone well (temperate), a half-buried wagon wheel (desert,
+ * canyon), a lava-cracked
+ * basalt monolith (volcanic). Baked Blender models with PBR maps (assets/models.js hero_*), RENDER ONLY: no sim body,
+ * so the layouts and hashes of every match are unchanged, but they also do not block a worm (like the pebbles / cacti
+ * of the decor kit they are scenery). Sites are chosen deterministically from the match seed and the lattice (hash
+ * only, no random, no clock): flat ground of the right material, above the sea, away from the worms and from each
+ * other. A hero stands where it was placed until the ground under it changes (a blast, a collapse): then it breaks with
+ * its baked chunks (SS.models.shatter), so nothing floats. Contact shadow via groundView.blob. The monolith's baked
+ * glow breathes slowly (a low-passed sum of two slow sines, never a jump). Nothing is placed on End of the World, in
+ * caves or under snow weather. API (W4V module): init(scene), clear(), onEvent(), frame(S, view, camera, dt), info().
  * Porting: a static mesh + a few lines of site picking (the same lattice queries) in any engine. */
 (function (SS) {
   'use strict';
@@ -25,11 +27,20 @@
   let scene = null, items = [], key = '', lastT = -1, chk = 0, glowT = 0, built = 0;
 
   HV.init = function (sc) { scene = sc; };
-  HV.clear = function () { for (const it of items) if (it.g.parent) it.g.parent.remove(it.g); items = []; key = ''; };
+  HV.clear = function () {
+    for (const it of items)
+      if (it.g.parent) it.g.parent.remove(it.g);
+    items = [];
+    key = '';
+  };
   HV.onEvent = function () {};
-  /* the decor (pebbles, tufts, grass, twigs ...) keeps out of a hero's footprint: clutter.js / grass.js ask here per instance */
+  /* the decor (pebbles, tufts, grass, twigs ...) keeps out of a hero's footprint: clutter.js / grass.js ask here per
+   * instance */
   HV.blocked = function (x, z) {
-    for (let i = 0; i < items.length; i++) { const it = items[i], dx = x - it.x, dz = z - it.z; if (dx * dx + dz * dz < it.pad * it.pad) return true; }
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i], dx = x - it.x, dz = z - it.z;
+      if (dx * dx + dz * dz < it.pad * it.pad) return true;
+    }
     return false;
   };
   HV._items = () => items;
@@ -45,7 +56,8 @@
     return dev;
   }
 
-  /* P116: the beach village: the sim lists the huts (sim/beach.js village: flat pads, doors to the water); a hut whose pad is gone (a 2D map's other rows, a fort) is skipped */
+  /* P116: the beach village: the sim lists the huts (sim/beach.js village: flat pads, doors to the water); a hut whose
+   * pad is gone (a 2D map's other rows, a fort) is skipped */
   function pickBeach(S, W) {
     const out = [], B = W.features && W.features.beach;
     for (const h of (B && B.huts) || []) {
@@ -57,7 +69,8 @@
   }
   function pick(S, W, biome) {
     if (biome === 'beach') return pickBeach(S, W);
-    const set = SETS[biome]; if (!set) return [];
+    const set = SETS[biome];
+    if (!set) return [];
     const out = [], seed = (S.settings && S.settings.seed | 0) || 0, sea = W.SEA, dry = !!W.dry;
     const cx = W.SX * 0.5, cz = W.SZ * 0.5, pr = dry && SS.CFG.DRY ? SS.CFG.DRY.PLAY_R - 3 : Math.min(W.SX, W.SZ) * 0.5 - 7;
     for (let s = 0; s < set.length; s++) {
@@ -74,24 +87,54 @@
         const dev = flatEnough(W, x, z, FOOT[id], y0);
         if (dev < 0 || dev > (maxAbove != null ? 0.45 : 0.3)) continue;
         let near = false;
-        for (const o of out) if (Math.hypot(o.x - x, o.z - z) < (maxAbove != null ? 6.5 : 14)) near = true;
-        for (const w of S.worms || []) if (w.pos && Math.hypot(w.pos.x - x, w.pos.z - z) < 5) near = true;
-        for (const t of S.trees || []) if (Math.hypot(t.x - x, t.z - z) < 2.6) near = true;                     // (sim trees / props are not moved: keep clear of them)
-        for (const o of S.bodies || []) if (o.pos && Math.hypot(o.pos.x - x, o.pos.z - z) < 2.4 + (o.rb || 0)) near = true;
-        for (const o of S.crates || []) if (o.pos && Math.hypot(o.pos.x - x, o.pos.z - z) < 3) near = true;
+        for (const o of out)
+          if (Math.hypot(o.x - x, o.z - z) < (maxAbove != null ? 6.5 : 14)) near = true;
+        for (const w of S.worms || [])
+          if (w.pos && Math.hypot(w.pos.x - x, w.pos.z - z) < 5) near = true;
+        // (sim trees / props are not moved: keep clear of them)
+        for (const t of S.trees || [])
+          if (Math.hypot(t.x - x, t.z - z) < 2.6) near = true;
+        for (const o of S.bodies || [])
+          if (o.pos && Math.hypot(o.pos.x - x, o.pos.z - z) < 2.4 + (o.rb || 0)) near = true;
+        for (const o of S.crates || [])
+          if (o.pos && Math.hypot(o.pos.x - x, o.pos.z - z) < 3) near = true;
         if (near) continue;
         if (id === 'hero_monolith') {                 // never beside lava
           let hot = false;
-          for (let k = 0; k < 8 && !hot; k++) { const a = k * Math.PI / 4; if (W.mat_at(x + Math.cos(a) * 2.2, W.top_at(x + Math.cos(a) * 2.2, z + Math.sin(a) * 2.2) - 0.12, z + Math.sin(a) * 2.2) === MT.LAVA) hot = true; }
+          for (let k = 0; k < 8 && !hot; k++) {
+            const a = k * Math.PI / 4;
+            if (
+              W.mat_at(x + Math.cos(a) * 2.2, W.top_at(x + Math.cos(a) * 2.2, z + Math.sin(a) * 2.2) - 0.12, z + Math.sin(a) * 2.2)
+              === MT.LAVA
+            ) hot = true;
+          }
           if (hot) continue;
         }
         let yaw = h3 * Math.PI * 2;
-        if (maxAbove != null) {                                     // a hut stands with its door (+X) towards the nearest open water: the lowest of 12 probes 9 m round
+        // a hut stands with its door (+X) towards the nearest open water: the lowest of 12 probes 9 m round
+        if (maxAbove != null) {
           let lo = 1e9, bx = 1, bz = 0;
-          for (let q = 0; q < 12; q++) { const a = q * Math.PI / 6, hq = W.top_at(x + Math.cos(a) * 9, z + Math.sin(a) * 9); if (hq < lo) { lo = hq; bx = Math.cos(a); bz = Math.sin(a); } }
+          for (let q = 0; q < 12; q++) {
+            const a = q * Math.PI / 6, hq = W.top_at(x + Math.cos(a) * 9, z + Math.sin(a) * 9);
+            if (hq < lo) {
+              lo = hq;
+              bx = Math.cos(a);
+              bz = Math.sin(a);
+            }
+          }
           yaw = -Math.atan2(bz, bx) + (h3 - 0.5) * 0.4;
         }
-        out.push({ id: id, x: x, y: y0 - sink - dev * 0.5 + lift, z: z, y0: y0, yaw: yaw, lean: lean, leanDir: h1 < 0.5 ? 1 : -1, r: FOOT[id] });
+        out.push({
+          id: id,
+          x: x,
+          y: y0 - sink - dev * 0.5 + lift,
+          z: z,
+          y0: y0,
+          yaw: yaw,
+          lean: lean,
+          leanDir: h1 < 0.5 ? 1 : -1,
+          r: FOOT[id]
+        });
         n++;
       }
     }
@@ -110,9 +153,13 @@
       if (!W.under && !W.eow && SETS[biome] && S.phase !== undefined && S.worms && S.worms.length) {
         for (const p of pick(S, W, biome)) {
           if (!SS.models.has(p.id)) continue;
-          const g = SS.models.mesh(p.id); if (!g) continue;
+          const g = SS.models.mesh(p.id);
+          if (!g) continue;
           g.position.set(p.x, p.y, p.z); qa.setFromAxisAngle(ax, p.yaw);
-          if (p.lean) { qb.setFromAxisAngle(bx, p.lean * p.leanDir); qa.multiply(qb); }
+          if (p.lean) {
+            qb.setFromAxisAngle(bx, p.lean * p.leanDir);
+            qa.multiply(qb);
+          }
           g.quaternion.copy(qa); scene.add(g);
           items.push({ pad: p.r + 0.55, id: p.id, g: g, x: p.x, y: p.y, z: p.z, y0: p.y0, r: p.r, seed: ((p.x * 73 + p.z * 131) | 0) });
           built++;
@@ -121,8 +168,15 @@
         if (items.length && SS.terrain && SS.terrain.chunks && SS.terrain.onChunk) {
           const ch = SS.terrain.chunks();
           for (let ci = 0; ci < ch.length; ci++) {
-            const c = ch[ci]; if (!c || !c.box) continue;
-            for (const it of items) if (it.x + it.pad > c.box.min.x && it.x - it.pad < c.box.max.x && it.z + it.pad > c.box.min.z && it.z - it.pad < c.box.max.z) { SS.terrain.onChunk(ci, c); break; }
+            const c = ch[ci];
+            if (!c || !c.box) continue;
+            for (const it of items)
+              if (
+                it.x + it.pad > c.box.min.x && it.x - it.pad < c.box.max.x && it.z + it.pad > c.box.min.z && it.z - it.pad < c.box.max.z
+              ) {
+                SS.terrain.onChunk(ci, c);
+                break;
+              }
           }
         }
       } else if (!S.worms || !S.worms.length) key = '';          // (the world is not populated yet: try again next frame)
@@ -134,11 +188,16 @@
     if (chk > 0.45) {
       chk = 0;
       for (let i = items.length - 1; i >= 0; i--) {
-        const it = items[i]; let dev = 0;
-        const c = W.top_at(it.x, it.z); dev = Math.abs(c - it.y0);
-        for (let a = 0; a < 4 && dev < 0.5; a++) dev = Math.max(dev, Math.abs(W.top_at(it.x + Math.cos(a * 1.57) * it.r, it.z + Math.sin(a * 1.57) * it.r) - it.y0));
+        const it = items[i];
+        let dev = 0;
+        const c = W.top_at(it.x, it.z);
+        dev = Math.abs(c - it.y0);
+        for (let a = 0; a < 4 && dev < 0.5; a++)
+          dev = Math.max(dev, Math.abs(W.top_at(it.x + Math.cos(a * 1.57) * it.r, it.z + Math.sin(a * 1.57) * it.r) - it.y0));
         if (dev > 0.5) {
-          if (SS.models.shatter(it.id, it.g, it.seed)) { if (SS.fx && SS.fx.dust) SS.fx.dust(it.x, it.y0 + 0.4, it.z, 8, 0.7, 0x8a7a64); }
+          if (SS.models.shatter(it.id, it.g, it.seed)) {
+            if (SS.fx && SS.fx.dust) SS.fx.dust(it.x, it.y0 + 0.4, it.z, 8, 0.7, 0x8a7a64);
+          }
           if (it.g.parent) it.g.parent.remove(it.g);
           items.splice(i, 1);
         }
@@ -148,7 +207,11 @@
     const gl = 1.35 + 0.3 * Math.sin(glowT * 0.9) + 0.12 * Math.sin(glowT * 2.1 + 1.3);
     for (const it of items) {
       if (SS.groundView) SS.groundView.blob(it.x, it.y0, it.z, it.r * 0.95, 0.9);
-      if (it.id === 'hero_monolith') { const m = it.g.children[0] && it.g.children[0].material; const mm = Array.isArray(m) ? m[0] : m; if (mm) mm.emissiveIntensity = gl; }
+      if (it.id === 'hero_monolith') {
+        const m = it.g.children[0] && it.g.children[0].material;
+        const mm = Array.isArray(m) ? m[0] : m;
+        if (mm) mm.emissiveIntensity = gl;
+      }
     }
   };
 })(window.SS = window.SS || {});

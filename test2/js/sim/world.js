@@ -4,7 +4,20 @@
  * crater, flow automaton and minimap reads this single store.
  *
  * C layout:  struct World { f32 d[N]; u8 mat[N]; u8 heat[N]; f32 top[NX*NZ]; u32 chunkVer[CX*CY*CZ]; ... };
- * Index:     idx(i,j,k) = (k*NY + j)*NX + i      (x fastest, then y, then z — matches a 3D texture). */
+ * Index:     idx(i,j,k) = (k*NY + j)*NX + i      (x fastest, then y, then z — matches a 3D texture).
+ *
+ * World flags (ONE meaning each; worldgen.G.begin, dim2d.crop and eow.gen_begin set them per map):
+ *   W.dry       the 3D desert's DISC rules, nothing else: the hot-sand play circle (S.playR, C.DRY), the lattice disc
+ *               LAT_R with the analytic far dunes beyond it (W.far / W.circ / W.frz), the sudden-death shrink,
+ *               struct.js off, the hot-sand HUD. dim2d.crop clears it: the 2D desert is a finite slab with none of
+ *               those rules. It does NOT mean "no sea" (the 2D desert has no sea and is not dry).
+ *   W.under     an underground map; W.eow the End of the World; W.flat a 2D slab (dim2d).
+ *   W.SEA       the sea level in metres. Below 0 (C.DRY.SEA, caves, the End of the World: -1) the level lies under the
+ *               lattice floor.
+ *   W.has_sea() "this world has a sea" = the sea level exists (W.sea_exists(W.SEA)), read LIVE: sudden death raises a
+ *               2D desert's SEA from -1 up into the slab. Everything that draws or sounds like a sea asks THIS (the
+ *               water grid / face / outer ocean, splash and waterblast FX and sounds, the surf bed, farland's far
+ *               ocean, the cut face's rock under the open sea, the menu preview's sea), never W.dry. */
 (function (SS) {
   'use strict';
   const M = SS.math;
@@ -23,7 +36,10 @@
   W.sizeVer = 0;
   W.resize = function (sx, sz) {
     W.SX = sx; W.SZ = sz;
-    W.MX = sx / 2; W.MZ = sz / 2; W.PR = sx / 2 - 3.5; W.SC = sx / 96;
+    W.MX = sx / 2;
+    W.MZ = sz / 2;
+    W.PR = sx / 2 - 3.5;
+    W.SC = sx / 96;
     NX = W.NX = Math.round(sx / H) + 1;
     NY = W.NY = Math.round(W.SY / H) + 1;
     NZ = W.NZ = Math.round(sz / H) + 1;
@@ -40,15 +56,22 @@
     W.sizeVer++;
   };
   W.resize(96, 96);
-  /* P68a (sim/dim2d.js): a 2D map is a thin slab; W.flat = z-invariant lattice (mark copies the middle slice kz over all slices).
+  /* P68a (sim/dim2d.js): a 2D map is a thin slab; W.flat = z-invariant lattice (mark copies the middle slice kz over
+   * all slices).
    * zpick / zin are the z margins of spawn code: the real range in 3D, the slab's plane in 2D. */
   W.flat = false; W.kz = -1;
   W.zpick = (r, m) => (W.flat ? W.MZ : m + r * (W.SZ - 2 * m));
-  W.sepk = 1;                                       // spacing factor of spawn spots (a line of ground holds fewer than an area: dim2d sets it)
+  // spacing factor of spawn spots (a line of ground holds fewer than an area: dim2d sets it)
+  W.sepk = 1;
   W.zin = (z, m) => W.flat || (z >= m && z <= W.SZ - m);
   W.version = 0;
   W.biome = 'temperate';
   W.under = false; W.dry = false;          // world kind flags (worldgen.G.begin sets them per map)
+  /* the one place that decides "a sea exists": a level at or above the lattice floor (y = 0). sea_exists takes a level
+   * so that the menu preview's data (SS.worldgen.preview: { sea }) asks the same rule; has_sea is the live world.
+   * C: bool world_has_sea(const World*). */
+  W.sea_exists = sea => sea >= 0;
+  W.has_sea = () => W.sea_exists(W.SEA);
   W.features = {};                       // generator output: volcano, canals, lavaInit, pockets, vents... (read-only for others)
   W.idx = idx;
 
@@ -63,19 +86,34 @@
     i0 = M.max(0, i0); j0 = M.max(0, j0); k0 = M.max(0, k0);
     i1 = M.min(NX - 1, i1); j1 = M.min(NY - 1, j1); k1 = M.min(NZ - 1, k1);
     if (i1 < i0 || j1 < j0 || k1 < k0) return;
-    if (W.flat) { SS.dim2d.flatten(W, i0, j0, i1, j1); k0 = 0; k1 = NZ - 1; }     // P68a: the slab stays z-invariant
+    // P68a: the slab stays z-invariant
+    if (W.flat) {
+      SS.dim2d.flatten(W, i0, j0, i1, j1);
+      k0 = 0;
+      k1 = NZ - 1;
+    }
     if (W.frz) restore_frozen(i0, j0, k0, i1, j1, k1);
     W.version++;
     const CS = W.CS;
     const ci0 = M.max(0, Math.floor((i0 - 2) / CS)), ci1 = M.min(W.CX - 1, Math.floor((i1 + 1) / CS));
     const cj0 = M.max(0, Math.floor((j0 - 2) / CS)), cj1 = M.min(W.CY - 1, Math.floor((j1 + 1) / CS));
     const ck0 = M.max(0, Math.floor((k0 - 2) / CS)), ck1 = M.min(W.CZ - 1, Math.floor((k1 + 1) / CS));
-    for (let c = ck0; c <= ck1; c++) for (let b = cj0; b <= cj1; b++) for (let a = ci0; a <= ci1; a++) W.chunkVer[(c * W.CY + b) * W.CX + a]++;
+    for (let c = ck0; c <= ck1; c++)
+      for (let b = cj0; b <= cj1; b++)
+        for (let a = ci0; a <= ci1; a++) W.chunkVer[(c * W.CY + b) * W.CX + a]++;
     const D = W.dirtyBox;
     if (!D) W.dirtyBox = { i0, j0, k0, i1, j1, k1 };
-    else { D.i0 = M.min(D.i0, i0); D.j0 = M.min(D.j0, j0); D.k0 = M.min(D.k0, k0); D.i1 = M.max(D.i1, i1); D.j1 = M.max(D.j1, j1); D.k1 = M.max(D.k1, k1); }
+    else {
+      D.i0 = M.min(D.i0, i0);
+      D.j0 = M.min(D.j0, j0);
+      D.k0 = M.min(D.k0, k0);
+      D.i1 = M.max(D.i1, i1);
+      D.j1 = M.max(D.j1, j1);
+      D.k1 = M.max(D.k1, k1);
+    }
     W.update_tops(i0, k0, i1, k1);
-    if (!quiet) for (let q = 0; q < W.listeners.length; q++) W.listeners[q](i0, k0, i1, k1);
+    if (!quiet)
+      for (let q = 0; q < W.listeners.length; q++) W.listeners[q](i0, k0, i1, k1);
   };
   W.mark_all = function (quiet) { W.mark(0, 0, 0, NX - 1, NY - 1, NZ - 1, quiet); };
 
@@ -88,36 +126,57 @@
   W.freeze_beyond = function (cx, cz, r) {
     const slot = new Int32Array(NX * NZ).fill(-1);
     let n = 0;
-    for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) if (M.len2(i * H - cx, k * H - cz) > r) slot[k * NX + i] = n++;
+    for (let k = 0; k < NZ; k++)
+      for (let i = 0; i < NX; i++)
+        if (M.len2(i * H - cx, k * H - cz) > r) slot[k * NX + i] = n++;
     const d = new Float32Array(n * NY), m = new Uint8Array(n * NY), ht = new Uint8Array(n * NY);
-    for (let k = 0; k < NZ; k++) for (let i = 0; i < NX; i++) {
-      const s = slot[k * NX + i];
-      if (s < 0) continue;
-      for (let j = 0; j < NY; j++) { const o = idx(i, j, k), q = s * NY + j; d[q] = W.d[o]; m[q] = W.mat[o]; ht[q] = W.heat[o]; }
-    }
+    for (let k = 0; k < NZ; k++)
+      for (let i = 0; i < NX; i++) {
+        const s = slot[k * NX + i];
+        if (s < 0) continue;
+        for (let j = 0; j < NY; j++) {
+          const o = idx(i, j, k), q = s * NY + j;
+          d[q] = W.d[o];
+          m[q] = W.mat[o];
+          ht[q] = W.heat[o];
+        }
+      }
     W.frz = { slot, d, m, ht, n };
   };
   function restore_frozen(i0, j0, k0, i1, j1, k1) {
     const F = W.frz;
-    for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
-      const s = F.slot[k * NX + i];
-      if (s < 0) continue;
-      for (let j = j0; j <= j1; j++) { const o = idx(i, j, k), q = s * NY + j; W.d[o] = F.d[q]; W.mat[o] = F.m[q]; W.heat[o] = F.ht[q]; }
-    }
+    for (let k = k0; k <= k1; k++)
+      for (let i = i0; i <= i1; i++) {
+        const s = F.slot[k * NX + i];
+        if (s < 0) continue;
+        for (let j = j0; j <= j1; j++) {
+          const o = idx(i, j, k), q = s * NY + j;
+          W.d[o] = F.d[q];
+          W.mat[o] = F.m[q];
+          W.heat[o] = F.ht[q];
+        }
+      }
   }
   W.frozen_col = (i, k) => !!W.frz && W.frz.slot[k * NX + i] >= 0;
 
   W.update_tops = function (i0, k0, i1, k1) {
     const D = W.d;
-    for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
-      let j = NY - 1, o = idx(i, j, k);
-      while (j >= 0 && D[o] <= 0) { j--; o -= NX; }
-      const c = k * NX + i;
-      W.topJ[c] = j;
-      if (j < 0) { W.top[c] = 0; continue; }
-      const a = D[o], b = j < NY - 1 ? D[o + NX] : -1;
-      W.top[c] = (j + (a > 0 && b <= 0 ? a / (a - b) : 0)) * H;
-    }
+    for (let k = k0; k <= k1; k++)
+      for (let i = i0; i <= i1; i++) {
+        let j = NY - 1, o = idx(i, j, k);
+        while (j >= 0 && D[o] <= 0) {
+          j--;
+          o -= NX;
+        }
+        const c = k * NX + i;
+        W.topJ[c] = j;
+        if (j < 0) {
+          W.top[c] = 0;
+          continue;
+        }
+        const a = D[o], b = j < NY - 1 ? D[o + NX] : -1;
+        W.top[c] = (j + (a > 0 && b <= 0 ? a / (a - b) : 0)) * H;
+      }
   };
 
   /* ---------- sampling ---------- */
@@ -130,7 +189,10 @@
   W.circ = null;
   const outside = (x, z) => {
     const c = W.circ;
-    if (c) { const dx = x - c.x, dz = z - c.z; return dx * dx + dz * dz > c.r * c.r; }
+    if (c) {
+      const dx = x - c.x, dz = z - c.z;
+      return dx * dx + dz * dz > c.r * c.r;
+    }
     return x < 0 || z < 0 || x > W.SX || z > W.SZ;
   };
   W.outside = outside;
@@ -144,7 +206,9 @@
     if (y >= W.SY) return -3;
     const fx = x / H, fy = y / H, fz = z / H;
     let i = Math.floor(fx), j = Math.floor(fy), k = Math.floor(fz);
-    if (i > NX - 2) i = NX - 2; if (j > NY - 2) j = NY - 2; if (k > NZ - 2) k = NZ - 2;
+    if (i > NX - 2) i = NX - 2;
+    if (j > NY - 2) j = NY - 2;
+    if (k > NZ - 2) k = NZ - 2;
     const u = fx - i, v = fy - j, w = fz - k, D = W.d;
     const o = idx(i, j, k);
     const c00 = D[o] + (D[o + 1] - D[o]) * u, c10 = D[o + NX] + (D[o + NX + 1] - D[o + NX]) * u;
@@ -156,40 +220,64 @@
   /* outward surface normal (points from solid into air) */
   W.normal = function (x, y, z, out) {
     const e = 0.2;
-    let gx = W.sample(x + e, y, z) - W.sample(x - e, y, z), gy = W.sample(x, y + e, z) - W.sample(x, y - e, z), gz = W.sample(x, y, z + e) - W.sample(x, y, z - e);
+    let gx = W.sample(x + e, y, z) - W.sample(x - e, y, z),
+      gy = W.sample(x, y + e, z) - W.sample(x, y - e, z),
+      gz = W.sample(x, y, z + e) - W.sample(x, y, z - e);
     const l = M.len3(gx, gy, gz);
-    if (l < 1e-6) { gx = 0; gy = -1; gz = 0; } else { gx /= l; gy /= l; gz /= l; }
+    if (l < 1e-6) {
+      gx = 0;
+      gy = -1;
+      gz = 0;
+    } else {
+      gx /= l;
+      gy /= l;
+      gz /= l;
+    }
     out.x = -gx; out.y = -gy; out.z = -gz;
     return out;
   };
   /* material of the most solid of the 8 lattice points around (x,y,z); AIR if none is solid */
   W.mat_at = function (x, y, z) {
     if (W.far && outside(x, z)) return W.sample(x, y, z) > 0 ? MAT.SAND : MAT.AIR;   // dry: the far dunes are sand
-    const i = M.max(0, M.min(NX - 2, Math.floor(x / H))), j = M.max(0, M.min(NY - 2, Math.floor(y / H))), k = M.max(0, M.min(NZ - 2, Math.floor(z / H)));
+    const i = M.max(0, M.min(NX - 2, Math.floor(x / H))),
+      j = M.max(0, M.min(NY - 2, Math.floor(y / H))),
+      k = M.max(0, M.min(NZ - 2, Math.floor(z / H)));
     let best = 0, bd = 0;
     for (let q = 0; q < 8; q++) {
       const o = idx(i + (q & 1), j + ((q >> 1) & 1), k + (q >> 2));
-      if (W.d[o] > bd) { bd = W.d[o]; best = W.mat[o]; }
+      if (W.d[o] > bd) {
+        bd = W.d[o];
+        best = W.mat[o];
+      }
     }
     return best;
   };
   W.in_bounds = (i, j, k) => i >= 0 && j >= 0 && k >= 0 && i < NX && j < NY && k < NZ;
-  /* what column (i, k) is topped with: the material of its highest solid lattice point (0 = no ground). The organic-top table (config MATS[].veg) is asked of this. */
+  /* what column (i, k) is topped with: the material of its highest solid lattice point (0 = no ground). The organic-top
+   * table (config MATS[].veg) is asked of this. */
   W.top_mat = function (i, k) {
     const j = W.topJ[k * NX + i];
     return j < 0 ? 0 : W.mat[(k * NY + j) * NX + i];
   };
-  /* how much of the surface AT a point carries nothing: the density-weighted share (0..1) of the solid corners of the lattice cell holding (x, y, z) whose material has veg level 0 in the
-   * organic-top table (config MATS[].veg: steel, foam, concrete, glass, ice, snow, lava, bedrock). Weights wv = min(d, 1) + 0.05 are the ones meshgen gives a cell's corners, so this is the
-   * mesh vertex's own built-material share (meshgen noveg) for the cell: a sliver of foam over soil weighs little, a concrete wall's cell a lot. Natural rock under a skin of soil is veg 1 and does not
-   * count. The section edge refuses grass labels from 0.4 up (meshgen veg_keep: the plants are gone by 0.55). */
+  /* how much of the surface AT a point carries nothing: the density-weighted share (0..1) of the solid corners of the
+   * lattice cell holding (x, y, z) whose material has veg level 0 in the
+   * organic-top table (config MATS[].veg: steel, foam, concrete, glass, ice, snow, lava, bedrock). Weights wv = min(d,
+   * 1) + 0.05 are the ones meshgen gives a cell's corners, so this is the mesh vertex's own built-material share
+   * (meshgen noveg) for the cell: a sliver of foam over soil weighs little, a concrete wall's cell a lot. Natural rock
+   * under a skin of soil is veg 1 and does not count. The section edge refuses grass labels from 0.4 up (meshgen
+   * veg_keep: the plants are gone by 0.55). */
   W.noveg_at = function (x, y, z) {
-    const i = M.max(0, M.min(NX - 2, Math.floor(x / H))), j = M.max(0, M.min(NY - 2, Math.floor(y / H))), k = M.max(0, M.min(NZ - 2, Math.floor(z / H))), L = C.VEG_LEVEL;
+    const i = M.max(0, M.min(NX - 2, Math.floor(x / H))),
+      j = M.max(0, M.min(NY - 2, Math.floor(y / H))),
+      k = M.max(0, M.min(NZ - 2, Math.floor(z / H))),
+      L = C.VEG_LEVEL;
     let s = 0, t = 0;
     for (let q = 0; q < 8; q++) {
       const o = ((k + (q >> 2)) * NY + j + ((q >> 1) & 1)) * NX + i + (q & 1), d = W.d[o];
       if (d <= 0) continue;
-      const wv = (d < 1 ? d : 1) + 0.05; t += wv; if (!L[W.mat[o]]) s += wv;
+      const wv = (d < 1 ? d : 1) + 0.05;
+      t += wv;
+      if (!L[W.mat[o]]) s += wv;
     }
     return t > 0 ? s / t : 0;
   };
@@ -199,11 +287,13 @@
     if (W.far && outside(x, z)) return M.max(0, W.far(x, z));
     const i = M.max(0, M.min(NX - 1, Math.round(x / H))), k = M.max(0, M.min(NZ - 1, Math.round(z / H)));
     let y0 = 0;
-    for (let dk = -1; dk <= 1; dk++) for (let di = -1; di <= 1; di++) {
-      const ii = M.max(0, M.min(NX - 1, i + di)), kk = M.max(0, M.min(NZ - 1, k + dk));
-      y0 = M.max(y0, W.top[kk * NX + ii]);
-    }
-    for (let y = M.min(W.SY - 0.25, y0 + 1); y > 0; y -= 0.1) if (W.sample(x, y, z) > 0) return y;
+    for (let dk = -1; dk <= 1; dk++)
+      for (let di = -1; di <= 1; di++) {
+        const ii = M.max(0, M.min(NX - 1, i + di)), kk = M.max(0, M.min(NZ - 1, k + dk));
+        y0 = M.max(y0, W.top[kk * NX + ii]);
+      }
+    for (let y = M.min(W.SY - 0.25, y0 + 1); y > 0; y -= 0.1)
+      if (W.sample(x, y, z) > 0) return y;
     return 0;
   };
   /* coarse column top (bilinear over lattice columns) — cheap, for sky exposure / water beds */
@@ -219,12 +309,16 @@
   W.solid_len = function (x0, y0, z0, x1, y1, z1) {
     const L = M.len3(x1 - x0, y1 - y0, z1 - z0), n = M.max(1, Math.ceil(L / 0.25)), st = L / n;
     let s = 0;
-    for (let i = 1; i < n; i++) { const t = i / n; if (W.sample(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t) > 0) s += st; }
+    for (let i = 1; i < n; i++) {
+      const t = i / n;
+      if (W.sample(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t) > 0) s += st;
+    }
     return s;
   };
   /* First solid hit from p along unit dir d within maxD; returns distance or -1. */
   W.raycast = function (x, y, z, dx, dy, dz, maxD) {
-    for (let r = 0; r <= maxD; r += 0.15) if (W.sample(x + dx * r, y + dy * r, z + dz * r) > 0) return r;
+    for (let r = 0; r <= maxD; r += 0.15)
+      if (W.sample(x + dx * r, y + dy * r, z + dz * r) > 0) return r;
     return -1;
   };
 
@@ -236,18 +330,35 @@
     const k0 = M.max(0, Math.floor((cz - R - 1) / H)), k1 = M.min(NZ - 1, Math.ceil((cz + R + 1) / H));
     let removed = 0;
     const fz = W.frz ? W.frz.slot : null;
-    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-      const o = idx(i, j, k);
-      if (W.mat[o] === MAT.BEDROCK || W.mat[o] === MAT.STEEL || (fz && fz[k * NX + i] >= 0)) continue;
-      const v = M.len3(i * H - cx, j * H - cy, k * H - cz) - R;
-      if (v < W.d[o]) { if (W.d[o] > 0 && v <= 0) { removed++; W.mat[o] = MAT.AIR; W.heat[o] = 0; } W.d[o] = v; }
-    }
+    for (let k = k0; k <= k1; k++)
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++) {
+          const o = idx(i, j, k);
+          if (W.mat[o] === MAT.BEDROCK || W.mat[o] === MAT.STEEL || (fz && fz[k * NX + i] >= 0)) continue;
+          const v = M.len3(i * H - cx, j * H - cy, k * H - cz) - R;
+          if (v < W.d[o]) {
+            if (W.d[o] > 0 && v <= 0) {
+              removed++;
+              W.mat[o] = MAT.AIR;
+              W.heat[o] = 0;
+            }
+            W.d[o] = v;
+          }
+        }
     W.mark(i0, j0, k0, i1, j1, k1);
     return removed;
   };
   /* Set one lattice point solid/air (used by flow automata and re-baking). */
-  W.set_solid = function (o, dval, m, heat) { W.d[o] = dval; W.mat[o] = m; W.heat[o] = heat || 0; };
-  W.set_air = function (o, dval) { W.d[o] = dval == null ? -0.6 : dval; W.mat[o] = MAT.AIR; W.heat[o] = 0; };
+  W.set_solid = function (o, dval, m, heat) {
+    W.d[o] = dval;
+    W.mat[o] = m;
+    W.heat[o] = heat || 0;
+  };
+  W.set_air = function (o, dval) {
+    W.d[o] = dval == null ? -0.6 : dval;
+    W.mat[o] = MAT.AIR;
+    W.heat[o] = 0;
+  };
 
   /* Generation (delegates to sim/worldgen.js). Resumable: gen_begin + gen_step until it returns 1. */
   /* map side in metres from the settings: mapSize 'normal' | 'large' ('auto' = the biome's default, C.MAP.DEFAULT);
@@ -265,21 +376,27 @@
     const sx = W.size_of(settings);
     W.flat = false; W.kz = -1; W.sepk = 1;
     if (sx !== W.SX || sx !== W.SZ || !W.d) W.resize(sx, sx);
-    W.crack = null;                          // P66b: the crack damage field belongs to a match (cracks.js init allocates it when the CRACKS flag is on)
+    // P66b: the crack damage field belongs to a match (cracks.js init allocates it when the CRACKS flag is on)
+    W.crack = null;
     return SS.worldgen.begin(W, settings);
   };
   W.gen_step = function (job) {
     const p = SS.worldgen.step(job);
     if (p >= 1 && !job.finalized) {
       job.finalized = true;
-      if (job.settings && job.settings.dim === '2d' && SS.dim2d) SS.dim2d.crop(W);          // P68a: the finished map becomes a one-slice slab
+      // P68a: the finished map becomes a one-slice slab
+      if (job.settings && job.settings.dim === '2d' && SS.dim2d) SS.dim2d.crop(W);
       W.update_tops(0, 0, W.NX - 1, W.NZ - 1);
-      if (W.flat) SS.dim2d.finish(W, job.settings);                                              // P104: the slab's own vents (nothing off-slab survives the crop)
+      // P104: the slab's own vents (nothing off-slab survives the crop)
+      if (W.flat) SS.dim2d.finish(W, job.settings);
       W.mark_all();
     }
     return p;
   };
-  W.generate = function (settings) { const job = W.gen_begin(settings); while (W.gen_step(job) < 1); };
+  W.generate = function (settings) {
+    const job = W.gen_begin(settings);
+    while (W.gen_step(job) < 1);
+  };
 
   SS.world = W;
   window.WORLD = W; // legacy alias

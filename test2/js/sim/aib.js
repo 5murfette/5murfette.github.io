@@ -1,38 +1,57 @@
-/* sim/aib.js — P38 A3: the CPU's movement and tools (sub-module of sim/ai.js; hooks: prep / reposition / move / cands / fire / air).
- * Portable and deterministic: reads the state only, no RNG of its own, sim time and the fixed step; all plan state lives in
- * S.aiPlan.mv (plain data, one struct).
+/* sim/aib.js — P38 A3: the CPU's movement and tools (sub-module of sim/ai.js; hooks: prep / reposition / move / cands /
+ * fire / air).
+ * Portable and deterministic: reads the state only, no RNG of its own, sim time and the fixed step; all plan state
+ * lives in S.aiPlan.mv (plain data, one struct).
  *
  * C layout
  *   struct AiMove { u8 kind; /0 walk, 1 fetch (crate), 2 rope, 3 zipline/
  *                   u8 st;   /per kind: see below/
  *                   f32 t0, tmax, goalS, goalY; i8 dir; i32 crate;
- *                   Goal goal; Cand cand[16]; i16 ci; Cand best; f32 tAttach, tRel, lvMin; f32 lastS, stuckT; u8 jumps; }
+ *                   Goal goal; Cand cand[16]; i16 ci; Cand best; f32 tAttach, tRel, lvMin; f32 lastS, stuckT; u8 jumps;
+ *                   }
  *   struct Goal   { u8 type /0 foe, 1 high/; f32 s, y, dangerY; }
  *   struct Cand   { f32 aim; i8 dir; f32 as, ay, len, v, tRel; }
  *
  * Behaviours
- *   prep(S, pl, a)          before the search: flee a xeno within its range + 2.5 m; climb away from the rising sea in sudden death
+ *   prep(S, pl, a)          before the search: flee a xeno within its range + 2.5 m; climb away from the rising sea in
+ *   sudden death
  *                           (walk to higher ground, else a rope); fetch a health crate when low on HP and one is near.
- *   reposition(S, pl, a)    no shot from here: fetch a near crate, ride a zipline toward the target, swing on the ninja rope toward it
- *                           (a swing is planned by simulating the pendulum + the ballistic landing, one candidate per sim step).
+ *   reposition(S, pl, a)    no shot from here: fetch a near crate, ride a zipline toward the target, swing on the ninja
+ *   rope toward it
+ *                           (a swing is planned by simulating the pendulum + the ballistic landing, one candidate per
+ *                           sim step).
  *   move(S, pl, a, inp)     runs the current move; true when it is over (the AI then searches again from the new spot).
  *   cands(...)              force field (exposed / hurt), gravity gun (throw a mine / barrel at a foe), sniper.
  *   fire(...)               executes those candidates.    air(S, a)  the parachute when a fall would hurt.
- * Landing / spot values are in HP-like points; a move is only started when it gets clearly closer to the target or clears the line. */
+ * Landing / spot values are in HP-like points; a move is only started when it gets clearly closer to the target or
+ * clears the line. */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane;
   const AB = SS.aib = {};
-  const K = AB.K = { WALK_TOL: 0.45, FETCH_R: 16, FETCH_HP: 55, MOVE_MIN: 6, SWING_T: 5, LAND_V: 26, XENO_PAD: 2.5, ROPE_AIMS: 9, MAX_MOVES: 2, FF_THREAT_R: 35, BAD_TURNS: 8, DETOUR_R: 10, DETOUR_NEAR: 4, SHOT_OK: 45, FETCH_HP_NOFOE: 25, RETREAT_R: 9, BONUS_K: 0.6, WALK_V: 2.0, BIG_WORTH: 37, SHOT_WEAK: 22, CRATE_PREF: 0.8, COLLECT_SC: 0.9, COLLECT_NEAR: 7, FAR_R: 45, FAR_MIN: 20, TP_HP: 40 };
+  const K =
+    AB.K = {
+      WALK_TOL: 0.45, FETCH_R: 16, FETCH_HP: 55, MOVE_MIN: 6, SWING_T: 5, LAND_V: 26, XENO_PAD: 2.5, ROPE_AIMS: 9, MAX_MOVES: 2,
+      FF_THREAT_R: 35, BAD_TURNS: 8, DETOUR_R: 10, DETOUR_NEAR: 4, SHOT_OK: 45, FETCH_HP_NOFOE: 25, RETREAT_R: 9, BONUS_K: 0.6, WALK_V: 2.0,
+      BIG_WORTH: 37, SHOT_WEAK: 22, CRATE_PREF: 0.8, COLLECT_SC: 0.9, COLLECT_NEAR: 7, FAR_R: 45, FAR_MIN: 20, TP_HP: 40
+    };
   const sim = () => SS.sim, WPm = () => SS.weapons, W = () => SS.world;
   const canK = (S, k) => WPm().can_use(S, k);
   const hasSkill = (a, k) => !!(a.skills && a.skills[k] > 0);
 
   /* ---------- shared helpers ---------- */
-  function clearLine(S, s0, y0, s1, y1) { const L = M.len2(s1 - s0, y1 - y0), n = Math.ceil(L / 0.25); for (let i = 2; i < n - 1; i++) { const f = i / n; if (P.solid2(S, s0 + (s1 - s0) * f, y0 + (y1 - y0) * f)) return false; } return true; }
+  function clearLine(S, s0, y0, s1, y1) {
+    const L = M.len2(s1 - s0, y1 - y0), n = Math.ceil(L / 0.25);
+    for (let i = 2; i < n - 1; i++) {
+      const f = i / n;
+      if (P.solid2(S, s0 + (s1 - s0) * f, y0 + (y1 - y0) * f)) return false;
+    }
+    return true;
+  }
   function wetAt(S, s, y) {
     const wp = P.to_world(S, s, y), surf = sim().surface_at(S, wp.x, wp.z);
-    const deck = SS.struct && SS.struct.floor_at ? SS.struct.floor_at(S, wp.x, y, wp.z) : -1e9, ice = SS.ice && S.ice ? SS.ice.top_at(S, wp.x, wp.z) : -1e9;
+    const deck = SS.struct && SS.struct.floor_at ? SS.struct.floor_at(S, wp.x, y, wp.z) : -1e9,
+      ice = SS.ice && S.ice ? SS.ice.top_at(S, wp.x, wp.z) : -1e9;
     if (SS.lava && S.lava && SS.lava.depth_at(S, wp.x, wp.z) > 0.02) return true;
     return !!(SS.water && S.water && SS.water.depth(S, wp.x, wp.z) > 0.3 && deck < surf && ice < -1e8);
   }
@@ -40,7 +59,8 @@
     if (!S.alien) return null;
     for (const X of S.alien.xenos) {
       if (X.hp <= 0) continue;
-      for (const nd of X.n) if (M.len3(nd.x - x, nd.y - y, nd.z - z) < X.range + pad) return X;
+      for (const nd of X.n)
+        if (M.len3(nd.x - x, nd.y - y, nd.z - z) < X.range + pad) return X;
     }
     return null;
   }
@@ -50,23 +70,32 @@
     if (wetAt(S, ah, a.pos.y)) return false;
     if (xenoNear(S, wp.x, a.pos.y, wp.z, 0.5)) return false;
     // (P38 R3: also not into a live mine, a flame or a gas puff: the retreat walked the worm into its own napalm / gas)
-    for (const b of S.bodies) if (b.prop === 'mine' && !b.disarmed && M.len3(b.pos.x - wp.x, b.pos.y - a.pos.y, b.pos.z - wp.z) < 1.4) return false;
-    for (const f of S.flames) if (S.time < f.t1 && M.len2(f.x - wp.x, f.z - wp.z) < f.r + 0.5 && Math.abs(f.y - a.pos.y) < 2.5) return false;
+    for (const b of S.bodies)
+      if (b.prop === 'mine' && !b.disarmed && M.len3(b.pos.x - wp.x, b.pos.y - a.pos.y, b.pos.z - wp.z) < 1.4) return false;
+    for (const f of S.flames)
+      if (S.time < f.t1 && M.len2(f.x - wp.x, f.z - wp.z) < f.r + 0.5 && Math.abs(f.y - a.pos.y) < 2.5) return false;
     if (SS.weaponsA && SS.weaponsA.gas_at && SS.weaponsA.gas_at(S, wp.x, a.pos.y + 0.3, wp.z) > 0) return false;
-    // (P38-R5: nor into a claymore's laser, its own either: the walk of a CPU worm set off its team's claymore, 700 HP of damage in one match)
+    // (P38-R5: nor into a claymore's laser, its own either: the walk of a CPU worm set off its team's claymore, 700 HP
+    // of damage in one match)
     for (let i = 0; S.claymores && i < S.claymores.length; i++) {
-      const c = S.claymores[i], L = C.TOOLB.CLAY.LASER, sa = [c.pos.x, c.pos.y, c.pos.z], sb = [c.pos.x + c.dir.x * L, c.pos.y + c.dir.y * L, c.pos.z + c.dir.z * L];
+      const c = S.claymores[i],
+        L = C.TOOLB.CLAY.LASER,
+        sa = [c.pos.x, c.pos.y, c.pos.z],
+        sb = [c.pos.x + c.dir.x * L, c.pos.y + c.dir.y * L, c.pos.z + c.dir.z * L];
       if (M.seg_dist(wp.x, a.pos.y, wp.z, sa, sb) < C.WORM_R + 0.6) return false;
     }
     const g = WPm().ground_below(S, ah, a.pos.y + 0.5);
     if (g < -1e8 || a.pos.y - g > (maxDrop || 4.5)) return false;
     if (a.pos.y - g > 1.2 && wetAt(S, ah, g + 0.3)) return false;                // (P99: a drop that ends in water / lava is no step)
-    if (SS.lab4 && S.settings.labFlags && SS.lab4.magnet(S, wp.x, g + a.foot, wp.z) && !SS.lab4.magnet(S, a.pos.x, a.pos.y, a.pos.z)) return false;   // P79: not onto a lightning magnet in a storm
+    // P79: not onto a lightning magnet in a storm
+    if (SS.lab4 && S.settings.labFlags && SS.lab4.magnet(S, wp.x, g + a.foot, wp.z) && !SS.lab4.magnet(S, a.pos.x, a.pos.y, a.pos.z))
+      return false;
     return true;
   };
   // can the worm walk from s0 to s1 (every 0.4 m: a step up <= 0.7, a drop <= 2.5, no water)
   function walkable(S, s0, s1, y0) {
-    const dir = s1 >= s0 ? 1 : -1; let gy = WPm().ground_below(S, s0, y0 + 0.6);
+    const dir = s1 >= s0 ? 1 : -1;
+    let gy = WPm().ground_below(S, s0, y0 + 0.6);
     if (gy < -1e8) return false;
     for (let s = s0 + dir * 0.4; (s1 - s) * dir > 0; s += dir * 0.4) {
       const g = WPm().ground_below(S, s, gy + 1.0);
@@ -75,24 +104,49 @@
     }
     return true;
   }
-  /* P99: can the worm WALK from s0 to s1 the way sim.js walkWorm lets it: per move step it climbs up to STEP_UP (0.64 m, a step of 0.033 m: slopes to about 85 degrees, so a mountain
-   * side is fine, a vertical face is not), follows the ground down STEP_DOWN, and at a ledge drops (it falls on to the ground below: at most MAXDROP m, not into water / lava). The old
-   * walkable() (rise <= 0.7 per 0.4 m) rejected most alpine / canyon slopes, so nearly every crate fetch was marked 'bad' at the first step (P99: 3 of 52 crates picked). Steps of 0.12 m
-   * (the climb allowance per step stays 0.64: a bit stricter than the sim at 0.033 m). C: same loop over the voxel lattice, no allocation. */
-  const WR = { STEP: 0.12, UP: 0.64, DOWN: 0.64, MAXDROP: 11, DL: 0.08, JUMP: 1.4 };         // (a drop of up to 13.6 m is safe: WORM_DYN.FALL_SAFE; 11 keeps a margin)
+  /* P99: can the worm WALK from s0 to s1 the way sim.js walkWorm lets it: per move step it climbs up to STEP_UP (0.64
+   * m, a step of 0.033 m: slopes to about 85 degrees, so a mountain
+   * side is fine, a vertical face is not), follows the ground down STEP_DOWN, and at a ledge drops (it falls on to the
+   * ground below: at most MAXDROP m, not into water / lava). The old walkable() (rise <= 0.7 per 0.4 m) rejected most
+   * alpine / canyon slopes, so nearly every crate fetch was marked 'bad' at the first step (P99: 3 of 52 crates
+   * picked). Steps of 0.12 m (the climb allowance per step stays 0.64: a bit stricter than the sim at 0.033 m). C: same
+   * loop over the voxel lattice, no allocation. */
+  // (a drop of up to 13.6 m is safe: WORM_DYN.FALL_SAFE; 11 keeps a margin)
+  const WR = { STEP: 0.12, UP: 0.64, DOWN: 0.64, MAXDROP: 11, DL: 0.08, JUMP: 1.4 };
   function walkReach(S, s0, s1, y0) {
-    const dir = s1 >= s0 ? 1 : -1, g0 = WPm().ground_below(S, s0, y0 + 0.6); if (g0 < -1e8) return false;
-    const off = y0 - g0; let s = s0, y = y0;
+    const dir = s1 >= s0 ? 1 : -1, g0 = WPm().ground_below(S, s0, y0 + 0.6);
+    if (g0 < -1e8) return false;
+    const off = y0 - g0;
+    let s = s0, y = y0;
     while ((s1 - s) * dir > 0) {
       const ns = dir > 0 ? M.min(s + WR.STEP, s1) : M.max(s - WR.STEP, s1), base = P.overlap2(S, s, y);
       let moved = false;
-      for (let l = 0; l <= WR.UP + 1e-6; l += WR.DL) if (P.overlap2(S, ns, y + l) <= base) { s = ns; y += l; moved = true; break; }
-      for (let l = WR.UP + WR.DL; !moved && l <= WR.JUMP + 1e-6; l += WR.DL) if (P.overlap2(S, ns, y + l) <= base) { s = ns; y += l; moved = true; }      // (a ledge up to the jump's apex: the walk hops when it stops)
+      for (let l = 0; l <= WR.UP + 1e-6; l += WR.DL)
+        if (P.overlap2(S, ns, y + l) <= base) {
+          s = ns;
+          y += l;
+          moved = true;
+          break;
+        }
+      // (a ledge up to the jump's apex: the walk hops when it stops)
+      for (let l = WR.UP + WR.DL; !moved && l <= WR.JUMP + 1e-6; l += WR.DL)
+        if (P.overlap2(S, ns, y + l) <= base) {
+          s = ns;
+          y += l;
+          moved = true;
+        }
       if (!moved) return false;
       let snapped = P.grounded2(S, s, y);
-      if (!snapped) for (let l = WR.DL; l <= WR.DOWN + 1e-6; l += WR.DL) if (P.grounded2(S, s, y - l)) { y -= l; snapped = true; break; }
+      if (!snapped)
+        for (let l = WR.DL; l <= WR.DOWN + 1e-6; l += WR.DL)
+          if (P.grounded2(S, s, y - l)) {
+            y -= l;
+            snapped = true;
+            break;
+          }
       if (!snapped) {                                                            // a ledge: the worm drops to the ground below
-        const g = WPm().ground_below(S, s, y); if (g < -1e8 || y - (g + off) > WR.MAXDROP) return false;
+        const g = WPm().ground_below(S, s, y);
+        if (g < -1e8 || y - (g + off) > WR.MAXDROP) return false;
         y = g + off;
       }
       if (wetAt(S, s, y - off + 0.3)) return false;
@@ -100,7 +154,8 @@
     return true;
   }
   AB.walk_reach = walkReach;
-  // where a worm released with (vs, vy) from (s, y) comes down: { s, y, vy, wet, t } (the ballistic flight under the worm gravity)
+  // where a worm released with (vs, vy) from (s, y) comes down: { s, y, vy, wet, t } (the ballistic flight under the
+  // worm gravity)
   AB.walkable = (S, s0, s1, y0) => walkable(S, s0, s1, y0);
   AB.walk_to = (S, pl, a, goalS, why, tmax) => startWalk(S, pl, a, goalS, why, tmax, 0, null);
   AB.wet_at = (S, s, y) => wetAt(S, s, y);
@@ -108,20 +163,47 @@
     const g = C.G_WORM * (sim().gravity_k ? sim().gravity_k(S, a) : 1), dt = 1 / 30;
     out.wet = false; out.t = 0;
     for (let t = 0; t < 5; t += dt) {
-      vy -= g * dt; let ns = s + vs * dt;
+      vy -= g * dt;
+      let ns = s + vs * dt;
       const ny = y + vy * dt;
-      if (P.overlap2(S, ns, y) > P.overlap2(S, s, y) + 1) { vs = 0; ns = s; }
-      if (vy < 0 && P.grounded2(S, ns, ny)) { out.s = ns; out.y = ny; out.vy = vy; out.t = t; return out; }
-      if (ny < 0.6 || wetAt(S, ns, ny - 0.5)) { out.s = ns; out.y = ny; out.vy = vy; out.wet = true; out.t = t; return out; }
+      if (P.overlap2(S, ns, y) > P.overlap2(S, s, y) + 1) {
+        vs = 0;
+        ns = s;
+      }
+      if (vy < 0 && P.grounded2(S, ns, ny)) {
+        out.s = ns;
+        out.y = ny;
+        out.vy = vy;
+        out.t = t;
+        return out;
+      }
+      if (ny < 0.6 || wetAt(S, ns, ny - 0.5)) {
+        out.s = ns;
+        out.y = ny;
+        out.vy = vy;
+        out.wet = true;
+        out.t = t;
+        return out;
+      }
       s = ns; y = ny;
     }
-    out.s = s; out.y = y; out.vy = vy; out.wet = true; out.t = 5;       // never came down: treat as lost
+    // never came down: treat as lost
+    out.s = s;
+    out.y = y;
+    out.vy = vy;
+    out.wet = true;
+    out.t = 5;
     return out;
   }
-  // value of standing at (s, y) for a goal: foe: closer, a clear line, a good range, a little height; high: height above the danger
+  // value of standing at (s, y) for a goal: foe: closer, a clear line, a good range, a little height; high: height
+  // above the danger
   function spotValue(S, goal, s0, s, y, ld) {
     if (ld && (ld.wet || -ld.vy > K.LAND_V)) return -100;
-    if (SS.fort && SS.fort.is()) { const q = P.to_world(S, s, y); if (SS.fort.trapped(q.x, q.z, y)) return -100; }      // P68b: never land in a fort-mode chasm / pit
+    // P68b: never land in a fort-mode chasm / pit
+    if (SS.fort && SS.fort.is()) {
+      const q = P.to_world(S, s, y);
+      if (SS.fort.trapped(q.x, q.z, y)) return -100;
+    }
     if (goal.type === 1) return M.min(y - goal.dangerY, 8) * 2;
     const d = Math.abs(goal.s - s), d0 = Math.abs(goal.s - s0), clear = clearLine(S, s, y + 0.4, goal.s, goal.y);
     let v = (d0 - d) * 1.2 + (clear ? 12 : 0) + (d > 5 && d < 26 ? 4 : 0) + M.clamp((y - goal.y) * 0.5, -3, 5);
@@ -132,12 +214,28 @@
   /* ---------- the moves ---------- */
   function startWalk(S, pl, a, goalS, why, tmax, kind, crate) {
     const ap = P.to_plane(S, a.pos);
-    pl.mv = { kind: kind || 0, st: 'go', why, t0: S.time, tmax: tmax || 6, goalS, dir: goalS >= ap.s ? 1 : -1, crate: crate == null ? -1 : crate, lastS: ap.s, stuckT: 0, jumps: 0, tChk: S.time };
+    pl.mv = {
+      kind: kind || 0,
+      st: 'go',
+      why,
+      t0: S.time,
+      tmax: tmax || 6,
+      goalS,
+      dir: goalS >= ap.s ? 1 : -1,
+      crate: crate == null ? -1 : crate,
+      lastS: ap.s,
+      stuckT: 0,
+      jumps: 0,
+      tChk: S.time
+    };
     pl.phase = 'move'; return true;
   }
-  /* P38-R5 (B9): what a crate is worth to the CPU, in HP-eq. A weapon crate by its rarity band (the balance table: 10 + U / 2, clamped 10..60:
-   * common ~20, uncommon ~32, rare ~45, super ~60), a tool crate 14 (overload 26), a health crate by the HP it would restore. */
-  // P84: infected with the hugger already off: only a health crate cures it (the parasite kills in the end), so it is worth a detour at any HP
+  /* P38-R5 (B9): what a crate is worth to the CPU, in HP-eq. A weapon crate by its rarity band (the balance table: 10 +
+   * U / 2, clamped 10..60:
+   * common ~20, uncommon ~32, rare ~45, super ~60), a tool crate 14 (overload 26), a health crate by the HP it would
+   * restore. */
+  // P84: infected with the hugger already off: only a health crate cures it (the parasite kills in the end), so it is
+  // worth a detour at any HP
   const needsCure = a => !!(a.embryo && !(a.hug != null && a.hug >= 0));
   AB.needs_cure = needsCure;
   const crateWorth = (S, a, c) => {
@@ -147,29 +245,36 @@
     const B = SS.balance, r = B && c.weapon ? B.row(c.weapon) : null;
     return r ? M.clamp(10 + 0.5 * B.value(r), 10, 60) : 22;
   };
-  // P99: what the crate is worth to THIS worm's team right now: a weapon the team lacks counts a quarter more, a third copy of one it already has a quarter less (finite stock only)
+  // P99: what the crate is worth to THIS worm's team right now: a weapon the team lacks counts a quarter more, a third
+  // copy of one it already has a quarter less (finite stock only)
   const crateNeed = (S, a, c) => {
     const w = crateWorth(S, a, c);
-    if (c.kind === 'weapon' && c.weapon) { const have = SS.game.ammo(S, a.team, c.weapon); if (have !== Infinity) return w * (have <= 0 ? 1.25 : have >= 3 ? 0.75 : 1); }
+    if (c.kind === 'weapon' && c.weapon) {
+      const have = SS.game.ammo(S, a.team, c.weapon);
+      if (have !== Infinity) return w * (have <= 0 ? 1.25 : have >= 3 ? 0.75 : 1);
+    }
     return w;
   };
   AB.crate_worth = crateWorth;
   const crateValue = crateWorth;
-  /* crates the worm could not reach: remembered per match in S.aiMem.bad (i32 crate ids + turn numbers), K.BAD_TURNS turns
+  /* crates the worm could not reach: remembered per match in S.aiMem.bad (i32 crate ids + turn numbers), K.BAD_TURNS
+   * turns
    * (a crate behind a ledge was retried every turn: the plan reset them). C: struct { i32 id, turn; } bad[16]. */
   function markBad(S, pl, id) {
     pl.badCrates.push(id);
     const b = S.aiMem.bad;
-    b.push({ id, turn: S.turnNo }); if (b.length > 16) b.shift();
+    b.push({ id, turn: S.turnNo });
+    if (b.length > 16) b.shift();
   }
   function isBad(S, pl, id) {
     if (pl && pl.badCrates.indexOf(id) >= 0) return true;
     const b = S.aiMem.bad;
-    for (let i = 0; i < b.length; i++) if (b[i].id === id && S.turnNo - b[i].turn < K.BAD_TURNS) return true;
+    for (let i = 0; i < b.length; i++)
+      if (b[i].id === id && S.turnNo - b[i].turn < K.BAD_TURNS) return true;
     return false;
   }
-  // is a foe within 3 m of the vertical plane through the worm and the crate? (fetching turns the section to the crate; the shot
-  // after it needs a target on that plane, the rotation lock being closed by the walk)
+  // is a foe within 3 m of the vertical plane through the worm and the crate? (fetching turns the section to the crate;
+  // the shot after it needs a target on that plane, the rotation lock being closed by the walk)
   function foeOnCratePlane(S, a, c) {
     const dx = c.pos.x - a.pos.x, dz = c.pos.z - a.pos.z, L = M.nz(M.len2(dx, dz), 1);
     for (const o of S.worms) {
@@ -178,7 +283,8 @@
     }
     return false;
   }
-  /* P38-R5 (B9): a crate worth more than an average one (22 HP-eq) is worth a longer walk: + (worth - 22) x BONUS_K m (super ~ +23 m, rare ~ +14, uncommon ~ +6) */
+  /* P38-R5 (B9): a crate worth more than an average one (22 HP-eq) is worth a longer walk: + (worth - 22) x BONUS_K m
+   * (super ~ +23 m, rare ~ +14, uncommon ~ +6) */
   const dyOk = dy => dy <= 4 && dy >= -WR.MAXDROP;                      // P99: climbing is limited, dropping is free (see walkReach)
   const bonusR = (S, a, c) => M.max(0, crateWorth(S, a, c) - 22) * K.BONUS_K;
   // the best crate to fetch: landed, within FETCH_R m (3D), not tried before this turn; value / (distance + 6)
@@ -189,7 +295,8 @@
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z);
       if (d > K.FETCH_R + bonusR(S, a, c) || !dyOk(c.pos.y - a.pos.y)) continue;
       if (minHp != null && !(c.kind === 'health' && (a.hp <= minHp || needsCure(a)))) continue;
-      if (minHp != null && a.hp > K.FETCH_HP_NOFOE && !needsCure(a) && !foeOnCratePlane(S, a, c)) continue;      // (P38-R2: else the walk ends with no target on the new plane: 48 % of those turns had no shot)
+      // (P38-R2: else the walk ends with no target on the new plane: 48 % of those turns had no shot)
+      if (minHp != null && a.hp > K.FETCH_HP_NOFOE && !needsCure(a) && !foeOnCratePlane(S, a, c)) continue;
       const sc = crateValue(S, a, c) / (d + 6);
       if (!best || sc > best.sc) best = { c, sc, d };
     }
@@ -199,16 +306,24 @@
   function crateSafe(S, a, c) {
     const cp = P.to_plane(S, c.pos);
     if (wetAt(S, cp.s, c.pos.y)) return false;
-    if (a.hp < 45) for (let i = 0; i < S.worms.length; i++) { const o = S.worms[i]; if (!o.dead && o.hp > 0 && o.team !== a.team && M.len3(o.pos.x - c.pos.x, o.pos.y - c.pos.y, o.pos.z - c.pos.z) < 8) return false; }
+    if (a.hp < 45)
+      for (let i = 0; i < S.worms.length; i++) {
+        const o = S.worms[i];
+        if (!o.dead && o.hp > 0 && o.team !== a.team && M.len3(o.pos.x - c.pos.x, o.pos.y - c.pos.y, o.pos.z - c.pos.z) < 8) return false;
+      }
     return true;
   }
-  /* P99: the CPU picked up about 1 crate in 10 (P95). Any crate worth the walk, valued by worth / (distance + 6) >= COLLECT_SC (a common weapon crate to 16 m, a tool to 9 m,
-   * rare ones farther through bonusR, a health crate when hurt), safe to reach, and either close (COLLECT_NEAR) or with a foe on the plane the walk turns the section to */
+  /* P99: the CPU picked up about 1 crate in 10 (P95). Any crate worth the walk, valued by worth / (distance + 6) >=
+   * COLLECT_SC (a common weapon crate to 16 m, a tool to 9 m,
+   * rare ones farther through bonusR, a health crate when hurt), safe to reach, and either close (COLLECT_NEAR) or with
+   * a foe on the plane the walk turns the section to */
   function collectGoal(S, pl, a) {
-    if (S.eow) return null;                                              // (the End of the World has its own hop planner: a walk along a flat section means nothing on a planetoid)
+    // (the End of the World has its own hop planner: a walk along a flat section means nothing on a planetoid)
+    if (S.eow) return null;
     let best = null;
     for (let i = 0; i < S.crates.length; i++) {
-      const c = S.crates[i]; if (!c.landed || isBad(S, pl, c.id)) continue;
+      const c = S.crates[i];
+      if (!c.landed || isBad(S, pl, c.id)) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z);
       if (d > K.FETCH_R + bonusR(S, a, c) || !dyOk(c.pos.y - a.pos.y)) continue;
       const w = crateNeed(S, a, c), sc = w / (d + 6);
@@ -221,29 +336,63 @@
   function bigCrate(S, pl, a) {
     let best = null;
     for (let i = 0; i < S.crates.length; i++) {
-      const c = S.crates[i]; if (!c.landed || c.kind !== 'weapon' || isBad(S, pl, c.id)) continue;
-      const w = crateWorth(S, a, c); if (w < K.BIG_WORTH) continue;
+      const c = S.crates[i];
+      if (!c.landed || c.kind !== 'weapon' || isBad(S, pl, c.id)) continue;
+      const w = crateWorth(S, a, c);
+      if (w < K.BIG_WORTH) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z);
       if (d > K.FETCH_R + bonusR(S, a, c) || !dyOk(c.pos.y - a.pos.y)) continue;
-      const sc = w / (d + 6); if (!best || sc > best.sc) best = { c, sc, d };
+      const sc = w / (d + 6);
+      if (!best || sc > best.sc) best = { c, sc, d };
     }
     return best;
   }
   function startFetch(S, pl, a, g, keep) {
     const rot = !keep && (!SS.rotlock || SS.rotlock.allowed(S));
     const dist = M.len3(g.c.pos.x - a.pos.x, g.c.pos.y - a.pos.y, g.c.pos.z - a.pos.z);
-    pl.mv = { kind: 1, st: rot ? 'align' : 'go', why: 'crate', t0: S.time, tmax: M.clamp(4 + dist / K.WALK_V, 9, 20), crate: g.c.id, goalS: 0, dir: 1, lastS: 0, stuckT: 0, jumps: 0, tChk: S.time };
+    pl.mv = {
+      kind: 1,
+      st: rot ? 'align' : 'go',
+      why: 'crate',
+      t0: S.time,
+      tmax: M.clamp(4 + dist / K.WALK_V, 9, 20),
+      crate: g.c.id,
+      goalS: 0,
+      dir: 1,
+      lastS: 0,
+      stuckT: 0,
+      jumps: 0,
+      tChk: S.time
+    };
     if (rot) sim().align_to_point(S, g.c.pos.x, g.c.pos.z);
     pl.phase = 'move'; return true;
   }
 
-  /* P95: one straight leg through a cave toward the nearest foe by PATH (sim/aid.js nav.leg gives the waypoint). The section turns to the waypoint while the rotation is free,
-   * then the worm walks it (kind 4: moveWalk 'align' fixes goalS from the waypoint once the turn is done); false when the plane cannot be turned and the waypoint is off it. */
+  /* P95: one straight leg through a cave toward the nearest foe by PATH (sim/aid.js nav.leg gives the waypoint). The
+   * section turns to the waypoint while the rotation is free,
+   * then the worm walks it (kind 4: moveWalk 'align' fixes goalS from the waypoint once the turn is done); false when
+   * the plane cannot be turned and the waypoint is off it. */
   AB.nav_walk = function (S, pl, a, g) {
     const rot = !SS.rotlock || SS.rotlock.allowed(S), cp = P.to_plane(S, { x: g.x, y: g.y, z: g.z }), ap = P.to_plane(S, a.pos);
     if (!rot && Math.abs(cp.t) > 1.0) return false;
     const dist = M.len3(g.x - a.pos.x, g.y - a.pos.y, g.z - a.pos.z);
-    pl.mv = { kind: 4, st: rot ? 'align' : 'go', why: 'nav', t0: S.time, tmax: M.clamp(3 + dist / K.WALK_V, 5, 14), crate: -1, goalS: cp.s, dir: cp.s >= ap.s ? 1 : -1, lastS: ap.s, stuckT: 0, jumps: 0, tChk: S.time, wx: g.x, wy: g.y, wz: g.z };
+    pl.mv = {
+      kind: 4,
+      st: rot ? 'align' : 'go',
+      why: 'nav',
+      t0: S.time,
+      tmax: M.clamp(3 + dist / K.WALK_V, 5, 14),
+      crate: -1,
+      goalS: cp.s,
+      dir: cp.s >= ap.s ? 1 : -1,
+      lastS: ap.s,
+      stuckT: 0,
+      jumps: 0,
+      tChk: S.time,
+      wx: g.x,
+      wy: g.y,
+      wz: g.z
+    };
     if (rot) sim().align_to_point(S, g.x, g.z);
     pl.phase = 'move'; return true;
   };
@@ -253,17 +402,30 @@
     const ap = P.to_plane(S, a.pos);
     const X = xenoNear(S, a.pos.x, a.pos.y, a.pos.z, K.XENO_PAD);
     if (X) {
-      let bs = null, bd = 1e9; for (const nd of X.n) { const d = M.len3(nd.x - a.pos.x, nd.y - a.pos.y, nd.z - a.pos.z); if (d < bd) { bd = d; bs = P.to_plane(S, nd).s; } }
+      let bs = null, bd = 1e9;
+      for (const nd of X.n) {
+        const d = M.len3(nd.x - a.pos.x, nd.y - a.pos.y, nd.z - a.pos.z);
+        if (d < bd) {
+          bd = d;
+          bs = P.to_plane(S, nd).s;
+        }
+      }
       const dir = bs > ap.s ? -1 : 1;
       if (AB.safe_step(S, a, dir)) return startWalk(S, pl, a, ap.s + dir * (X.range + 7 - bd), 'xeno', 5);
     }
-    if (SS.fort && SS.fort.is() && SS.fort.trapped(a.pos.x, a.pos.z, a.pos.y) && !a.air && !S.rope) {      // P68b: in a fort-mode chasm / pit: the teleport, else the rope
+    // P68b: in a fort-mode chasm / pit: the teleport, else the rope
+    if (SS.fort && SS.fort.is() && SS.fort.trapped(a.pos.x, a.pos.z, a.pos.y) && !a.air && !S.rope) {
       const danger = a.pos.y + 4;
-      if (SS.aic && SS.aic.escape(S, pl, a, danger)) return true;                  // (the teleport first: the rope plan rarely finds a swing out of a pit)
-      if (pl.moves < K.MAX_MOVES && ropeStart(S, pl, a, { type: 1, s: ap.s, y: a.pos.y, dangerY: danger }, [1, -1])) { pl.moves++; return true; }
+      // (the teleport first: the rope plan rarely finds a swing out of a pit)
+      if (SS.aic && SS.aic.escape(S, pl, a, danger)) return true;
+      if (pl.moves < K.MAX_MOVES && ropeStart(S, pl, a, { type: 1, s: ap.s, y: a.pos.y, dangerY: danger }, [1, -1])) {
+        pl.moves++;
+        return true;
+      }
     }
     if (S.sudden && !W().dry && SS.water) {                                  // the sea rises after every turn: climb away from it
-      const surf = M.max(sim().surface_at(S, a.pos.x, a.pos.z), W().SEA), danger = surf + C.GAME.SD_AI_MARGIN;      // (P84: the sea rises slowly and without pause: stay SD_AI_MARGIN m above it, about two turns ahead)
+      // (P84: the sea rises slowly and without pause: stay SD_AI_MARGIN m above it, about two turns ahead)
+      const surf = M.max(sim().surface_at(S, a.pos.x, a.pos.z), W().SEA), danger = surf + C.GAME.SD_AI_MARGIN;
       if (a.pos.y - 0.5 < danger) {
         let bestS = null, bestD = 1e9;
         for (let o = -30; o <= 30; o += 1) {
@@ -272,38 +434,77 @@
           bestS = s; bestD = Math.abs(o);
         }
         if (bestS != null) return startWalk(S, pl, a, bestS, 'sea', 9);
-        if (pl.moves < K.MAX_MOVES && ropeStart(S, pl, a, { type: 1, s: ap.s, y: a.pos.y, dangerY: danger }, [1, -1])) { pl.moves++; return true; }
-        if (SS.aic && SS.aic.escape(S, pl, a, danger)) return true;                // P38-R5: the teleport, when nothing else gets it out of the sea
+        if (pl.moves < K.MAX_MOVES && ropeStart(S, pl, a, { type: 1, s: ap.s, y: a.pos.y, dangerY: danger }, [1, -1])) {
+          pl.moves++;
+          return true;
+        }
+        // P38-R5: the teleport, when nothing else gets it out of the sea
+        if (SS.aic && SS.aic.escape(S, pl, a, danger)) return true;
       }
     }
-    if (a.hp <= K.FETCH_HP && pl.moves < K.MAX_MOVES) { const g = crateGoal(S, pl, a, K.FETCH_HP); if (g) { pl.moves++; return startFetch(S, pl, a, g); } }
-    /* P38-R5 (B9): a rare / super weapon crate (worth >= BIG_WORTH HP-eq) is worth more than this turn's shot (the CPU's shots average 15-35 HP): go and get it,
-     * turning the section to it while the rotation is free; the turn goes on from the new spot with whatever targets are on that plane */
-    if (pl.moves < K.MAX_MOVES) { const g = bigCrate(S, pl, a); if (g) { pl.moves++; return startFetch(S, pl, a, g); } }
-    if (pl.moves < K.MAX_MOVES && !pl.collected) { const g = collectGoal(S, pl, a); if (g) { pl.collected = 1; pl.moves++; return startFetch(S, pl, a, g); } }      // P99
-    if (a.hp <= K.FETCH_HP && AB.crate_far(S, pl, a, true)) return true;                  // P99: a hurt worm and a health crate out of a walk's reach (a ledge above): rope, or the teleport when very low
+    if (a.hp <= K.FETCH_HP && pl.moves < K.MAX_MOVES) {
+      const g = crateGoal(S, pl, a, K.FETCH_HP);
+      if (g) {
+        pl.moves++;
+        return startFetch(S, pl, a, g);
+      }
+    }
+    /* P38-R5 (B9): a rare / super weapon crate (worth >= BIG_WORTH HP-eq) is worth more than this turn's shot (the
+     * CPU's shots average 15-35 HP): go and get it,
+     * turning the section to it while the rotation is free; the turn goes on from the new spot with whatever targets
+     * are on that plane */
+    if (pl.moves < K.MAX_MOVES) {
+      const g = bigCrate(S, pl, a);
+      if (g) {
+        pl.moves++;
+        return startFetch(S, pl, a, g);
+      }
+    }
+    // P99
+    if (pl.moves < K.MAX_MOVES && !pl.collected) {
+      const g = collectGoal(S, pl, a);
+      if (g) {
+        pl.collected = 1;
+        pl.moves++;
+        return startFetch(S, pl, a, g);
+      }
+    }
+    // P99: a hurt worm and a health crate out of a walk's reach (a ledge above): rope, or the teleport when very low
+    if (a.hp <= K.FETCH_HP && AB.crate_far(S, pl, a, true)) return true;
     return false;
   };
 
-  /* P38-R2: a shot exists but is weak (< SHOT_OK): first pick up a weapon / tool crate lying within DETOUR_R m on the shot's own
-   * plane (no realign: the target stays on it; any shot: a crate within K.DETOUR_NEAR m), then search again from there. Crates were picked in 3 % of the turns. */
+  /* P38-R2: a shot exists but is weak (< SHOT_OK): first pick up a weapon / tool crate lying within DETOUR_R m on the
+   * shot's own
+   * plane (no realign: the target stays on it; any shot: a crate within K.DETOUR_NEAR m), then search again from there.
+   * Crates were picked in 3 % of the turns. */
   AB.mark_bad = markBad; AB.is_bad = isBad;
-  /* P99: rv = the value of the shot the CPU has. A crate worth more than that (worth x CRATE_PREF > rv: a health crate for a hurt worm, a rare weapon, a tool when the shot is weak) is fetched
-   * even off the shot's plane (the shot is lost only when no foe is on the new plane: its value was lower anyway). The P38 rule stays: a non-health crate within maxD m (plus the rarity bonus). */
+  /* P99: rv = the value of the shot the CPU has. A crate worth more than that (worth x CRATE_PREF > rv: a health crate
+   * for a hurt worm, a rare weapon, a tool when the shot is weak) is fetched
+   * even off the shot's plane (the shot is lost only when no foe is on the new plane: its value was lower anyway). The
+   * P38 rule stays: a non-health crate within maxD m (plus the rarity bonus). */
   AB.detour = function (S, pl, a, maxD, loose, rv) {
     if (pl.moves >= K.MAX_MOVES || a.air || S.rope || pl.detour) return false;
-    let best = null; const rot = !SS.rotlock || SS.rotlock.allowed(S);
+    let best = null;
+    const rot = !SS.rotlock || SS.rotlock.allowed(S);
     for (const c of S.crates) {
       if (!c.landed || isBad(S, pl, c.id)) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z), cp = P.to_plane(S, c.pos), w = crateNeed(S, a, c);
       if (!dyOk(c.pos.y - a.pos.y)) continue;
       const legacy = c.kind !== 'health' && d <= maxD + bonusR(S, a, c) && Math.abs(c.pos.y - a.pos.y) <= 3;
-      const valued = rv != null && !S.eow && w > 8 && w * K.CRATE_PREF > rv && d <= K.FETCH_R + bonusR(S, a, c) && w / (d + 6) >= K.COLLECT_SC;
+      const valued = rv != null
+        && !S.eow
+        && w > 8
+        && w * K.CRATE_PREF > rv
+        && d <= K.FETCH_R + bonusR(S, a, c)
+        && w / (d + 6) >= K.COLLECT_SC;
       if (!legacy && !valued) continue;
-      const on = Math.abs(cp.t) <= 1.2;                                   // on the shot's plane, or (rotation still free) a plane that has a foe on it
+      // on the shot's plane, or (rotation still free) a plane that has a foe on it
+      const on = Math.abs(cp.t) <= 1.2;
       if (!on && !(rot && (loose || valued || foeOnCratePlane(S, a, c)))) continue;
       if (!crateSafe(S, a, c)) continue;
-      if (on && !walkReach(S, P.to_plane(S, a.pos).s, cp.s, a.pos.y)) continue;     // (an off-plane crate is checked after the turn to it: moveWalk 'align')
+      // (an off-plane crate is checked after the turn to it: moveWalk 'align')
+      if (on && !walkReach(S, P.to_plane(S, a.pos).s, cp.s, a.pos.y)) continue;
       const sc = valued ? w / (d + 6) : 0.5;
       if (!best || sc > best.sc) best = { c, d, sc, on };
     }
@@ -311,53 +512,88 @@
     pl.detour = 1; pl.moves++; return startFetch(S, pl, a, best, best.on);
   };
 
-  /* P38-R2: the retreat window after a shot: toward a crate lying on the view plane within RETREAT_R m (any kind: weapon / tool, a health
-   * crate when below 80 HP), else 0. (The plane is fixed after the shot, the crate must be on it; walkable: no water / drop.) */
-  // one of the worm's own shells / sheep still in flight within 8 m of that spot of the plane: the retreat must not walk into its own blast
-  function shellNear(S, a, s) { for (let i = 0; i < S.proj.length; i++) { const p = S.proj[i]; if (p.owner === a.id && Math.abs(p.s - s) < 8) return true; } return false; }
+  /* P38-R2: the retreat window after a shot: toward a crate lying on the view plane within RETREAT_R m (any kind:
+   * weapon / tool, a health
+   * crate when below 80 HP), else 0. (The plane is fixed after the shot, the crate must be on it; walkable: no water /
+   * drop.) */
+  // one of the worm's own shells / sheep still in flight within 8 m of that spot of the plane: the retreat must not
+  // walk into its own blast
+  function shellNear(S, a, s) {
+    for (let i = 0; i < S.proj.length; i++) {
+      const p = S.proj[i];
+      if (p.owner === a.id && Math.abs(p.s - s) < 8) return true;
+    }
+    return false;
+  }
   AB.retreat_crate_dir = function (S, a) {
-    let best = null; const ap = P.to_plane(S, a.pos);
+    let best = null;
+    const ap = P.to_plane(S, a.pos);
     for (const c of S.crates) {
       if (!c.landed || isBad(S, null, c.id) || (c.kind === 'health' && a.hp >= 80 && !needsCure(a))) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z), cp = P.to_plane(S, c.pos);
-      if (d > M.min(K.RETREAT_R + bonusR(S, a, c), S.retreatT > 0 ? K.WALK_V * S.retreatT : 1e9) || Math.abs(c.pos.y - a.pos.y) > 3 || Math.abs(cp.t) > 1.0 || Math.abs(cp.s - ap.s) < K.WALK_TOL) continue;
+      if (
+        d > M.min(K.RETREAT_R + bonusR(S, a, c), S.retreatT > 0 ? K.WALK_V * S.retreatT : 1e9)
+        || Math.abs(c.pos.y - a.pos.y) > 3
+        || Math.abs(cp.t) > 1.0
+        || Math.abs(cp.s - ap.s) < K.WALK_TOL
+      ) continue;
       if (!walkReach(S, ap.s, cp.s, a.pos.y) || shellNear(S, a, cp.s)) continue;
       if (!best || d < best.d) best = { d, dir: cp.s > ap.s ? 1 : -1 };
     }
     return best ? best.dir : 0;
   };
 
-  /* P99: no shot and no crate within a walk, but a worthwhile one lies on a ledge / across a gap / far off: swing toward it on the rope when it is on the plane, else
-   * teleport onto it (the crate is picked up the moment the worm stands within 1.1 m). Only crates worth >= FAR_MIN, safe, within FAR_R m, once per turn. */
+  /* P99: no shot and no crate within a walk, but a worthwhile one lies on a ledge / across a gap / far off: swing
+   * toward it on the rope when it is on the plane, else
+   * teleport onto it (the crate is picked up the moment the worm stands within 1.1 m). Only crates worth >= FAR_MIN,
+   * safe, within FAR_R m, once per turn. */
   AB.crate_far = function (S, pl, a, hurt) {
     if (S.eow || pl.far || pl.moves >= K.MAX_MOVES || a.air || S.rope) return false;
     let best = null;
     for (let i = 0; i < S.crates.length; i++) {
-      const c = S.crates[i]; if (!c.landed || (hurt && c.kind !== 'health')) continue;
-      if (hurt && dyOk(c.pos.y - a.pos.y)) continue;                                // (before the search only what a walk cannot reach: the rest is fetched on foot)
+      const c = S.crates[i];
+      if (!c.landed || (hurt && c.kind !== 'health')) continue;
+      // (before the search only what a walk cannot reach: the rest is fetched on foot)
+      if (hurt && dyOk(c.pos.y - a.pos.y)) continue;
       const d = M.len3(c.pos.x - a.pos.x, c.pos.y - a.pos.y, c.pos.z - a.pos.z), w = crateNeed(S, a, c);
       if (d > K.FAR_R || w < K.FAR_MIN || d < 3 || !crateSafe(S, a, c)) continue;
-      const sc = w / (d + 10); if (!best || sc > best.sc) best = { c, sc, d, w };
+      const sc = w / (d + 10);
+      if (!best || sc > best.sc) best = { c, sc, d, w };
     }
     if (!best) return false;
     pl.far = 1;
     const c = best.c, cp = P.to_plane(S, c.pos), ap = P.to_plane(S, a.pos);
-    if (SS.aic && SS.aic.crate_teleport && best.w >= 30 && (!hurt || a.hp <= K.TP_HP) && SS.aic.crate_teleport(S, pl, a, c, cp)) return true;
-    if (Math.abs(cp.t) < 1.2 && best.d < 30 && ropeStart(S, pl, a, { type: 0, s: cp.s, y: c.pos.y, dangerY: 0 }, [cp.s >= ap.s ? 1 : -1])) { pl.moves++; return true; }
+    if (SS.aic && SS.aic.crate_teleport && best.w >= 30 && (!hurt || a.hp <= K.TP_HP) && SS.aic.crate_teleport(S, pl, a, c, cp))
+      return true;
+    if (Math.abs(cp.t) < 1.2 && best.d < 30 && ropeStart(S, pl, a, { type: 0, s: cp.s, y: c.pos.y, dangerY: 0 }, [cp.s >= ap.s ? 1 : -1])) {
+      pl.moves++;
+      return true;
+    }
     return false;
   };
   // no shot from here
   AB.reposition = function (S, pl, a) {
     if (pl.moves >= K.MAX_MOVES || a.air || S.rope) return false;
-    const AIx = SS.ai, tgt = AIx.foe(S, pl, pl.fi) || (pl.foes0 && AIx.foe_of(S, pl, pl.foes0[0])); if (!tgt) return false;
+    const AIx = SS.ai, tgt = AIx.foe(S, pl, pl.fi) || (pl.foes0 && AIx.foe_of(S, pl, pl.foes0[0]));
+    if (!tgt) return false;
     const g = crateGoal(S, pl, a, null);
-    if (g && g.sc * 20 > 8 && (!SS.rotlock || SS.rotlock.allowed(S) || Math.abs(P.to_plane(S, g.c.pos).t) < 0.8)) { pl.moves++; return startFetch(S, pl, a, g); }
+    if (g && g.sc * 20 > 8 && (!SS.rotlock || SS.rotlock.allowed(S) || Math.abs(P.to_plane(S, g.c.pos).t) < 0.8)) {
+      pl.moves++;
+      return startFetch(S, pl, a, g);
+    }
     if (AB.crate_far(S, pl, a)) return true;
     const tp = P.to_plane(S, tgt.pos);
-    if (Math.abs(tp.t) > 3) return false;                                     // the target is not on this section: rope / zip only work in it
+    // the target is not on this section: rope / zip only work in it
+    if (Math.abs(tp.t) > 3) return false;
     const goal = { type: 0, s: tp.s, y: tgt.pos.y, dangerY: 0 }, dir = tp.s >= P.to_plane(S, a.pos).s ? 1 : -1;
-    if (canK(S, 'zipline') && zipStart(S, pl, a, goal, dir)) { pl.moves++; return true; }
-    if (ropeStart(S, pl, a, goal, [dir])) { pl.moves++; return true; }
+    if (canK(S, 'zipline') && zipStart(S, pl, a, goal, dir)) {
+      pl.moves++;
+      return true;
+    }
+    if (ropeStart(S, pl, a, goal, [dir])) {
+      pl.moves++;
+      return true;
+    }
     return false;
   };
 
@@ -368,24 +604,33 @@
     let s = s0 + ds * 0.4, y = y0 + dy * 0.4;
     for (let d = 0.4; d < C.ROPE_MAX; d += 0.1) {
       s += ds * 0.1; y += dy * 0.1;
-      if (P.solid2(S, s, y) || (S.planeBodies.length && P.body_at2(S, s, y, true) >= 0)) return { s, y, len: M.max(C.ROPE_MIN, M.len2(s - s0, y - y0)) };
+      if (P.solid2(S, s, y) || (S.planeBodies.length && P.body_at2(S, s, y, true) >= 0))
+        return { s, y, len: M.max(C.ROPE_MIN, M.len2(s - s0, y - y0)) };
       if (y < 0.2 || y > W().SY + 2) return null;
     }
     return null;
   }
-  // candidates: a few spots along the walk (0 .. 10 m toward each direction, the swing needs room: a worm standing on the ledge's
-  // foot would scrape the ground) x launch angles; each is a hook ray + (later, one per step) a swing simulation
+  // candidates: a few spots along the walk (0 .. 10 m toward each direction, the swing needs room: a worm standing on
+  // the ledge's foot would scrape the ground) x launch angles; each is a hook ray + (later, one per step) a swing
+  // simulation
   function ropeStart(S, pl, a, goal, dirs) {
     if (a.air || S.rope) return false;
     const cands = [], ap = P.to_plane(S, a.pos), g0 = WPm().ground_below(S, ap.s, a.pos.y + 0.6), lift = g0 > -1e8 ? a.pos.y - g0 : 0.5;
-    for (const dir of dirs) for (let off = 0; off <= 12; off += 1) {
-      const s0 = ap.s + dir * off; let y0 = a.pos.y;
-      if (off > 0) { if (!walkable(S, ap.s, s0, a.pos.y)) break; const g = WPm().ground_below(S, s0, a.pos.y + 1); if (g < -1e8) break; y0 = g + lift; }
-      for (let i = 0; i < 5; i++) {
-        const aim = 0.45 + i * 0.2, h = hookRay(S, s0, y0, aim, dir);
-        if (h && h.len >= 4 && h.y > y0 + 1.5) cands.push({ aim, dir, as: h.s, ay: h.y, len: h.len, s0, y0, off, v: -1e9, tRel: 0 });
+    for (const dir of dirs)
+      for (let off = 0; off <= 12; off += 1) {
+        const s0 = ap.s + dir * off;
+        let y0 = a.pos.y;
+        if (off > 0) {
+          if (!walkable(S, ap.s, s0, a.pos.y)) break;
+          const g = WPm().ground_below(S, s0, a.pos.y + 1);
+          if (g < -1e8) break;
+          y0 = g + lift;
+        }
+        for (let i = 0; i < 5; i++) {
+          const aim = 0.45 + i * 0.2, h = hookRay(S, s0, y0, aim, dir);
+          if (h && h.len >= 4 && h.y > y0 + 1.5) cands.push({ aim, dir, as: h.s, ay: h.y, len: h.len, s0, y0, off, v: -1e9, tRel: 0 });
+        }
       }
-    }
     if (!cands.length) return false;
     pl.mv = { kind: 2, st: 'plan', why: 'rope', t0: S.time, tmax: 30, goal, cand: cands, ci: 0, best: null, lvMin: 0, s00: ap.s };
     pl.phase = 'move'; return true;
@@ -393,8 +638,16 @@
   const lz = { s: 0, y: 0, vy: 0, wet: false, t: 0 };
   // simulate the swing of a candidate (the rope_step pendulum without bends) and the flight after each possible release
   function swingPlan(S, a, goal, c) {
-    const R = RP(), ap = { s: c.s0 }, gk = sim().gravity_k ? sim().gravity_k(S, a) : 1, GW = C.G_WORM * gk, dt = 1 / 60, NS = 8, h = dt / NS;
-    let s = c.s0, y = c.y0, vs = 0, vy = 0; const base = P.overlap2(S, s, y); let best = null;
+    const R = RP(),
+      ap = { s: c.s0 },
+      gk = sim().gravity_k ? sim().gravity_k(S, a) : 1,
+      GW = C.G_WORM * gk,
+      dt = 1 / 60,
+      NS = 8,
+      h = dt / NS;
+    let s = c.s0, y = c.y0, vs = 0, vy = 0;
+    const base = P.overlap2(S, s, y);
+    let best = null;
     for (let i = 0; i < K.SWING_T / dt; i++) {
       const mv = Math.abs(vs) > 0.8 ? (vs > 0 ? 1 : -1) : c.dir;
       let ns = s, ny = y;
@@ -403,12 +656,34 @@
         let dx = ns - c.as, dy = ny - c.ay, L = M.nz(M.len2(dx, dy), 1);
         if (mv && L > c.len - 0.35) {
           let ts = -dy / L, ty = dx / L;
-          if (Math.abs(ts) > 0.12) { if (ts * mv < 0) { ts = -ts; ty = -ty; } } else if (ty < 0) { ts = -ts; ty = -ty; }
+          if (Math.abs(ts) > 0.12) {
+            if (ts * mv < 0) {
+              ts = -ts;
+              ty = -ty;
+            }
+          } else if (ty < 0) {
+            ts = -ts;
+            ty = -ty;
+          }
           vs += ts * R.PUMP_K * C.G_WORM * h; vy += ty * R.PUMP_K * C.G_WORM * h;
         }
-        const dm = M.exp(-R.DAMP * h); vs *= dm; vy *= dm;
-        ns += vs * h; ny += vy * h; dx = ns - c.as; dy = ny - c.ay; L = M.len2(dx, dy);
-        if (L > c.len) { ns = c.as + dx / L * c.len; ny = c.ay + dy / L * c.len; const rv = (vs * dx + vy * dy) / L; if (rv > 0) { vs -= rv * dx / L; vy -= rv * dy / L; } }
+        const dm = M.exp(-R.DAMP * h);
+        vs *= dm;
+        vy *= dm;
+        ns += vs * h;
+        ny += vy * h;
+        dx = ns - c.as;
+        dy = ny - c.ay;
+        L = M.len2(dx, dy);
+        if (L > c.len) {
+          ns = c.as + dx / L * c.len;
+          ny = c.ay + dy / L * c.len;
+          const rv = (vs * dx + vy * dy) / L;
+          if (rv > 0) {
+            vs -= rv * dx / L;
+            vy -= rv * dy / L;
+          }
+        }
       }
       if (P.overlap2(S, ns, ny) > base + 5) return best;                      // it would scrape the ground / a wall: stop here
       s = ns; y = ny;
@@ -426,8 +701,14 @@
     switch (m.st) {
       case 'plan': {
         if (m.ci < m.cand.length) {                                           // one candidate per step
-          const c = m.cand[m.ci++]; c.sBase = m.s00; const r = swingPlan(S, a, m.goal, c);
-          if (r) { c.v = r.v; c.tRel = r.tRel; if (!m.best || c.v > m.best.v) m.best = c; }
+          const c = m.cand[m.ci++];
+          c.sBase = m.s00;
+          const r = swingPlan(S, a, m.goal, c);
+          if (r) {
+            c.v = r.v;
+            c.tRel = r.tRel;
+            if (!m.best || c.v > m.best.v) m.best = c;
+          }
           return false;
         }
         if (!m.best || m.best.v < K.MOVE_MIN) return true;
@@ -435,33 +716,56 @@
       }
       case 'approach': {
         const ds = m.best.s0 - P.to_plane(S, a.pos).s, dir = ds > 0 ? 1 : -1;
-        if (Math.abs(ds) < 0.3) { m.st = 'fire'; return false; }
+        if (Math.abs(ds) < 0.3) {
+          m.st = 'fire';
+          return false;
+        }
         if (!AB.safe_step(S, a, dir) && Math.abs(ds) > 1) return true;
         inp.move = dir; return false;
       }
       case 'fire':
-        S.weapon = 'rope'; S.aim = m.best.aim; a.facing = m.best.dir; inp.fire_pressed = 1; m.st = 'hook'; m.t1 = S.time; return false;
+        S.weapon = 'rope';
+        S.aim = m.best.aim;
+        a.facing = m.best.dir;
+        inp.fire_pressed = 1;
+        m.st = 'hook';
+        m.t1 = S.time;
+        return false;
       case 'hook':
-        if (S.rope && S.rope.hooked) { m.st = 'swing'; m.tAttach = S.time; }
+        if (S.rope && S.rope.hooked) {
+          m.st = 'swing';
+          m.tAttach = S.time;
+        }
         else if (!S.hook && S.time - m.t1 > 0.05) return true;                // the hook found nothing: give up
         return false;
       case 'swing': {
-        if (!S.rope) { m.st = 'fly'; return false; }
+        if (!S.rope) {
+          m.st = 'fly';
+          return false;
+        }
         const t = S.time - m.tAttach, dir = m.best.dir;
         inp.move = Math.abs(a.vs) > 0.8 ? (a.vs > 0 ? 1 : -1) : dir;
         if (t >= m.best.tRel - 0.05) {
-          const ap = P.to_plane(S, a.pos); landing(S, a, ap.s, a.pos.y, a.vs, a.vy, lz);
+          const ap = P.to_plane(S, a.pos);
+          landing(S, a, ap.s, a.pos.y, a.vs, a.vy, lz);
           const v = spotValue(S, m.goal, m.s00, lz.s, lz.y, lz);
           if (v >= m.lvMin || t > m.best.tRel + 2.5) {
             if (-lz.vy > 13 && canK(S, 'parachute')) S.weapon = 'parachute';   // a long fall: the canopy opens by itself when it gets fast
             inp.jump = 1; m.st = 'fly'; m.t2 = S.time;                         // (jump = let go)
           }
         }
-        if (t > K.SWING_T + 3) { inp.jump = 1; m.st = 'fly'; m.t2 = S.time; }
+        if (t > K.SWING_T + 3) {
+          inp.jump = 1;
+          m.st = 'fly';
+          m.t2 = S.time;
+        }
         return false;
       }
       case 'fly':
-        if (S.rope) { inp.jump = 1; return false; }
+        if (S.rope) {
+          inp.jump = 1;
+          return false;
+        }
         if (!a.air && S.time - (m.t2 || m.t0) > 0.2) return true;
         return false;
     }
@@ -471,14 +775,29 @@
   /* ----- zipline ----- */
   function zipStart(S, pl, a, goal, dir) {
     if (a.air || a.walking || S.rope) return false;
-    const Z = C.TRAV.ZIP, ap = P.to_plane(S, a.pos), g0 = WPm().ground_below(S, ap.s, a.pos.y + 0.6), lift = g0 > -1e8 ? a.pos.y - g0 : 0.5; let best = null;
+    const Z = C.TRAV.ZIP, ap = P.to_plane(S, a.pos), g0 = WPm().ground_below(S, ap.s, a.pos.y + 0.6), lift = g0 > -1e8 ? a.pos.y - g0 : 0.5;
+    let best = null;
     for (let off = 0; off <= 12; off += 1.5) {                                // from here or a few metres on (the brink of a ledge)
-      const s0 = ap.s + dir * off; let y0 = a.pos.y;
-      if (off > 0) { if (!walkable(S, ap.s, s0, a.pos.y)) break; const g = WPm().ground_below(S, s0, a.pos.y + 1); if (g < -1e8) break; y0 = g + lift; }
+      const s0 = ap.s + dir * off;
+      let y0 = a.pos.y;
+      if (off > 0) {
+        if (!walkable(S, ap.s, s0, a.pos.y)) break;
+        const g = WPm().ground_below(S, s0, a.pos.y + 1);
+        if (g < -1e8) break;
+        y0 = g + lift;
+      }
       for (let aim = -0.15; aim >= -0.95; aim -= 0.1) {
         const ds = dir * M.cos(aim), dy = M.sin(aim), ay = y0 + Z.HANG;
         let s = s0 + ds * 0.4, y = y0 + dy * 0.4, hit = null;
-        for (let d = 0.4; d < Z.RANGE; d += 0.1) { s += ds * 0.1; y += dy * 0.1; if (P.solid2(S, s, y) || (S.planeBodies.length && P.body_at2(S, s, y, true) >= 0)) { hit = { s: s - ds * 0.1, y: y - dy * 0.1 }; break; } if (y < 0.2) break; }
+        for (let d = 0.4; d < Z.RANGE; d += 0.1) {
+          s += ds * 0.1;
+          y += dy * 0.1;
+          if (P.solid2(S, s, y) || (S.planeBodies.length && P.body_at2(S, s, y, true) >= 0)) {
+            hit = { s: s - ds * 0.1, y: y - dy * 0.1 };
+            break;
+          }
+          if (y < 0.2) break;
+        }
         if (!hit) continue;
         const L = M.len2(hit.s - s0, hit.y - ay);
         if (L < Z.MIN_LEN || ay - hit.y < Z.MIN_DROP || P.solid2(S, s0, ay) || !clearLine(S, s0, ay, hit.s, hit.y)) continue;
@@ -496,13 +815,22 @@
     const m = pl.mv, b = m.best, z = S.zip;
     if (m.st === 'approach') {
       const ds = b.s0 - P.to_plane(S, a.pos).s, dir = ds > 0 ? 1 : -1;
-      if (Math.abs(ds) < 0.3) { m.st = 'fire'; return false; }
+      if (Math.abs(ds) < 0.3) {
+        m.st = 'fire';
+        return false;
+      }
       if (!AB.safe_step(S, a, dir) && Math.abs(ds) > 1) return true;
       inp.move = dir; return false;
     }
     if (m.st === 'fire') {
       if (a.air || a.walking) return false;
-      S.weapon = 'zipline'; S.aim = b.aim; a.facing = b.dir; inp.fire_pressed = 1; m.st = 'ride'; m.t1 = S.time; return false;
+      S.weapon = 'zipline';
+      S.aim = b.aim;
+      a.facing = b.dir;
+      inp.fire_pressed = 1;
+      m.st = 'ride';
+      m.t1 = S.time;
+      return false;
     }
     if (z && z.state === 2) inp.move = b.dir;                                  // a push along the line
     if (S.time - m.t1 > 0.3 && (!z || z.state === 0 || z.state === 3) && !a.air) return true;
@@ -514,28 +842,67 @@
     const m = pl.mv, ap = P.to_plane(S, a.pos);
     if (m.st === 'align') {
       if (S.thetaGoal != null) return false;
-      if (m.kind === 4) { m.goalS = P.to_plane(S, { x: m.wx, y: m.wy, z: m.wz }).s; m.dir = m.goalS >= ap.s ? 1 : -1; if (m.wy < a.pos.y - 1.5) m.goalS += m.dir * 2.5; m.st = 'go'; m.t0 = S.time; m.lastS = ap.s; m.tChk = S.time; return false; }       // (P95: the cave leg)
-      const c = S.crates.find(q => q.id === m.crate); if (!c) return true;
+      // (P95: the cave leg)
+      if (m.kind === 4) {
+        m.goalS = P.to_plane(S, { x: m.wx, y: m.wy, z: m.wz }).s;
+        m.dir = m.goalS >= ap.s ? 1 : -1;
+        if (m.wy < a.pos.y - 1.5) m.goalS += m.dir * 2.5;
+        m.st = 'go';
+        m.t0 = S.time;
+        m.lastS = ap.s;
+        m.tChk = S.time;
+        return false;
+      }
+      const c = S.crates.find(q => q.id === m.crate);
+      if (!c) return true;
       const cp = P.to_plane(S, c.pos);
-      if (Math.abs(cp.t) > 0.9 || !walkReach(S, ap.s, cp.s, a.pos.y)) { markBad(S, pl, m.crate); return true; }
-      m.goalS = cp.s; m.st = 'go'; m.t0 = S.time; m.lastS = ap.s; m.tChk = S.time; return false;
+      if (Math.abs(cp.t) > 0.9 || !walkReach(S, ap.s, cp.s, a.pos.y)) {
+        markBad(S, pl, m.crate);
+        return true;
+      }
+      m.goalS = cp.s;
+      m.st = 'go';
+      m.t0 = S.time;
+      m.lastS = ap.s;
+      m.tChk = S.time;
+      return false;
     }
-    if (m.kind === 1) { const c = S.crates.find(q => q.id === m.crate); if (!c) return true; if (m.st === 'go') m.goalS = P.to_plane(S, c.pos).s; }
+    if (m.kind === 1) {
+      const c = S.crates.find(q => q.id === m.crate);
+      if (!c) return true;
+      if (m.st === 'go') m.goalS = P.to_plane(S, c.pos).s;
+    }
     const ds = m.goalS - ap.s;
-    if (m.kind === 4 && ds * m.dir <= 0) return true;                          // (P99: the cave leg ends on a drop: the goal lies 2.5 m past the edge, the worm falls over it and stops once it has passed it)
-    if (m.kind === 1 && Math.abs(ds) < K.WALK_TOL) { const c1 = S.crates.find(q => q.id === m.crate); if (c1 && Math.abs(c1.pos.y - a.pos.y) > 1.6) markBad(S, pl, m.crate); }      // (P99: right above / below the crate but not on it: a cliff between, give it up)
+    // (P99: the cave leg ends on a drop: the goal lies 2.5 m past the edge, the worm falls over it and stops once it
+    // has passed it)
+    if (m.kind === 4 && ds * m.dir <= 0) return true;
+    // (P99: right above / below the crate but not on it: a cliff between, give it up)
+    if (m.kind === 1 && Math.abs(ds) < K.WALK_TOL) {
+      const c1 = S.crates.find(q => q.id === m.crate);
+      if (c1 && Math.abs(c1.pos.y - a.pos.y) > 1.6) markBad(S, pl, m.crate);
+    }
     if (Math.abs(ds) < K.WALK_TOL || S.time - m.t0 > m.tmax) return true;
     const dir = ds > 0 ? 1 : -1;
-    if (!AB.safe_step(S, a, dir, m.kind === 1 ? WR.MAXDROP : 0)) { if (m.kind === 1) markBad(S, pl, m.crate); return true; }
+    if (!AB.safe_step(S, a, dir, m.kind === 1 ? WR.MAXDROP : 0)) {
+      if (m.kind === 1) markBad(S, pl, m.crate);
+      return true;
+    }
     inp.move = dir;
     if (S.time - m.tChk > 0.8) {                                               // no progress for 0.8 s: hop once or twice, then give up
-      if (Math.abs(ap.s - m.lastS) < 0.25) { if (m.jumps++ >= 2) { if (m.kind === 1) markBad(S, pl, m.crate); return true; } inp.jump = 1; }
+      if (Math.abs(ap.s - m.lastS) < 0.25) {
+        if (m.jumps++ >= 2) {
+          if (m.kind === 1) markBad(S, pl, m.crate);
+          return true;
+        }
+        inp.jump = 1;
+      }
       m.lastS = ap.s; m.tChk = S.time;
     }
     return false;
   }
   AB.move = function (S, pl, a, inp) {
-    const m = pl.mv; if (!m) return true;
+    const m = pl.mv;
+    if (!m) return true;
     if (S.time - m.t0 > m.tmax + 8) return true;
     const r = m.kind === 2 ? moveRope(S, pl, a, inp) : m.kind === 3 ? moveZip(S, pl, a, inp) : moveWalk(S, pl, a, inp);
     if (r) pl.mv = null;
@@ -545,7 +912,8 @@
   // the parachute: a fall that would hurt (AI.control, every step while the worm flies free)
   AB.air = function (S, a) {
     if (!a.air || S.rope || S.weapon === 'parachute' || !canK(S, 'parachute') || a.vy > -6) return;
-    const ap = P.to_plane(S, a.pos); landing(S, a, ap.s, a.pos.y, a.vs, a.vy, lz);
+    const ap = P.to_plane(S, a.pos);
+    landing(S, a, ap.s, a.pos.y, a.vs, a.vy, lz);
     if (-lz.vy > 13) S.weapon = 'parachute';
   };
 
@@ -554,54 +922,102 @@
   AB.cands = function (S, pl, a, tgt, cands, ctx) {
     if (tgt.team === a.team) return;
     // force field: hurt or exposed to several enemies, nothing better to do
-    if (canK(S, 'ffield') && SS.ffield && !S.ffields.some(f => f.state === 0 && f.team === a.team) && !a.air && P.grounded2(S, ctx.ap.s, a.pos.y) && !SS.ffield.inside(S, a.pos, 0)) {
-      // P38-R2: the value is the damage the field would prevent, not a flat 14+: only enemies that can really hit us count (within 35 m,
-      // clear 3D line); a fallback candidate (fb): it is used only when no shot is worth more (ai.js: giveUp / robust)
-      let thr = 0; for (const o of S.worms) if (!o.dead && o.hp > 0 && o.team !== a.team && M.len3(o.pos.x - a.pos.x, o.pos.y - a.pos.y, o.pos.z - a.pos.z) < K.FF_THREAT_R && W().solid_len(o.pos.x, o.pos.y + 0.3, o.pos.z, a.pos.x, a.pos.y + 0.3, a.pos.z) < 0.5) thr++;
-      if (thr >= 1 && a.hp <= 65) cands.push({ special: 'ffield', fb: 1, v: M.min(8, 2 + (100 - a.hp) * 0.06 + 1.5 * M.min(thr, 3)), aim: 0, facing: ctx.facing });
+    if (
+      canK(S, 'ffield')
+      && SS.ffield
+      && !S.ffields.some(f => f.state === 0 && f.team === a.team)
+      && !a.air
+      && P.grounded2(S, ctx.ap.s, a.pos.y)
+      && !SS.ffield.inside(S, a.pos, 0)
+    ) {
+      // P38-R2: the value is the damage the field would prevent, not a flat 14+: only enemies that can really hit us
+      // count (within 35 m, clear 3D line); a fallback candidate (fb): it is used only when no shot is worth more
+      // (ai.js: giveUp / robust)
+      let thr = 0;
+      for (const o of S.worms)
+        if (
+          !o.dead
+          && o.hp > 0
+          && o.team !== a.team
+          && M.len3(o.pos.x - a.pos.x, o.pos.y - a.pos.y, o.pos.z - a.pos.z) < K.FF_THREAT_R
+          && W().solid_len(o.pos.x, o.pos.y + 0.3, o.pos.z, a.pos.x, a.pos.y + 0.3, a.pos.z) < 0.5
+        ) thr++;
+      if (thr >= 1 && a.hp <= 65)
+        cands.push({ special: 'ffield', fb: 1, v: M.min(8, 2 + (100 - a.hp) * 0.06 + 1.5 * M.min(thr, 3)), aim: 0, facing: ctx.facing });
     }
     // gravity gun: a mine / barrel within reach, thrown at the target
     if (canK(S, 'gravgun') && SS.gadgets && !S.grab && !a.air) gravCand(S, pl, a, tgt, cands, ctx);
     // sniper: a long clear shot (the real bullet path incl. drop)
     if (canK(S, 'sniper') && SS.skills && ctx.dist > 12 && ctx.dist < 60) {
-      const A = C.ARMS.SNIPER, out = { pts: [], hit: null }, a0 = S.aim, f0 = a.facing; let ok = null;
+      const A = C.ARMS.SNIPER, out = { pts: [], hit: null }, a0 = S.aim, f0 = a.facing;
+      let ok = null;
       a.facing = ctx.facing;
       for (let da = -0.12; da <= 0.35 && !ok; da += 0.01) {
         S.aim = ctx.aim + da; SS.skills.laser_path(S, a, 'sniper', out);
-        if (out.hit && out.hit.kind === 'worm' && M.len3(out.hit.x - tgt.pos.x, out.hit.y - tgt.pos.y, out.hit.z - tgt.pos.z) < 0.7) ok = S.aim;
+        if (out.hit && out.hit.kind === 'worm' && M.len3(out.hit.x - tgt.pos.x, out.hit.y - tgt.pos.y, out.hit.z - tgt.pos.z) < 0.7)
+          ok = S.aim;
       }
       S.aim = a0; a.facing = f0;
-      if (ok != null) cands.push({ special: 'sniper', v: M.min(tgt.hp, A.DMG) * 1.0 + (tgt.hp <= A.DMG ? 12 : 0), aim: ok, facing: ctx.facing });
+      if (ok != null)
+        cands.push({ special: 'sniper', v: M.min(tgt.hp, A.DMG) * 1.0 + (tgt.hp <= A.DMG ? 12 : 0), aim: ok, facing: ctx.facing });
     }
   };
   function gravCand(S, pl, a, tgt, cands, ctx) {
-    const GD = SS.gadgets, KG = C.TOOLB.GRAV, list = GD.grabbables(S, a, tmpList); let body = null;
-    for (const e of list) if ((e.b.prop === 'mine' || e.b.prop === 'barrel') && e.d < KG.RANGE - 0.5) { body = e.b; break; }
-    if (!body) return;
-    if ((P.to_plane(S, body.pos).s - ctx.ap.s) * ctx.facing < 0.3) return;       // it must lie on the target's side: turning round would drag it through the thrower
-    // throw search: aim x power; the body flies as a point mass from the hold point to the first rock / the first worm
-    const g = C.G, me = a.team; let best = null; const ap = ctx.ap;
-    for (let aim = -0.3; aim <= 1.4; aim += 0.05) for (let pw = 0.3; pw <= 1.0001; pw += 0.1) {
-      const v = 4 + (C.ARSENAL.gravgun.vmax || 24) * pw, ds = ctx.facing * M.cos(aim), dy = M.sin(aim);
-      let s = ap.s + ds * KG.HOLD, y = a.pos.y + dy * KG.HOLD + 0.1, vs = ds * v, vy = dy * v, hitW = null, end = null;
-      if (P.solid2(S, s, y)) continue;
-      for (let t = 0; t < 4 && !end; t += 1 / 30) {
-        vy -= g / 30; s += vs / 30; y += vy / 30;
-        if (P.solid2(S, s, y)) { end = { s, y }; break; }
-        if (body.prop === 'barrel') for (const o of S.worms) { if (o.dead || o === a) continue; const q = P.to_plane(S, o.pos); if (Math.abs(q.t) < 0.5 && M.len2(s - q.s, y - o.pos.y) < C.WORM_R + 0.4) { hitW = o; break; } }
-        if (hitW) break;
+    const GD = SS.gadgets, KG = C.TOOLB.GRAV, list = GD.grabbables(S, a, tmpList);
+    let body = null;
+    for (const e of list)
+      if ((e.b.prop === 'mine' || e.b.prop === 'barrel') && e.d < KG.RANGE - 0.5) {
+        body = e.b;
+        break;
       }
-      if (!end && !hitW) continue;
-      let val = 0;
-      if (body.prop === 'mine') { const wp = P.to_world(S, end.s, end.y + 0.1); val = scoreAt(S, wp, C.PROPS.MINE.W, C.PROPS.MINE.DMG) * 0.7; }
-      else if (hitW) { const sp = M.len2(vs, vy), ke = 0.5 * M.min(body.mass, C.BODY.HIT_MASS) * sp * sp / 1000, dmg = M.min(hitW.hp, Math.round(ke * C.BODY.HIT_PER_KJ));
-        val = (hitW.team === me ? -1.6 : 1) * dmg * 0.8; }
-      if (!best || val > best.v) best = { special: 'gravgun', v: val, aim, pw, facing: ctx.facing, body: body.id };
-    }
+    if (!body) return;
+    // it must lie on the target's side: turning round would drag it through the thrower
+    if ((P.to_plane(S, body.pos).s - ctx.ap.s) * ctx.facing < 0.3) return;
+    // throw search: aim x power; the body flies as a point mass from the hold point to the first rock / the first worm
+    const g = C.G, me = a.team;
+    let best = null;
+    const ap = ctx.ap;
+    for (let aim = -0.3; aim <= 1.4; aim += 0.05)
+      for (let pw = 0.3; pw <= 1.0001; pw += 0.1) {
+        const v = 4 + (C.ARSENAL.gravgun.vmax || 24) * pw, ds = ctx.facing * M.cos(aim), dy = M.sin(aim);
+        let s = ap.s + ds * KG.HOLD, y = a.pos.y + dy * KG.HOLD + 0.1, vs = ds * v, vy = dy * v, hitW = null, end = null;
+        if (P.solid2(S, s, y)) continue;
+        for (let t = 0; t < 4 && !end; t += 1 / 30) {
+          vy -= g / 30; s += vs / 30; y += vy / 30;
+          if (P.solid2(S, s, y)) {
+            end = { s, y };
+            break;
+          }
+          if (body.prop === 'barrel')
+            for (const o of S.worms) {
+              if (o.dead || o === a) continue;
+              const q = P.to_plane(S, o.pos);
+              if (Math.abs(q.t) < 0.5 && M.len2(s - q.s, y - o.pos.y) < C.WORM_R + 0.4) {
+                hitW = o;
+                break;
+              }
+            }
+          if (hitW) break;
+        }
+        if (!end && !hitW) continue;
+        let val = 0;
+        if (body.prop === 'mine') {
+          const wp = P.to_world(S, end.s, end.y + 0.1);
+          val = scoreAt(S, wp, C.PROPS.MINE.W, C.PROPS.MINE.DMG) * 0.7;
+        }
+        else if (hitW) {
+          const sp = M.len2(vs, vy),
+            ke = 0.5 * M.min(body.mass, C.BODY.HIT_MASS) * sp * sp / 1000,
+            dmg = M.min(hitW.hp, Math.round(ke * C.BODY.HIT_PER_KJ));
+          val = (hitW.team === me ? -1.6 : 1) * dmg * 0.8;
+        }
+        if (!best || val > best.v) best = { special: 'gravgun', v: val, aim, pw, facing: ctx.facing, body: body.id };
+      }
     if (best) cands.push(best);
   }
   function scoreAt(S, c, Wkg, dmg) {
-    const me = S.active.team; let v = 0;
+    const me = S.active.team;
+    let v = 0;
     for (const o of S.worms) {
       if (o.dead) continue;
       const e = SS.blast.worm_effect(c, Wkg, o.pos, dmg), dm = M.min(o.hp, Math.round(e.dmg));
@@ -613,26 +1029,50 @@
   // execute a candidate of ours (true when handled)
   AB.fire = function (S, pl, a, b, d, gauss, inp) {
     const k = b.special;
-    if (k === 'ffield') { S.weapon = 'ffield'; a.facing = b.facing; pl.phase = 'done'; pl.fired = { wpn: k, v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) }; WPm().use(S, 0); return true; }
-    if (k === 'sniper') {
-      S.weapon = 'sniper'; a.facing = b.facing; S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.3 * (hasSkill(a, 'laser') ? 0.5 : 1), -1.5, 1.5);
-      pl.phase = 'done'; pl.fired = { wpn: k, v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) }; WPm().use(S, 0); return true;
+    if (k === 'ffield') {
+      S.weapon = 'ffield';
+      a.facing = b.facing;
+      pl.phase = 'done';
+      pl.fired = { wpn: k, v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) };
+      WPm().use(S, 0);
+      return true;
     }
-    if (k === 'gravgun') {                                                       // 1: aim at the body and grab (free), 2: wait for it to come, throw
+    if (k === 'sniper') {
+      S.weapon = 'sniper';
+      a.facing = b.facing;
+      S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.3 * (hasSkill(a, 'laser') ? 0.5 : 1), -1.5, 1.5);
+      pl.phase = 'done';
+      pl.fired = { wpn: k, v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) };
+      WPm().use(S, 0);
+      return true;
+    }
+    // 1: aim at the body and grab (free), 2: wait for it to come, throw
+    if (k === 'gravgun') {
       S.weapon = 'gravgun'; a.facing = b.facing;
-      const body = S.bodies.find(q => q.id === b.body); if (!body) { pl.phase = 'endt'; return true; }
+      const body = S.bodies.find(q => q.id === b.body);
+      if (!body) {
+        pl.phase = 'endt';
+        return true;
+      }
       const ap = P.to_plane(S, a.pos), bp = P.to_plane(S, body.pos), bf = bp.s >= ap.s ? 1 : -1;
       a.facing = bf; S.aim = M.atan2(body.pos.y - a.pos.y, Math.abs(bp.s - ap.s) + 1e-3);
       WPm().use(S, 0);
-      if (S.grab) { pl.grav = { b, t: S.time }; pl.phase = 'grav'; pl.fired = null; }
+      if (S.grab) {
+        pl.grav = { b, t: S.time };
+        pl.phase = 'grav';
+        pl.fired = null;
+      }
       else pl.phase = 'endt';
       return true;
     }
     return false;
   };
   AB.grav_throw = function (S, pl, a, d, gauss) {
-    const g = pl.grav; if (!g || S.time - g.t < 0.5) return false;
-    const b = g.b; a.facing = b.facing; S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5);
+    const g = pl.grav;
+    if (!g || S.time - g.t < 0.5) return false;
+    const b = g.b;
+    a.facing = b.facing;
+    S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5);
     pl.phase = 'done'; pl.fired = { wpn: 'gravgun', v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) };
     SS.sim.fire(S, M.clamp(b.pw + gauss(S) * d.noiseP * 0.5, 0.05, 1));
     return true;

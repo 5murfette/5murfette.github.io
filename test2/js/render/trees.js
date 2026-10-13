@@ -25,7 +25,8 @@
     spruce: { bark: [0.55, 0.4, 0.32], leaf: [0.85, 1.0, 0.9], core: [0.035, 0.08, 0.05] },
     juniper: { bark: [0.7, 0.62, 0.55], leaf: [0.78, 0.86, 0.7], core: [0.05, 0.07, 0.04] },
     snag: { bark: [1.05, 0.98, 0.9], leaf: [1, 1, 1], core: [0.05, 0.05, 0.05] },
-    palm: { bark: [0.95, 0.86, 0.74], leaf: [0.9, 1.0, 0.74], core: [0.05, 0.08, 0.03] }      // P116: coconut palm: grey-tan ringed trunk, glossy yellow-green fronds
+    // P116: coconut palm: grey-tan ringed trunk, glossy yellow-green fronds
+    palm: { bark: [0.95, 0.86, 0.74], leaf: [0.9, 1.0, 0.74], core: [0.05, 0.08, 0.03] }
   };
   let scene = null, tx = null, Q = null, U = null, own = null;
   let woodMat, leafMat, coreMat, woodMats, leafMats, coreMats, woodDepth, leafDepth, coreDepth, meshes = [];
@@ -35,13 +36,25 @@
 
   /* ---------- shaders ---------- */
   const VHEAD = /* glsl */`
-    uniform highp sampler2D tState; uniform float uTime, uPalm; uniform vec3 uWind, uO, uN;
-    attribute vec4 aInfo; attribute vec3 aCen;
-    varying vec3 vTW; varying vec4 vTr; varying float vLeafF; varying float vCut; varying float vRootT; varying vec3 vCenT; varying float vRoot;
+    uniform highp sampler2D tState;
+    uniform float uTime, uPalm;
+    uniform vec3 uWind, uO, uN;
+    attribute vec4 aInfo;
+    attribute vec3 aCen;
+    varying vec3 vTW;
+    varying vec4 vTr;
+    varying float vLeafF;
+    varying float vCut;
+    varying float vRootT;
+    varying vec3 vCenT;
+    varying float vRoot;
     vec3 treeXform(vec3 p) {
       vCenT = aCen; vRoot = 0.0;
     #ifdef LOG
-      vTr = vec4(1.0, aInfo.x, 0.0, 0.0); vLeafF = 1.0; vCut = step(0.95, fract(aInfo.w * 64.0)); vRootT = 0.0;
+      vTr = vec4(1.0, aInfo.x, 0.0, 0.0);
+      vLeafF = 1.0;
+      vCut = step(0.95, fract(aInfo.w * 64.0));
+      vRootT = 0.0;
       return p;
     #else
       int row = int(aInfo.x + 0.5), part = int(aInfo.y + 0.5);
@@ -63,23 +76,32 @@
       vec2 sw = (uWind.xz * 0.014 * g * h * h + vec2(sin(uTime * 1.25 + tr.a * 9.0), cos(uTime * 1.05 + tr.a * 7.0)) * 0.03 * h * h) * (1.0 + 1.2 * uPalm);
       p.xz += sw * (1.0 - 0.75 * tr.g);
       if (leaf) {
-        float fk = uPalm > 0.5 ? 0.02 + 0.2 * length(p - aCen) * (0.35 + length(uWind.xz) * 0.09) : 0.022 * (0.4 + length(uWind.xz) * 0.12);       // a frond flutters at its tip (P116)
+        // a frond flutters at its tip (P116)
+        float fk = uPalm > 0.5 ? 0.02 + 0.2 * length(p - aCen) * (0.35 + length(uWind.xz) * 0.09) : 0.022 * (0.4 + length(uWind.xz) * 0.12);
         p += vec3(sin(uTime * 4.7 + p.y * 2.7 + seed * 30.0), uPalm * 0.7 * sin(uTime * 2.3 + seed * 17.0 + p.x), cos(uTime * 4.1 + p.x * 2.9)) * fk;
       }
       return keep > 0.5 ? p : vec3(0.0);
     #endif
     }`;
   const FCLIP = /* glsl */`
-    varying vec3 vTW; varying vec4 vTr; varying float vLeafF; varying float vCut; varying float vRootT; varying vec3 vCenT; varying float vRoot;
-    uniform vec3 uO, uN, uHaze; uniform float uBack, uAlpha, uInsp, uCtxSolid, uCtxHaze, uSecG;
+    varying vec3 vTW;
+    varying vec4 vTr;
+    varying float vLeafF;
+    varying float vCut;
+    varying float vRootT;
+    varying vec3 vCenT;
+    varying float vRoot;
+    uniform vec3 uO, uN, uHaze;
+    uniform float uBack, uAlpha, uInsp, uCtxSolid, uCtxHaze, uSecG;
     float treeA = 1.0;
     // context behind the slab: same haze as the terrain ghost
     vec3 treeHaze(vec3 c) {
     #ifdef CTX
       float ad = max(0.0, -dot(vTW - uO, uN) - uBack);
-      /* P65i: aerial perspective by the REAL eye distance and the fog colour (Beer-Lambert, like the scene fog), applied to the albedo
-       * at 0.6 of the fog colour (it is lit afterwards, so the full colour came out as a white frost at 15-25 m); the slice depth
-       * only adds a light cue so the ghost still reads as "behind the cut" */
+      /* P65i: aerial perspective by the REAL eye distance and the fog colour (Beer-Lambert, like the scene fog),
+       * applied to the albedo
+       * at 0.6 of the fog colour (it is lit afterwards, so the full colour came out as a white frost at 15-25 m); the
+       * slice depth only adds a light cue so the ghost still reads as "behind the cut" */
       float ed = length(vTW - cameraPosition);
       float aer = 1.0 - exp(-ed * 0.016 * (0.7 + 0.6 * uCtxSolid * uCtxHaze));
       float cue = 0.05 * smoothstep(0.0, 40.0, ad);
@@ -93,10 +115,11 @@
       float m[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
       return (m[k] + 0.5) / 16.0;
     }
-    // passes: main = trees rooted in (or in front of) the slab, drawn whole behind slice zero (+ dithered inspection ghost
-    // in front); CTX = trees rooted behind the slab, drawn like the terrain ghost: a depth pre-pass (renderOrder 4) then
-    // one translucent layer at the front-most depth (renderOrder 5). Per tree, so a crown never splits solid/ghost.
-    // jag > 0 (foliage): the slice cuts the crown along a ragged line a little behind t = 0 instead of a straight edge
+    // passes: main = trees rooted in (or in front of) the slab, drawn whole behind slice zero (+ dithered inspection
+    // ghost in front); CTX = trees rooted behind the slab, drawn like the terrain ghost: a depth pre-pass (renderOrder
+    // 4) then one translucent layer at the front-most depth (renderOrder 5). Per tree, so a crown never splits
+    // solid/ghost. jag > 0 (foliage): the slice cuts the crown along a ragged line a little behind t = 0 instead of a
+    // straight edge
     void treeClipJ(float jag) {
     #ifndef LOG
       float t = dot(vTW - uO, uN);
@@ -106,9 +129,13 @@
      #else
       float a = 1.0;
       if (vRootT < -uBack - ${CTX_M}) discard;
-      // P118c (Q-OV1): in the overview (P85: the whole map solid) the trees in front of the plane are as solid as the terrain under them; a = uInsp only
-      // dithers (screen door) during the 0.35 s transition. It used to be a 30 % ghost fading with the distance: a green stipple swarm over the island
-      if (uSecG < 0.5 && t > 0.02 - jag) { if (uInsp < 0.02) discard; a = uInsp; }
+      // P118c (Q-OV1): in the overview (P85: the whole map solid) the trees in front of the plane are as solid as the
+      // terrain under them; a = uInsp only dithers (screen door) during the 0.35 s transition. It used to be a 30 %
+      // ghost fading with the distance: a green stipple swarm over the island
+      if (uSecG < 0.5 && t > 0.02 - jag) {
+        if (uInsp < 0.02) discard;
+        a = uInsp;
+      }
       if (a < 0.995 && a <= bayer4(gl_FragCoord.xy)) discard;
      #endif
     #endif
@@ -116,15 +143,27 @@
     void treeClip() { treeClipJ(0.0); }`;
   function patchVS(sh) {
     sh.vertexShader = VHEAD + '\n' + sh.vertexShader
-      .replace('#include <begin_vertex>', `vec3 transformed = treeXform(vec3(position)); vTW = transformed;`);
+      .replace('#include <begin_vertex>', /* glsl */`vec3 transformed = treeXform(vec3(position));
+        vTW = transformed;`);
   }
   function makeMats() {
     own = {
       tState: { value: stTex }, uTime: { value: 0 }, uWind: { value: new T.Vector3(1.6, 0, 0.7) },
-      uBarkTint: { value: new T.Color(1, 1, 1) }, uLeafTint: { value: new T.Color(1, 1, 1) }, uCore: { value: new T.Color(0.05, 0.08, 0.03) },
+      uBarkTint: { value: new T.Color(1, 1, 1) }, uLeafTint: { value: new T.Color(1, 1, 1) },
+      uCore: { value: new T.Color(0.05, 0.08, 0.03) },
       uInsp: { value: 0 }, uPalm: { value: 0 }, tLeaf: { value: tx.foliage || null }
     };
-    const shared = () => Object.assign({}, own, { uO: U.uO, uN: U.uN, uBack: U.uBack, uAlpha: U.uAlpha, uSecG: SS.section.uniforms.uSecG, uCtxSolid: U.uCtxSolid, uCtxHaze: U.uCtxHaze, tNoise: U.tNoise, uHaze: U.uHaze || { value: new T.Color(0.6, 0.7, 0.8) } });
+    const shared = () => Object.assign({}, own, {
+      uO: U.uO,
+      uN: U.uN,
+      uBack: U.uBack,
+      uAlpha: U.uAlpha,
+      uSecG: SS.section.uniforms.uSecG,
+      uCtxSolid: U.uCtxSolid,
+      uCtxHaze: U.uCtxHaze,
+      tNoise: U.tNoise,
+      uHaze: U.uHaze || { value: new T.Color(0.6, 0.7, 0.8) }
+    });
     const woodFS = sh => {
       sh.fragmentShader = FCLIP + `
         uniform float uTime, uPalm; uniform vec3 uBarkTint; uniform sampler2D tNoise;
@@ -133,11 +172,15 @@
         .replace('#include <color_fragment>', /* glsl */`#include <color_fragment>
           float nb = texture2D(tNoise, vTW.xz * 0.23 + vTW.y * 0.11).a;
           vec3 c = diffuseColor.rgb * uBarkTint;
-          if (uPalm > 0.5) { float rb = 0.5 + 0.5 * sin(vTW.y * 21.0 + nb * 2.2); c *= 0.7 + 0.42 * rb * rb + 0.12 * (nb - 0.5); }   // P116: palm trunk: ring scars of the old fronds
+          // P116: palm trunk: ring scars of the old fronds
+          if (uPalm > 0.5) {
+            float rb = 0.5 + 0.5 * sin(vTW.y * 21.0 + nb * 2.2);
+            c *= 0.7 + 0.42 * rb * rb + 0.12 * (nb - 0.5);
+          }
           float lum = dot(diffuseColor.rgb, vec3(0.33));
           if (!gl_FrontFacing || vCut > 0.5) {
-            // T3: fresh inner wood (slice / broken end): bright pale-yellow sapwood, growth bands about the segment axis
-            // (faded to their mean once finer than a pixel), torn-fibre mottling
+            // T3: fresh inner wood (slice / broken end): bright pale-yellow sapwood, growth bands about the segment
+            // axis (faded to their mean once finer than a pixel), torn-fibre mottling
             float rr = length(vTW - vCenT), bw = 0.012, aa = fwidth(rr) / bw;
             float band = 0.5 + 0.5 * sin(rr * 6.2832 / bw + nb * 4.0);
             float fib = texture2D(tNoise, vTW.xz * 3.1 + vTW.y * 2.3).g;
@@ -158,18 +201,24 @@
       sh.fragmentShader = FCLIP + `
         uniform float uTime; uniform vec3 uLeafTint; uniform sampler2D tNoise;
 \n` + sh.fragmentShader
-        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\n treeClipJ(0.45 * smoothstep(0.3, 0.75, texture2D(tNoise, vTW.xy * 1.9 + vTW.z * 0.7).a));')
+        .replace(
+          '#include <clipping_planes_fragment>',
+          '#include <clipping_planes_fragment>\n treeClipJ(0.45 * smoothstep(0.3, 0.75, texture2D(tNoise, vTW.xy * 1.9 + vTW.z * 0.7).a));'
+        )
         .replace('#include <color_fragment>', /* glsl */`#include <color_fragment>
           float nl = texture2D(tNoise, vTW.xz * 0.35 + vTW.y * 0.2).a;
           vec3 c = diffuseColor.rgb * uLeafTint * (0.8 + 0.4 * nl);
-          c = mix(c, vec3(0.12, 0.07, 0.03) * (0.7 + 0.6 * nl), max(smoothstep(0.0, 0.45, vTr.g), 0.8 * smoothstep(0.05, 0.6, vTr.b)));  // scorched by the heat, then charred
+          // scorched by the heat, then charred
+          c = mix(c, vec3(0.12, 0.07, 0.03) * (0.7 + 0.6 * nl), max(smoothstep(0.0, 0.45, vTr.g), 0.8 * smoothstep(0.05, 0.6, vTr.b)));
           if (!gl_FrontFacing) c *= 0.7;
           diffuseColor.rgb = treeHaze(c);`)
-        .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n normal = normalize(vNormal);')  // same outward normal on both faces
+        // same outward normal on both faces
+        .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n normal = normalize(vNormal);')
         .replace('#include <emissivemap_fragment>', /* glsl */`#include <emissivemap_fragment>
           #if NUM_DIR_LIGHTS > 0
           {
-            // P56 translucency: leaves seen against the sun pass its light (a warm, saturated green glow on the rim of the crown)
+            // P56 translucency: leaves seen against the sun pass its light (a warm, saturated green glow on the rim of
+            // the crown)
             vec3 vdir = normalize(vViewPosition);
             float tl = pow(max(dot(directionalLights[0].direction, -vdir), 0.0), 3.0);
             totalEmissiveRadiance += diffuseColor.rgb * vec3(1.1, 1.0, 0.45) * directionalLights[0].color * tl * 0.14;
@@ -192,7 +241,8 @@
           vec3 c = mix(uCore * (0.25 + 0.7 * ng), lt.rgb * 0.5, lt.a);   // texels are linear (dark): alpha is the leaf mask
           c = mix(c, lt2.rgb * 0.4, lt2.a * 0.85);
           c = mix(c, vec3(0.04, 0.03, 0.02), smoothstep(0.0, 0.45, vTr.g));
-          // the crown cut open by the slice: a flat section through dense foliage (leaf clumps in slice-plane coordinates)
+          // the crown cut open by the slice: a flat section through dense foliage (leaf clumps in slice-plane
+          // coordinates)
           if (!gl_FrontFacing) {
             vec3 tg = normalize(vec3(-uN.z, 0.0, uN.x));
             vec2 su = vec2(dot(vTW, tg), vTW.y) * 1.3;
@@ -200,9 +250,14 @@
             c = mix(vec3(0.02, 0.035, 0.012), st.rgb * (0.6 + 0.3 * nl), st.a) * (1.0 - 0.8 * smoothstep(0.0, 0.45, vTr.g));
           }
           diffuseColor.rgb = treeHaze(c);`)
-        .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n if (!gl_FrontFacing) normal = normalize((viewMatrix * vec4(uN, 0.0)).xyz);')   // section lit flat
-        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-          if (!gl_FrontFacing) totalEmissiveRadiance += diffuseColor.rgb * 0.45;   // the section sits inside the crown's own shadow: keep it readable
+        // section lit flat
+        .replace(
+          '#include <normal_fragment_begin>',
+          '#include <normal_fragment_begin>\n if (!gl_FrontFacing) normal = normalize((viewMatrix * vec4(uN, 0.0)).xyz);'
+        )
+        .replace('#include <emissivemap_fragment>', /* glsl */`#include <emissivemap_fragment>
+          // the section sits inside the crown's own shadow: keep it readable
+          if (!gl_FrontFacing) totalEmissiveRadiance += diffuseColor.rgb * 0.45;
           totalEmissiveRadiance += vTr.b * (gl_FrontFacing ? 1.0 : 0.35) * smoothstep(0.62, 0.9, nl + 0.2 * sin(uTime * 6.0 + vTW.y * 4.0)) * vec3(1.4, 0.36, 0.05);`);   // glowing patches
     };
     // pass 0 main (opaque), 1 context depth pre-pass, 2 context colour (translucent, front-most layer only)
@@ -214,14 +269,26 @@
       if (pass) m.defines = { CTX: 1 };
       m.onBeforeCompile = sh => {
         Object.assign(sh.uniforms, shared()); patchVS(sh); fs(sh);
-        if (pass === 2) sh.fragmentShader = sh.fragmentShader.replace('#include <alphatest_fragment>', '#include <alphatest_fragment>\n diffuseColor.a = treeA;');
+        if (pass === 2)
+          sh.fragmentShader = sh.fragmentShader.replace(
+            '#include <alphatest_fragment>',
+            '#include <alphatest_fragment>\n diffuseColor.a = treeA;'
+          );
       };
       m.customProgramCacheKey = () => key + 'p' + (pass || 0);
       return m;
     };
     const variants = (opts, fs, key) => [0, 1, 2].map(p => mk(opts, fs, key, p));
-    woodMats = variants({ map: tx.bark || null, color: tx.bark ? 0xffffff : 0x5a4632, roughness: 0.95, side: T.DoubleSide }, woodFS, 'treeWood1');
-    leafMats = variants({ map: tx.foliage || null, color: 0xffffff, roughness: 0.85, side: T.DoubleSide, alphaTest: 0.45 }, leafFS, 'treeLeaf1');
+    woodMats = variants(
+      { map: tx.bark || null, color: tx.bark ? 0xffffff : 0x5a4632, roughness: 0.95, side: T.DoubleSide },
+      woodFS,
+      'treeWood1'
+    );
+    leafMats = variants(
+      { map: tx.foliage || null, color: 0xffffff, roughness: 0.85, side: T.DoubleSide, alphaTest: 0.45 },
+      leafFS,
+      'treeLeaf1'
+    );
     coreMats = variants({ roughness: 0.95, side: T.DoubleSide }, coreFS, 'treeCore1');
     woodMat = woodMats[0]; leafMat = leafMats[0]; coreMat = coreMats[0];
     const depth = (map, key) => {
@@ -235,29 +302,52 @@
       return m;
     };
     woodDepth = depth(null, 'treeWoodD1'); leafDepth = depth(tx.foliage, 'treeLeafD1'); coreDepth = depth(null, 'treeCoreD1');
-    for (const b of [woodMat, leafMat, coreMat, leafDepth]) logMat(b);      // P78: broken-part variants exist before the pre-warm scans the registry (render/prewarm.js compiles them with the clipping state they are drawn with)
+    // P78: broken-part variants exist before the pre-warm scans the registry (render/prewarm.js compiles them with the
+    // clipping state they are drawn with)
+    for (const b of [woodMat, leafMat, coreMat, leafDepth]) logMat(b);
   }
 
   /* ---------- geometry builders (world or body space) ---------- */
   function Buf() { return { p: [], n: [], uv: [], info: [], cen: [], idx: [], v: 0 }; }
   function vert(B, x, y, z, nx, ny, nz, u, v, info, cx, cy, cz) {
-    B.p.push(x, y, z); B.n.push(nx, ny, nz); B.uv.push(u, v); B.info.push(info[0], info[1], info[2], info[3]); B.cen.push(cx, cy, cz); return B.v++;
+    B.p.push(x, y, z);
+    B.n.push(nx, ny, nz);
+    B.uv.push(u, v);
+    B.info.push(info[0], info[1], info[2], info[3]);
+    B.cen.push(cx, cy, cz);
+    return B.v++;
   }
-  // aInfo.w packs the height fraction (floor(w*64)/63) and a per-vertex seed (fract(w*64): card visibility, 0.99 = cut cap)
+  // aInfo.w packs the height fraction (floor(w*64)/63) and a per-vertex seed (fract(w*64): card visibility, 0.99 = cut
+  // cap)
   const pack = (hf, seed) => (Math.round(M.clamp(hf, 0, 1) * 63) + M.clamp(seed, 0, 0.999)) / 64;
   function basis(dx, dy, dz) {
     const l = Math.hypot(dx, dy, dz) || 1, ax = dx / l, ay = dy / l, az = dz / l;
-    let ux = 0, uy = 1, uz = 0; if (Math.abs(ay) > 0.9) { ux = 1; uy = 0; }
-    let e1x = uy * az - uz * ay, e1y = uz * ax - ux * az, e1z = ux * ay - uy * ax; const l1 = Math.hypot(e1x, e1y, e1z); e1x /= l1; e1y /= l1; e1z /= l1;
+    let ux = 0, uy = 1, uz = 0;
+    if (Math.abs(ay) > 0.9) {
+      ux = 1;
+      uy = 0;
+    }
+    let e1x = uy * az - uz * ay, e1y = uz * ax - ux * az, e1z = ux * ay - uy * ax;
+    const l1 = Math.hypot(e1x, e1y, e1z);
+    e1x /= l1;
+    e1y /= l1;
+    e1z /= l1;
     const e2x = ay * e1z - az * e1y, e2y = az * e1x - ax * e1z, e2z = ax * e1y - ay * e1x;
     return { ax, ay, az, l, e1x, e1y, e1z, e2x, e2y, e2z };
   }
   /* tapered bark tube a -> b (+ cap at b); along0 = bark v at a (m) */
   // T3: mark = per-vertex seed of the ring vertices (0.6 = root); splA / splB = splinter heights of the caps (fraction
-  // of the radius along the axis: a fresh break is torn, not a flat disc), capA = also close the tube at a (a log's base)
-  const sh1 = (i, k) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+  // of the radius along the axis: a fresh break is torn, not a flat disc), capA = also close the tube at a (a log's
+  // base)
+  const sh1 = (i, k) => {
+    const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  };
   function tube(B, a, b, r0, r1, along0, row, part, sp, hfA, hfB, radial, cut, mark, splB, capA) {
-    const bs = basis(b.x - a.x, b.y - a.y, b.z - a.z), L = bs.l, rings = 1 + Math.max(1, Math.ceil(L / 0.8)), circ = 2 * Math.PI * Math.max(r0, 0.05);
+    const bs = basis(b.x - a.x, b.y - a.y, b.z - a.z),
+      L = bs.l,
+      rings = 1 + Math.max(1, Math.ceil(L / 0.8)),
+      circ = 2 * Math.PI * Math.max(r0, 0.05);
     const ku = Math.max(1, Math.round(circ / 0.9));                 // bark texture repeats around the trunk
     const base = B.v;
     for (let q = 0; q < rings; q++) {
@@ -269,25 +359,59 @@
         vert(B, cx + nx * r, cy + ny * r, cz + nz * r, nx, ny, nz, k / radial * ku, (along0 + u * L) / circ * ku, info, cx, cy, cz);
       }
     }
-    for (let q = 0; q < rings - 1; q++) for (let k = 0; k < radial; k++) {
-      const i0 = base + q * (radial + 1) + k, i1 = i0 + radial + 1;
-      B.idx.push(i0, i0 + 1, i1, i0 + 1, i1 + 1, i1);         // CCW seen from outside (normal d x e2 was inward)
-    }
+    for (let q = 0; q < rings - 1; q++)
+      for (let k = 0; k < radial; k++) {
+        const i0 = base + q * (radial + 1) + k, i1 = i0 + radial + 1;
+        B.idx.push(i0, i0 + 1, i1, i0 + 1, i1 + 1, i1);         // CCW seen from outside (normal d x e2 was inward)
+      }
     // cap (the broken / cut end shows light wood: info.w seed 0.99 marks it in LOG mode; in play the backface rule).
     // T3: splintered: every other rim vertex pushed out along the axis by a random share of the radius (spikes), the
     // centre a little; an unbroken cap sits inside the child's tube, so the spikes stay hidden there
     const capAt = (P, rr, sgn, spl) => {
       const info = [row, part, sp, pack(sgn > 0 ? hfB : hfA, cut ? 0.99 : 0)], ax = bs.ax * sgn, ay = bs.ay * sgn, az = bs.az * sgn;
-      const c0 = vert(B, P.x + ax * rr * spl * 0.35, P.y + ay * rr * spl * 0.35, P.z + az * rr * spl * 0.35, ax, ay, az, 0.5, 0.5, info, P.x, P.y, P.z);
+      const c0 = vert(
+        B,
+        P.x + ax * rr * spl * 0.35,
+        P.y + ay * rr * spl * 0.35,
+        P.z + az * rr * spl * 0.35,
+        ax,
+        ay,
+        az,
+        0.5,
+        0.5,
+        info,
+        P.x,
+        P.y,
+        P.z
+      );
       const nr = spl > 0 ? radial * 3 : radial;                   // a torn end gets 3x the rim vertices (fibres)
       for (let k = 0; k <= nr; k++) {
         const th = k / nr * 2 * Math.PI, c = Math.cos(th), s = Math.sin(th), kk = k % nr;
         // irregular: a slanted break (cos term) + random fibre heights, now and then one long splinter
         const h1 = sh1(part + row * 0.37, kk), h2 = sh1(kk * 1.7, part + row);
-        const up = spl * rr * Math.max(0, 0.3 + 0.35 * c * (part % 2 ? 1 : -1) + 0.7 * h1 * h1 * h1 + (h2 > 0.86 ? 0.8 * h1 + 0.3 : 0) - 0.3 * (k % 2));
-        vert(B, P.x + (bs.e1x * c + bs.e2x * s) * rr + ax * up, P.y + (bs.e1y * c + bs.e2y * s) * rr + ay * up, P.z + (bs.e1z * c + bs.e2z * s) * rr + az * up, ax, ay, az, 0.5 + 0.5 * c, 0.5 + 0.5 * s, info, P.x, P.y, P.z);
+        const up = spl
+          * rr
+          * Math.max(0, 0.3 + 0.35 * c * (part % 2 ? 1 : -1) + 0.7 * h1 * h1 * h1 + (h2 > 0.86 ? 0.8 * h1 + 0.3 : 0) - 0.3 * (k % 2));
+        vert(
+          B,
+          P.x + (bs.e1x * c + bs.e2x * s) * rr + ax * up,
+          P.y + (bs.e1y * c + bs.e2y * s) * rr + ay * up,
+          P.z + (bs.e1z * c + bs.e2z * s) * rr + az * up,
+          ax,
+          ay,
+          az,
+          0.5 + 0.5 * c,
+          0.5 + 0.5 * s,
+          info,
+          P.x,
+          P.y,
+          P.z
+        );
       }
-      for (let k = 0; k < nr; k++) { if (sgn > 0) B.idx.push(c0, c0 + 1 + k, c0 + 2 + k); else B.idx.push(c0, c0 + 2 + k, c0 + 1 + k); }
+      for (let k = 0; k < nr; k++) {
+        if (sgn > 0) B.idx.push(c0, c0 + 1 + k, c0 + 2 + k);
+        else B.idx.push(c0, c0 + 2 + k, c0 + 1 + k);
+      }
     };
     capAt(b, r1, 1, splB || 0);
     if (capA) capAt(a, r0, -1, capA);
@@ -308,7 +432,9 @@
       const nx = 0.7 * bs.ax, ny = 0.7 * bs.ay + 0.3, nz = 0.7 * bs.az, nl = Math.hypot(nx, ny, nz);
       const info = [row, part, sp, pack(hf, 0.02 + 0.97 * M.hash3(i, seed * 997 | 0, 11))], base = B.v;
       for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-        const px = cx + (ex.x * (u - 0.5) + ey.x * (v - 0.5)) * s, py = cy + (ex.y * (u - 0.5) + ey.y * (v - 0.5)) * s, pz = cz + (ex.z * (u - 0.5) + ey.z * (v - 0.5)) * s;
+        const px = cx + (ex.x * (u - 0.5) + ey.x * (v - 0.5)) * s,
+          py = cy + (ex.y * (u - 0.5) + ey.y * (v - 0.5)) * s,
+          pz = cz + (ex.z * (u - 0.5) + ey.z * (v - 0.5)) * s;
         vert(B, px, py, pz, nx / nl, ny / nl, nz / nl, u, v, info, l.x, l.y, l.z);
       }
       B.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
@@ -351,18 +477,29 @@
       const by = l.y + r * ([-0.24, 0.16, 0.48][wh] + 0.2 * M.hash3(i, 3, sd0)), b0 = { x: l.x + ox * 0.04, y: by, z: l.z + oz * 0.04 };
       const info = [row, part, sp, pack(hf, 0.02 + 0.97 * M.hash3(i, seed * 997 | 0, 13))], base = B.v;
       const nx = e.x * 0.6, ny = 0.8, nz = e.z * 0.6, nl = Math.hypot(nx, ny, nz);
-      const P = (k1, k2) => ({ x: b0.x + (e.x * (k1 + k2) + sd.x * (k1 - k2)) * s / Math.SQRT2, y: b0.y + (e.y * (k1 + k2) + sd.y * (k1 - k2)) * s / Math.SQRT2, z: b0.z + (e.z * (k1 + k2) + sd.z * (k1 - k2)) * s / Math.SQRT2 });
-      for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const p = P(u, v); vert(B, p.x, p.y, p.z, nx / nl, ny / nl, nz / nl, u, v, info, l.x, l.y, l.z); }
+      const P = (k1, k2) => ({
+        x: b0.x + (e.x * (k1 + k2) + sd.x * (k1 - k2)) * s / Math.SQRT2,
+        y: b0.y + (e.y * (k1 + k2) + sd.y * (k1 - k2)) * s / Math.SQRT2,
+        z: b0.z + (e.z * (k1 + k2) + sd.z * (k1 - k2)) * s / Math.SQRT2
+      });
+      for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const p = P(u, v);
+        vert(B, p.x, p.y, p.z, nx / nl, ny / nl, nz / nl, u, v, info, l.x, l.y, l.z);
+      }
       B.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
     }
   }
-  /* P116 palm crown: radial arching fronds (flat strips with a V fold, the leaflets droop from the midrib) at the cluster centre l, textured with tx.palm
-   * (chroma-keyed; the frond runs along u, its width across v 0.25..0.75). One card per frond: a blast strips them one by one (the seed in aInfo.w). */
+  /* P116 palm crown: radial arching fronds (flat strips with a V fold, the leaflets droop from the midrib) at the
+   * cluster centre l, textured with tx.palm
+   * (chroma-keyed; the frond runs along u, its width across v 0.25..0.75). One card per frond: a blast strips them one
+   * by one (the seed in aInfo.w). */
   function palmCrown(B, l, row, part, sp, hf, seed, low) {
     const r = l.r, n = low ? 9 : 14, segs = low ? 3 : 5, ga = 2.399963, sd0 = seed * 997 | 0;
     for (let i = 0; i < n; i++) {
       const ring = i / n, hh = k => M.hash3(i, sd0, k);
-      const az = i * ga + seed * 6.28 + 0.5 * hh(21), e0 = 1.0 - 1.55 * ring + (hh(23) - 0.5) * 0.4, L = r * (1.5 + 0.4 * hh(25)) * (1 - 0.1 * ring);
+      const az = i * ga + seed * 6.28 + 0.5 * hh(21),
+        e0 = 1.0 - 1.55 * ring + (hh(23) - 0.5) * 0.4,
+        L = r * (1.5 + 0.4 * hh(25)) * (1 - 0.1 * ring);
       const bend = 0.75 + 0.8 * ring + 0.3 * hh(27), w = L * 0.4, ca = Math.cos(az), sa = Math.sin(az);
       const side = { x: -sa, y: 0, z: ca };
       const info = [row, part, sp, pack(hf, 0.02 + 0.97 * hh(29))], base = B.v;
@@ -370,14 +507,50 @@
       for (let s = 0; s <= segs; s++) {
         const t = s / segs, el = e0 - bend * (s === 0 ? 0 : t - 0.5 / segs);
         let dx = Math.cos(el) * ca, dy = Math.sin(el), dz = Math.cos(el) * sa;
-        if (s > 0) { px += dx * L / segs; py += dy * L / segs; pz += dz * L / segs; }
-        const el1 = e0 - bend * t; dx = Math.cos(el1) * ca; dy = Math.sin(el1); dz = Math.cos(el1) * sa;
-        const ux = side.y * dz - side.z * dy, uy = side.z * dx - side.x * dz, uz = side.x * dy - side.y * dx;     // side x dir: the frond's upper face
+        if (s > 0) {
+          px += dx * L / segs;
+          py += dy * L / segs;
+          pz += dz * L / segs;
+        }
+        const el1 = e0 - bend * t;
+        dx = Math.cos(el1) * ca;
+        dy = Math.sin(el1);
+        dz = Math.cos(el1) * sa;
+        // side x dir: the frond's upper face
+        const ux = side.y * dz - side.z * dy, uy = side.z * dx - side.x * dz, uz = side.x * dy - side.y * dx;
         const hw = w * 0.5 * (0.35 + 0.65 * Math.sin(Math.min(1, t * 1.15 + 0.1) * 1.5708)), fold = 0.42;
         const cf = Math.cos(fold), sf = Math.sin(fold), u = 0.01 + t * 0.98;
-        vert(B, px - side.x * hw * cf - ux * hw * sf, py - side.y * hw * cf - uy * hw * sf, pz - side.z * hw * cf - uz * hw * sf, ux, uy, uz, u, 0.25, info, l.x, l.y, l.z);
+        vert(
+          B,
+          px - side.x * hw * cf - ux * hw * sf,
+          py - side.y * hw * cf - uy * hw * sf,
+          pz - side.z * hw * cf - uz * hw * sf,
+          ux,
+          uy,
+          uz,
+          u,
+          0.25,
+          info,
+          l.x,
+          l.y,
+          l.z
+        );
         vert(B, px, py, pz, ux, uy, uz, u, 0.5, info, l.x, l.y, l.z);
-        vert(B, px + side.x * hw * cf - ux * hw * sf, py + side.y * hw * cf - uy * hw * sf, pz + side.z * hw * cf - uz * hw * sf, ux, uy, uz, u, 0.75, info, l.x, l.y, l.z);
+        vert(
+          B,
+          px + side.x * hw * cf - ux * hw * sf,
+          py + side.y * hw * cf - uy * hw * sf,
+          pz + side.z * hw * cf - uz * hw * sf,
+          ux,
+          uy,
+          uz,
+          u,
+          0.75,
+          info,
+          l.x,
+          l.y,
+          l.z
+        );
       }
       for (let s = 0; s < segs; s++) {
         const a = base + s * 3, b = a + 3;
@@ -401,18 +574,28 @@
     const sp = t.sp, h = Math.max(1, t.h || 1), alongs = [];
     const hf = y => (y - (t.y || 0)) / h;
     const kid = new Uint8Array(t.seg.length);           // segment j has a child (a later segment with p === j)
-    for (let k = 0; k < t.seg.length; k++) { const p = t.seg[k].p; if (p >= 0 && p < k) kid[p] = 1; }
+    for (let k = 0; k < t.seg.length; k++) {
+      const p = t.seg[k].p;
+      if (p >= 0 && p < k) kid[p] = 1;
+    }
     for (let j = 0; j < t.seg.length && j < LEAF0; j++) {
-      const g = t.seg[j]; if (g.on === 0) { alongs.push(0); continue; }
+      const g = t.seg[j];
+      if (g.on === 0) {
+        alongs.push(0);
+        continue;
+      }
       const a = { x: g.a.x - ox, y: g.a.y - oy, z: g.a.z - oz }, b = { x: g.b.x - ox, y: g.b.y - oy, z: g.b.z - oz };
       const a0 = g.p >= 0 && alongs[g.p] !== undefined ? alongs[g.p] : 0;
       const radial = g.kind === 2 ? (low ? 4 : 5) : (low ? 6 : 9);
       const hasKid = kid[j];
-      alongs.push(a0 + tube(Bw, a, b, g.r0, g.r1, a0, row, j, sp, hf(g.a.y), hf(g.b.y), radial, true, 0, hasKid ? 1 : 0, row < 0 && g.p < 0 ? 1 : 0));
+      alongs.push(
+        a0 + tube(Bw, a, b, g.r0, g.r1, a0, row, j, sp, hf(g.a.y), hf(g.b.y), radial, true, 0, hasKid ? 1 : 0, row < 0 && g.p < 0 ? 1 : 0)
+      );
     }
     if (row >= 0 && t.seg.length) roots(t, row, Bw, sp, low);
     for (let k = 0; k < t.leaf.length && k < TREE_T - LEAF0; k++) {
-      const l = t.leaf[k]; if (l.s === -1 && row >= 0) continue;
+      const l = t.leaf[k];
+      if (l.s === -1 && row >= 0) continue;
       const lc = { x: l.x - ox, y: l.y - oy, z: l.z - oz, r: l.r }, seed = ((t.id || 1) * 0.6180339 + k * 0.137) % 1;
       if (sp === 4) palmCrown(Bl, lc, row, LEAF0 + k, sp, hf(l.y), seed, low);
       else if (sp === 1) tier(Bl, Bc, lc, row, LEAF0 + k, sp, hf(l.y), seed, low ? 12 : 26);
@@ -426,14 +609,20 @@
    * stump): they vanish with a shattered stump. Seeded by the tree id (stable per map). */
   const rootCache = new WeakMap();                 // tree -> root segments laid out against the ORIGINAL ground
   function rootSegs(t, low) {
-    let L = rootCache.get(t); if (L) return L;
+    let L = rootCache.get(t);
+    if (L) return L;
     L = [];
     const TK = C.TREES, s0 = t.seg[0], rs = s0.r0, plate = Math.max(TK.ROOT_R_MIN, TK.ROOT_R_K * (t.crown || 1.5));
     let hs = (((t.id || 1) * 2654435761) ^ 0x9e3779b9) >>> 0;
     const R = () => (hs = (Math.imul(hs, 1664525) + 1013904223) >>> 0) / 4294967296;
     const Wd = SS.world, gy = (x, z) => (Wd && Wd.top_at ? Wd.top_at(x, z) : t.y);
-    const palm = t.sp === 4, n = palm ? 3 : low ? 4 : 6 + Math.floor(R() * 3);          // (P116: a palm's root plate is hidden under the sand: three short laterals are enough, they only show in a crater)
-    const under = (P, r) => { const g = gy(P.x, P.z) - r - 0.05; if (P.y > g) P.y = g; return P; };
+    // (P116: a palm's root plate is hidden under the sand: three short laterals are enough, they only show in a crater)
+    const palm = t.sp === 4, n = palm ? 3 : low ? 4 : 6 + Math.floor(R() * 3);
+    const under = (P, r) => {
+      const g = gy(P.x, P.z) - r - 0.05;
+      if (P.y > g) P.y = g;
+      return P;
+    };
     const chain = (P, ang, dip, Lr, r, nSeg, side) => {
       for (let q = 0; q < nSeg; q++) {
         ang += (R() - 0.5) * 0.9; dip = Math.min(1.1, Math.max(0.05, dip + (R() - 0.35) * 0.3));
@@ -441,7 +630,8 @@
         const Q = under({ x: P.x + Math.cos(ang) * ca * l, y: P.y - Math.sin(dip) * l, z: P.z + Math.sin(ang) * ca * l }, r * 0.7);
         Q.y = Math.max(Q.y, t.y - TK.ROOT_D - 0.6);
         L.push({ a: P, b: Q, r0: r, r1: r * 0.72 });
-        if (side && (q === 1 || q === 3)) chain({ x: Q.x, y: Q.y, z: Q.z }, ang + (R() < 0.5 ? -1 : 1) * (0.6 + 0.6 * R()), dip, Lr * 0.35, r * 0.5, 3, false);
+        if (side && (q === 1 || q === 3))
+          chain({ x: Q.x, y: Q.y, z: Q.z }, ang + (R() < 0.5 ? -1 : 1) * (0.6 + 0.6 * R()), dip, Lr * 0.35, r * 0.5, 3, false);
         P = Q; r *= 0.72;
       }
     };
@@ -450,7 +640,14 @@
       const P = under({ x: t.x + Math.cos(ang) * rs * 0.6, y: t.y - 0.1, z: t.z + Math.sin(ang) * rs * 0.6 }, rs * 0.4);
       chain(P, ang, 0.1 + 0.3 * R(), Lr, rs * (0.38 + 0.15 * R()), palm || low ? 3 : 5, !low && !palm);
     }
-    if (t.sp !== 1) L.push({ a: { x: t.x, y: t.y - 0.3, z: t.z }, b: { x: t.x + (R() - 0.5) * 0.3, y: t.y - TK.TAP_D, z: t.z + (R() - 0.5) * 0.3 }, r0: rs * 0.55, r1: 0.04 });   // tap root (spruce: plate only)
+    // tap root (spruce: plate only)
+    if (t.sp !== 1)
+      L.push({
+        a: { x: t.x, y: t.y - 0.3, z: t.z },
+        b: { x: t.x + (R() - 0.5) * 0.3, y: t.y - TK.TAP_D, z: t.z + (R() - 0.5) * 0.3 },
+        r0: rs * 0.55,
+        r1: 0.04
+      });
     rootCache.set(t, L);
     return L;
   }
@@ -465,8 +662,13 @@
     const air = (x, y, z) => !Wd || !Wd.sample || Wd.sample(x, y, z) <= 0;
     for (const g of rootSegs(t, low)) {
       const a = g.a, b = g.b;
-      if (air(a.x * 0.75 + b.x * 0.25, a.y * 0.75 + b.y * 0.25, a.z * 0.75 + b.z * 0.25) && air((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2) && air(a.x * 0.25 + b.x * 0.75, a.y * 0.25 + b.y * 0.75, a.z * 0.25 + b.z * 0.75)) {
-        // wholly in air: thin roots were torn out; a thick one (r > 5 cm) still anchored at an end hangs across the crater
+      if (
+        air(a.x * 0.75 + b.x * 0.25, a.y * 0.75 + b.y * 0.25, a.z * 0.75 + b.z * 0.25)
+        && air((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2)
+        && air(a.x * 0.25 + b.x * 0.75, a.y * 0.25 + b.y * 0.75, a.z * 0.25 + b.z * 0.75)
+      ) {
+        // wholly in air: thin roots were torn out; a thick one (r > 5 cm) still anchored at an end hangs across the
+        // crater
         if (!(g.r0 > 0.05 && (!air(a.x, a.y - 0.15, a.z) || !air(b.x, b.y - 0.15, b.z)))) continue;
       }
       tube(Bw, a, b, g.r0, g.r1, 0, row, 0, sp, 0, 0, rad, false, 0.6, 0, 0);
@@ -497,18 +699,35 @@
     const Bw = Buf(), Bl = Buf(), Bc = Buf(), low = Q && Q.name === 'low';
     trees.forEach((t, i) => treeInto(t, i, Bw, Bl, Bc, 0, 0, 0, low));
     const sp = SPN[trees[0].sp] || 'oak', L = LOOK[sp] || LOOK.oak;          // (an unknown species falls back to oak)
-    own.uBarkTint.value.setRGB(L.bark[0], L.bark[1], L.bark[2]); own.uLeafTint.value.setRGB(L.leaf[0], L.leaf[1], L.leaf[2]); own.uCore.value.setRGB(L.core[0], L.core[1], L.core[2]);
+    own.uBarkTint.value.setRGB(L.bark[0], L.bark[1], L.bark[2]);
+    own.uLeafTint.value.setRGB(L.leaf[0], L.leaf[1], L.leaf[2]);
+    own.uCore.value.setRGB(L.core[0], L.core[1], L.core[2]);
     const map = sp === 'spruce' ? tx.pine : sp === 'palm' ? tx.palm : tx.foliage;
     own.uPalm.value = sp === 'palm' ? 1 : 0;
     for (const m of leafMats) m.roughness = sp === 'palm' ? 0.36 : 0.85;                  // P116: glossy fronds: the sun glints on them
-    if (leafMat.map !== map) for (const m of [...leafMats, leafDepth, ...[...logMats.values()].filter(c => c.userData.logOf === leafMat || c.userData.logOf === leafDepth)]) { m.map = map || null; m.needsUpdate = true; }
+    if (leafMat.map !== map)
+      for (
+        const m of [
+          ...leafMats,
+          leafDepth,
+          ...[...logMats.values()].filter(c => c.userData.logOf === leafMat || c.userData.logOf === leafDepth)
+        ]
+      ) {
+        m.map = map || null;
+        m.needsUpdate = true;
+      }
     own.tLeaf.value = map || null;
     const mk = (B, mats, dm) => {
       if (!B.idx.length) return;
       const g = geo(B);
       mats.forEach((mat, pass) => {
-        const m = new T.Mesh(g, mat); m.frustumCulled = false;
-        if (pass === 0) { m.castShadow = true; m.receiveShadow = true; m.customDepthMaterial = dm; }
+        const m = new T.Mesh(g, mat);
+        m.frustumCulled = false;
+        if (pass === 0) {
+          m.castShadow = true;
+          m.receiveShadow = true;
+          m.customDepthMaterial = dm;
+        }
         else m.renderOrder = pass === 1 ? 4 : 5;          // with the terrain ghost's pre-pass / colour pass
         scene.add(m); meshes.push(m);
       });
@@ -519,28 +738,54 @@
   }
 
   TV.init = function (sc, textures, quality) {
-    scene = sc; tx = textures || {}; Q = quality; U = SS.terrain.uniforms;
+    scene = sc;
+    tx = textures || {};
+    Q = quality;
+    U = SS.terrain.uniforms;
     stTex = new T.DataTexture(new Float32Array(ROW * 4), ROW, 1, T.RGBAFormat, T.FloatType); stTex.needsUpdate = true;
     makeMats();
   };
 
-  function freeFlames(id) { const fl = flames.get(id); if (fl) { for (const f of fl) SS.bodyView.unflame(f); flames.delete(id); } }
+  function freeFlames(id) {
+    const fl = flames.get(id);
+    if (fl) {
+      for (const f of fl) SS.bodyView.unflame(f);
+      flames.delete(id);
+    }
+  }
   TV.frame = function (S, view) {
     if (!own) return;
     time = view.time || time + 1 / 60;
-    if (builtFor !== S.trees) { for (const id of [...flames.keys()]) freeFlames(id); rebuild(S); lastBoom = S.lastExplosion; }
+    if (builtFor !== S.trees) {
+      for (const id of [...flames.keys()]) freeFlames(id);
+      rebuild(S);
+      lastBoom = S.lastExplosion;
+    }
     // T3: a blast near a tree may have uncovered / torn its roots: rebuild the wood (root segments now in air dropped).
     // Keyed on the explosion record itself (S.lastBoom also moves on every shot fired / projectile removed)
     else {
       if (S.lastExplosion !== lastBoom) {
-        lastBoom = S.lastExplosion; const e = S.lastExplosion;
-        if (e && (S.trees || []).some(t => Math.hypot(t.x - e.x, t.z - e.z) < Math.max(C.TREES.ROOT_R_MIN, C.TREES.ROOT_R_K * (t.crown || 1.5)) * 1.1 + e.R + 1)) { if (!rebuildWanted) wantedAt = performance.now(); rebuildWanted = true; }
+        lastBoom = S.lastExplosion;
+        const e = S.lastExplosion;
+        if (
+          e
+          && (S.trees || []).some(
+            t => Math.hypot(t.x - e.x, t.z - e.z) < Math.max(C.TREES.ROOT_R_MIN, C.TREES.ROOT_R_K * (t.crown || 1.5)) * 1.1 + e.R + 1
+          )
+        ) {
+          if (!rebuildWanted) wantedAt = performance.now();
+          rebuildWanted = true;
+        }
       }
-      // P38-R4: the rebuild of all the wood (up to 28 ms) runs at most every REBUILD_MIN s of real time: a barrage near trees coalesces into one
-      if (rebuildWanted && performance.now() - rebuildAt > REBUILD_MIN * 1000 && performance.now() - wantedAt > REBUILD_LAG * 1000) rebuild(S);   // (REBUILD_LAG: not in the frame of the blast, which also remeshes terrain and spawns the effects)
+      // P38-R4: the rebuild of all the wood (up to 28 ms) runs at most every REBUILD_MIN s of real time: a barrage near
+      // trees coalesces into one (REBUILD_LAG: not in the frame of the blast, which also remeshes terrain and spawns
+      // the effects)
+      if (rebuildWanted && performance.now() - rebuildAt > REBUILD_MIN * 1000 && performance.now() - wantedAt > REBUILD_LAG * 1000)
+        rebuild(S);
     }
     own.uTime.value = time; own.uInsp.value = view.insp || 0;
-    const wm = S.wind && S.wind.mean; if (wm) own.uWind.value.set(wm.x, 0, wm.z);
+    const wm = S.wind && S.wind.mean;
+    if (wm) own.uWind.value.set(wm.x, 0, wm.z);
     const trees = S.trees || [], O = S.O, n = SS.plane.nrm(S), back = U.uBack.value, insp = view.insp || 0, ctx = view.ctxA || 0;
     const tOf = (x, z) => (x - O.x) * n.x + (z - O.z) * n.z;
     const gf = SS.section.frontOn;
@@ -551,34 +796,65 @@
     if (stData && trees.length) {
       for (let i = 0; i < trees.length && i < nRows; i++) {
         const t = trees[i], o = i * ROW * 4;
-        for (let j = 0; j < LEAF0; j++) { stData[o + j * 4] = j < t.seg.length ? t.seg[j].on : 0; stData[o + j * 4 + 1] = 0; }
-        for (let j = 1; j < t.seg.length && j < LEAF0; j++) if (!t.seg[j].on && t.seg[j].p >= 0) stData[o + t.seg[j].p * 4 + 1] = 1;   // exposed top
+        for (let j = 0; j < LEAF0; j++) {
+          stData[o + j * 4] = j < t.seg.length ? t.seg[j].on : 0;
+          stData[o + j * 4 + 1] = 0;
+        }
+        // exposed top
+        for (let j = 1; j < t.seg.length && j < LEAF0; j++)
+          if (!t.seg[j].on && t.seg[j].p >= 0) stData[o + t.seg[j].p * 4 + 1] = 1;
         for (let k = 0; k < TREE_T - LEAF0; k++) stData[o + (LEAF0 + k) * 4] = k < t.leaf.length && t.leaf[k].s >= 0 ? t.leaf[k].f : 0;
         const q = o + TREE_T * 4, qr = o + ROOT_T * 4;
         stData[qr] = t.x; stData[qr + 1] = t.z;
-        stData[q] = t.alive ? 1 : 0; stData[q + 1] = t.char; stData[q + 2] = SS.trees ? SS.trees.intensity(t) : 0; stData[q + 3] = ((t.id || 1) * 0.618034) % 1;
+        stData[q] = t.alive ? 1 : 0;
+        stData[q + 1] = t.char;
+        stData[q + 2] = SS.trees ? SS.trees.intensity(t) : 0;
+        stData[q + 3] = ((t.id || 1) * 0.618034) % 1;
       }
       stTex.needsUpdate = true;
     }
     // flames on burning trees
     for (const t of trees) {
       const I = t.alive && t.burn >= 0 && SS.trees ? SS.trees.intensity(t) : 0;
-      if (I <= 0.02 || !SS.bodyView) { freeFlames(t.id); continue; }
-      let fl = flames.get(t.id); if (!fl) { fl = []; flames.set(t.id, fl); }
+      if (I <= 0.02 || !SS.bodyView) {
+        freeFlames(t.id);
+        continue;
+      }
+      let fl = flames.get(t.id);
+      if (!fl) {
+        fl = [];
+        flames.set(t.id, fl);
+      }
       const want = [];
       if (visL(t, tOf(t.x, t.z))) want.push([t.x, t.y - 0.1, t.z, 0.9 + 0.5 * I, 1.5 + 1.2 * I]);
-      for (const l of t.leaf) if (l.s >= 0 && l.f > 0.15 && visL(t, tOf(l.x, l.z))) {
-        const tf = Math.min(l.r * 0.6, Math.max(0, 0.3 - tOf(l.x, l.z)));     // toward the camera, never past the slice
-        want.push([l.x + n.x * tf, l.y - l.r * 0.1, l.z + n.z * tf, l.r * (0.7 + 0.4 * I) * Math.sqrt(l.f), l.r * (1.2 + 0.9 * I) * Math.sqrt(l.f)]);
-      }
+      for (const l of t.leaf)
+        if (l.s >= 0 && l.f > 0.15 && visL(t, tOf(l.x, l.z))) {
+          const tf = Math.min(l.r * 0.6, Math.max(0, 0.3 - tOf(l.x, l.z)));     // toward the camera, never past the slice
+          want.push([
+            l.x + n.x * tf,
+            l.y - l.r * 0.1,
+            l.z + n.z * tf,
+            l.r * (0.7 + 0.4 * I) * Math.sqrt(l.f),
+            l.r * (1.2 + 0.9 * I) * Math.sqrt(l.f)
+          ]);
+        }
       while (fl.length > want.length) SS.bodyView.unflame(fl.pop());
       for (let i = 0; i < want.length; i++) {
-        if (!fl[i]) { fl[i] = SS.bodyView.flame(((t.id * 0.37 + i * 0.211) % 1)); fl[i].big = 1; }
-        const w = want[i]; fl[i].position.set(w[0], w[1], w[2]); fl[i].scale.set(w[3], w[4], 1);
+        if (!fl[i]) {
+          fl[i] = SS.bodyView.flame(((t.id * 0.37 + i * 0.211) % 1));
+          fl[i].big = 1;
+        }
+        const w = want[i];
+        fl[i].position.set(w[0], w[1], w[2]);
+        fl[i].scale.set(w[3], w[4], 1);
       }
     }
-    if (SS.groundView) for (const t of trees) if (t.alive && visT(tOf(t.x, t.z)) && t.seg.length) SS.groundView.blob(t.x, t.y - 0.05, t.z, t.seg[0].r0 * 3.2 + 0.45, 1);   // P65b: contact shade round the trunk base
-    // grass fire: burning cells are flame sources of the fire system (render/fire.js heat field); only those inside the drawn slab (same rule as the shaders)
+    // P65b: contact shade round the trunk base
+    if (SS.groundView)
+      for (const t of trees)
+        if (t.alive && visT(tOf(t.x, t.z)) && t.seg.length) SS.groundView.blob(t.x, t.y - 0.05, t.z, t.seg[0].r0 * 3.2 + 0.45, 1);
+    // grass fire: burning cells are flame sources of the fire system (render/fire.js heat field); only those inside the
+    // drawn slab (same rule as the shaders)
     if (SS.fireView) SS.fireView.vis = (x, z) => visT(tOf(x, z));
   };
 
@@ -600,19 +876,35 @@
   TV.logGroup = function (log) {
     if (!own) return null;
     const g = new T.Group(), Bw = Buf(), Bl = Buf(), Bc = Buf();
-    const t = { id: log.tree, sp: log.sp, y: 0, h: 1, seg: log.segs.map((s, i) => ({ a: s.a, b: s.b, r0: s.r0, r1: s.r1, kind: s.kind, on: 1, p: i - 1 })), leaf: log.leaves.map(l => ({ x: l.x, y: l.y, z: l.z, r: l.r * (0.55 + 0.45 * Math.sqrt(l.f)), f: l.f, s: 0 })) };
+    const t = {
+      id: log.tree,
+      sp: log.sp,
+      y: 0,
+      h: 1,
+      seg: log.segs.map((s, i) => ({ a: s.a, b: s.b, r0: s.r0, r1: s.r1, kind: s.kind, on: 1, p: i - 1 })),
+      leaf: log.leaves.map(l => ({ x: l.x, y: l.y, z: l.z, r: l.r * (0.55 + 0.45 * Math.sqrt(l.f)), f: l.f, s: 0 }))
+    };
     treeInto(t, -1, Bw, Bl, Bc, 0, 0, 0, true);
     // LOG mode: aInfo.x carries the char
-    for (const B of [Bw, Bl, Bc]) for (let i = 0; i < B.info.length; i += 4) B.info[i] = log.char || 0;
+    for (const B of [Bw, Bl, Bc])
+      for (let i = 0; i < B.info.length; i += 4) B.info[i] = log.char || 0;
     const parts = [];
     for (const [B, mat] of [[Bw, woodMat], [Bl, leafMat], [Bc, coreMat]]) {
       if (!B.idx.length) continue;
-      const m = new T.Mesh(geo(B), logMat(mat)); m.castShadow = m.receiveShadow = true; g.add(m); parts.push(m);
+      const m = new T.Mesh(geo(B), logMat(mat));
+      m.castShadow = m.receiveShadow = true;
+      g.add(m);
+      parts.push(m);
       if (mat === leafMat) m.customDepthMaterial = logMat(leafDepth);
     }
     return { group: g, meshes: parts };
   };
-  TV.uInsp = () => (own ? own.uInsp.value : 0);                      // (tests: the overview factor the tree shaders see; 1 = every tree solid, P118c)
+  // (tests: the overview factor the tree shaders see; 1 = every tree solid, P118c)
+  TV.uInsp = () => (own ? own.uInsp.value : 0);
   TV.debug = () => ({ meshes, woodMats, leafMats, coreMats, state: stData, ROW, LEAF0 });   // dev tools (shot scripts, verify)
-  TV.stats = () => ({ tris, fire: SS.fireView ? SS.fireView.stats().cells : 0, flames: [...flames.values()].reduce((a, f) => a + f.length, 0) });
+  TV.stats = () => ({
+    tris,
+    fire: SS.fireView ? SS.fireView.stats().cells : 0,
+    flames: [...flames.values()].reduce((a, f) => a + f.length, 0)
+  });
 })(window.SS = window.SS || {});

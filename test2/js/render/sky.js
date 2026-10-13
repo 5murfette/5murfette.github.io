@@ -27,7 +27,8 @@
     canyon:    { turb: 7.0, abs: [0.12, 0.2, 0.34], alb: [0.2, 0.13, 0.08], ovc: [0.82, 0.78, 0.74] },
     desert:    { turb: 12.0, abs: [0.08, 0.16, 0.34], alb: [0.42, 0.33, 0.2], ovc: [0.86, 0.8, 0.7] },
     volcanic:  { turb: 30.0, abs: [0.3, 0.48, 0.75], alb: [0.05, 0.045, 0.04], ovc: [0.56, 0.46, 0.4] },
-    beach:     { turb: 3.4, abs: [0.1, 0.11, 0.12], alb: [0.2, 0.17, 0.11], ovc: [0.82, 0.82, 0.85] }       // P116: clean humid tropical air over a bright sand shore (warm ground bounce for the low sun)
+    // P116: clean humid tropical air over a bright sand shore (warm ground bounce for the low sun)
+    beach:     { turb: 3.4, abs: [0.1, 0.11, 0.12], alb: [0.2, 0.17, 0.11], ovc: [0.82, 0.82, 0.85] }
   };
   // per weather kind: overcast (0 clear .. 1 full deck), its brightness, extra turbidity, ash loading (multiplies the
   // absorption), storm flag (weather.js)
@@ -61,30 +62,52 @@
     const float Rg = 6360e3, Rt = 6460e3, PI = 3.14159265;
     const vec3 bR = vec3(5.802e-6, 13.558e-6, 33.1e-6), bO = vec3(0.650e-6, 1.881e-6, 0.085e-6);
     const float HR = 8000.0, HM = 1200.0;
-    uniform vec3 uSun, uAbs, uAlb, uOvc, uMoon; uniform float uTurb, uOv, uOvL, uE, uObsH, uNight;
-    vec2 raySphere(vec3 o, vec3 d, float R){ float b = dot(o, d), c = dot(o, o) - R * R, h = b * b - c; if (h < 0.0) return vec2(-1.0); h = sqrt(h); return vec2(-b - h, -b + h); }
+    uniform vec3 uSun, uAbs, uAlb, uOvc, uMoon;
+    uniform float uTurb, uOv, uOvL, uE, uObsH, uNight;
+    vec2 raySphere(vec3 o, vec3 d, float R){
+      float b = dot(o, d), c = dot(o, o) - R * R, h = b * b - c;
+      if (h < 0.0) return vec2(-1.0);
+      h = sqrt(h);
+      return vec2(-b - h, -b + h);
+    }
     vec3 dens(float h){ return vec3(exp(-h / HR), exp(-h / HM), max(0.0, 1.0 - abs(h - 25e3) / 15e3)); }
-    vec3 ext(vec3 dd){ vec3 bM = vec3(3.996e-6) * uTurb; return bR * dd.x + (bM + bM * uAbs) * dd.y + bO * dd.z; }
+    vec3 ext(vec3 dd){
+      vec3 bM = vec3(3.996e-6) * uTurb;
+      return bR * dd.x + (bM + bM * uAbs) * dd.y + bO * dd.z;
+    }
     // optical depth (R, M, O) from p to the top of the atmosphere along l (8 steps, 0 if the ground blocks: then huge)
     vec3 odToSun(vec3 p, vec3 l){
-      vec2 tg = raySphere(p, l, Rg); if (tg.x > 0.0) return vec3(1e9);
-      float tt = raySphere(p, l, Rt).y, st = tt / 8.0; vec3 od = vec3(0.0);
-      for (int i = 0; i < 8; i++) { vec3 q = p + l * (float(i) + 0.5) * st; od += dens(length(q) - Rg) * st; }
+      vec2 tg = raySphere(p, l, Rg);
+      if (tg.x > 0.0) return vec3(1e9);
+      float tt = raySphere(p, l, Rt).y, st = tt / 8.0;
+      vec3 od = vec3(0.0);
+      for (int i = 0; i < 8; i++) {
+        vec3 q = p + l * (float(i) + 0.5) * st;
+        od += dens(length(q) - Rg) * st;
+      }
       return od;
     }
     vec3 scatter(vec3 dir){
       vec3 o = vec3(0.0, Rg + uObsH, 0.0);
-      float tEnd = raySphere(o, dir, Rt).y; vec2 tg = raySphere(o, dir, Rg); bool ground = tg.x > 0.0;
+      float tEnd = raySphere(o, dir, Rt).y;
+      vec2 tg = raySphere(o, dir, Rg);
+      bool ground = tg.x > 0.0;
       if (ground) tEnd = tg.x;
-      const int N = 32; float mu = dot(dir, uSun);
+      const int N = 32;
+      float mu = dot(dir, uSun);
       float pR = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
-      const float g = 0.8; float pM = 3.0 / (8.0 * PI) * (1.0 - g * g) * (1.0 + mu * mu) / ((2.0 + g * g) * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
+      const float g = 0.8;
+      float pM = 3.0 / (8.0 * PI) * (1.0 - g * g) * (1.0 + mu * mu) / ((2.0 + g * g) * pow(1.0 + g * g - 2.0 * g * mu, 1.5));
       vec3 bM = vec3(3.996e-6) * uTurb;
-      vec3 L = vec3(0.0), odV = vec3(0.0); float prev = 0.0;
+      vec3 L = vec3(0.0), odV = vec3(0.0);
+      float prev = 0.0;
       for (int i = 0; i < N; i++) {
         // samples packed toward the observer (the dense low air matters most)
-        float t1 = tEnd * pow((float(i) + 1.0) / float(N), 2.0), ds = t1 - prev, t = (prev + t1) * 0.5; prev = t1;
-        vec3 q = o + dir * t; float h = length(q) - Rg; vec3 dd = dens(h) * ds;
+        float t1 = tEnd * pow((float(i) + 1.0) / float(N), 2.0), ds = t1 - prev, t = (prev + t1) * 0.5;
+        prev = t1;
+        vec3 q = o + dir * t;
+        float h = length(q) - Rg;
+        vec3 dd = dens(h) * ds;
         vec3 odS = odToSun(q, uSun);
         vec3 Tr = exp(-ext(odV + dd * 0.5 + odS));
         // single scattering + crude isotropic multiple scattering (0.12 x the in-scattered light, unphased)
@@ -112,7 +135,8 @@
       vec3 dir = vec3(cos(el) * cos(az), sin(el), cos(el) * sin(az));
       vec3 L = scatter(dir);
       L = mix(L, overcast(dir), uOv);
-      // P56 night: a faint moonlit airglow (deep blue, a paler band at the horizon) and a halo round the moon, so the night sky is not black
+      // P56 night: a faint moonlit airglow (deep blue, a paler band at the horizon) and a halo round the moon, so the
+      // night sky is not black
       float nel = clamp(dir.y, -0.2, 1.0), mm = max(dot(dir, uMoon), 0.0);
       vec3 ng = mix(vec3(0.020, 0.032, 0.062), vec3(0.003, 0.0065, 0.019), pow(max(nel, 0.0), 0.45)) * (nel < 0.0 ? 0.5 : 1.0);
       ng += vec3(0.5, 0.62, 0.9) * (pow(mm, 18.0) * 0.012 + pow(mm, 220.0) * 0.06);
@@ -122,7 +146,10 @@
   /* dome: LUT + sun disc + sharp aureole + lightning flash; (uDark kept for weather.js, unused: the overcast is in
    * the LUT); dithered against banding */
   const DOME_F = /* glsl */`
-    uniform sampler2D tLut, tNoise; uniform vec3 uSun, uSunC, uMoon; uniform float uNight, uOv, uFlash, uDark, uDisc, uDeck, uDeckH, uVis; uniform vec2 uDrift;
+    uniform sampler2D tLut, tNoise;
+    uniform vec3 uSun, uSunC, uMoon;
+    uniform float uNight, uOv, uFlash, uDark, uDisc, uDeck, uDeckH, uVis;
+    uniform vec2 uDrift;
     varying vec3 vD;
     vec2 lutUV(vec3 d){
       float el = asin(clamp(d.y, -1.0, 1.0));
@@ -136,7 +163,8 @@
       // drifting fbm gives it structure (thick dark masses, thinner brighter parts, a glow where the sun is behind
       // thin cloud), fading into the haze toward the horizon
       if (uDeck > 0.0 && d.y > 0.002) {
-        float t = uDeckH / d.y; vec2 p = d.xz * t + uDrift;
+        float t = uDeckH / d.y;
+        vec2 p = d.xz * t + uDrift;
         float dn = texture2D(tNoise, p / 11000.0).a * 0.5 + texture2D(tNoise, p / 3100.0 + 0.37).a * 0.32 + texture2D(tNoise, p / 900.0 + 0.71).r * 0.18;
         float thick = smoothstep(0.3, 0.75, dn), f = 1.0 - exp(-t / uVis * 2.6);
         float k = mix(1.0, 1.32 - 0.62 * thick + pow(max(mu, 0.0), 6.0) * (1.0 - thick) * 0.5, uDeck * (1.0 - f));
@@ -171,25 +199,60 @@
 
   SK.init = function (scene, tx, Q, rend) {
     renderer = rend;
-    rt = new T.WebGLRenderTarget(LW, LH, { type: T.HalfFloatType, format: T.RGBAFormat, depthBuffer: false, stencilBuffer: false, generateMipmaps: false });
-    rt.texture.minFilter = rt.texture.magFilter = T.LinearFilter; rt.texture.wrapS = T.RepeatWrapping; rt.texture.wrapT = T.ClampToEdgeWrapping;
-    const U = { uSun: { value: P.sun }, uAbs: { value: P.abs }, uAlb: { value: P.alb }, uOvc: { value: P.ovc }, uTurb: { value: 1 }, uMoon: { value: new T.Vector3(0, 1, 0) }, uNight: { value: 0 }, uOv: { value: 0 }, uOvL: { value: 1 }, uE: { value: SKY_E }, uObsH: { value: OBS_H } };
-    lutMat = new T.ShaderMaterial({ uniforms: U, vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }', fragmentShader: LUT_F, depthTest: false, depthWrite: false });
+    rt = new T.WebGLRenderTarget(LW, LH, {
+      type: T.HalfFloatType,
+      format: T.RGBAFormat,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: false
+    });
+    rt.texture.minFilter = rt.texture.magFilter = T.LinearFilter;
+    rt.texture.wrapS = T.RepeatWrapping;
+    rt.texture.wrapT = T.ClampToEdgeWrapping;
+    const U = {
+      uSun: { value: P.sun },
+      uAbs: { value: P.abs },
+      uAlb: { value: P.alb },
+      uOvc: { value: P.ovc },
+      uTurb: { value: 1 },
+      uMoon: { value: new T.Vector3(0, 1, 0) },
+      uNight: { value: 0 },
+      uOv: { value: 0 },
+      uOvL: { value: 1 },
+      uE: { value: SKY_E },
+      uObsH: { value: OBS_H }
+    };
+    lutMat = new T.ShaderMaterial({
+      uniforms: U,
+      vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: LUT_F,
+      depthTest: false,
+      depthWrite: false
+    });
     SS.section.exempt(lutMat, 'sky: full-screen LUT quad');
     lutScene = new T.Scene(); lutCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const q = new T.Mesh(new T.PlaneGeometry(2, 2), lutMat); q.frustumCulled = false; lutScene.add(q);
+    const q = new T.Mesh(new T.PlaneGeometry(2, 2), lutMat);
+    q.frustumCulled = false;
+    lutScene.add(q);
     domeMat = new T.ShaderMaterial({
       side: T.BackSide, depthWrite: false, fog: false,
-      uniforms: { tLut: { value: rt.texture }, tNoise: { value: tx.noise }, uMoon: { value: new T.Vector3(0, 1, 0) }, uNight: { value: 0 }, uSun: { value: P.sun }, uSunC: { value: new T.Vector3(1, 1, 1) }, uOv: { value: 0 }, uFlash: { value: 0 }, uDark: { value: 0 }, uDisc: { value: 60 },
+      uniforms: { tLut: { value: rt.texture }, tNoise: { value: tx.noise }, uMoon: { value: new T.Vector3(0, 1, 0) }, uNight: { value: 0 },
+        uSun: { value: P.sun }, uSunC: { value: new T.Vector3(1, 1, 1) }, uOv: { value: 0 }, uFlash: { value: 0 }, uDark: { value: 0 },
+        uDisc: { value: 60 },
         uDeck: { value: 0 }, uDeckH: { value: 1000 }, uVis: { value: 40000 }, uDrift: { value: new T.Vector2() } },
       vertexShader: 'varying vec3 vD; void main(){ vD = position; vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }',
       fragmentShader: DOME_F
     });
     SS.section.exempt(domeMat, 'sky dome');
-    dome = new T.Mesh(new T.SphereGeometry(500, 48, 24), domeMat); dome.renderOrder = -10; dome.frustumCulled = false; scene.add(dome);
+    dome = new T.Mesh(new T.SphereGeometry(500, 48, 24), domeMat);
+    dome.renderOrder = -10;
+    dome.frustumCulled = false;
+    scene.add(dome);
     dome.layers.enable(ENV_LAYER);
     envRT = new T.WebGLCubeRenderTarget(ENV_N, { type: T.HalfFloatType, generateMipmaps: false, minFilter: T.LinearFilter });
-    envCam = new T.CubeCamera(1, 1000, envRT); envCam.layers.set(ENV_LAYER); for (const c of envCam.children) c.layers.set(ENV_LAYER);
+    envCam = new T.CubeCamera(1, 1000, envRT);
+    envCam.layers.set(ENV_LAYER);
+    for (const c of envCam.children) c.layers.set(ENV_LAYER);
     sceneRef = scene;
     SK.info.tex = rt.texture;
     return { mesh: dome, mat: domeMat };
@@ -198,12 +261,20 @@
   /* new look: biome + weather kind (+ the biome's sun direction); renders the LUT and reads back the ring colours */
   SK.look = function (biome, kind, sunDir, night) {
     const B = BIOME[biome] || BIOME.temperate, Wk = Object.assign({}, WEATHER[kind] || WEATHER.clear);
-    if (biome === 'volcanic') { Wk.ov = Math.max(Wk.ov, VOLC_MIN.ov); Wk.ovL = Math.min(Wk.ovL, VOLC_MIN.ovL); }
+    if (biome === 'volcanic') {
+      Wk.ov = Math.max(Wk.ov, VOLC_MIN.ov);
+      Wk.ovL = Math.min(Wk.ovL, VOLC_MIN.ovL);
+    }
     P.sun.set(sunDir[0], sunDir[1], sunDir[2]).normalize();
     P.turb = B.turb * Wk.turb; P.abs.set(B.abs[0] * Wk.ash, B.abs[1] * Wk.ash, B.abs[2] * Wk.ash);
-    P.alb.set(B.alb[0], B.alb[1], B.alb[2]); P.ovc.set(B.ovc[0], B.ovc[1], B.ovc[2]); P.ov = Wk.ov; P.ovL = Wk.ovL;
+    P.alb.set(B.alb[0], B.alb[1], B.alb[2]);
+    P.ovc.set(B.ovc[0], B.ovc[1], B.ovc[2]);
+    P.ov = Wk.ov;
+    P.ovL = Wk.ovL;
     P.storm = !!Wk.storm;
-    const u = lutMat.uniforms; u.uNight.value = night ? night.k : 0; if (night) u.uMoon.value.set(night.moon[0], night.moon[1], night.moon[2]).normalize();
+    const u = lutMat.uniforms;
+    u.uNight.value = night ? night.k : 0;
+    if (night) u.uMoon.value.set(night.moon[0], night.moon[1], night.moon[2]).normalize();
     domeMat.uniforms.uMoon.value.copy(u.uMoon.value); domeMat.uniforms.uNight.value = night ? night.k : 0;
     u.uTurb.value = P.turb; u.uOv.value = P.ov; u.uOvL.value = P.ovL;
     domeMat.uniforms.uOv.value = P.ov;
@@ -220,18 +291,35 @@
     // ring colours (linear radiance): horizon (el ~ +1.5°), sky average (5-25°), zenith (top rows)
     const buf = new Uint16Array(LW * 4), row = el => Math.round((0.5 + 0.5 * Math.sqrt(el / (Math.PI / 2))) * LH - 0.5);
     const ring = (r0, r1) => {
-      const s = [0, 0, 0]; let n = 0;
+      const s = [0, 0, 0];
+      let n = 0;
       for (let r = r0; r <= r1; r++) {
         renderer.readRenderTargetPixels(rt, 0, Math.min(LH - 1, r), LW, 1, buf);
-        for (let i = 0; i < LW; i++) for (let k = 0; k < 3; k++) s[k] += T.DataUtils.fromHalfFloat(buf[i * 4 + k]);
+        for (let i = 0; i < LW; i++)
+          for (let k = 0; k < 3; k++) s[k] += T.DataUtils.fromHalfFloat(buf[i * 4 + k]);
         n += LW;
       }
       return s.map(v => v / n);
     };
-    const toS = c => c.map(v => { const x = Math.max(0, v); return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055; });
+    const toS = c => c.map(v => {
+      const x = Math.max(0, v);
+      return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+    });
     const hz = ring(row(0.02), row(0.035)), av = ring(row(0.09), row(0.44)), tp = ring(LH - 3, LH - 1);
     envT = -1;
-    SK.info = { horizon: toS(hz), avg: toS(av), top: toS(tp), horizonLin: hz, storm: P.storm, phys: true, tex: rt.texture, env: envRT.texture, sunT: [P.sunT.x, P.sunT.y, P.sunT.z], ov: P.ov, ms: +(performance.now() - t0ms).toFixed(1) };
+    SK.info = {
+      horizon: toS(hz),
+      avg: toS(av),
+      top: toS(tp),
+      horizonLin: hz,
+      storm: P.storm,
+      phys: true,
+      tex: rt.texture,
+      env: envRT.texture,
+      sunT: [P.sunT.x, P.sunT.y, P.sunT.z],
+      ov: P.ov,
+      ms: +(performance.now() - t0ms).toFixed(1)
+    };
     return SK.info;
   };
   SK.frame = function (camera, drift, vis, time) {
@@ -241,12 +329,18 @@
     if (vis) domeMat.uniforms.uVis.value = vis;
     if (envT < 0 || time - envT > ENV_DT || time < envT) {
       envT = time;
-      const fog = sceneRef.fog; sceneRef.fog = null;
+      const fog = sceneRef.fog;
+      sceneRef.fog = null;
       envCam.position.copy(camera.position); envCam.update(renderer, sceneRef);
       sceneRef.fog = fog;
       // the clouds live in the far pass's scene (render/farland.js): draw them into the same cube, no clear
       const fs = SS.farView && SS.farView.scene && SS.farView.scene();
-      if (fs) { const ac = renderer.autoClear; renderer.autoClear = false; envCam.update(renderer, fs); renderer.autoClear = ac; }
+      if (fs) {
+        const ac = renderer.autoClear;
+        renderer.autoClear = false;
+        envCam.update(renderer, fs);
+        renderer.autoClear = ac;
+      }
     }
   };
   SK.ENV_LAYER = ENV_LAYER;

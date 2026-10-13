@@ -1,30 +1,53 @@
 /* render/softview.js — P39 J1: glue between the game and the soft-body worm solver (js/core/softworm.js).
- * The sim worm (disc, position, velocity, damage) stays the authority; each worm's visual body is a jelly chain (v.sw, SS.softworm) driven by it:
- *   - update(S, w, v, sp, c): once per worm and frame. sp = the muscle GOAL spine (actors.js spine(): the animator's pose at NS samples), c = the
- *     context (facing, slope, flight, water, rope, salto ...). Sets the solver inputs, advances it by the frame time (fixed sub-steps inside),
- *     and returns the LIVE spine (body-local x, y, tangent angle a, radius r at NS samples) the tube mesh is built from. Local frame as before:
- *     x along the facing, y up, origin = the sim disc centre, so eyes / arms / hats keep working unchanged.
- *   - onEvent(S, e): the sim's events become impulses: a blast (per-node radial kick with falloff, 'explode'.pushes), a bat (a dent where it
- *     lands, 0.06 s after the swing, along the hit vector), a landing (impact speed), any other hit with a direction (shot, punch, bite).
+ * The sim worm (disc, position, velocity, damage) stays the authority; each worm's visual body is a jelly chain (v.sw,
+ * SS.softworm) driven by it:
+ *   - update(S, w, v, sp, c): once per worm and frame. sp = the muscle GOAL spine (actors.js spine(): the animator's
+ *     pose at NS samples), c = the context (facing, slope, flight, water, rope, salto ...). Sets the solver inputs,
+ *     advances it by the frame time (fixed sub-steps inside), and returns the LIVE spine (body-local x, y, tangent
+ *     angle a, radius r at NS samples) the tube mesh is built from. Local frame as before: x along the facing, y up,
+ *     origin = the sim disc centre, so eyes / arms / hats keep working unchanged.
+ *   - onEvent(S, e): the sim's events become impulses: a blast (per-node radial kick with falloff, 'explode'.pushes), a
+ *     bat (a dent where it lands, 0.06 s after the swing, along the hit vector), a landing (impact speed), any other
+ *     hit with a direction (shot, punch, bite).
  *   - twist(w, rate): a spinning blow (the knockout punch) as an angular impulse.
- * Terrain: the real density field of the world on the worm's own vertical plane (+ the cross-sections of props near it). Presentation only
- * (not in S, not hashed); fixed sub-step, so it is frame-rate independent; a replay rebuilds the worm views, which resets the bodies.
- * Porting: one SoftWorm struct per worm; this file is the engine-side glue (sample callback, event -> impulse tables). */
+ * Terrain: the real density field of the world on the worm's own vertical plane (+ the cross-sections of props near
+ * it). Presentation only (not in S, not hashed); fixed sub-step, so it is frame-rate independent; a replay rebuilds the
+ * worm views, which resets the bodies. Porting: one SoftWorm struct per worm; this file is the engine-side glue (sample
+ * callback, event -> impulse tables). */
 (function (SS) {
   'use strict';
   const M = SS.math, C = SS.CFG, P = SS.plane, SW = SS.softworm, N = SW.N;
   const SV = SS.softView = {};
   const NS = 150;
-  const OUT = { x: new Float32Array(NS), y: new Float32Array(NS), a: new Float32Array(NS), r: new Float32Array(NS), dx: 0, dy: 0 };   // dx, dy: how far the shoulder is from its goal (m): a held weapon rides with it
+  // dx, dy: how far the shoulder is from its goal (m): a held weapon rides with it
+  const OUT = { x: new Float32Array(NS), y: new Float32Array(NS), a: new Float32Array(NS), r: new Float32Array(NS), dx: 0, dy: 0 };
   const TMP = { x: 0, y: 0 };
-  const MAT_ICE = 7, MAT_SNOW = 6, SINK = { 6: 0.1, 4: 0.055, 11: 0.05, 12: 0.03 };   // sink depth (m) by ground material: snow, sand, ash, scree
+  // sink depth (m) by ground material: snow, sand, ash, scree
+  const MAT_ICE = 7, MAT_SNOW = 6, SINK = { 6: 0.1, 4: 0.055, 11: 0.05, 12: 0.03 };
   const BAT_SPEED = 38, BAT_DELAY = 0.06, HIT_R = 0.32;
   let clock = 0;
   const pend = [];                          // delayed bat hits { t, w, cs, cy, dx, dy }
   const batW = [];                          // worms hit by a bat this step (until the 'swing' event with the contact point arrives)
 
   /* ---------- the world seen from one worm's plane ---------- */
-  const E = { S: null, c: 1, s: 0, t: 0, sink: 0, nb: 0, bs: [], bY: [], bK: [], bA: [], bB: [], nw: 0, ws: [], wy: [], wr: [], sample: null };
+  const E = {
+    S: null,
+    c: 1,
+    s: 0,
+    t: 0,
+    sink: 0,
+    nb: 0,
+    bs: [],
+    bY: [],
+    bK: [],
+    bA: [],
+    bB: [],
+    nw: 0,
+    ws: [],
+    wy: [],
+    wr: [],
+    sample: null
+  };
   E.sample = function (s, y) {
     const S = E.S, nx = -E.s, nz = E.c;
     let d = SS.world.sample(S.O.x + s * E.c + E.t * nx, y, S.O.z + s * E.s + E.t * nz) - E.sink;
@@ -33,57 +56,90 @@
       const f = E.bK[i] === 0 ? (E.bA[i] - M.len2(ds, dy)) * 0.7 : Math.min(E.bA[i] - Math.abs(ds), E.bB[i] - Math.abs(dy)) * 0.7;
       if (f > d) d = f;
     }
-    for (let i = 0; i < E.nw; i++) { const f = (E.wr[i] - M.len2(s - E.ws[i], y - E.wy[i])) * 0.7; if (f > d) d = f; }   // P88: the back of the worm below (its live nodes)
+    // P88: the back of the worm below (its live nodes)
+    for (let i = 0; i < E.nw; i++) {
+      const f = (E.wr[i] - M.len2(s - E.ws[i], y - E.wy[i])) * 0.7;
+      if (f > d) d = f;
+    }
     return d;
   };
   function gatherBodies(S, s0, y0) {
-    const B = S.planeBodies; E.nb = 0; if (!B) return;
+    const B = S.planeBodies;
+    E.nb = 0;
+    if (!B) return;
     for (let i = 0; i < B.length && E.nb < 8; i++) {
-      const b = B[i]; if (b.worm >= 0) continue;
+      const b = B[i];
+      if (b.worm >= 0) continue;
       const rr = b.kind === 0 ? b.r : Math.max(b.hs, b.hy);
       if (Math.abs(b.s - s0) > rr + 2 || Math.abs(b.y - y0) > rr + 2) continue;
-      const k = E.nb++; E.bs[k] = b.s; E.bY[k] = b.y; E.bK[k] = b.kind; E.bA[k] = b.kind === 0 ? b.r : b.hs; E.bB[k] = b.kind === 0 ? 0 : b.hy;
+      const k = E.nb++;
+      E.bs[k] = b.s;
+      E.bY[k] = b.y;
+      E.bK[k] = b.kind;
+      E.bA[k] = b.kind === 0 ? b.r : b.hs;
+      E.bB[k] = b.kind === 0 ? 0 : b.hy;
     }
   }
 
 
   /* ---------- P88: worms standing on / walking over each other ----------
-   * Sim: every worm is a solid ball of WORM_R for the others (sim.worm_under); the soft bodies used to ignore each other, so a worm stood on an invisible ball
-   * (hovering over a thin lying worm) and the soft pin to the sim position wobbled it whenever the sim climbed a step. Now:
-   *   - the worm ABOVE is carried by the live back of the worm below: its solver sees the lower worm's nodes as terrain (E.nw spheres), its visual height follows the
-   *     real surface (offset = how far its belly is from that surface, critically damped: no pop on the climb, no hover) and its ground frame is the back's slope;
-   *   - the worm BELOW folds under the weight: a localized dent (the goal nodes under the contact sink, the tube bulges a little), the depth follows the load with a
-   *     critically damped spring (K_DENT_W 1/s: settles in ~0.3 s, never overshoots), not through the jelly solver (no wobble).
-   * Presentation only (not in S): a function of the sim positions and the live nodes. */
+   * Sim: every worm is a solid ball of WORM_R for the others (sim.worm_under); the soft bodies used to ignore each
+   * other, so a worm stood on an invisible ball (hovering over a thin lying worm) and the soft pin to the sim position
+   * wobbled it whenever the sim climbed a step. Now:
+   *   - the worm ABOVE is carried by the live back of the worm below: its solver sees the lower worm's nodes as terrain
+   *     (E.nw spheres), its visual height follows the real surface (offset = how far its belly is from that surface,
+   *     critically damped: no pop on the climb, no hover) and its ground frame is the back's slope;
+   *   - the worm BELOW folds under the weight: a localized dent (the goal nodes under the contact sink, the tube bulges
+   *     a little), the depth follows the load with a critically damped spring (K_DENT_W 1/s: settles in ~0.3 s, never
+   * overshoots), not through the jelly solver (no wobble). Presentation only (not in S): a function of the sim
+   * positions and the live nodes. */
   const STK = { DENT: 0.09, DENT_MAX: 0.14, SIGMA: 0.3, W: 13, WY: 11, REACH: 0.12, GAP_UP: 0.3, GAP_DN: 0.14, GOAL_TAU: 0.045 };
   const stk = (v) => v.stk || (v.stk = { fy: 0, fv: 0, on: 0, dd: 0, dv: 0, sc: 0, lo: -1, thS: 0, init: 0 });
   // the nearest worm below w (another ball within reach, w above it)
   function below(S, w) {
-    let best = null, bd = 1e9; const R2 = 2 * C.WORM_R + STK.REACH;
+    let best = null, bd = 1e9;
+    const R2 = 2 * C.WORM_R + STK.REACH;
     for (let i = 0; i < S.worms.length; i++) {
-      const o = S.worms[i]; if (o === w || o.dead || o.drowning || o.swim) continue;
+      const o = S.worms[i];
+      if (o === w || o.dead || o.drowning || o.swim) continue;
       const dx = w.pos.x - o.pos.x, dy = w.pos.y - o.pos.y, dz = w.pos.z - o.pos.z, d = M.len3(dx, dy, dz);
-      if (dy > 0.3 && d < R2 && d < bd) { bd = d; best = o; }
+      if (dy > 0.3 && d < R2 && d < bd) {
+        bd = d;
+        best = o;
+      }
     }
     return best;
   }
   // the weight on w: the worms above it (count, mean plane s of their contact)
   const LOAD = { n: 0, s: 0 };
   function loadOn(S, w) {
-    LOAD.n = 0; LOAD.s = 0; const R2 = 2 * C.WORM_R + STK.REACH;
+    LOAD.n = 0;
+    LOAD.s = 0;
+    const R2 = 2 * C.WORM_R + STK.REACH;
     for (let i = 0; i < S.worms.length; i++) {
-      const o = S.worms[i]; if (o === w || o.dead || o.drowning || o.swim) continue;
+      const o = S.worms[i];
+      if (o === w || o.dead || o.drowning || o.swim) continue;
       const dx = o.pos.x - w.pos.x, dy = o.pos.y - w.pos.y, dz = o.pos.z - w.pos.z, d = M.len3(dx, dy, dz);
-      if (dy > 0.3 && d < R2) { LOAD.n++; LOAD.s += P.to_plane(S, o.pos).s; }
+      if (dy > 0.3 && d < R2) {
+        LOAD.n++;
+        LOAD.s += P.to_plane(S, o.pos).s;
+      }
     }
     if (LOAD.n) LOAD.s /= LOAD.n;
     return LOAD.n;
   }
   const SURF = { y: -1e9, th: 0 };
-  // the top of the lower worm's live body at plane s: node spheres (centre y + sqrt(rad^2 - ds^2)); the slope over +-0.25 m
+  // the top of the lower worm's live body at plane s: node spheres (centre y + sqrt(rad^2 - ds^2)); the slope over
+  // +-0.25 m
   function backAt(sw, s) {
     let best = -1e9;
-    for (let j = 0; j < N; j++) { const ds = s - sw.px[j], r = sw.rad[j]; if (Math.abs(ds) < r) { const h = sw.py[j] + Math.sqrt(r * r - ds * ds); if (h > best) best = h; } }
+    for (let j = 0; j < N; j++) {
+      const ds = s - sw.px[j], r = sw.rad[j];
+      if (Math.abs(ds) < r) {
+        const h = sw.py[j] + Math.sqrt(r * r - ds * ds);
+        if (h > best) best = h;
+      }
+    }
     return best;
   }
   function backSurface(sw, s) {
@@ -94,133 +150,294 @@
   }
 
   SV.init = function () {};
-  SV.clear = function () { pend.length = 0; batW.length = 0; clock = 0; };
+  SV.clear = function () {
+    pend.length = 0;
+    batW.length = 0;
+    clock = 0;
+  };
   SV.frame = function (S, view, camera, dt) {
     clock += dt; batW.length = 0;
-    for (let i = pend.length - 1; i >= 0; i--) if (clock >= pend[i].t) { const q = pend[i]; pend.splice(i, 1); const sw = body(q.w); if (sw) SW.hit(sw, q.cs, q.cy, q.dx, q.dy, BAT_SPEED, HIT_R); }
+    for (let i = pend.length - 1; i >= 0; i--)
+      if (clock >= pend[i].t) {
+        const q = pend[i];
+        pend.splice(i, 1);
+        const sw = body(q.w);
+        if (sw) SW.hit(sw, q.cs, q.cy, q.dx, q.dy, BAT_SPEED, HIT_R);
+      }
   };
-  const body = w => { const vis = SS.actors && SS.actors.vis(w), v = vis && vis.v; return v && v.sw && v.sw.init ? v.sw : null; };
+  const body = w => {
+    const vis = SS.actors && SS.actors.vis(w), v = vis && vis.v;
+    return v && v.sw && v.sw.init ? v.sw : null;
+  };
   SV.body = body; SV.OUT = OUT;
 
   /* ---------- per worm and frame ---------- */
-  /* c = { f, sNow, airborne, wet (0..1), surf, vs (crawl velocity), grounded, slope (rad, ground frame in the plane), hang (angle rad or null), swim, lean, spin,
+  /* c = { f, sNow, airborne, wet (0..1), surf, vs (crawl velocity), grounded, slope (rad, ground frame in the plane),
+   * hang (angle rad or null), swim, lean, spin,
    *       sx, sy, ox, oy (goal scale / offset: the muscles), dt, dizzy } */
   SV.update = function (S, w, v, sp, c) {
-    if (S.eow && SS.eowView) return SS.eowView.goal(OUT, sp, c);      // P68c: no jelly solver in space (its gravity and ground are the upright world's): the muscle pose, turned by the suit
-    let sw = v.sw; const created = !sw; if (created) sw = v.sw = SW.make();
+    // P68c: no jelly solver in space (its gravity and ground are the upright world's): the muscle pose, turned by the
+    // suit
+    if (S.eow && SS.eowView) return SS.eowView.goal(OUT, sp, c);
+    let sw = v.sw;
+    const created = !sw;
+    if (created) sw = v.sw = SW.make();
     const I = sw.in, f = c.f, s0 = c.sNow, y0 = w.pos.y;
-    // the goal pose: the animator's spine sampled at N nodes, scaled by the muscles (crouch, stretch, breathing) about the ground line
-    // P88: the weight of the worms standing on this one: a dent depth by a critically damped spring (no overshoot), at the contact point
+    // the goal pose: the animator's spine sampled at N nodes, scaled by the muscles (crouch, stretch, breathing) about
+    // the ground line P88: the weight of the worms standing on this one: a dent depth by a critically damped spring (no
+    // overshoot), at the contact point
     const K = stk(v), nLoad = loadOn(S, w), dtc = M.min(c.dt, 0.05);
-    { const tgt = M.min(STK.DENT_MAX, STK.DENT * nLoad), acc = -2 * STK.W * K.dv - STK.W * STK.W * (K.dd - tgt); K.dv += acc * dtc; K.dd += K.dv * dtc; if (K.dd < 0) { K.dd = 0; K.dv = 0; } if (nLoad) K.sc = LOAD.s; }
+    {
+      const tgt = M.min(STK.DENT_MAX, STK.DENT * nLoad), acc = -2 * STK.W * K.dv - STK.W * STK.W * (K.dd - tgt);
+      K.dv += acc * dtc;
+      K.dd += K.dv * dtc;
+      if (K.dd < 0) {
+        K.dd = 0;
+        K.dv = 0;
+      }
+      if (nLoad) K.sc = LOAD.s;
+    }
     const dent = K.dd > 1e-4, dxl = f * (K.sc - s0), s2 = 1 / (2 * STK.SIGMA * STK.SIGMA);
     for (let j = 0; j < N; j++) {
       const i = Math.round(j * (NS - 1) / (N - 1));
       let gx = sp.x[i] * c.sx + c.ox, gy = -0.5 + (sp.y[i] + 0.5) * c.sy + c.oy, gr = sp.r[i] * (c.sx + c.sy) * 0.5;
-      if (dent) { const g = M.exp(-(gx - dxl) * (gx - dxl) * s2), hw = M.clamp((gy + 0.5) / 0.6, 0.15, 1); gy -= K.dd * g * hw; gr *= 1 + 2.2 * K.dd * g; }
-      // P88: the animators step the pose (a head turn, a reaction, a state change) from one frame to the next: a 0.1 m step of the goal is an impulse (energy 0.5) that
-      // made a resting worm hop and spin. The goal is low-passed (STK.GOAL_TAU s: invisible as motion, no impulse for the solver).
+      if (dent) {
+        const g = M.exp(-(gx - dxl) * (gx - dxl) * s2), hw = M.clamp((gy + 0.5) / 0.6, 0.15, 1);
+        gy -= K.dd * g * hw;
+        gr *= 1 + 2.2 * K.dd * g;
+      }
+      // P88: the animators step the pose (a head turn, a reaction, a state change) from one frame to the next: a 0.1 m
+      // step of the goal is an impulse (energy 0.5) that made a resting worm hop and spin. The goal is low-passed
+      // (STK.GOAL_TAU s: invisible as motion, no impulse for the solver).
       if (!K.gf) { K.gf = { x: new Float64Array(N), y: new Float64Array(N), r: new Float64Array(N), on: 0 }; }
-      if (!K.gf.on || created) { K.gf.x[j] = gx; K.gf.y[j] = gy; K.gf.r[j] = gr; } else { const a = 1 - M.exp(-dtc / STK.GOAL_TAU); K.gf.x[j] += (gx - K.gf.x[j]) * a; K.gf.y[j] += (gy - K.gf.y[j]) * a; K.gf.r[j] += (gr - K.gf.r[j]) * a; }
+      if (!K.gf.on || created) {
+        K.gf.x[j] = gx;
+        K.gf.y[j] = gy;
+        K.gf.r[j] = gr;
+      } else {
+        const a = 1 - M.exp(-dtc / STK.GOAL_TAU);
+        K.gf.x[j] += (gx - K.gf.x[j]) * a;
+        K.gf.y[j] += (gy - K.gf.y[j]) * a;
+        K.gf.r[j] += (gr - K.gf.r[j]) * a;
+      }
       SW.set_goal(sw, j, K.gf.x[j], K.gf.y[j], K.gf.r[j], sp.b ? sp.b[i] : 0);
     }
     K.gf.on = 1;
     const tp = P.to_plane(S, w.pos);
-    E.S = S; E.c = M.cos(S.theta); E.s = M.sin(S.theta); E.t = tp.t; gatherBodies(S, s0, y0);
-    // P88: standing on a worm: its live back is the ground (obstacle nodes), the visual height follows it, the ground frame is the back's slope
-    const lo = c.grounded ? below(S, w) : null, lsw = lo ? body(lo) : null; let yv = y0, slopeS = c.slope;
+    E.S = S;
+    E.c = M.cos(S.theta);
+    E.s = M.sin(S.theta);
+    E.t = tp.t;
+    gatherBodies(S, s0, y0);
+    // P88: standing on a worm: its live back is the ground (obstacle nodes), the visual height follows it, the ground
+    // frame is the back's slope
+    const lo = c.grounded ? below(S, w) : null, lsw = lo ? body(lo) : null;
+    let yv = y0, slopeS = c.slope;
     E.nw = 0;
     if (lsw && Math.abs(P.to_plane(S, lo.pos).t - tp.t) < C.WORM_R + 0.2) {
-      for (let j = 0; j < N && E.nw < 16; j++) if (Math.abs(lsw.px[j] - s0) < 1.4) { E.ws[E.nw] = lsw.px[j]; E.wy[E.nw] = lsw.py[j]; E.wr[E.nw] = lsw.rad[j]; E.nw++; }
-      if (backSurface(lsw, s0)) { K.on = 1; K.gap = M.clamp((y0 - 0.5) - SURF.y, -STK.GAP_DN, STK.GAP_UP); slopeS = SURF.th; } else K.on = 0;
+      for (let j = 0; j < N && E.nw < 16; j++)
+        if (Math.abs(lsw.px[j] - s0) < 1.4) {
+          E.ws[E.nw] = lsw.px[j];
+          E.wy[E.nw] = lsw.py[j];
+          E.wr[E.nw] = lsw.rad[j];
+          E.nw++;
+        }
+      if (backSurface(lsw, s0)) {
+        K.on = 1;
+        K.gap = M.clamp((y0 - 0.5) - SURF.y, -STK.GAP_DN, STK.GAP_UP);
+        slopeS = SURF.th;
+      } else K.on = 0;
     } else K.on = 0;
-    {                                                      // the visual height: the sim height minus the gap to the real back; critically damped (a step of the climb is not a pop)
+    // the visual height: the sim height minus the gap to the real back; critically damped (a step of the climb is not a
+    // pop)
+    {
       const tgt = y0 - (K.on ? K.gap : 0);
-      if (!K.init || Math.abs(K.fy - tgt) > 1.5) { K.fy = tgt; K.fv = 0; K.init = 1; }
-      else if (K.on || Math.abs(K.fy - y0) > 0.002 || Math.abs(K.fv) > 0.01) { const acc = -2 * STK.WY * K.fv - STK.WY * STK.WY * (K.fy - tgt); K.fv += acc * dtc; K.fy += K.fv * dtc; if (!K.on && Math.abs(K.fy - y0) < 0.002 && Math.abs(K.fv) < 0.01) { K.fy = y0; K.fv = 0; } }
-      else { K.fy = y0; K.fv = 0; }
+      if (!K.init || Math.abs(K.fy - tgt) > 1.5) {
+        K.fy = tgt;
+        K.fv = 0;
+        K.init = 1;
+      }
+      else if (K.on || Math.abs(K.fy - y0) > 0.002 || Math.abs(K.fv) > 0.01) {
+        const acc = -2 * STK.WY * K.fv - STK.WY * STK.WY * (K.fy - tgt);
+        K.fv += acc * dtc;
+        K.fy += K.fv * dtc;
+        if (!K.on && Math.abs(K.fy - y0) < 0.002 && Math.abs(K.fv) < 0.01) {
+          K.fy = y0;
+          K.fv = 0;
+        }
+      }
+      else {
+        K.fy = y0;
+        K.fv = 0;
+      }
       yv = K.fy;
     }
     // inputs of the solver
-    if (!created && sw.init && I.f !== f) SW.flip(sw, I.px);               // turned round: the view mirrors the body, so the nodes mirror about the disc
+    // turned round: the view mirrors the body, so the nodes mirror about the disc
+    if (!created && sw.init && I.f !== f) SW.flip(sw, I.px);
     I.f = f; I.x = s0; I.y = yv;
     I.ground = c.grounded ? 1 : 0; I.thG = slopeS + f * c.lean;
     I.spin = c.spin; I.tone = c.dizzy ? 0.75 : (c.firm || 1); I.vref = c.grounded && c.vs ? c.vs : 0;
     I.surf = c.surf > -1e8 ? c.surf : -1e9; I.g = 9.81 * (SS.sim && SS.sim.gravity_k ? SS.sim.gravity_k(S, w) : 1);
-    if (c.flip) { I.extTh = c.flip.a; I.extW = c.flip.w; } else if (c.hang != null) { I.extTh = f * c.hang; I.extW = 0.9; } else if (c.fly) { I.extTh = c.fly.a; I.extW = c.fly.w; } else if (c.swim) { I.extTh = 0; I.extW = 0.5; } else I.extW = 0;
-    if (c.pull) { I.hx = c.pull.x * I.g * SW.K.PULL; I.hy = c.pull.y * I.g * SW.K.PULL; } else I.hx = I.hy = 0;   // rope / riser tension on the head
+    if (c.flip) {
+      I.extTh = c.flip.a;
+      I.extW = c.flip.w;
+    } else if (c.hang != null) {
+      I.extTh = f * c.hang;
+      I.extW = 0.9;
+    } else if (c.fly) {
+      I.extTh = c.fly.a;
+      I.extW = c.fly.w;
+    } else if (c.swim) {
+      I.extTh = 0;
+      I.extW = 0.5;
+    } else I.extW = 0;
+    // rope / riser tension on the head
+    if (c.pull) {
+      I.hx = c.pull.x * I.g * SW.K.PULL;
+      I.hy = c.pull.y * I.g * SW.K.PULL;
+    } else I.hx = I.hy = 0;
     I.mu = SW.K.MU;
     let sinkT = 0;
     if (c.grounded) {
       const m = SS.world.mat_at(w.pos.x, w.pos.y - 0.7, w.pos.z);
-      if (m === MAT_ICE) I.mu = 0.1; else if (m === MAT_SNOW) I.mu = 0.5;
-      sinkT = SINK[m] || 0;                                  // P65h: a worm sinks into loose ground (the surface the body meets is lowered by that depth)
+      if (m === MAT_ICE) I.mu = 0.1;
+      else if (m === MAT_SNOW) I.mu = 0.5;
+      // P65h: a worm sinks into loose ground (the surface the body meets is lowered by that depth)
+      sinkT = SINK[m] || 0;
     }
     v.sinkD = (v.sinkD || 0) + (sinkT - (v.sinkD || 0)) * M.min(1, c.dt * 3.5);
     E.sink = v.sinkD * 0.7;
-    if (!sw.init) { I.px = s0; I.py = yv; SW.reset(sw, s0, yv); }
-    else if (sw.th0 != null && (Math.abs(S.theta - sw.th0) > 1e-5 || sw.ox !== S.O.x || sw.oz !== S.O.z)) {      // (the section turned, or its origin moved: 2D recentres it)
-      // P38 R3: while the section turns, the in-plane coordinates of a worm far from the pivot jump by metres per frame: the body is carried along (re-anchored),
-      // not reset and not dragged. P88: it starts from rest in the new cross-section every frame (no velocity from the shift, none from the terrain profile that
-      // changed under it: a turn used to launch every worm's jelly off the ground: the "wobble in the air" at each turn start / camera rotation)
-      const ds = s0 - I.px, dy = yv - I.py; for (let k = 0; k < N; k++) { sw.px[k] += ds; sw.py[k] += dy; sw.vx[k] = sw.vy[k] = 0; } sw.wz = 0; I.px = s0; I.py = yv;
-      if (I.ground > 0.5) {                                          // the slope seen from the new plane: the body is turned to it at once (about its centroid), it does not swing round
+    if (!sw.init) {
+      I.px = s0;
+      I.py = yv;
+      SW.reset(sw, s0, yv);
+    }
+    // (the section turned, or its origin moved: 2D recentres it)
+    else if (sw.th0 != null && (Math.abs(S.theta - sw.th0) > 1e-5 || sw.ox !== S.O.x || sw.oz !== S.O.z)) {
+      // P38 R3: while the section turns, the in-plane coordinates of a worm far from the pivot jump by metres per
+      // frame: the body is carried along (re-anchored), not reset and not dragged. P88: it starts from rest in the new
+      // cross-section every frame (no velocity from the shift, none from the terrain profile that changed under it: a
+      // turn used to launch every worm's jelly off the ground: the "wobble in the air" at each turn start / camera
+      // rotation)
+      const ds = s0 - I.px, dy = yv - I.py;
+      for (let k = 0; k < N; k++) {
+        sw.px[k] += ds;
+        sw.py[k] += dy;
+        sw.vx[k] = sw.vy[k] = 0;
+      }
+      sw.wz = 0;
+      I.px = s0;
+      I.py = yv;
+      // the slope seen from the new plane: the body is turned to it at once (about its centroid), it does not swing
+      // round
+      if (I.ground > 0.5) {
         const dth = I.thG - sw.th;
-        if (Math.abs(dth) > 0.5) SW.reset(sw, s0, yv);                 // the plane runs the other way round (the slope changes sign): the body is laid on the goal pose of the new frame
+        // the plane runs the other way round (the slope changes sign): the body is laid on the goal pose of the new
+        // frame
+        if (Math.abs(dth) > 0.5) SW.reset(sw, s0, yv);
         else {
-          let cx = 0, cy = 0; for (let k = 0; k < N; k++) { cx += sw.px[k]; cy += sw.py[k]; } cx /= N; cy /= N;
-          const cs = M.cos(dth), sn = M.sin(dth); for (let k = 0; k < N; k++) { const rx = sw.px[k] - cx, ry = sw.py[k] - cy; sw.px[k] = cx + rx * cs - ry * sn; sw.py[k] = cy + rx * sn + ry * cs; }
+          let cx = 0, cy = 0;
+          for (let k = 0; k < N; k++) {
+            cx += sw.px[k];
+            cy += sw.py[k];
+          }
+          cx /= N;
+          cy /= N;
+          const cs = M.cos(dth), sn = M.sin(dth);
+          for (let k = 0; k < N; k++) {
+            const rx = sw.px[k] - cx, ry = sw.py[k] - cy;
+            sw.px[k] = cx + rx * cs - ry * sn;
+            sw.py[k] = cy + rx * sn + ry * cs;
+          }
           sw.th = sw.thE = sw.thG = I.thG;
         }
       }
       SW.relax(sw, E, 4);                                          // (and onto the new cross-section's surface, at rest)
-    } else if (Math.abs(s0 - I.px) + Math.abs(yv - I.py) > 1.2 + 1.6 * c.speed * c.dt) SW.reset(sw, s0, yv);   // a teleport / a respawn (a fast flight is not)
-    sw.th0 = S.theta; sw.ox = S.O.x; sw.oz = S.O.z; sw.ut = S.tick;                       // (ut: the sim tick of the last update; tools tell a live body from a stale one)
+      // a teleport / a respawn (a fast flight is not)
+    } else if (Math.abs(s0 - I.px) + Math.abs(yv - I.py) > 1.2 + 1.6 * c.speed * c.dt) SW.reset(sw, s0, yv);
+    // (ut: the sim tick of the last update; tools tell a live body from a stale one)
+    sw.th0 = S.theta;
+    sw.ox = S.O.x;
+    sw.oz = S.O.z;
+    sw.ut = S.tick;
     SW.advance(sw, c.dt, E);
     // the live spine: Catmull-Rom through the nodes, body-local (x along the facing, origin = the sim disc centre)
     const lx = j => f * (sw.px[j < 0 ? 0 : j >= N ? N - 1 : j] - s0), ly = j => sw.py[j < 0 ? 0 : j >= N ? N - 1 : j] - y0;
     for (let k = 0; k < NS; k++) {
-      const t = k * (N - 1) / (NS - 1); let j = Math.floor(t); if (j > N - 2) j = N - 2; const u = t - j, u2 = u * u, u3 = u2 * u;
+      const t = k * (N - 1) / (NS - 1);
+      let j = Math.floor(t);
+      if (j > N - 2) j = N - 2;
+      const u = t - j, u2 = u * u, u3 = u2 * u;
       const p0x = lx(j - 1), p1x = lx(j), p2x = lx(j + 1), p3x = lx(j + 2), p0y = ly(j - 1), p1y = ly(j), p2y = ly(j + 1), p3y = ly(j + 2);
       const x = 0.5 * (2 * p1x + (-p0x + p2x) * u + (2 * p0x - 5 * p1x + 4 * p2x - p3x) * u2 + (-p0x + 3 * p1x - 3 * p2x + p3x) * u3);
       const y = 0.5 * (2 * p1y + (-p0y + p2y) * u + (2 * p0y - 5 * p1y + 4 * p2y - p3y) * u2 + (-p0y + 3 * p1y - 3 * p2y + p3y) * u3);
       const dx = 0.5 * ((-p0x + p2x) + 2 * (2 * p0x - 5 * p1x + 4 * p2x - p3x) * u + 3 * (-p0x + 3 * p1x - 3 * p2x + p3x) * u2);
       const dy = 0.5 * ((-p0y + p2y) + 2 * (2 * p0y - 5 * p1y + 4 * p2y - p3y) * u + 3 * (-p0y + 3 * p1y - 3 * p2y + p3y) * u2);
       OUT.x[k] = x; OUT.y[k] = y; OUT.a[k] = M.atan2(dy, dx);
-      // radius: the animator's (annuli, saddle, contraction) times the volume factor of the solver (stretch -> thin, squash -> bulge)
-      const ra = sw.r0[j] > 1e-4 ? sw.rad[j] / sw.r0[j] : 1, rb = sw.r0[j + 1] > 1e-4 ? sw.rad[j + 1] / sw.r0[j + 1] : 1, vf = ra + (rb - ra) * u;
+      // radius: the animator's (annuli, saddle, contraction) times the volume factor of the solver (stretch -> thin,
+      // squash -> bulge)
+      const ra = sw.r0[j] > 1e-4 ? sw.rad[j] / sw.r0[j] : 1,
+        rb = sw.r0[j + 1] > 1e-4 ? sw.rad[j + 1] / sw.r0[j + 1] : 1,
+        vf = ra + (rb - ra) * u;
       OUT.r[k] = sp.r[k] * (c.sx + c.sy) * 0.5 * vf;
     }
     const sh = Math.round(NS * 0.55);
-    let dx = OUT.x[sh] - (sp.x[sh] * c.sx + c.ox), dy = OUT.y[sh] - (-0.5 + (sp.y[sh] + 0.5) * c.sy + c.oy); const dl = M.len2(dx, dy);
-    if (dl > 0.25) { dx *= 0.25 / dl; dy *= 0.25 / dl; }
+    let dx = OUT.x[sh] - (sp.x[sh] * c.sx + c.ox), dy = OUT.y[sh] - (-0.5 + (sp.y[sh] + 0.5) * c.sy + c.oy);
+    const dl = M.len2(dx, dy);
+    if (dl > 0.25) {
+      dx *= 0.25 / dl;
+      dy *= 0.25 / dl;
+    }
     OUT.dx = dx; OUT.dy = dy;
     return OUT;
   };
 
   /* ---------- events -> impulses ---------- */
-  const toPlane = (S, x, y, z) => { const p = P.to_plane(S, { x, z }); TMP.x = p.s; TMP.y = y; return TMP; };
-  const planeDir = (S, dx, dy, dz) => { const d = P.dir(S), a = dx * d.x + dz * d.z, l = M.len2(a, dy) || 1; return { x: a / l, y: dy / l }; };
+  const toPlane = (S, x, y, z) => {
+    const p = P.to_plane(S, { x, z });
+    TMP.x = p.s;
+    TMP.y = y;
+    return TMP;
+  };
+  const planeDir = (S, dx, dy, dz) => {
+    const d = P.dir(S), a = dx * d.x + dz * d.z, l = M.len2(a, dy) || 1;
+    return { x: a / l, y: dy / l };
+  };
   SV.onEvent = function (S, e) {
     if (e.type === 'explode' && e.pushes) {
       for (const q of e.pushes) {
-        const sw = body(q.worm); if (!sw) continue;
+        const sw = body(q.worm);
+        if (!sw) continue;
         const c = toPlane(S, e.x, e.y, e.z);
         SW.blast(sw, c.x, c.y, q.dv, q.r, 0.45);
       }
     } else if (e.type === 'land' && e.worm) {
-      const sw = body(e.worm); if (sw && (e.speed || 0) > 3) SW.land(sw, e.speed);
+      const sw = body(e.worm);
+      if (sw && (e.speed || 0) > 3) SW.land(sw, e.speed);
     } else if (e.type === 'hurt' && e.worm && !e.dot && e.dir && !e.worm.dead) {
-      if (e.src === C.DS.BAT) { batW.push({ w: e.worm, dir: e.dir }); return; }
+      if (e.src === C.DS.BAT) {
+        batW.push({ w: e.worm, dir: e.dir });
+        return;
+      }
       if (e.src === C.DS.BLAST) return;                                    // (explode.pushes carries the real per-node wave)
-      const sw = body(e.worm); if (!sw) return;
-      const d = planeDir(S, e.dir.x, e.dir.y, e.dir.z), cen = {}; SW.centroid(sw, cen);
+      const sw = body(e.worm);
+      if (!sw) return;
+      const d = planeDir(S, e.dir.x, e.dir.y, e.dir.z), cen = {};
+      SW.centroid(sw, cen);
       SW.hit(sw, cen.x - d.x * 0.3, cen.y - d.y * 0.3 + 0.1, d.x, d.y, M.clamp(4 + e.amount * 0.6, 4, 26), 0.3);
-    } else if (e.type === 'swing' && batW.length) {                         // the bat's contact point (the worms it hit were queued by their 'hurt')
+    } else if (e.type === 'swing' && batW.length) {
+      // the bat's contact point (the worms it hit were queued by their 'hurt')
       const c = toPlane(S, e.x, e.y, e.z), cs = c.x, cy = c.y;
-      for (const q of batW) { const d = planeDir(S, q.dir.x, q.dir.y, q.dir.z); pend.push({ t: clock + BAT_DELAY, w: q.w, cs, cy, dx: d.x, dy: d.y }); }
+      for (const q of batW) {
+        const d = planeDir(S, q.dir.x, q.dir.y, q.dir.z);
+        pend.push({ t: clock + BAT_DELAY, w: q.w, cs, cy, dx: d.x, dy: d.y });
+      }
       batW.length = 0;
     }
   };
-  SV.twist = function (w, rate) { const sw = body(w); if (sw) SW.twist(sw, rate); };
+  SV.twist = function (w, rate) {
+    const sw = body(w);
+    if (sw) SW.twist(sw, rate);
+  };
 })(window.SS = window.SS || {});

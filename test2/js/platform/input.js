@@ -19,49 +19,119 @@
    * the worm turns to it), a left press aims + starts the shot, holding charges, releasing fires. The mouse aims only
    * when really used for it: not while a keyboard shot charges, not for nudges within 40 px after aiming with the keys,
    * not parked at a screen edge (10 %). main.js sets mouseFireOk(shift) = a local human turn with an aimable weapon;
-   * otherwise a left drag pans the camera as before. The result goes through the lockstep input (aimset / aimv / face). */
-  I.mx = 0; I.my = 0; I.mouseIn = false; I.held = false; I.aimReq = false; I.mfire = false; I.mfirePressed = false; I.kbLock = null; I.mouseFireOk = null;
+   * otherwise a left drag pans the camera as before. The result goes through the lockstep input (aimset / aimv /
+   * face). */
+  I.mx = 0;
+  I.my = 0;
+  I.mouseIn = false;
+  I.held = false;
+  I.aimReq = false;
+  I.mfire = false;
+  I.mfirePressed = false;
+  I.kbLock = null;
+  I.mouseFireOk = null;
   /* P9: weapon hotkeys from the PoC (sim/arsenal.js `key`), on key codes; poc5's own keys that clashed moved:
    * help F1 / ?, slice view `, recentre Home, end turn = Skip Go (K), new map = the menu, lobby = the menu button */
-  // (P37: the letters ran out. Merge of W2-W4 keys: '=' is only the + of the +/- weapon parameters, '\\' only worm select,
-  // M the parachute; the robo dog moved to `, the punch to Numpad0, the zipline to Numpad9, the gravity gun to Numpad .)
-  const PUNCT = { '-': 'Minus', '=': 'Equal', ';': 'Semicolon', "'": 'Quote', '/': 'Slash', '\\': 'Backslash', '`': 'Backquote', 'N.': 'NumpadDecimal' };
-  const CODE = k => (/^[0-9]$/.test(k) ? 'Digit' + k : /^N[0-9]$/.test(k) ? 'Numpad' + k[1] : PUNCT[k] || 'Key' + k);   // (N1..N8: the P37 weapons A on the numpad)
+  // (P37: the letters ran out. Merge of W2-W4 keys: '=' is only the + of the +/- weapon parameters, '\\' only worm
+  // select, M the parachute; the robo dog moved to `, the punch to Numpad0, the zipline to Numpad9, the gravity gun to
+  // Numpad .)
+  const PUNCT = {
+    '-': 'Minus',
+    '=': 'Equal',
+    ';': 'Semicolon',
+    "'": 'Quote',
+    '/': 'Slash',
+    '\\': 'Backslash',
+    '`': 'Backquote',
+    'N.': 'NumpadDecimal'
+  };
+  // (N1..N8: the P37 weapons A on the numpad)
+  const CODE = k => (/^[0-9]$/.test(k) ? 'Digit' + k : /^N[0-9]$/.test(k) ? 'Numpad' + k[1] : PUNCT[k] || 'Key' + k);
   let WKEY = null;
-  const wkeys = () => { if (!WKEY) { WKEY = {}; const A = SS.CFG.ARSENAL; for (const k in A) WKEY[CODE(A[k].key)] = k; } return WKEY; };
+  const wkeys = () => {
+    if (!WKEY) {
+      WKEY = {};
+      const A = SS.CFG.ARSENAL;
+      for (const k in A) WKEY[CODE(A[k].key)] = k;
+    }
+    return WKEY;
+  };
 
-  const HANDLED = new Set(['Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter', 'Slash', 'Quote', 'F1', 'F3']);   // (Slash / Quote: Firefox's quick find; F1: the browser's help page; F3: find next)
+  // (Slash / Quote: Firefox's quick find; F1: the browser's help page; F3: find next)
+  const HANDLED = new Set([
+    'Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter', 'Slash', 'Quote', 'F1', 'F3'
+  ]);
   I.attach = function (canvas, onKey) {
     addEventListener('keydown', e => {
       if (e.target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) return;
-      // (P38 R1: macOS swallows the keyup of every key pressed while Cmd is held, so a Cmd / Ctrl chord (a browser shortcut) must never leave game keys stuck: drop what is held and ignore the chord)
-      if (e.metaKey || e.ctrlKey) { I.keys.clear(); return; }
+      // (P38 R1: macOS swallows the keyup of every key pressed while Cmd is held, so a Cmd / Ctrl chord (a browser
+      // shortcut) must never leave game keys stuck: drop what is held and ignore the chord)
+      if (e.metaKey || e.ctrlKey) {
+        I.keys.clear();
+        return;
+      }
       if (HANDLED.has(e.code)) e.preventDefault();
-      if (!e.repeat) { I.pressed.add(e.code); if (onKey) onKey(e.code); }
+      if (!e.repeat) {
+        I.pressed.add(e.code);
+        if (onKey) onKey(e.code);
+      }
       I.keys.add(e.code);
     });
     addEventListener('keyup', e => I.keys.delete(e.code));
     let drag = false, pan = false, down = null;
-    /* P38 R6 (R5): a lost mouseup (the window lost focus / the tab was hidden while a button was down) must not leave the
+    /* P38 R6 (R5): a lost mouseup (the window lost focus / the tab was hidden while a button was down) must not leave
+     * the
      * mouse fire, pan or drag latched: every pointer latch is dropped with the keys */
-    const release_all = () => { I.keys.clear(); I.mfire = false; I.mfirePressed = false; I.held = false; I.aimReq = false; drag = false; pan = false; down = null; };
+    const release_all = () => {
+      I.keys.clear();
+      I.mfire = false;
+      I.mfirePressed = false;
+      I.held = false;
+      I.aimReq = false;
+      drag = false;
+      pan = false;
+      down = null;
+    };
     addEventListener('blur', release_all);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) release_all(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) release_all();
+    });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     canvas.addEventListener('mousedown', e => {
       I.mx = e.clientX; I.my = e.clientY;
-      if (e.button === 0 && I.mouseFireOk && I.mouseFireOk(e.shiftKey)) { I.mfire = true; I.mfirePressed = true; I.aimReq = true; I.kbLock = null; return; }
-      if (e.button === 2) drag = true; if (e.button === 0 || e.button === 1) pan = true; if (e.button === 0) down = { x: e.clientX, y: e.clientY };
+      if (e.button === 0 && I.mouseFireOk && I.mouseFireOk(e.shiftKey)) {
+        I.mfire = true;
+        I.mfirePressed = true;
+        I.aimReq = true;
+        I.kbLock = null;
+        return;
+      }
+      if (e.button === 2) drag = true;
+      if (e.button === 0 || e.button === 1) pan = true;
+      if (e.button === 0) down = { x: e.clientX, y: e.clientY };
     });
     addEventListener('mouseup', e => {
       drag = false; pan = false; I.held = false;
-      if (e.button === 0 && I.mfire) { I.mfire = false; down = null; return; }                 // release = fire (PoC releaseFire)
-      if (e.button === 0 && down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6) I.clicks.push({ x: e.clientX, y: e.clientY, shift: e.shiftKey });
+      // release = fire (PoC releaseFire)
+      if (e.button === 0 && I.mfire) {
+        I.mfire = false;
+        down = null;
+        return;
+      }
+      if (e.button === 0 && down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6)
+        I.clicks.push({ x: e.clientX, y: e.clientY, shift: e.shiftKey });
       down = null;
     });
     addEventListener('mousemove', e => {
-      if (drag) I.mouseRot += e.movementX * 0.6; if (pan) { I.panX += e.movementX; I.panY += e.movementY; }
-      I.mx = e.clientX; I.my = e.clientY; I.mouseIn = e.target === canvas; I.held = drag || pan;
+      if (drag) I.mouseRot += e.movementX * 0.6;
+      if (pan) {
+        I.panX += e.movementX;
+        I.panY += e.movementY;
+      }
+      I.mx = e.clientX;
+      I.my = e.clientY;
+      I.mouseIn = e.target === canvas;
+      I.held = drag || pan;
       if (drag || pan || e.target !== canvas) return;
       if (I.kbLock && Math.hypot(e.clientX - I.kbLock.x, e.clientY - I.kbLock.y) < 40) return;
       I.kbLock = null;
@@ -71,8 +141,13 @@
     });
     canvas.addEventListener('dblclick', () => { I.panReset = true; });
     canvas.addEventListener('mouseleave', () => { I.mouseIn = false; });
-    addEventListener('mouseout', e => { if (!e.relatedTarget) I.mouseIn = false; });
-    canvas.addEventListener('wheel', e => { e.preventDefault(); I.wheel += e.deltaY > 0 ? 1 : -1; }, { passive: false });
+    addEventListener('mouseout', e => {
+      if (!e.relatedTarget) I.mouseIn = false;
+    });
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      I.wheel += e.deltaY > 0 ? 1 : -1;
+    }, { passive: false });
   };
 
   /* P24.4 touch (PoC #touch pad + pointer handling): the pad's buttons hold / press the same key codes as the keyboard
@@ -80,38 +155,83 @@
    * 🔍 toggles near / far zoom, ⇄ = Tab. On the canvas: one finger aims (like the mouse) and a quick tap is a click (a
    * target for target weapons); two fingers pinch to zoom and drag to pan. */
   I.attachTouch = function (canvas) {
-    const pad = document.getElementById('touch'); if (!pad) return;
-    const on = () => { if (!document.body.classList.contains('touch')) { document.body.classList.add('touch'); const w = document.getElementById('weapons'); if (w) w.classList.add('closed'); } };
+    const pad = document.getElementById('touch');
+    if (!pad) return;
+    const on = () => {
+      if (!document.body.classList.contains('touch')) {
+        document.body.classList.add('touch');
+        const w = document.getElementById('weapons');
+        if (w) w.classList.add('closed');
+      }
+    };
     if (window.matchMedia && matchMedia('(pointer: coarse)').matches) on();
     addEventListener('touchstart', on, { passive: true });
     for (const btn of pad.querySelectorAll('button[data-k]')) {
       const k = btn.dataset.k;
       const down = e => {
         e.preventDefault(); btn.classList.add('on');
-        if (k === 'weapons') { const w = document.getElementById('weapons'); if (w) w.classList.toggle('closed'); return; }
-        if (k === 'zoom') { I.zoomToggle = true; return; }                         // (P119b: main.js hands it to SS.view.zoomToggle: far = 6 notches out, near = exactly back)
+        if (k === 'weapons') {
+          const w = document.getElementById('weapons');
+          if (w) w.classList.toggle('closed');
+          return;
+        }
+        // (P119b: main.js hands it to SS.view.zoomToggle: far = 6 notches out, near = exactly back)
+        if (k === 'zoom') {
+          I.zoomToggle = true;
+          return;
+        }
         I.pressed.add(k); I.keys.add(k);
       };
-      const up = e => { e.preventDefault(); btn.classList.remove('on'); if (k !== 'weapons' && k !== 'zoom') I.keys.delete(k); };
-      btn.addEventListener('pointerdown', down); btn.addEventListener('pointerup', up); btn.addEventListener('pointercancel', up); btn.addEventListener('pointerleave', up);
+      const up = e => {
+        e.preventDefault();
+        btn.classList.remove('on');
+        if (k !== 'weapons' && k !== 'zoom') I.keys.delete(k);
+      };
+      btn.addEventListener('pointerdown', down);
+      btn.addEventListener('pointerup', up);
+      btn.addEventListener('pointercancel', up);
+      btn.addEventListener('pointerleave', up);
     }
     // the weapon grid closes again after a pick on a touch device
-    const wg = document.getElementById('weapons'); if (wg) wg.addEventListener('click', e => { if (document.body.classList.contains('touch') && e.target.closest && e.target.closest('.wpn')) setTimeout(() => wg.classList.add('closed'), 120); });
-    const pts = new Map(); let pinch = null, tap = null;
+    const wg = document.getElementById('weapons');
+    if (wg) wg.addEventListener('click', e => {
+      if (document.body.classList.contains('touch') && e.target.closest && e.target.closest('.wpn'))
+        setTimeout(() => wg.classList.add('closed'), 120);
+    });
+    const pts = new Map();
+    let pinch = null, tap = null;
     canvas.addEventListener('pointerdown', e => {
       if (e.pointerType !== 'touch') return;
       on(); pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; tap = null; return; }
+      if (pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+        tap = null;
+        return;
+      }
       tap = { x: e.clientX, y: e.clientY, t: performance.now(), moved: false };
-      I.mx = e.clientX; I.my = e.clientY; I.mouseIn = false; I.aimReq = true; I.kbLock = null;
+      I.mx = e.clientX;
+      I.my = e.clientY;
+      I.mouseIn = false;
+      I.aimReq = true;
+      I.kbLock = null;
     });
     canvas.addEventListener('pointermove', e => {
       if (e.pointerType !== 'touch' || !pts.has(e.pointerId)) return;
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinch && pts.size >= 2) {
         const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        if (d / pinch.d > 1.15) { I.wheel -= 1; pinch.d = d; } else if (d / pinch.d < 0.87) { I.wheel += 1; pinch.d = d; }
-        I.panX += mx - pinch.mx; I.panY += my - pinch.my; pinch.mx = mx; pinch.my = my;
+        if (d / pinch.d > 1.15) {
+          I.wheel -= 1;
+          pinch.d = d;
+        } else if (d / pinch.d < 0.87) {
+          I.wheel += 1;
+          pinch.d = d;
+        }
+        I.panX += mx - pinch.mx;
+        I.panY += my - pinch.my;
+        pinch.mx = mx;
+        pinch.my = my;
         return;
       }
       if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 10) tap.moved = true;
@@ -119,13 +239,17 @@
     });
     const end = e => {
       if (e.pointerType !== 'touch') return;
-      pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
-      if (tap && !tap.moved && performance.now() - tap.t < 350 && e.type === 'pointerup') I.clicks.push({ x: tap.x, y: tap.y, shift: false });   // a tap = a click (targets)
+      pts.delete(e.pointerId);
+      if (pts.size < 2) pinch = null;
+      // a tap = a click (targets)
+      if (tap && !tap.moved && performance.now() - tap.t < 350 && e.type === 'pointerup')
+        I.clicks.push({ x: tap.x, y: tap.y, shift: false });
       if (!pts.size) tap = null;
     };
     canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
     canvas.style.touchAction = 'none';
-    canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });   // no emulated mouse events (a tap must not 'click-fire')
+    // no emulated mouse events (a tap must not 'click-fire')
+    canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
   };
   /* Fill a sim Input from the current device state. Edge triggers are consumed by end_step(). */
   // S (optional): the state, for keys whose meaning depends on the selected weapon (strike side, girder angle, fuse,
@@ -140,7 +264,8 @@
     inp.sdir = strike ? (arrowsL ? -1 : arrowsR ? 1 : 0) : 0;
     inp.move = strike ? ((k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0)) : (right ? 1 : 0) - (left ? 1 : 0);
     // the girder turns in 22.5° steps on the up / down keys
-    inp.gang = 0;                                                                       // (P37 W4: the plate turns freely while the keys are held)
+    // (P37 W4: the plate turns freely while the keys are held)
+    inp.gang = 0;
     inp.gturn = girder ? ((k.has('KeyW') || k.has('ArrowUp')) ? 1 : 0) - ((k.has('KeyS') || k.has('ArrowDown')) ? 1 : 0) : 0;
     inp.up = !girder && (k.has('KeyW') || k.has('ArrowUp')) ? 1 : 0;
     inp.down = !girder && (k.has('KeyS') || k.has('ArrowDown')) ? 1 : 0;
@@ -149,7 +274,8 @@
     inp.drop = ropeDrop && p.has('Enter') ? 1 : 0;
     inp.jump = !ropeDrop && p.has('Enter') ? 1 : 0;
     inp.backflip = p.has('Backspace') ? 1 : 0;
-    inp.jet = p.has('KeyJ') || I.jetReq ? 1 : 0; I.jetReq = 0;                                                   // P86: the team's jetpack on / off (End of the World)
+    // P86: the team's jetpack on / off (End of the World)
+    inp.jet = p.has('KeyJ') || I.jetReq ? 1 : 0; I.jetReq = 0;
     inp.fire_pressed = p.has('Space') || I.mfirePressed ? 1 : 0;
     inp.fire_held = k.has('Space') || I.mfire ? 1 : 0;
     // mouse aim: from the worm's centre (the shots leave along the aim from there) through the cursor on the section
@@ -165,28 +291,51 @@
         }
       }
     }
-    // P37: + / - step the selected weapon's parameter (fuse 0.5-5 s, mortar burst height 1-5 m, planted mine fuse 0-3 s):
-    // = / + / numpad +, and - / numpad -; - only steps while the weapon has one (else it picks the bellows, key '-')
+    // P37: + / - step the selected weapon's parameter (fuse 0.5-5 s, mortar burst height 1-5 m, planted mine fuse 0-3
+    // s): = / + / numpad +, and - / numpad -; - only steps while the weapon has one (else it picks the bellows, key
+    // '-')
     const hasParam = !!(S && S.active && SS.weaponsA && SS.weaponsA.param(S, S.weapon));
-    inp.adj = ((p.has('Equal') || p.has('NumpadAdd')) && hasParam ? 1 : 0) - ((p.has('NumpadSubtract') || p.has('Minus')) && hasParam ? 1 : 0);
-    let wkey = ''; const wk = wkeys(); for (const c of p) if (wk[c] && !(hasParam && (c === 'Minus'))) wkey = wk[c];
-    if (I.pickWeapon) { wkey = I.pickWeapon; I.pickWeapon = ''; }
+    inp.adj = ((p.has('Equal') || p.has('NumpadAdd')) && hasParam ? 1 : 0)
+      - ((p.has('NumpadSubtract') || p.has('Minus')) && hasParam ? 1 : 0);
+    let wkey = '';
+    const wk = wkeys();
+    for (const c of p)
+      if (wk[c] && !(hasParam && (c === 'Minus'))) wkey = wk[c];
+    if (I.pickWeapon) {
+      wkey = I.pickWeapon;
+      I.pickWeapon = '';
+    }
     // P24.11 (PoC Q / E / Tab cycle; here [ and ]: Q / E turn the section): previous / next weapon that has ammo
     if (!wkey && S && S.active && S.teams && (p.has('BracketLeft') || p.has('BracketRight'))) {
       const order = SS.CFG.ARSENAL_ORDER.filter(k => k !== 'skip'), am = S.teams[S.active.team].ammo, dir = p.has('BracketRight') ? 1 : -1;
       let i = Math.max(0, order.indexOf(S.weapon));
-      for (let n = 0; n < order.length; n++) { i = (i + dir + order.length) % order.length; if (am[order[i]] > 0 || am[order[i]] === Infinity) { wkey = order[i]; break; } }
+      for (let n = 0; n < order.length; n++) {
+        i = (i + dir + order.length) % order.length;
+        if (am[order[i]] > 0 || am[order[i]] === Infinity) {
+          wkey = order[i];
+          break;
+        }
+      }
     }
     inp.weapon = wkey;
-    inp.fuse = p.has('KeyF') && S ? (Math.floor(SS.weaponsA ? SS.weaponsA.fuse_of(S, S.weapon) : S.fuse) % 5) + 1 : 0;                  // PoC: F cycles the fuse 1-5 s
-    if (S && S.phase === 'perk') { inp.fuse = I.perkPick | 0; for (let n = 1; n <= 3; n++) if (p.has('Digit' + n) || p.has('Numpad' + n)) inp.fuse = n; I.perkPick = 0; }      // P50: the perk draft picks a card with 1 / 2 / 3 or a click (Input.fuse)
+    // PoC: F cycles the fuse 1-5 s
+    inp.fuse = p.has('KeyF') && S ? (Math.floor(SS.weaponsA ? SS.weaponsA.fuse_of(S, S.weapon) : S.fuse) % 5) + 1 : 0;
+    // P50: the perk draft picks a card with 1 / 2 / 3 or a click (Input.fuse)
+    if (S && S.phase === 'perk') {
+      inp.fuse = I.perkPick | 0;
+      for (let n = 1; n <= 3; n++)
+        if (p.has('Digit' + n) || p.has('Numpad' + n)) inp.fuse = n;
+      I.perkPick = 0;
+    }
     inp.rotate = (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0);
     inp.rotate_mouse = I.mouseRot;
     inp.fine = shift ? 1 : 0;
-    // P37-6: Tab = the next OPPONENT worm (strongest team / worm first), Shift+Tab = the next crate (nearest first); both
-    // only while the view may still be rotated (sim/rotlock.js). PoC worm select (option) moved to the \\ key (every letter is a weapon / move key).
+    // P37-6: Tab = the next OPPONENT worm (strongest team / worm first), Shift+Tab = the next crate (nearest first);
+    // both only while the view may still be rotated (sim/rotlock.js). PoC worm select (option) moved to the \\ key
+    // (every letter is a weapon / move key).
     inp.wsel = p.has('Backslash') && S && SS.sim.can_switch && SS.sim.can_switch(S) ? 1 : 0;
-    inp.gear = I.gearReq || (p.has('Semicolon') ? 1 : 0); I.gearReq = 0;                                       // P89: ; = the team's life jacket on / off (sim/gear.js)
+    // P89: ; = the team's life jacket on / off (sim/gear.js)
+    inp.gear = I.gearReq || (p.has('Semicolon') ? 1 : 0); I.gearReq = 0;
     inp.align_step = p.has('Tab') && !shift ? 1 : 0;
     inp.align_crate = p.has('Tab') && shift ? 1 : 0;
     inp.align_refocus = 0;
@@ -194,9 +343,25 @@
     inp.reset = 0;
     inp.inspect = k.has('KeyV') ? 1 : 0;
     inp.tgt = 0; inp.ts = 0; inp.ty = 0;
-    inp.dbk = 0; inp.dbp0 = 0; inp.dbp1 = 0; inp.dbs = 0; inp.dby = 0; inp.dbsky = 0;        // (P49: the debug toolbox fills these after the sample, ui/debug.js)
-    if (target) { inp.tgt = 1; inp.ts = target.s; inp.ty = target.y; if (target.fire) inp.fire_pressed = 1; }
+    // (P49: the debug toolbox fills these after the sample, ui/debug.js)
+    inp.dbk = 0;
+    inp.dbp0 = 0;
+    inp.dbp1 = 0;
+    inp.dbs = 0;
+    inp.dby = 0;
+    inp.dbsky = 0;
+    if (target) {
+      inp.tgt = 1;
+      inp.ts = target.s;
+      inp.ty = target.y;
+      if (target.fire) inp.fire_pressed = 1;
+    }
     return inp;
   };
-  I.end_step = function () { I.pressed.clear(); I.mouseRot = 0; I.aimReq = false; I.mfirePressed = false; };
+  I.end_step = function () {
+    I.pressed.clear();
+    I.mouseRot = 0;
+    I.aimReq = false;
+    I.mfirePressed = false;
+  };
 })(window.SS = window.SS || {});

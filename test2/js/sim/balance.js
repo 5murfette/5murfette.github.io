@@ -8,8 +8,10 @@
  * Row fields (C: struct BalRow, 56 bytes, const BalRow BAL[NWEAPONS]):
  *   k        char[12]  arsenal key
  *   ammo     i16       starting ammo per team (Infinity -> -1 = unlimited), equals C.ARSENAL[k].ammo
- *   dmg      f32       HP taken off ONE 100-HP foe by one use, perfect shot on flat ground, a 12 m range (measured: balshots 'one')
- *   dmgN     f32       HP in total off THREE foes standing 1.5 m apart (measured 'three'); the group bonus is weighted 25 %
+ *   dmg      f32       HP taken off ONE 100-HP foe by one use, perfect shot on flat ground, a 12 m range (measured:
+ *            balshots 'one')
+ *   dmgN     f32       HP in total off THREE foes standing 1.5 m apart (measured 'three'); the group bonus is weighted
+ *            25 %
  *   dot      f32       HP of poison / burn that arrives later than the shot's 20 s window (gas: 6 rounds)
  *   knock    f32       m the hardest-hit foe was thrown (measured; into the sea = a kill)
  *   terr     f32       m3 of terrain removed (measured, soil)
@@ -17,17 +19,21 @@
  *   hits     u8        separate damaging hits one use can deliver (bomblets, rounds, missiles)
  *   aim tim exp u8     difficulty 0..3: aim = precision needed (0 = click / no aim), tim = timing / fuse / waiting for
  *                      the victim, exp = exposure of the shooter (self damage, standing in the open, turn delay)
- *   util     u8        utility points 0..6 for non-damage effect (escape, cover, mobility, denial): 1 point = UTIL_HP HP
- *   cond     f32       0..1 share of uses whose nominal effect really lands (storm-only, traps need a victim to walk in)
- *   prem     f32       HP-equivalent premium for effects the shots cannot measure (denial, area control); documented per row
+ *   util     u8        utility points 0..6 for non-damage effect (escape, cover, mobility, denial): 1 point = UTIL_HP
+ *            HP
+ *   cond     f32       0..1 share of uses whose nominal effect really lands (storm-only, traps need a victim to walk
+ *            in)
+ *   prem     f32       HP-equivalent premium for effects the shots cannot measure (denial, area control); documented
+ *            per row
  *   delay    f32       seconds of retreat after the use (= C.ARSENAL[k].retreat, default C.GAME.RETREAT)
  *   crateW   f32       weight in the supply-crate draw (= the weight of its band; 0 = not in the crate pool)
  *   counter  char[]    how the victim plays against it
  * Derived (B.value): P = min(dmg,100) + GROUP_K * max(0, min(dmgN,300) - min(dmg,100)) + dot + UTIL_HP * util + prem,
  *   E = 1 - EASE_K * (aim + tim + exp),  U = P * E * cond   ("usable value", HP-eq per use). Band by U:
  *   common < 30 <= uncommon < 55 <= rare < 85 <= super. Rules (checked by baltest): start ammo <= BAND.ammoMax,
- *   crateW = BAND.w, crate-only (ammo 0) or 1 per team for rare / super, basic (unlimited) rows are the three PoC staples.
- * API: SS.balance = { ROWS, TOOLS, BAND, ECON, row(k), value(row), band_of(U), crate_pick(u), tool_pick(u) }. */
+ *   crateW = BAND.w, crate-only (ammo 0) or 1 per team for rare / super, basic (unlimited) rows are the three PoC
+ * staples. API: SS.balance = { ROWS, TOOLS, BAND, ECON, row(k), value(row), band_of(U), crate_pick(u), tool_pick(u)
+ * }. */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math;
@@ -42,11 +48,15 @@
     super:    { lo: 85, hi: 1e9, ammoMax: 1, w: 3 }
   };
   B.ORDER = ['common', 'uncommon', 'rare', 'super'];
-  /* crate economy (weapons.js WP.CRATE reads these). P84: crateRound = the default chance of ONE crate in a round (all crate levels at 5, C.CRATES: P_LEVEL x level);
-   * healthShare = the health share of a Crate Overload's mix; the per-turn chances (0.3, tool 0.12 / 0.22 / 0.4) are gone */
+  /* crate economy (weapons.js WP.CRATE reads these). P84: crateRound = the default chance of ONE crate in a round (all
+   * crate levels at 5, C.CRATES: P_LEVEL x level);
+   * healthShare = the health share of a Crate Overload's mix; the per-turn chances (0.3, tool 0.12 / 0.22 / 0.4) are
+   * gone */
   B.ECON = { crateRound: 0.2, healthShare: 0.45, healthHP: 30 };
 
-  const R = (k, ammo, dmg, dmgN, dot, knock, terr, range, hits, aim, tim, exp, util, cond, prem, counter) => ({ k, ammo, dmg, dmgN, dot, knock, terr, range, hits, aim, tim, exp, util, cond, prem, counter });
+  const R = (k, ammo, dmg, dmgN, dot, knock, terr, range, hits, aim, tim, exp, util, cond, prem, counter) => ({
+    k, ammo, dmg, dmgN, dot, knock, terr, range, hits, aim, tim, exp, util, cond, prem, counter
+  });
   B.ROWS = [
     //  key           ammo  dmg dmgN dot knock terr  range hits a t e  u  cond prem counter
     R('bazooka',      Infinity, 50, 82, 0, 5, 22, 160, 1, 2, 0, 1, 0, 1, 0, 'cover, distance, wind'),
@@ -94,9 +104,15 @@
     R('raven',        1, 27, 78, 0, 3, 19, 999, 5, 1, 1, 1, 0, 1, 25, 'a shot downs the raven; roofs'),
     R('skip',         Infinity, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, '-')
   ];
-  /* tool-crate deliveries (skills.js): w = weight in the tool draw, value = HP-eq of what it grants for the turns it lasts */
+  /* tool-crate deliveries (skills.js): w = weight in the tool draw, value = HP-eq of what it grants for the turns it
+   * lasts */
   B.TOOLS = [
-    { k: 'freerot',  w: 14, value: 20, note: 'turn the view freely for 2 turns (the rotation lock exists because free rotation passes obstacles)' },
+    {
+      k: 'freerot',
+      w: 14,
+      value: 20,
+      note: 'turn the view freely for 2 turns (the rotation lock exists because free rotation passes obstacles)'
+    },
     { k: 'laser',    w: 20, value: 12, note: 'laser sight for 4 turns: aim help for bullet weapons' },
     { k: 'fastwalk', w: 18, value: 14, note: 'x1.6 walk speed for 3 turns' },
     { k: 'lowgrav',  w: 18, value: 14, note: 'x0.45 gravity for 3 turns' },
@@ -104,17 +120,40 @@
     { k: 'overload', w: 7,  value: 120, note: 'ten crates fall over the whole map' }
   ];
 
-  /* every change this phase made to the game data, with the measurement that justified it (docs/BALANCE.md prints them) */
+  /* every change this phase made to the game data, with the measurement that justified it (docs/BALANCE.md prints
+   * them) */
   B.CHANGES = [
     { what: 'Minigun: DMG 4 -> 2 per round, burst 2.2 -> 2.0 s, start ammo 2 -> 0 (crate-only, rare band)',
       why: 'measured 244 HP per burst on one still foe (264 on three) = 2.4 full-HP worms for zero aim; CPU matches (new AI, 240 games): 178 HP per use, 290 kills in 345 uses. Now 112 per burst (one full-HP worm if every round lands).' },
-    { what: 'Moai Drop: start ammo 1 -> 0 (crate-only, super band)', why: 'measured 118 HP on the target with no aim at all (a kill on any worm up to 100 HP) and no counterplay in the shooter turn; CPU matches: 96 HP per use, 463 kills in 587 uses (the most lethal weapon per use).' },
-    { what: 'Homing: start ammo 2 -> 1', why: 'with the improved CPU aim it is the top killer of the limited weapons: 47 HP per use, 719 uses, 307 kills (0.43 kills per use against the bazooka\'s 0.19 and the holy grenade\'s 0.36) for an aim rating of 1; usable value 50 puts it at the top of the uncommon band, so one per team.' },
-    { what: 'Black Hole: start ammo 1 -> 0; Boulder 2 -> 1; Acid Bomb 2 -> 1; Mail Raven 2 -> 1', why: 'rare band (usable value 55-85): at most 1 per team; black hole is a listed super weapon. Boulder does 60 HP (155 on a group) with no terrain cost; acid 83 HP (173 on a group).' },
-    { what: 'Claymore: pellet damage 8 -> 5', why: 'measured 300 HP point-blank (2 m); now 195 point-blank and 48 at the 3 m laser trigger (about 77 before): a trap that needs a victim should not be a guaranteed kill.' },
-    { what: 'Gas Bomb: poison per round 1-3 -> 2-4 HP', why: 'measured 14 HP in 6 rounds per infected worm (usable value 15, the weakest damage weapon). Now 20.' },
-    { what: 'Supply crates: weapon drawn by rarity band (common 10 / uncommon 6 / rare 4 / super 3) instead of uniform over 38 weapons', why: 'uniform: a minigun, a holy grenade and a parachute were equally likely (2.6 % each). Now the super band is 2 % of weapon crates, rare 8 %, uncommon 18 %, common 71 %.' }
-    ,{ what: 'P38 R3: Acid Bomb row 83 / 173 -> 49 / 105 HP (re-measured after the R1 dedupe: balanceharness shots --only acid,sentry), Sentry 48 / 48 -> 96 / 96 HP with condition 0.4 -> 0.5; crate overload drawn with the weighted draw; tool crates have their own cap', why: 'the table was stale (acid: one pool hit per worm per 0.5 s now; sentry: R2 made the rounds honour 4 HP each, 24 rounds per use). Acid falls from the rare to the uncommon band (usable value 45), the sentry from common to uncommon; a sentry hit no longer ends the active worm\'s turn in the play phase (it denied whole turns). The overload used to draw 10 distinct entries uniformly from all weapons and tools (P(super) 43 % per overload): now health 45 %, then 25 % tools, the rest B.crate_pick. Crate caps: 24 weapon + health crates, 10 tool crates; a full class evicts its oldest landed crate (the cap used to stop supply for good once unreachable crates piled up). Re-measure the table with: node tools/dev/balanceharness.cjs shots --only acid,sentry (then node tools/dev/balance.cjs); tools/dev/gen/p38r3test.cjs re-measures acid and sentry within tolerance.' }
+    {
+      what: 'Moai Drop: start ammo 1 -> 0 (crate-only, super band)',
+      why: 'measured 118 HP on the target with no aim at all (a kill on any worm up to 100 HP) and no counterplay in the shooter turn; CPU matches: 96 HP per use, 463 kills in 587 uses (the most lethal weapon per use).'
+    },
+    {
+      what: 'Homing: start ammo 2 -> 1',
+      why: 'with the improved CPU aim it is the top killer of the limited weapons: 47 HP per use, 719 uses, 307 kills (0.43 kills per use against the bazooka\'s 0.19 and the holy grenade\'s 0.36) for an aim rating of 1; usable value 50 puts it at the top of the uncommon band, so one per team.'
+    },
+    {
+      what: 'Black Hole: start ammo 1 -> 0; Boulder 2 -> 1; Acid Bomb 2 -> 1; Mail Raven 2 -> 1',
+      why: 'rare band (usable value 55-85): at most 1 per team; black hole is a listed super weapon. Boulder does 60 HP (155 on a group) with no terrain cost; acid 83 HP (173 on a group).'
+    },
+    {
+      what: 'Claymore: pellet damage 8 -> 5',
+      why: 'measured 300 HP point-blank (2 m); now 195 point-blank and 48 at the 3 m laser trigger (about 77 before): a trap that needs a victim should not be a guaranteed kill.'
+    },
+    {
+      what: 'Gas Bomb: poison per round 1-3 -> 2-4 HP',
+      why: 'measured 14 HP in 6 rounds per infected worm (usable value 15, the weakest damage weapon). Now 20.'
+    },
+    {
+      what: 'Supply crates: weapon drawn by rarity band (common 10 / uncommon 6 / rare 4 / super 3) instead of uniform over 38 weapons',
+      why: 'uniform: a minigun, a holy grenade and a parachute were equally likely (2.6 % each). Now the super band is 2 % of weapon crates, rare 8 %, uncommon 18 %, common 71 %.'
+    }
+    ,
+    {
+      what: 'P38 R3: Acid Bomb row 83 / 173 -> 49 / 105 HP (re-measured after the R1 dedupe: balanceharness shots --only acid,sentry), Sentry 48 / 48 -> 96 / 96 HP with condition 0.4 -> 0.5; crate overload drawn with the weighted draw; tool crates have their own cap',
+      why: 'the table was stale (acid: one pool hit per worm per 0.5 s now; sentry: R2 made the rounds honour 4 HP each, 24 rounds per use). Acid falls from the rare to the uncommon band (usable value 45), the sentry from common to uncommon; a sentry hit no longer ends the active worm\'s turn in the play phase (it denied whole turns). The overload used to draw 10 distinct entries uniformly from all weapons and tools (P(super) 43 % per overload): now health 45 %, then 25 % tools, the rest B.crate_pick. Crate caps: 24 weapon + health crates, 10 tool crates; a full class evicts its oldest landed crate (the cap used to stop supply for good once unreachable crates piled up). Re-measure the table with: node tools/dev/balanceharness.cjs shots --only acid,sentry (then node tools/dev/balance.cjs); tools/dev/gen/p38r3test.cjs re-measures acid and sentry within tolerance.'
+    }
   ];
   B.CHANGES.push(
     { what: 'P38 R5 B1: Holy Grenade start ammo 1 -> 0 (crate-only, rare band), aim rating 2 -> 3',
@@ -146,25 +185,59 @@
     'P38 R5 B6 (kit scaling): the start kit is not scaled with the team count (half / one-per-item kits changed nothing measurable in the review); the match length is steered by the sudden death round instead (see section 6).',
     'Harness: `balanceharness.cjs matches --set cpu|tchigh|tcoff|noholy|holy1 [--teams 3] [--reps 2]` (60 matches: 2 teams / 3 / 4 x 5 biomes x 2 map sizes x 2 seeds), env BAL_TOOL=<tool> forces one tool delivery, `tools/dev/balcmp.cjs before.json after.json` prints the comparison. The scripted shots had a foe ON the shooter for the 6 m weapons in the spread scenario (d1 - 6 = 0 m: flamethrower and handgun measured 0 damage and 55-70 self HP): the spread foes now start at d1; baltest re-measures four rows (handgun, flamethrower, shotgun, grenade) and fails when the committed shots have gone stale.'
   );
-  B.row = k => { for (const r of B.ROWS) if (r.k === k) return r; return null; };
-  B.power = r => { const d1 = M.min(r.dmg, 100); return d1 + B.GROUP_K * M.max(0, M.min(r.dmgN, 300) - d1) + r.dot + B.UTIL_HP * r.util + r.prem; };
+  B.row = k => {
+    for (const r of B.ROWS)
+      if (r.k === k) return r;
+    return null;
+  };
+  B.power = r => {
+    const d1 = M.min(r.dmg, 100);
+    return d1 + B.GROUP_K * M.max(0, M.min(r.dmgN, 300) - d1) + r.dot + B.UTIL_HP * r.util + r.prem;
+  };
   B.ease = r => 1 - B.EASE_K * (r.aim + r.tim + r.exp);
   B.value = r => B.power(r) * B.ease(r) * r.cond;
-  B.band_of = u => { for (let i = B.ORDER.length - 1; i >= 0; i--) if (u >= B.BAND[B.ORDER[i]].lo) return B.ORDER[i]; return 'common'; };
+  B.band_of = u => {
+    for (let i = B.ORDER.length - 1; i >= 0; i--)
+      if (u >= B.BAND[B.ORDER[i]].lo) return B.ORDER[i];
+    return 'common';
+  };
   B.band = r => (r.ammo === Infinity ? 'basic' : B.band_of(B.value(r)));
-  B.weight = r => { const k = C.ARSENAL && C.ARSENAL[r.k]; return k && k.crate ? B.BAND[B.band(r)].w : 0; };
+  B.weight = r => {
+    const k = C.ARSENAL && C.ARSENAL[r.k];
+    return k && k.crate ? B.BAND[B.band(r)].w : 0;
+  };
 
   /* the weighted weapon-crate draw: u in [0,1) -> key of C.CRATE_POOL (cumulative table built once) */
-  const cumK = [], cumW = []; let tot = 0;
+  const cumK = [], cumW = [];
+  let tot = 0;
   function build() {
     cumK.length = 0; cumW.length = 0; tot = 0;
-    for (const k of C.CRATE_POOL) { const r = B.row(k), w = r ? B.weight(r) : 6; if (w > 0) { tot += w; cumK.push(k); cumW.push(tot); } }
+    for (const k of C.CRATE_POOL) {
+      const r = B.row(k), w = r ? B.weight(r) : 6;
+      if (w > 0) {
+        tot += w;
+        cumK.push(k);
+        cumW.push(tot);
+      }
+    }
   }
   B.crate_pick = function (u) {
-    const x = u * tot; for (let i = 0; i < cumW.length; i++) if (x < cumW[i]) return cumK[i];
+    const x = u * tot;
+    for (let i = 0; i < cumW.length; i++)
+      if (x < cumW[i]) return cumK[i];
     return cumK[cumK.length - 1];
   };
-  B.crate_weights = function () { const o = {}; let p = 0; for (let i = 0; i < cumK.length; i++) { o[cumK[i]] = (cumW[i] - p) / tot; p = cumW[i]; } return o; };
-  build();                                              // (the cumulative table is built once, at load: C.CRATE_POOL and the rows are static)
-  /* (P38 R7: no apply(): skills.js KS.POOL and weapons.js CR hold these numbers themselves; tools/dev/gen/r7test.cjs checks that they equal B.TOOLS / B.ECON) */
+  B.crate_weights = function () {
+    const o = {};
+    let p = 0;
+    for (let i = 0; i < cumK.length; i++) {
+      o[cumK[i]] = (cumW[i] - p) / tot;
+      p = cumW[i];
+    }
+    return o;
+  };
+  // (the cumulative table is built once, at load: C.CRATE_POOL and the rows are static)
+  build();
+  /* (P38 R7: no apply(): skills.js KS.POOL and weapons.js CR hold these numbers themselves; tools/dev/gen/r7test.cjs
+   * checks that they equal B.TOOLS / B.ECON) */
 })(window.SS = window.SS || {});

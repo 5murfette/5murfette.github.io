@@ -15,23 +15,40 @@
   K.stats = { seeds: 0, visited: 0, maxRun: 0 };      // last find_floating: probes, voxels visited, longest probe
 
   function ensure(W) {
-    if (!stamp || stamp.length !== W.N) { stamp = new Uint32Array(W.N); stack = new Int32Array(W.N); visit = new Int32Array(BUDGET + 8); }
-    if (counter > 4e9) { stamp.fill(0); counter = 1; }
+    if (!stamp || stamp.length !== W.N) {
+      stamp = new Uint32Array(W.N);
+      stack = new Int32Array(W.N);
+      visit = new Int32Array(BUDGET + 8);
+    }
+    if (counter > 4e9) {
+      stamp.fill(0);
+      counter = 1;
+    }
   }
   const CK_BREAK = C.CRACK.BREAK;
-  const supports = (W, o) => W.d[o] > 0 && W.mat[o] !== MAT.LAVA && !(W.crack && W.crack[o] >= CK_BREAK);   // P66b: an open crack carries nothing
+  // P66b: an open crack carries nothing
+  const supports = (W, o) => W.d[o] > 0 && W.mat[o] !== MAT.LAVA && !(W.crack && W.crack[o] >= CK_BREAK);
   function anchored(W, o) {
     const j = Math.floor(o / W.NX) % W.NY;
-    if (W.eow) return W.mat[o] === MAT.BEDROCK || W.mat[o] === MAT.STEEL;   // P68c: only a chunk's bedrock nub / the hull's steel hold in space
+    // P68c: only a chunk's bedrock nub / the hull's steel hold in space
+    if (W.eow) return W.mat[o] === MAT.BEDROCK || W.mat[o] === MAT.STEEL;
     if (j <= 2) return true;
-    if (W.mat[o] === MAT.ICE || W.mat[o] === MAT.FOAM) { const y = j * W.H; return y <= W.SEA + 0.6 && y >= W.SEA - 1.6; }   // floats (ice, P2 foam)
+    // floats (ice, P2 foam)
+    if (W.mat[o] === MAT.ICE || W.mat[o] === MAT.FOAM) {
+      const y = j * W.H;
+      return y <= W.SEA + 0.6 && y >= W.SEA - 1.6;
+    }
     if (W.mat[o] === MAT.STEEL) return true;                 // P2: a girder holds (PoC: steel is an anchor)
     return false;
   }
 
-  /* P66b (cracks.js): the scratch buffers and the stamp counter, shared so the structural check allocates nothing of its own */
+  /* P66b (cracks.js): the scratch buffers and the stamp counter, shared so the structural check allocates nothing of
+   * its own */
   K.BUDGET = BUDGET; K.anchored = anchored; K.supports = supports;
-  K.scratch = function (W) { ensure(W); return { stamp, stack, visit }; };
+  K.scratch = function (W) {
+    ensure(W);
+    return { stamp, stack, visit };
+  };
   K.next_id = function () { return ++counter; };
 
   /* Full pass (generation): flood from every anchor, delete whatever is not reached. */
@@ -39,14 +56,34 @@
     ensure(W);
     const A = ++counter, NX = W.NX, NY = W.NY, NZ = W.NZ, SXY = NX * NY;
     let sp = 0;
-    for (let o = 0; o < W.N; o++) if (supports(W, o) && anchored(W, o)) { stamp[o] = A; stack[sp++] = o; }
+    for (let o = 0; o < W.N; o++)
+      if (supports(W, o) && anchored(W, o)) {
+        stamp[o] = A;
+        stack[sp++] = o;
+      }
     while (sp > 0) {
       const o = stack[--sp], i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
-      nb[0] = i > 0 ? o - 1 : -1; nb[1] = i < NX - 1 ? o + 1 : -1; nb[2] = j > 0 ? o - NX : -1; nb[3] = j < NY - 1 ? o + NX : -1; nb[4] = k > 0 ? o - SXY : -1; nb[5] = k < NZ - 1 ? o + SXY : -1;
-      for (let q = 0; q < 6; q++) { const n = nb[q]; if (n >= 0 && stamp[n] !== A && supports(W, n)) { stamp[n] = A; stack[sp++] = n; } }
+      nb[0] = i > 0 ? o - 1 : -1;
+      nb[1] = i < NX - 1 ? o + 1 : -1;
+      nb[2] = j > 0 ? o - NX : -1;
+      nb[3] = j < NY - 1 ? o + NX : -1;
+      nb[4] = k > 0 ? o - SXY : -1;
+      nb[5] = k < NZ - 1 ? o + SXY : -1;
+      for (let q = 0; q < 6; q++) {
+        const n = nb[q];
+        if (n >= 0 && stamp[n] !== A && supports(W, n)) {
+          stamp[n] = A;
+          stack[sp++] = n;
+        }
+      }
     }
     let removed = 0;
-    for (let o = 0; o < W.N; o++) if (W.d[o] > 0 && stamp[o] !== A && W.mat[o] !== MAT.LAVA) { W.d[o] = -0.5; W.mat[o] = MAT.AIR; removed++; }
+    for (let o = 0; o < W.N; o++)
+      if (W.d[o] > 0 && stamp[o] !== A && W.mat[o] !== MAT.LAVA) {
+        W.d[o] = -0.5;
+        W.mat[o] = MAT.AIR;
+        removed++;
+      }
     return removed;
   };
 
@@ -56,71 +93,121 @@
     const NX = W.NX, NY = W.NY, NZ = W.NZ, SXY = NX * NY;
     const KNOWN = ++counter, comps = [];
     K.stats.seeds = 0; K.stats.visited = 0; K.stats.maxRun = 0;
-    const i0 = M.max(1, b.i0 - 2), i1 = M.min(NX - 2, b.i1 + 2), j0 = M.max(1, b.j0 - 2), j1 = M.min(NY - 2, b.j1 + 2), k0 = M.max(1, b.k0 - 2), k1 = M.min(NZ - 2, b.k1 + 2);
-    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-      const s = (k * NY + j) * NX + i;
-      if (!supports(W, s) || stamp[s] === KNOWN) continue;
-      // only seeds that touch air (the shell); interior voxels are reached through them
-      if (supports(W, s - 1) && supports(W, s + 1) && supports(W, s - NX) && supports(W, s + NX) && supports(W, s - SXY) && supports(W, s + SXY)) continue;
-      const sid = ++counter;
-      let sp = 0, nv = 0, ok = false;
-      stack[sp++] = s; stamp[s] = sid;
-      while (sp > 0) {
-        const o = stack[--sp];
-        if (nv < BUDGET) visit[nv] = o;
-        nv++;
-        if (anchored(W, o) || nv > BUDGET) { ok = true; break; }
-        const ii = o % NX, jj = Math.floor(o / NX) % NY, kk = Math.floor(o / SXY);
-        // push order: up, sides, down last -> down is explored first (reaches the ground fast)
-        nb[0] = jj < NY - 1 ? o + NX : -1; nb[1] = ii > 0 ? o - 1 : -1; nb[2] = ii < NX - 1 ? o + 1 : -1; nb[3] = kk > 0 ? o - SXY : -1; nb[4] = kk < NZ - 1 ? o + SXY : -1; nb[5] = jj > 0 ? o - NX : -1;
-        for (let q = 0; q < 6; q++) {
-          const n = nb[q];
-          if (n < 0 || !supports(W, n)) continue;
-          if (stamp[n] === KNOWN) { ok = true; sp = 0; break; }
-          if (stamp[n] !== sid) { stamp[n] = sid; stack[sp++] = n; }
+    const i0 = M.max(1, b.i0 - 2),
+      i1 = M.min(NX - 2, b.i1 + 2),
+      j0 = M.max(1, b.j0 - 2),
+      j1 = M.min(NY - 2, b.j1 + 2),
+      k0 = M.max(1, b.k0 - 2),
+      k1 = M.min(NZ - 2, b.k1 + 2);
+    for (let k = k0; k <= k1; k++)
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++) {
+          const s = (k * NY + j) * NX + i;
+          if (!supports(W, s) || stamp[s] === KNOWN) continue;
+          // only seeds that touch air (the shell); interior voxels are reached through them
+          if (
+            supports(W, s - 1)
+            && supports(W, s + 1)
+            && supports(W, s - NX)
+            && supports(W, s + NX)
+            && supports(W, s - SXY)
+            && supports(W, s + SXY)
+          ) continue;
+          const sid = ++counter;
+          let sp = 0, nv = 0, ok = false;
+          stack[sp++] = s; stamp[s] = sid;
+          while (sp > 0) {
+            const o = stack[--sp];
+            if (nv < BUDGET) visit[nv] = o;
+            nv++;
+            if (anchored(W, o) || nv > BUDGET) {
+              ok = true;
+              break;
+            }
+            const ii = o % NX, jj = Math.floor(o / NX) % NY, kk = Math.floor(o / SXY);
+            // push order: up, sides, down last -> down is explored first (reaches the ground fast)
+            nb[0] = jj < NY - 1 ? o + NX : -1;
+            nb[1] = ii > 0 ? o - 1 : -1;
+            nb[2] = ii < NX - 1 ? o + 1 : -1;
+            nb[3] = kk > 0 ? o - SXY : -1;
+            nb[4] = kk < NZ - 1 ? o + SXY : -1;
+            nb[5] = jj > 0 ? o - NX : -1;
+            for (let q = 0; q < 6; q++) {
+              const n = nb[q];
+              if (n < 0 || !supports(W, n)) continue;
+              if (stamp[n] === KNOWN) {
+                ok = true;
+                sp = 0;
+                break;
+              }
+              if (stamp[n] !== sid) {
+                stamp[n] = sid;
+                stack[sp++] = n;
+              }
+            }
+          }
+          K.stats.seeds++;
+          K.stats.visited += nv;
+          if (nv > K.stats.maxRun) K.stats.maxRun = nv;
+          const cnt = M.min(nv, BUDGET);
+          for (let q = 0; q < cnt; q++) stamp[visit[q]] = KNOWN; // either anchored, or recorded below (never probed twice)
+          if (!ok) comps.push(visit.slice(0, cnt));
         }
-      }
-      K.stats.seeds++; K.stats.visited += nv; if (nv > K.stats.maxRun) K.stats.maxRun = nv;
-      const cnt = M.min(nv, BUDGET);
-      for (let q = 0; q < cnt; q++) stamp[visit[q]] = KNOWN; // either anchored, or recorded below (never probed twice)
-      if (!ok) comps.push(visit.slice(0, cnt));
-    }
     return comps;
   };
 
-  /* P105: signed distance (metres, > 0 inside) of a piece's local grid, from its solid mask (d > 0). Two-pass 3-4-5 chamfer distance
-   * transform (error < 6 %) to the nearest voxel of the other phase, with the surface where the density contour is (0.37 cell from
-   * the last solid voxel centre). The density grid saturates a voxel inside the surface (clamp 1.5), so its gradient vanishes there
-   * and a sphere that sank a voxel into a piece lost its contact normal; the distance field keeps a unit gradient everywhere.
-   * Fixed loops over the grid arrays, no allocation besides the output. */
+  /* P105: signed distance (metres, > 0 inside) of a piece's local grid, from its solid mask (d > 0). Two-pass 3-4-5
+   * chamfer distance
+   * transform (error < 6 %) to the nearest voxel of the other phase, with the surface where the density contour is
+   * (0.37 cell from the last solid voxel centre). The density grid saturates a voxel inside the surface (clamp 1.5), so
+   * its gradient vanishes there and a sphere that sank a voxel into a piece lost its contact normal; the distance field
+   * keeps a unit gradient everywhere. Fixed loops over the grid arrays, no allocation besides the output. */
   K.build_sdf = function (g) {
     const nx = g.nx, ny = g.ny, nz = g.nz, N = nx * ny * nz, BIG = 30000, sxy = nx * ny;
     const out = new Float32Array(N), a = new Int32Array(N), b = new Int32Array(N);
-    for (let o = 0; o < N; o++) { const solid = g.d[o] > 0; a[o] = solid ? BIG : 0; b[o] = solid ? 0 : BIG; }   // a: distance to air (solid voxels), b: distance to solid (air voxels)
+    // a: distance to air (solid voxels), b: distance to solid (air voxels)
+    for (let o = 0; o < N; o++) {
+      const solid = g.d[o] > 0;
+      a[o] = solid ? BIG : 0;
+      b[o] = solid ? 0 : BIG;
+    }
     for (let pass = 0; pass < 2; pass++) {
       const f = pass === 0 ? a : b;
-      for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-        const o = (k * ny + j) * nx + i; let v = f[o];
-        if (v === 0) continue;
-        for (let dk = -1; dk <= 0; dk++) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-          if (dk === 0 && (dj > 0 || (dj === 0 && di >= 0))) continue;                       // only the already visited half of the 3x3x3 mask
-          const ii = i + di, jj = j + dj, kk = k + dk; if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny) continue;
-          const w = (di !== 0) + (dj !== 0) + (dk !== 0), c = f[o + dk * sxy + dj * nx + di] + (w === 1 ? 3 : w === 2 ? 4 : 5);
-          if (c < v) v = c;
-        }
-        f[o] = v;
-      }
-      for (let k = nz - 1; k >= 0; k--) for (let j = ny - 1; j >= 0; j--) for (let i = nx - 1; i >= 0; i--) {
-        const o = (k * ny + j) * nx + i; let v = f[o];
-        if (v === 0) continue;
-        for (let dk = 0; dk <= 1; dk++) for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-          if (dk === 0 && (dj < 0 || (dj === 0 && di <= 0))) continue;
-          const ii = i + di, jj = j + dj, kk = k + dk; if (ii < 0 || jj < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
-          const w = (di !== 0) + (dj !== 0) + (dk !== 0), c = f[o + dk * sxy + dj * nx + di] + (w === 1 ? 3 : w === 2 ? 4 : 5);
-          if (c < v) v = c;
-        }
-        f[o] = v;
-      }
+      for (let k = 0; k < nz; k++)
+        for (let j = 0; j < ny; j++)
+          for (let i = 0; i < nx; i++) {
+            const o = (k * ny + j) * nx + i;
+            let v = f[o];
+            if (v === 0) continue;
+            for (let dk = -1; dk <= 0; dk++)
+              for (let dj = -1; dj <= 1; dj++)
+                for (let di = -1; di <= 1; di++) {
+                  // only the already visited half of the 3x3x3 mask
+                  if (dk === 0 && (dj > 0 || (dj === 0 && di >= 0))) continue;
+                  const ii = i + di, jj = j + dj, kk = k + dk;
+                  if (ii < 0 || jj < 0 || kk < 0 || ii >= nx || jj >= ny) continue;
+                  const w = (di !== 0) + (dj !== 0) + (dk !== 0), c = f[o + dk * sxy + dj * nx + di] + (w === 1 ? 3 : w === 2 ? 4 : 5);
+                  if (c < v) v = c;
+                }
+            f[o] = v;
+          }
+      for (let k = nz - 1; k >= 0; k--)
+        for (let j = ny - 1; j >= 0; j--)
+          for (let i = nx - 1; i >= 0; i--) {
+            const o = (k * ny + j) * nx + i;
+            let v = f[o];
+            if (v === 0) continue;
+            for (let dk = 0; dk <= 1; dk++)
+              for (let dj = -1; dj <= 1; dj++)
+                for (let di = -1; di <= 1; di++) {
+                  if (dk === 0 && (dj < 0 || (dj === 0 && di <= 0))) continue;
+                  const ii = i + di, jj = j + dj, kk = k + dk;
+                  if (ii < 0 || jj < 0 || ii >= nx || jj >= ny || kk >= nz) continue;
+                  const w = (di !== 0) + (dj !== 0) + (dk !== 0), c = f[o + dk * sxy + dj * nx + di] + (w === 1 ? 3 : w === 2 ? 4 : 5);
+                  if (c < v) v = c;
+                }
+            f[o] = v;
+          }
     }
     const H = SS.world.H;
     for (let o = 0; o < N; o++) out[o] = g.d[o] > 0 ? (M.min(a[o], 3000) / 3 - 0.37) * H : -(M.min(b[o], 3000) / 3 - 0.37) * H;
@@ -131,11 +218,15 @@
    * Returns { pieces: [ChunkDesc], rubble: [{x,y,z,mat}] }. ChunkDesc carries a local density grid. */
   K.detach = function (W, comp, rng) {
     const NX = W.NX, NY = W.NY, SXY = NX * NY, H = W.H, n = comp.length;
-    let nPieces = M.clamp(Math.round(n / 320), 1, 6); const seeds = [];
-    if (W.crack) nPieces = SS.cracks.piece_count(W, comp, nPieces);                // P66b: damaged ground shatters into more, smaller pieces
+    let nPieces = M.clamp(Math.round(n / 320), 1, 6);
+    const seeds = [];
+    // P66b: damaged ground shatters into more, smaller pieces
+    if (W.crack) nPieces = SS.cracks.piece_count(W, comp, nPieces);
     for (let s = 0; s < nPieces; s++) {
       const o = comp[Math.floor(M.rng_next(rng) * n)];
-      seeds.push([(o % NX) * H, (Math.floor(o / NX) % NY) * H, W.flat ? 0 : Math.floor(o / SXY) * H]);   // P105: a 2D piece is cut along the plane only, every piece spans the whole slab (else z-slivers overlapped once pinned to the plane)
+      // P105: a 2D piece is cut along the plane only, every piece spans the whole slab (else z-slivers overlapped once
+      // pinned to the plane)
+      seeds.push([(o % NX) * H, (Math.floor(o / NX) % NY) * H, W.flat ? 0 : Math.floor(o / SXY) * H]);
     }
     const owner = new Uint8Array(n);
     for (let q = 0; q < n; q++) {
@@ -143,7 +234,10 @@
       let best = 0, bd = 1e9;
       for (let s = 0; s < nPieces; s++) {
         const dd = M.len3(x - seeds[s][0], y - seeds[s][1], W.flat ? 0 : z - seeds[s][2]) + (M.hash3(o, s, 3) - 0.5) * 1.2;
-        if (dd < bd) { bd = dd; best = s; }
+        if (dd < bd) {
+          bd = dd;
+          best = s;
+        }
       }
       owner[q] = best;
     }
@@ -151,24 +245,47 @@
     let bi0 = 1e9, bj0 = 1e9, bk0 = 1e9, bi1 = -1, bj1 = -1, bk1 = -1;
     for (let s = 0; s < nPieces; s++) {
       const list = [];
-      for (let q = 0; q < n; q++) if (owner[q] === s) list.push(comp[q]);
+      for (let q = 0; q < n; q++)
+        if (owner[q] === s) list.push(comp[q]);
       if (!list.length) continue;
       let i0 = 1e9, j0 = 1e9, k0 = 1e9, i1 = -1, j1 = -1, k1 = -1;
       for (const o of list) {
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
-        i0 = M.min(i0, i); i1 = M.max(i1, i); j0 = M.min(j0, j); j1 = M.max(j1, j); k0 = M.min(k0, k); k1 = M.max(k1, k);
+        i0 = M.min(i0, i);
+        i1 = M.max(i1, i);
+        j0 = M.min(j0, j);
+        j1 = M.max(j1, j);
+        k0 = M.min(k0, k);
+        k1 = M.max(k1, k);
       }
-      bi0 = M.min(bi0, i0); bj0 = M.min(bj0, j0); bk0 = M.min(bk0, k0); bi1 = M.max(bi1, i1); bj1 = M.max(bj1, j1); bk1 = M.max(bk1, k1);
-      if (list.length < 22) { for (const o of list) if (M.hash3(o, 9, 9) < 0.5) rubble.push({ x: (o % NX) * H, y: (Math.floor(o / NX) % NY) * H, z: Math.floor(o / SXY) * H, mat: W.mat[o] }); continue; }
+      bi0 = M.min(bi0, i0);
+      bj0 = M.min(bj0, j0);
+      bk0 = M.min(bk0, k0);
+      bi1 = M.max(bi1, i1);
+      bj1 = M.max(bj1, j1);
+      bk1 = M.max(bk1, k1);
+      if (list.length < 22) {
+        for (const o of list)
+          if (M.hash3(o, 9, 9) < 0.5)
+            rubble.push({ x: (o % NX) * H, y: (Math.floor(o / NX) % NY) * H, z: Math.floor(o / SXY) * H, mat: W.mat[o] });
+        continue;
+      }
       // local grid with one lattice of padding
-      const gx = i1 - i0 + 3, gy = j1 - j0 + 3, gz = k1 - k0 + 3, gd = new Float32Array(gx * gy * gz).fill(-0.6), gm = new Uint8Array(gx * gy * gz);
+      const gx = i1 - i0 + 3,
+        gy = j1 - j0 + 3,
+        gz = k1 - k0 + 3,
+        gd = new Float32Array(gx * gy * gz).fill(-0.6),
+        gm = new Uint8Array(gx * gy * gz);
       let cx = 0, cy = 0, cz = 0, mass = 0;
       const matCount = new Uint32Array(C.MATS.length);
       for (const o of list) {
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY), l = ((k - k0 + 1) * gy + (j - j0 + 1)) * gx + (i - i0 + 1);
         gd[l] = M.max(0.35, M.min(1.5, W.d[o])); gm[l] = W.mat[o]; matCount[W.mat[o]]++;
         const mv = C.MATS[W.mat[o]].rho * H * H * H;
-        cx += i * H * mv; cy += j * H * mv; cz += k * H * mv; mass += mv;
+        cx += i * H * mv;
+        cy += j * H * mv;
+        cz += k * H * mv;
+        mass += mv;
       }
       cx /= mass; cy /= mass; cz /= mass;
       let Ixx = 0, Iyy = 0, Izz = 0;
@@ -182,23 +299,37 @@
       for (const o of list) {
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
         const l = ((k - k0 + 1) * gy + (j - j0 + 1)) * gx + (i - i0 + 1);
-        const shell = gd[l - 1] <= 0 || gd[l + 1] <= 0 || gd[l - gx] <= 0 || gd[l + gx] <= 0 || gd[l - gx * gy] <= 0 || gd[l + gx * gy] <= 0;
+        const shell = gd[l - 1] <= 0
+          || gd[l + 1] <= 0
+          || gd[l - gx] <= 0
+          || gd[l + gx] <= 0
+          || gd[l - gx * gy] <= 0
+          || gd[l + gx * gy] <= 0;
         if (!shell) continue;
-        const key = (Math.floor(i * H / cell) * 1024 + Math.floor(j * H / cell)) * 1024 + Math.floor(k * H / cell);   // (cells < 1024 per axis; at most 48 keys: a linear scan)
+        // (cells < 1024 per axis; at most 48 keys: a linear scan)
+        const key = (Math.floor(i * H / cell) * 1024 + Math.floor(j * H / cell)) * 1024 + Math.floor(k * H / cell);
         if (taken.indexOf(key) >= 0) continue;
         taken.push(key); pts.push(i * H - cx, j * H - cy, k * H - cz, 0.26);
         if (pts.length >= 48 * 4) break;
       }
       const grid = { nx: gx, ny: gy, nz: gz, d: gd, mat: gm, i0: i0 - 1, j0: j0 - 1, k0: k0 - 1, s: null };
       grid.s = K.build_sdf(grid);
-      let dom = 0; for (let m = 1; m < C.MATS.length; m++) if (matCount[m] > matCount[dom]) dom = m;
+      let dom = 0;
+      for (let m = 1; m < C.MATS.length; m++)
+        if (matCount[m] > matCount[dom]) dom = m;
       pieces.push({
         grid,
         com: { x: cx, y: cy, z: cz }, mass, inertia: { x: Ixx, y: Iyy, z: Izz }, pts: new Float32Array(pts), mat: dom, voxels: list.length
       });
     }
-    for (let q = 0; q < n; q++) { const o = comp[q]; W.d[o] = -0.6; W.mat[o] = MAT.AIR; W.heat[o] = 0; }
-    if (W.crack) SS.cracks.detached(W, comp);                                      // P66b: the fracture surface opens up, the piece takes its damage with it
+    for (let q = 0; q < n; q++) {
+      const o = comp[q];
+      W.d[o] = -0.6;
+      W.mat[o] = MAT.AIR;
+      W.heat[o] = 0;
+    }
+    // P66b: the fracture surface opens up, the piece takes its damage with it
+    if (W.crack) SS.cracks.detached(W, comp);
     W.mark(bi0 - 1, bj0 - 1, bk0 - 1, bi1 + 1, bj1 + 1, bk1 + 1);
     return { pieces, rubble };
   };
@@ -206,8 +337,9 @@
   /* blast.js hook (settings.collapse): after a crater, cut out every component around the edited box that lost its
    * support and hand the pieces to the rigid-body solver (they fall, tumble and re-bake where they come to rest).
    * Small leftovers (< 22 voxels) become 'rubble' (FX only). The new pieces get the same blast kick as other bodies.
-   * Trees on a piece that breaks away are not handled here (P118a): the cut is a terrain edit like any other (W.mark), so the one
-   * central support check (trees.js on_edit, from the veg dirty rect) drops every tree whose footing is gone. */
+   * Trees on a piece that breaks away are not handled here (P118a): the cut is a terrain edit like any other (W.mark),
+   * so the one central support check (trees.js on_edit, from the veg dirty rect) drops every tree whose footing is
+   * gone. */
   SS.collapse_hook = function (S, box) {
     if (!SS.bodies) return null;
     const W = SS.world, comps = K.find_floating(W, box);
@@ -224,9 +356,18 @@
     const e = S.lastExplosion;
     if (e && made.length) SS.bodies.blast(S, e, M.pow(e.R / 3, 3), made);
     const ev = { voxels: vox, pieces: made.length, rubble: rub, x: 0, y: 0, z: 0 };
-    for (const b of made) { ev.x += b.pos.x / made.length; ev.y += b.pos.y / made.length; ev.z += b.pos.z / made.length; }
+    for (const b of made) {
+      ev.x += b.pos.x / made.length;
+      ev.y += b.pos.y / made.length;
+      ev.z += b.pos.z / made.length;
+    }
     SS.sim.emit(S, 'collapse', ev);
-    if (made.length) SS.sim.log(S, `Unsupported rock breaks off: ${made.length} piece${made.length > 1 ? 's' : ''}, ${(vox * W.H * W.H * W.H).toFixed(1)} m³.`, 0xd8c8a8);
+    if (made.length)
+      SS.sim.log(
+        S,
+        `Unsupported rock breaks off: ${made.length} piece${made.length > 1 ? 's' : ''}, ${(vox * W.H * W.H * W.H).toFixed(1)} m³.`,
+        0xd8c8a8
+      );
     return ev;
   };
 
@@ -239,23 +380,32 @@
     const k0 = M.max(1, Math.floor((pos.z - r) / H)), k1 = M.min(W.NZ - 2, Math.ceil((pos.z + r) / H));
     const v = { x: 0, y: 0, z: 0 };
     let added = 0;
-    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-      M.q_rot_inv(q, i * H - pos.x, j * H - pos.y, k * H - pos.z, v);
-      // local lattice coords: world-at-creation = com + v  ->  grid index
-      const fx = (com.x + v.x) / H - g.i0, fy = (com.y + v.y) / H - g.j0, fz = (com.z + v.z) / H - g.k0;
-      if (fx < 0 || fy < 0 || fz < 0 || fx >= g.nx - 1 || fy >= g.ny - 1 || fz >= g.nz - 1) continue;
-      const a = Math.floor(fx), b = Math.floor(fy), c = Math.floor(fz), u = fx - a, w = fy - b, t = fz - c;
-      const L = (aa, bb, cc) => g.d[((c + cc) * g.ny + (b + bb)) * g.nx + (a + aa)];
-      const dv = M.lerp(M.lerp(M.lerp(L(0, 0, 0), L(1, 0, 0), u), M.lerp(L(0, 1, 0), L(1, 1, 0), u), w), M.lerp(M.lerp(L(0, 0, 1), L(1, 0, 1), u), M.lerp(L(0, 1, 1), L(1, 1, 1), u), w), t);
-      const o = (k * NY + j) * NX + i;
-      if (dv > W.d[o]) {
-        if (dv > 0 && W.d[o] <= 0) {
-          const m = g.mat[((Math.round(fz)) * g.ny + Math.round(fy)) * g.nx + Math.round(fx)];
-          W.mat[o] = m || g.mat.find(x => x) || MAT.ROCK; W.heat[o] = 0; if (W.crack) W.crack[o] = 0; added++;
+    for (let k = k0; k <= k1; k++)
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++) {
+          M.q_rot_inv(q, i * H - pos.x, j * H - pos.y, k * H - pos.z, v);
+          // local lattice coords: world-at-creation = com + v  ->  grid index
+          const fx = (com.x + v.x) / H - g.i0, fy = (com.y + v.y) / H - g.j0, fz = (com.z + v.z) / H - g.k0;
+          if (fx < 0 || fy < 0 || fz < 0 || fx >= g.nx - 1 || fy >= g.ny - 1 || fz >= g.nz - 1) continue;
+          const a = Math.floor(fx), b = Math.floor(fy), c = Math.floor(fz), u = fx - a, w = fy - b, t = fz - c;
+          const L = (aa, bb, cc) => g.d[((c + cc) * g.ny + (b + bb)) * g.nx + (a + aa)];
+          const dv = M.lerp(
+            M.lerp(M.lerp(L(0, 0, 0), L(1, 0, 0), u), M.lerp(L(0, 1, 0), L(1, 1, 0), u), w),
+            M.lerp(M.lerp(L(0, 0, 1), L(1, 0, 1), u), M.lerp(L(0, 1, 1), L(1, 1, 1), u), w),
+            t
+          );
+          const o = (k * NY + j) * NX + i;
+          if (dv > W.d[o]) {
+            if (dv > 0 && W.d[o] <= 0) {
+              const m = g.mat[((Math.round(fz)) * g.ny + Math.round(fy)) * g.nx + Math.round(fx)];
+              W.mat[o] = m || g.mat.find(x => x) || MAT.ROCK;
+              W.heat[o] = 0;
+              if (W.crack) W.crack[o] = 0;
+              added++;
+            }
+            W.d[o] = dv;
+          }
         }
-        W.d[o] = dv;
-      }
-    }
     W.mark(i0, j0, k0, i1, j1, k1);
     return added;
   };

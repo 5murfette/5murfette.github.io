@@ -16,12 +16,12 @@
   /* ===================================================================================================================
    * Deterministic transcendentals (fdlibm / FreeBSD msun port).
    *
-   * WHY: Math.sin / pow / exp ... are implementation defined: V8, JavaScriptCore, SpiderMonkey and a native libm differ by
-   * 1 ulp on a few percent of the inputs, which desynchronises a lockstep match between different browsers (and from a
-   * future native port). The functions below use ONLY + - * / , Math.sqrt (correctly rounded by IEEE 754), integer ops
-   * and bit access to the IEEE-754 double, so every conforming engine / C compiler (no FMA contraction, no fast-math,
-   * strict double rounding, i.e. SSE2 / ARM64 and not x87) returns bit-identical results. Port 1:1 to C (docs/PORTING.md,
-   * "math contract"): the same algorithms and constants, NOT libm.
+   * WHY: Math.sin / pow / exp ... are implementation defined: V8, JavaScriptCore, SpiderMonkey and a native libm differ
+   * by 1 ulp on a few percent of the inputs, which desynchronises a lockstep match between different browsers (and from
+   * a future native port). The functions below use ONLY + - * / , Math.sqrt (correctly rounded by IEEE 754), integer
+   * ops and bit access to the IEEE-754 double, so every conforming engine / C compiler (no FMA contraction, no
+   * fast-math, strict double rounding, i.e. SSE2 / ARM64 and not x87) returns bit-identical results. Port 1:1 to C
+   * (docs/PORTING.md, "math contract"): the same algorithms and constants, NOT libm.
    *
    * Source: FreeBSD lib/msun (fdlibm 5.3 + Sun's later fixes): s_sin s_cos s_tan k_sin k_cos k_tan e_rem_pio2
    * k_rem_pio2 s_atan e_atan2 e_asin e_acos e_exp e_log e_log2 (+k_log.h) e_pow s_cbrt. Error < 1 ulp everywhere
@@ -29,25 +29,61 @@
    * the first and the last line of one call (C: a local union { double d; uint32_t w[2]; }).
    * =================================================================================================================== */
   const FB = new Float64Array(1), UB = new Uint32Array(FB.buffer);
-  const HI = (() => { FB[0] = 1; return UB[1] === 0x3ff00000 ? 1 : 0; })(), LO = 1 - HI;
-  const RY = new Float64Array(2);                  // rem_pio2 output y[0], y[1] (C: out parameters; a typed array: a captured `let` double would allocate)
-  const KQ = new Float64Array(20), KF = new Float64Array(20), KFQ = new Float64Array(20), KIQ = new Int32Array(20), KTX = new Float64Array(3);
+  const HI = (() => {
+    FB[0] = 1;
+    return UB[1] === 0x3ff00000 ? 1 : 0;
+  })(),
+    LO = 1 - HI;
+  // rem_pio2 output y[0], y[1] (C: out parameters; a typed array: a captured `let` double would allocate)
+  const RY = new Float64Array(2);
+  const KQ = new Float64Array(20),
+    KF = new Float64Array(20),
+    KFQ = new Float64Array(20),
+    KIQ = new Int32Array(20),
+    KTX = new Float64Array(3);
   /* high word (as int32) / low word (as uint32) of a double */
-  function hiw(x) { FB[0] = x; return UB[HI] | 0; }
-  function low(x) { FB[0] = x; return UB[LO]; }
+  function hiw(x) {
+    FB[0] = x;
+    return UB[HI] | 0;
+  }
+  function low(x) {
+    FB[0] = x;
+    return UB[LO];
+  }
   /* x with its high / low word replaced */
-  function sethi(x, h) { FB[0] = x; UB[HI] = h; return FB[0]; }
-  function setlo0(x) { FB[0] = x; UB[LO] = 0; return FB[0]; }
-  function mkw(h, l) { UB[HI] = h; UB[LO] = l; return FB[0]; }
+  function sethi(x, h) {
+    FB[0] = x;
+    UB[HI] = h;
+    return FB[0];
+  }
+  function setlo0(x) {
+    FB[0] = x;
+    UB[LO] = 0;
+    return FB[0];
+  }
+  function mkw(h, l) {
+    UB[HI] = h;
+    UB[LO] = l;
+    return FB[0];
+  }
   /* 2^n for -1022 <= n <= 1023 */
   function p2(n) { return mkw((n + 1023) << 20, 0); }
   function scalbn(x, n) {
-    while (n > 1023) { x *= p2(1023); n -= 1023; }
-    while (n < -1022) { x *= p2(-969); n += 969; }
+    while (n > 1023) {
+      x *= p2(1023);
+      n -= 1023;
+    }
+    while (n < -1022) {
+      x *= p2(-969);
+      n += 969;
+    }
     return x * p2(n);
   }
   const TWO54 = 1.80143985094819840000e+16, TWO24 = 1.67772160000000000000e+07, TWON24 = 5.96046447753906250000e-08;
-  const PI_O_2 = 1.5707963267948965580E+00, PI_O_4 = 7.8539816339744827900E-01, PI = 3.1415926535897931160E+00, PI_LO = 1.2246467991473531772E-16;
+  const PI_O_2 = 1.5707963267948965580E+00,
+    PI_O_4 = 7.8539816339744827900E-01,
+    PI = 3.1415926535897931160E+00,
+    PI_LO = 1.2246467991473531772E-16;
 
   /* ---------- argument reduction x mod pi/2 ---------- */
   const IPIO2 = new Int32Array([
@@ -67,13 +103,15 @@
     1.57079625129699707031e+00, 7.54978941586159635335e-08, 5.39030252995776476554e-15, 3.28200341580791294123e-22,
     1.27065575308067607349e-29, 1.22933308981111328932e-36, 2.73370053816464559624e-44, 2.16741683877804819444e-51
   ]);
-  /* Payne-Hanek for huge |x|: x[0..nx-1] are 24-bit chunks of |x| scaled by 2^-e0, result y[0]+y[1] in RY (precision 1: jk = 4).
+  /* Payne-Hanek for huge |x|: x[0..nx-1] are 24-bit chunks of |x| scaled by 2^-e0, result y[0]+y[1] in RY (precision 1:
+   * jk = 4).
    * Returns n mod 8. */
   function kernel_rem_pio2(x, e0, nx) {
     const jk = 4, jp = 4, q = KQ, f = KF, fq = KFQ, iq = KIQ;
     let jz, jx, jv, q0, ih, n, i, j, k, m, carry, z, fw;
     jx = nx - 1;
-    jv = ((e0 - 3) / 24) | 0; if (jv < 0) jv = 0;
+    jv = ((e0 - 3) / 24) | 0;
+    if (jv < 0) jv = 0;
     q0 = e0 - 24 * (jv + 1);
     j = jv - jx; m = jx + jk;
     for (i = 0; i <= m; i++, j++) f[i] = (j < 0) ? 0.0 : IPIO2[j];
@@ -104,7 +142,10 @@
         for (i = 0; i < jz; i++) {
           j = iq[i];
           if (carry === 0) {
-            if (j !== 0) { carry = 1; iq[i] = 0x1000000 - j; }
+            if (j !== 0) {
+              carry = 1;
+              iq[i] = 0x1000000 - j;
+            }
           } else iq[i] = 0xffffff - j;
         }
         if (q0 > 0) {
@@ -134,7 +175,10 @@
     }
     if (z === 0.0) {
       jz -= 1; q0 -= 24;
-      while (iq[jz] === 0) { jz--; q0 -= 24; }
+      while (iq[jz] === 0) {
+        jz--;
+        q0 -= 24;
+      }
     } else {
       z = scalbn(z, -q0);
       if (z >= TWO24) {
@@ -145,7 +189,10 @@
       } else iq[jz] = z | 0;
     }
     fw = scalbn(1.0, q0);
-    for (i = jz; i >= 0; i--) { q[i] = fw * iq[i]; fw *= TWON24; }
+    for (i = jz; i >= 0; i--) {
+      q[i] = fw * iq[i];
+      fw *= TWON24;
+    }
     for (i = jz; i >= 0; i--) {
       for (fw = 0.0, k = 0; k <= jp && k <= jz - i; k++) fw += PIO2[k] * q[i + k];
       fq[jz - i] = fw;
@@ -160,26 +207,56 @@
   }
   const INVPIO2 = 6.36619772367581382433e-01, PIO2_1 = 1.57079632673412561417e+00, PIO2_1T = 6.07710050650619224932e-11,
     PIO2_2 = 6.07710050630396597660e-11, PIO2_2T = 2.02226624879595063154e-21, PIO2_3 = 2.02226624871116645580e-21,
-    PIO2_3T = 8.47842766036889956997e-32, RINT = 6755399441055744.0, MEDIUM_MAX = 1647099.0, Q_3PI4 = 2.3561954498291016, Q_5PI4 = 3.926992416381836, Q_7PI4 = 5.497791290283203, Q_9PI4 = 7.0685882568359375, P16 = 1.52587890625e-05, P48 = 3.552713678800501e-15;
-  /* x = n*pi/2 + (RY[0] + RY[1]), |RY[0]| <= pi/4; returns n (the low bits are what the callers use). Caller handles |x| < pi/4, NaN, Inf.
-   * |x| < 2^20*pi/2: three-stage Cody-Waite (pi/2 in 33 + 33 + 33 + 53 bits, 151 bits good): one stage when no cancellation,
-   * the next stages only when the result lost more than 16 / 49 bits (tested on magnitudes, not on exponent words).
-   * Bigger |x|: Payne-Hanek (kernel_rem_pio2). */
+    PIO2_3T = 8.47842766036889956997e-32, RINT = 6755399441055744.0, MEDIUM_MAX = 1647099.0, Q_3PI4 = 2.3561954498291016,
+    Q_5PI4 = 3.926992416381836, Q_7PI4 = 5.497791290283203, Q_9PI4 = 7.0685882568359375, P16 = 1.52587890625e-05,
+    P48 = 3.552713678800501e-15;
+  /* x = n*pi/2 + (RY[0] + RY[1]), |RY[0]| <= pi/4; returns n (the low bits are what the callers use). Caller handles
+   * |x| < pi/4, NaN, Inf.
+   * |x| < 2^20*pi/2: three-stage Cody-Waite (pi/2 in 33 + 33 + 33 + 53 bits, 151 bits good): one stage when no
+   * cancellation, the next stages only when the result lost more than 16 / 49 bits (tested on magnitudes, not on
+   * exponent words). Bigger |x|: Payne-Hanek (kernel_rem_pio2). */
   function rem_pio2(x) {
     const ax = x < 0 ? -x : x;
     if (ax < Q_9PI4) {
-      /* |x| < 9pi/4: x - n*pio2_1 is exact (33-bit constant); pio2_1t adds 53 more bits. Not used when the result is tiny. */
+      /* |x| < 9pi/4: x - n*pio2_1 is exact (33-bit constant); pio2_1t adds 53 more bits. Not used when the result is
+       * tiny. */
       let n, z, a, b;
-      if (ax < Q_3PI4) { n = 1; a = PIO2_1; b = PIO2_1T; }
-      else if (ax < Q_5PI4) { n = 2; a = 2 * PIO2_1; b = 2 * PIO2_1T; }
-      else if (ax < Q_7PI4) { n = 3; a = 3 * PIO2_1; b = 3 * PIO2_1T; }
-      else { n = 4; a = 4 * PIO2_1; b = 4 * PIO2_1T; }
+      if (ax < Q_3PI4) {
+        n = 1;
+        a = PIO2_1;
+        b = PIO2_1T;
+      }
+      else if (ax < Q_5PI4) {
+        n = 2;
+        a = 2 * PIO2_1;
+        b = 2 * PIO2_1T;
+      }
+      else if (ax < Q_7PI4) {
+        n = 3;
+        a = 3 * PIO2_1;
+        b = 3 * PIO2_1T;
+      }
+      else {
+        n = 4;
+        a = 4 * PIO2_1;
+        b = 4 * PIO2_1T;
+      }
       if (x > 0) {
-        z = x - a; const y0 = z - b;
-        if ((y0 < 0 ? -y0 : y0) > 9.5367431640625e-07) { RY[0] = y0; RY[1] = (z - y0) - b; return n; }
+        z = x - a;
+        const y0 = z - b;
+        if ((y0 < 0 ? -y0 : y0) > 9.5367431640625e-07) {
+          RY[0] = y0;
+          RY[1] = (z - y0) - b;
+          return n;
+        }
       } else {
-        z = x + a; const y0 = z + b;
-        if ((y0 < 0 ? -y0 : y0) > 9.5367431640625e-07) { RY[0] = y0; RY[1] = (z - y0) + b; return -n; }
+        z = x + a;
+        const y0 = z + b;
+        if ((y0 < 0 ? -y0 : y0) > 9.5367431640625e-07) {
+          RY[0] = y0;
+          RY[1] = (z - y0) + b;
+          return -n;
+        }
       }
     }
     if (ax < MEDIUM_MAX) {
@@ -187,10 +264,18 @@
       let r = x - fn * PIO2_1, w = fn * PIO2_1T, y0 = r - w, t;
       let ay = y0 < 0 ? -y0 : y0;
       if (ay < ax * P16) {
-        t = r; w = fn * PIO2_2; r = t - w; w = fn * PIO2_2T - ((t - r) - w); y0 = r - w;
+        t = r;
+        w = fn * PIO2_2;
+        r = t - w;
+        w = fn * PIO2_2T - ((t - r) - w);
+        y0 = r - w;
         ay = y0 < 0 ? -y0 : y0;
         if (ay < ax * P48) {
-          t = r; w = fn * PIO2_3; r = t - w; w = fn * PIO2_3T - ((t - r) - w); y0 = r - w;
+          t = r;
+          w = fn * PIO2_3;
+          r = t - w;
+          w = fn * PIO2_3T - ((t - r) - w);
+          y0 = r - w;
         }
       }
       RY[0] = y0; RY[1] = (r - y0) - w;
@@ -198,12 +283,19 @@
     }
     const hx = hiw(x), ix = hx & 0x7fffffff, e0 = (ix >> 20) - 1046;
     let z = mkw((ix - (e0 << 20)) | 0, low(x)), i;
-    for (i = 0; i < 2; i++) { KTX[i] = z | 0; z = (z - KTX[i]) * TWO24; }
+    for (i = 0; i < 2; i++) {
+      KTX[i] = z | 0;
+      z = (z - KTX[i]) * TWO24;
+    }
     KTX[2] = z;
     let nx = 3;
     while (KTX[nx - 1] === 0) nx--;
     const n = kernel_rem_pio2(KTX, e0, nx);
-    if (hx < 0) { RY[0] = -RY[0]; RY[1] = -RY[1]; return -n; }
+    if (hx < 0) {
+      RY[0] = -RY[0];
+      RY[1] = -RY[1];
+      return -n;
+    }
     return n;
   }
 
@@ -230,8 +322,14 @@
     let z, r, v, w, s;
     const big = (x < 0 ? -x : x) >= 0.6743354797363281, neg = x < 0;
     if (big) {
-      if (neg) { x = -x; y = -y; }
-      z = PIO4 - x; w = PIO4LO - y; x = z + w; y = 0.0;
+      if (neg) {
+        x = -x;
+        y = -y;
+      }
+      z = PIO4 - x;
+      w = PIO4LO - y;
+      x = z + w;
+      y = 0.0;
     }
     z = x * x; w = z * z;
     r = T1 + w * (T3 + w * (T5 + w * (T7 + w * (T9 + w * T11))));
@@ -253,8 +351,13 @@
     return t + a * (s + t * v);
   }
 
-  /* thresholds of the fdlibm high-word tests as magnitudes: |x| < 0x3fe921fc00000000 (pi/4) etc. (exact, no bit access needed) */
-  const T_PIO4 = 0.7853984832763672, T_2M26 = 1.4901161193847656e-08, T_COS_TINY = 1.0536709282860102e-08, T_TAN_TINY = 7.450580596923828e-09, T_INF = Infinity;
+  /* thresholds of the fdlibm high-word tests as magnitudes: |x| < 0x3fe921fc00000000 (pi/4) etc. (exact, no bit access
+   * needed) */
+  const T_PIO4 = 0.7853984832763672,
+    T_2M26 = 1.4901161193847656e-08,
+    T_COS_TINY = 1.0536709282860102e-08,
+    T_TAN_TINY = 7.450580596923828e-09,
+    T_INF = Infinity;
   function f_sin(x) {
     const ax = x < 0 ? -x : x;
     if (ax < T_PIO4) {
@@ -297,8 +400,12 @@
   }
 
   /* ---------- atan / atan2 / asin / acos ---------- */
-  const ATANHI = new Float64Array([4.63647609000806093515e-01, 7.85398163397448278999e-01, 9.82793723247329054082e-01, 1.57079632679489655800e+00]);
-  const ATANLO = new Float64Array([2.26987774529616870924e-17, 3.06161699786838301793e-17, 1.39033110312309984516e-17, 6.12323399573676603587e-17]);
+  const ATANHI = new Float64Array([
+    4.63647609000806093515e-01, 7.85398163397448278999e-01, 9.82793723247329054082e-01, 1.57079632679489655800e+00
+  ]);
+  const ATANLO = new Float64Array([
+    2.26987774529616870924e-17, 3.06161699786838301793e-17, 1.39033110312309984516e-17, 6.12323399573676603587e-17
+  ]);
   const AT = new Float64Array([
     3.33333333333329318027e-01, -1.99999999998764832476e-01, 1.42857142725034663711e-01, -1.11111104054623557880e-01,
     9.09088713343650656196e-02, -7.69187620504482999495e-02, 6.66107313738753120669e-02, -5.83357013379057348645e-02,
@@ -317,10 +424,22 @@
     } else {
       x = ax;
       if (ax < 1.1875) {
-        if (ax < 0.6875) { id = 0; x = (2.0 * x - 1.0) / (2.0 + x); }
-        else { id = 1; x = (x - 1.0) / (x + 1.0); }
-      } else if (ax < 2.4375) { id = 2; x = (x - 1.5) / (1.0 + 1.5 * x); }
-      else { id = 3; x = -1.0 / x; }
+        if (ax < 0.6875) {
+          id = 0;
+          x = (2.0 * x - 1.0) / (2.0 + x);
+        }
+        else {
+          id = 1;
+          x = (x - 1.0) / (x + 1.0);
+        }
+      } else if (ax < 2.4375) {
+        id = 2;
+        x = (x - 1.5) / (1.0 + 1.5 * x);
+      }
+      else {
+        id = 3;
+        x = -1.0 / x;
+      }
     }
     z = x * x; w = z * z;
     s1 = z * (AT[0] + w * (AT[2] + w * (AT[4] + w * (AT[6] + w * (AT[8] + w * AT[10])))));
@@ -361,7 +480,10 @@
     }
     if (iy === 0x7ff00000) return hy < 0 ? -PI_O_2 : PI_O_2;
     k = (iy - ix) >> 20;
-    if (k > 60) { z = PI_O_2 + 0.5 * PI_LO; m &= 1; }
+    if (k > 60) {
+      z = PI_O_2 + 0.5 * PI_LO;
+      m &= 1;
+    }
     else if (hx < 0 && k < -60) z = 0.0;
     else z = f_atan(Math.abs(y / x));
     switch (m) {
@@ -464,8 +586,16 @@
     }
     if (hx > 0x3fd62e42) {
       if (hx < 0x3FF0A2B2) {
-        if (xsb === 0) { hi = x - LN2HI; lo = LN2LO; k = 1; }
-        else { hi = x + LN2HI; lo = -LN2LO; k = -1; }
+        if (xsb === 0) {
+          hi = x - LN2HI;
+          lo = LN2LO;
+          k = 1;
+        }
+        else {
+          hi = x + LN2HI;
+          lo = -LN2LO;
+          k = -1;
+        }
       } else {
         k = (INVLN2 * x + (xsb === 0 ? 0.5 : -0.5)) | 0;
         t = k;
@@ -609,7 +739,9 @@
       }
       if (iy === 0x3ff00000) { return hy < 0 ? 1.0 / x : x; }
       if (hy === 0x40000000) return x * x;
-      if (hy === 0x3fe00000) { if (hx >= 0) return Math.sqrt(x); }
+      if (hy === 0x3fe00000) {
+        if (hx >= 0) return Math.sqrt(x);
+      }
     }
     ax = Math.abs(x);
     if (lx === 0) {
@@ -643,13 +775,21 @@
     } else {
       let ss, s2, s_h, s_l, t_h, t_l;
       n = 0;
-      if (ix < 0x00100000) { ax *= TWO53; n -= 53; ix = hiw(ax); }
+      if (ix < 0x00100000) {
+        ax *= TWO53;
+        n -= 53;
+        ix = hiw(ax);
+      }
       n += (ix >> 20) - 0x3ff;
       j = ix & 0x000fffff;
       ix = j | 0x3ff00000;
       if (j <= 0x3988E) k = 0;
       else if (j < 0xBB67A) k = 1;
-      else { k = 0; n += 1; ix -= 0x00100000; }
+      else {
+        k = 0;
+        n += 1;
+        ix -= 0x00100000;
+      }
       ax = sethi(ax, ix);
       const bpk = k === 0 ? 1.0 : 1.5;
       u = ax - bpk;
@@ -731,7 +871,10 @@
     t = t * ((CB_P0 + r * (CB_P1 + r * CB_P2)) + ((r * r) * r) * (CB_P3 + r * CB_P4));
     FB[0] = t;
     lo = UB[LO] + 2147483648; hi2 = UB[HI];
-    if (lo >= 4294967296) { lo -= 4294967296; hi2 = (hi2 + 1) >>> 0; }
+    if (lo >= 4294967296) {
+      lo -= 4294967296;
+      hi2 = (hi2 + 1) >>> 0;
+    }
     UB[LO] = (lo & 0xc0000000) >>> 0; UB[HI] = hi2;
     t = FB[0];
     s = t * t;
@@ -741,33 +884,71 @@
     t = t + t * r;
     return t;
   }
-  M.sin = f_sin; M.cos = f_cos; M.tan = f_tan; M.asin = f_asin; M.acos = f_acos; M.atan = f_atan; M.atan2 = f_atan2;
-  M.exp = f_exp; M.log = f_log; M.log2 = f_log2; M.pow = f_pow; M.cbrt = f_cbrt;
-  /* min / max with C fminf / fmaxf semantics: a NaN operand loses (the other one is returned; both NaN -> NaN). JS Math.min / Math.max
-   * return NaN if either is NaN, C's fmin does not, and the sim must not depend on which engine it runs on, so the sim never calls Math.min /
-   * Math.max (portabilitytest). The sign of zero is not specified (Math.min(0, -0) is -0 here, 0 in C): never branch on it. */
+  M.sin = f_sin;
+  M.cos = f_cos;
+  M.tan = f_tan;
+  M.asin = f_asin;
+  M.acos = f_acos;
+  M.atan = f_atan;
+  M.atan2 = f_atan2;
+  M.exp = f_exp;
+  M.log = f_log;
+  M.log2 = f_log2;
+  M.pow = f_pow;
+  M.cbrt = f_cbrt;
+  /* min / max with C fminf / fmaxf semantics: a NaN operand loses (the other one is returned; both NaN -> NaN). JS
+   * Math.min / Math.max
+   * return NaN if either is NaN, C's fmin does not, and the sim must not depend on which engine it runs on, so the sim
+   * never calls Math.min / Math.max (portabilitytest). The sign of zero is not specified (Math.min(0, -0) is -0 here, 0
+   * in C): never branch on it. */
   M.min = (a, b) => (a !== a ? b : b !== b ? a : b < a ? b : a);
   M.max = (a, b) => (a !== a ? b : b !== b ? a : b > a ? b : a);
-  /* zero / NaN guard: v if it is a usable non-zero number, else d (what `v || d` did in JS; in C: (v != 0 && v == v) ? v : d). Used for the
-   * divisor of a normalisation (M.nz(M.len3(x, y, z), 1)). A NaN here is a bug upstream; the hash shows it (sim.hash mixes NaN as its own constant). */
+  /* zero / NaN guard: v if it is a usable non-zero number, else d (what `v || d` did in JS; in C: (v != 0 && v == v) ?
+   * v : d). Used for the
+   * divisor of a normalisation (M.nz(M.len3(x, y, z), 1)). A NaN here is a bug upstream; the hash shows it (sim.hash
+   * mixes NaN as its own constant). */
   M.nz = (v, d) => (v !== 0 && v === v ? v : d);
   M.clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   M.sat = v => (v < 0 ? 0 : v > 1 ? 1 : v);
   M.lerp = (a, b, t) => a + (b - a) * t;
   M.smooth = x => x * x * (3 - 2 * x);
-  M.smoothstep = (a, b, x) => { const t = M.sat((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+  M.smoothstep = (a, b, x) => {
+    const t = M.sat((x - a) / (b - a));
+    return t * t * (3 - 2 * t);
+  };
   M.wrap_angle = a => {
     if (!(a > -1e6 && a < 1e6)) return 0;            // NaN / Infinity / garbage input: 0 (C: fmod would give NaN)
     let n = 0;                                       // a few turns (the normal case): repeated subtraction, as always
-    while (a > Math.PI && n < 8) { a -= M.TAU; n++; } while (a < -Math.PI && n < 8) { a += M.TAU; n++; }
-    if (a > Math.PI || a < -Math.PI) { a -= M.TAU * Math.floor((a + Math.PI) / M.TAU); if (a > Math.PI) a = Math.PI; else if (a < -Math.PI) a = -Math.PI; }   // many turns: bounded cost (<= 1e6 rad)
+    while (a > Math.PI && n < 8) {
+      a -= M.TAU;
+      n++;
+    }
+    while (a < -Math.PI && n < 8) {
+      a += M.TAU;
+      n++;
+    }
+    // many turns: bounded cost (<= 1e6 rad)
+    if (a > Math.PI || a < -Math.PI) {
+      a -= M.TAU * Math.floor((a + Math.PI) / M.TAU);
+      if (a > Math.PI) a = Math.PI;
+      else if (a < -Math.PI) a = -Math.PI;
+    }
     return a;
   };
   /* Stable insertion sort (the contract for every sim ordering that is not already a total order: equal keys keep their
-   * input order, so the result does not depend on the sort algorithm; C qsort is unstable, std::sort too). cmp(a, b) > 0 means
-   * a goes after b. A NaN compare result counts as equal. In C: a loop over the array (n <= ~100 everywhere it is used). */
+   * input order, so the result does not depend on the sort algorithm; C qsort is unstable, std::sort too). cmp(a, b) >
+   * 0 means a goes after b. A NaN compare result counts as equal. In C: a loop over the array (n <= ~100 everywhere it
+   * is used). */
   M.sort_stable = (a, cmp) => {
-    for (let i = 1; i < a.length; i++) { const x = a[i]; let j = i - 1; while (j >= 0 && cmp(a[j], x) > 0) { a[j + 1] = a[j]; j--; } a[j + 1] = x; }
+    for (let i = 1; i < a.length; i++) {
+      const x = a[i];
+      let j = i - 1;
+      while (j >= 0 && cmp(a[j], x) > 0) {
+        a[j + 1] = a[j];
+        j--;
+      }
+      a[j + 1] = x;
+    }
     return a;
   };
   M.sign = v => (v > 0 ? 1 : v < 0 ? -1 : 0);
@@ -775,7 +956,12 @@
   /* ---------- vec3 (plain struct) ---------- */
   M.v3 = (x, y, z) => ({ x, y, z });
   M.v3_copy = a => ({ x: a.x, y: a.y, z: a.z });
-  M.v3_set = (o, x, y, z) => { o.x = x; o.y = y; o.z = z; return o; };
+  M.v3_set = (o, x, y, z) => {
+    o.x = x;
+    o.y = y;
+    o.z = z;
+    return o;
+  };
   M.v3_dist = (a, b) => M.len3(a.x - b.x, a.y - b.y, a.z - b.z);
   M.v3_len = a => M.len3(a.x, a.y, a.z);
   M.v3_sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
@@ -784,14 +970,24 @@
 
   /* ---------- quaternion (plain struct {x,y,z,w}) ---------- */
   M.q_ident = () => ({ x: 0, y: 0, z: 0, w: 1 });
-  M.q_axis_angle = (ax, ay, az, ang) => { const s = M.sin(ang / 2); return { x: ax * s, y: ay * s, z: az * s, w: M.cos(ang / 2) }; };
+  M.q_axis_angle = (ax, ay, az, ang) => {
+    const s = M.sin(ang / 2);
+    return { x: ax * s, y: ay * s, z: az * s, w: M.cos(ang / 2) };
+  };
   M.q_mul = (a, b) => ({
     x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
     y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
     z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
     w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
   });
-  M.q_norm = q => { const l = M.len4(q.x, q.y, q.z, q.w) || 1; q.x /= l; q.y /= l; q.z /= l; q.w /= l; return q; };
+  M.q_norm = q => {
+    const l = M.len4(q.x, q.y, q.z, q.w) || 1;
+    q.x /= l;
+    q.y /= l;
+    q.z /= l;
+    q.w /= l;
+    return q;
+  };
   /* rotate vector (x,y,z) by q, written into out */
   M.q_rot = (q, x, y, z, out) => {
     const tx = 2 * (q.y * z - q.z * y), ty = 2 * (q.z * x - q.x * z), tz = 2 * (q.x * y - q.y * x);
@@ -808,14 +1004,20 @@
     const y = q.y + h * (wy * q.w + wz * q.x - wx * q.z);
     const z = q.z + h * (wz * q.w + wx * q.y - wy * q.x);
     const w = q.w + h * (-wx * q.x - wy * q.y - wz * q.z);
-    q.x = x; q.y = y; q.z = z; q.w = w;
+    q.x = x;
+    q.y = y;
+    q.z = z;
+    q.w = w;
     return M.q_norm(q);
   };
 
   /* ---------- RNG: struct { u32 s; } (LCG, deterministic) ---------- */
   M.rng_make = seed => ({ s: seed >>> 0 });
   M.rng_seed = (r, seed) => { r.s = seed >>> 0; };
-  M.rng_next = r => { r.s = (Math.imul(r.s, 1664525) + 1013904223) >>> 0; return r.s / 4294967296; };
+  M.rng_next = r => {
+    r.s = (Math.imul(r.s, 1664525) + 1013904223) >>> 0;
+    return r.s / 4294967296;
+  };
   M.rng_range = (r, a, b) => a + (b - a) * M.rng_next(r);
   M.rng_int = (r, n) => Math.floor(M.rng_next(r) * n);
 
@@ -836,16 +1038,24 @@
   /* ---------- value noise (smoothstep-interpolated lattice hash), range [0,1] ---------- */
   M.noise3 = (x, y, z, seed) => {
     const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
-    let u = x - xi, v = y - yi, w = z - zi; u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v); w = w * w * (3 - 2 * w);
+    let u = x - xi, v = y - yi, w = z - zi;
+    u = u * u * (3 - 2 * u);
+    v = v * v * (3 - 2 * v);
+    w = w * w * (3 - 2 * w);
     const a = h4(xi, yi, zi, seed), b = h4(xi + 1, yi, zi, seed), c = h4(xi, yi + 1, zi, seed), d = h4(xi + 1, yi + 1, zi, seed);
-    const e = h4(xi, yi, zi + 1, seed), f = h4(xi + 1, yi, zi + 1, seed), g = h4(xi, yi + 1, zi + 1, seed), h = h4(xi + 1, yi + 1, zi + 1, seed);
+    const e = h4(xi, yi, zi + 1, seed),
+      f = h4(xi + 1, yi, zi + 1, seed),
+      g = h4(xi, yi + 1, zi + 1, seed),
+      h = h4(xi + 1, yi + 1, zi + 1, seed);
     const x1 = a + (b - a) * u, x2 = c + (d - c) * u, x3 = e + (f - e) * u, x4 = g + (h - g) * u;
     const y1 = x1 + (x2 - x1) * v, y2 = x3 + (x4 - x3) * v;
     return y1 + (y2 - y1) * w;
   };
   M.noise2 = (x, z, seed) => {
     const xi = Math.floor(x), zi = Math.floor(z);
-    let u = x - xi, w = z - zi; u = u * u * (3 - 2 * u); w = w * w * (3 - 2 * w);
+    let u = x - xi, w = z - zi;
+    u = u * u * (3 - 2 * u);
+    w = w * w * (3 - 2 * w);
     const a = h4(xi, 0, zi, seed), b = h4(xi + 1, 0, zi, seed), c = h4(xi, 0, zi + 1, seed), d = h4(xi + 1, 0, zi + 1, seed);
     const x1 = a + (b - a) * u, x2 = c + (d - c) * u;
     return x1 + (x2 - x1) * w;
@@ -873,7 +1083,13 @@
   /* ridged multifractal-ish: sharp crests, range ~[0,1] */
   M.ridge2 = (x, z, seed, oct) => {
     let a = 0.5, f = 1, s = 0, n = 0;
-    for (let o = 0; o < oct; o++) { const r = 1 - Math.abs(M.noise2(x * f, z * f, seed + o * 57) * 2 - 1); s += a * r * r; n += a; a *= 0.5; f *= 2.07; }
+    for (let o = 0; o < oct; o++) {
+      const r = 1 - Math.abs(M.noise2(x * f, z * f, seed + o * 57) * 2 - 1);
+      s += a * r * r;
+      n += a;
+      a *= 0.5;
+      f *= 2.07;
+    }
     return s / n;
   };
   /* distance from point to segment a->b (arrays [x,y,z]) */

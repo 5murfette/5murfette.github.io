@@ -17,11 +17,17 @@
   let scene = null, mat = null, matPiece = null, depth = null, U = null, own = null, items = new Map();
 
   const FS_HEAD = /* glsl */`
-    uniform vec3 uPaint; uniform float uInsp, uClip; uniform vec3 uO, uN; uniform sampler2D tNoise;
-    varying vec3 vW; varying vec3 vObj; varying float vDeck;`;
+    uniform vec3 uPaint;
+    uniform float uInsp, uClip;
+    uniform vec3 uO, uN;
+    uniform sampler2D tNoise;
+    varying vec3 vW;
+    varying vec3 vObj;
+    varying float vDeck;`;
   function patch(sh, clip) {
     Object.assign(sh.uniforms, own, { uO: U.uO, uN: U.uN, tNoise: U.tNoise, uClip: { value: clip ? 1 : 0 } });
-    sh.vertexShader = 'attribute float aDeck; varying vec3 vW; varying vec3 vObj; varying float vDeck;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+    sh.vertexShader = 'attribute float aDeck; varying vec3 vW; varying vec3 vObj; varying float vDeck;\n'
+      + sh.vertexShader.replace('#include <begin_vertex>', /* glsl */`#include <begin_vertex>
       vW = (modelMatrix * vec4(transformed, 1.0)).xyz; vObj = transformed; vDeck = aDeck;`);
     sh.fragmentShader = FS_HEAD + '\n' + sh.fragmentShader
       .replace('#include <map_fragment>', /* glsl */`
@@ -42,14 +48,20 @@
           rough = mix(0.45, 0.85, rust) - 0.1 * tread; metal = (1.0 - rust) * 0.85;
           c *= 0.85 + 0.25 * tread;
         }
-        if (!gl_FrontFacing) { c = vec3(0.55, 0.55, 0.56); rough = 0.35; metal = 1.0; }   // the cut through the steel
+        // the cut through the steel
+        if (!gl_FrontFacing) {
+          c = vec3(0.55, 0.55, 0.56);
+          rough = 0.35;
+          metal = 1.0;
+        }
         diffuseColor.rgb = c;`)
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = rough;')
       .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n metalnessFactor = metal;');
   }
   function mkMat(clip) {
     const m = new T.MeshStandardMaterial({ roughness: 0.6, metalness: 0, side: T.DoubleSide });
-    if (clip) m.userData.sectionMargin = 0.02;           // P46: the standing bridge ends at slice zero (+2 cm); fallen pieces use the default margin
+    // P46: the standing bridge ends at slice zero (+2 cm); fallen pieces use the default margin
+    if (clip) m.userData.sectionMargin = 0.02;
     m.onBeforeCompile = sh => patch(sh, clip);
     m.customProgramCacheKey = () => 'struct' + (clip ? 'C' : 'P');
     return m;
@@ -62,25 +74,47 @@
     const ax = b.x - a.x, ay = b.y - a.y, az = b.z - a.z, L = Math.hypot(ax, ay, az) || 1e-3;
     const dx = ax / L, dy = ay / L, dz = az / L;
     let ux = upH ? upH.x : 0, uy = upH ? upH.y : 1, uz = upH ? upH.z : 0;
-    if (Math.abs(dx * ux + dy * uy + dz * uz) > 0.95) { ux = 1; uy = 0; uz = 0; }
+    if (Math.abs(dx * ux + dy * uy + dz * uz) > 0.95) {
+      ux = 1;
+      uy = 0;
+      uz = 0;
+    }
     // s = d x up (across), t = s x d (perpendicular)
-    let sx = dy * uz - dz * uy, sy = dz * ux - dx * uz, sz = dx * uy - dy * ux; const sl = Math.hypot(sx, sy, sz); sx /= sl; sy /= sl; sz /= sl;
+    let sx = dy * uz - dz * uy, sy = dz * ux - dx * uz, sz = dx * uy - dy * ux;
+    const sl = Math.hypot(sx, sy, sz);
+    sx /= sl;
+    sy /= sl;
+    sz /= sl;
     const tx = sy * dz - sz * dy, ty = sz * dx - sx * dz, tz = sx * dy - sy * dx;
     const hw = w / 2, hh = h / 2;
-    const faces = [[sx, sy, sz, hw, tx, ty, tz, hh], [-sx, -sy, -sz, hw, -tx, -ty, -tz, hh], [tx, ty, tz, hh, -sx, -sy, -sz, hw], [-tx, -ty, -tz, hh, sx, sy, sz, hw]];
+    const faces = [
+      [sx, sy, sz, hw, tx, ty, tz, hh],
+      [-sx, -sy, -sz, hw, -tx, -ty, -tz, hh],
+      [tx, ty, tz, hh, -sx, -sy, -sz, hw],
+      [-tx, -ty, -tz, hh, sx, sy, sz, hw]
+    ];
     for (const [nx, ny, nz, off, ex, ey, ez, ext] of faces) {
       const v0 = B.v;
       for (const [u, e] of [[0, -1], [1, -1], [1, 1], [0, 1]]) {
         const P = u ? b : a;
-        B.p.push(P.x + nx * off + ex * ext * e, P.y + ny * off + ey * ext * e, P.z + nz * off + ez * ext * e); B.n.push(nx, ny, nz); B.d.push(deck ? 1 : 0); B.v++;
+        B.p.push(P.x + nx * off + ex * ext * e, P.y + ny * off + ey * ext * e, P.z + nz * off + ez * ext * e);
+        B.n.push(nx, ny, nz);
+        B.d.push(deck ? 1 : 0);
+        B.v++;
       }
       B.idx.push(v0, v0 + 1, v0 + 2, v0, v0 + 2, v0 + 3);
     }
     // end caps
     for (const [P, sg] of [[a, -1], [b, 1]]) {
       const v0 = B.v;
-      for (const [es, et] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { B.p.push(P.x + sx * hw * es + tx * hh * et, P.y + sy * hw * es + ty * hh * et, P.z + sz * hw * es + tz * hh * et); B.n.push(dx * sg, dy * sg, dz * sg); B.d.push(deck ? 1 : 0); B.v++; }
-      if (sg > 0) B.idx.push(v0, v0 + 1, v0 + 2, v0, v0 + 2, v0 + 3); else B.idx.push(v0, v0 + 2, v0 + 1, v0, v0 + 3, v0 + 2);
+      for (const [es, et] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        B.p.push(P.x + sx * hw * es + tx * hh * et, P.y + sy * hw * es + ty * hh * et, P.z + sz * hw * es + tz * hh * et);
+        B.n.push(dx * sg, dy * sg, dz * sg);
+        B.d.push(deck ? 1 : 0);
+        B.v++;
+      }
+      if (sg > 0) B.idx.push(v0, v0 + 1, v0 + 2, v0, v0 + 2, v0 + 3);
+      else B.idx.push(v0, v0 + 2, v0 + 1, v0, v0 + 3, v0 + 2);
     }
   }
   function members(B, list, ux, uz, gussets) {
@@ -91,7 +125,8 @@
       else box(B, m.a, m.b, m.w, m.h, false, across);   // side-truss members: section faces across the bridge
     }
     // gusset plates: 0.4 x 0.4 x 12 mm in the truss plane at the side-truss nodes
-    for (const g of gussets) box(B, { x: g.x - ux * 0.2, y: g.y, z: g.z - uz * 0.2 }, { x: g.x + ux * 0.2, y: g.y, z: g.z + uz * 0.2 }, 0.2, 0.4, false, across);
+    for (const g of gussets)
+      box(B, { x: g.x - ux * 0.2, y: g.y, z: g.z - uz * 0.2 }, { x: g.x + ux * 0.2, y: g.y, z: g.z + uz * 0.2 }, 0.2, 0.4, false, across);
   }
   function mesh(B, m) {
     const g = new T.BufferGeometry();
@@ -99,7 +134,9 @@
     g.setAttribute('normal', new T.Float32BufferAttribute(B.n, 3));
     g.setAttribute('aDeck', new T.Float32BufferAttribute(B.d, 1));
     g.setIndex(B.idx); g.computeBoundingSphere();
-    const o = new T.Mesh(g, m); o.castShadow = o.receiveShadow = true; o.frustumCulled = false;
+    const o = new T.Mesh(g, m);
+    o.castShadow = o.receiveShadow = true;
+    o.frustumCulled = false;
     return o;
   }
 
@@ -111,30 +148,52 @@
     depth.userData.sectionMargin = 0.02;
     depth.customProgramCacheKey = () => 'structDepth';
   };
-  SV.clear = function () { for (const [, it] of items) { scene.remove(it.mesh); it.mesh.geometry.dispose(); } items.clear(); };
+  SV.clear = function () {
+    for (const [, it] of items) {
+      scene.remove(it.mesh);
+      it.mesh.geometry.dispose();
+    }
+    items.clear();
+  };
   SV.frame = function (S, view) {
     if (!scene) return;
     own.uInsp.value = view.insp || 0;
     const L = S.structs || [];
     if (!L.length && !items.size) return;
     const seen = new Set();
-    if (L.length) { const p = PAINT[L[0].look] || PAINT[0]; own.uPaint.value.setRGB(p[0], p[1], p[2]); }
+    if (L.length) {
+      const p = PAINT[L[0].look] || PAINT[0];
+      own.uPaint.value.setRGB(p[0], p[1], p[2]);
+    }
     for (const st of L) {
       seen.add(st);
       let it = items.get(st);
       if (it && it.ver === st.ver) continue;
-      if (it) { scene.remove(it.mesh); it.mesh.geometry.dispose(); items.delete(st); }
+      if (it) {
+        scene.remove(it.mesh);
+        it.mesh.geometry.dispose();
+        items.delete(st);
+      }
       if (st.fallen) continue;
       const B = Buf(), list = [], gus = [];
-      for (const m of st.mem) if (m.on) list.push({ a: st.nodes[m.a], b: st.nodes[m.b], kind: m.kind, w: m.w, h: m.h });
+      for (const m of st.mem)
+        if (m.on) list.push({ a: st.nodes[m.a], b: st.nodes[m.b], kind: m.kind, w: m.w, h: m.h });
       const used = new Set();
-      for (const m of st.mem) if (m.on && m.kind !== 3 && m.kind !== 2) for (const k of [m.a, m.b]) used.add(k);
+      for (const m of st.mem)
+        if (m.on && m.kind !== 3 && m.kind !== 2)
+          for (const k of [m.a, m.b]) used.add(k);
       for (const k of used) gus.push(st.nodes[k]);
       members(B, list, st.ux, st.uz, gus);
-      const me = mesh(B, mat); me.customDepthMaterial = depth;
+      const me = mesh(B, mat);
+      me.customDepthMaterial = depth;
       scene.add(me); items.set(st, { mesh: me, ver: st.ver, tris: B.idx.length / 3 });
     }
-    for (const [st, it] of items) if (!seen.has(st)) { scene.remove(it.mesh); it.mesh.geometry.dispose(); items.delete(st); }
+    for (const [st, it] of items)
+      if (!seen.has(st)) {
+        scene.remove(it.mesh);
+        it.mesh.geometry.dispose();
+        items.delete(st);
+      }
   };
   /* a fallen piece (body space members) */
   SV.pieceGroup = function (b) {
@@ -142,7 +201,11 @@
     const B = Buf(), g = new T.Group();
     let ux = 1, uz = 0;
     const ch = b.members.find(m => m.kind === 0);
-    if (ch) { const dx = ch.b.x - ch.a.x, dz = ch.b.z - ch.a.z, l = Math.hypot(dx, dz) || 1; ux = dx / l; uz = dz / l; }
+    if (ch) {
+      const dx = ch.b.x - ch.a.x, dz = ch.b.z - ch.a.z, l = Math.hypot(dx, dz) || 1;
+      ux = dx / l;
+      uz = dz / l;
+    }
     members(B, b.members, ux, uz, []);
     const me = mesh(B, matPiece);
     g.add(me);
@@ -158,5 +221,9 @@
     return { meshes: [me] };
   };
   // triangles of the standing structures now in the scene (fallen pieces are counted by the body view)
-  SV.stats = () => { let tris = 0; for (const [, it] of items) tris += it.tris; return { structs: items.size, tris }; };
+  SV.stats = () => {
+    let tris = 0;
+    for (const [, it] of items) tris += it.tris;
+    return { structs: items.size, tris };
+  };
 })(window.SS = window.SS || {});

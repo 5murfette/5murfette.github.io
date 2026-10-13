@@ -1,4 +1,5 @@
-/* sim/arsenal.js — the PoC's 28 weapons and tools as data (P2; docs/poc-weapons.md has every PoC rule with line numbers).
+/* sim/arsenal.js — the PoC's 28 weapons and tools as data (P2; docs/poc-weapons.md has every PoC rule with line
+ * numbers).
  * Converted with the P.4 scale rules (HANDOFF §P.4): launch speeds by the poc5 anchors (thrown 821 px/s and rocket
  * 1026 px/s = 28 m/s, so every weapon keeps its PoC speed ratio), accelerations k_A = 9.81 / 520, effect zones by the
  * worm (k_L = 0.45 / 7 m per px, long ranges by their share of the map), times unchanged, blasts by cube-root scaling
@@ -9,8 +10,8 @@
  * Projectile model (p.type = weapon or sub-munition key, all in C.PROJ): impact (bursts on contact) | bouncy (rest =
  * restitution, fric = tangential retention per bounce, fuse s, fuseSet = F key sets it) ; W (kg TNT-eq), windK, drag
  * (1/s), arm (s before terrain contact counts), split {kind, n, jx, vy0, vy1} (m/s), fire (burning patches), metal
- * (magnets pull it), boom (P66a explosion class C.BOOM: HE detonation when absent / 0, FUEL = napalm and other fuel / incendiary),
- * special handlers: homing | sheep | hole | foam | napalm | flame.
+ * (magnets pull it), boom (P66a explosion class C.BOOM: HE detonation when absent / 0, FUEL = napalm and other fuel /
+ * incendiary), special handlers: homing | sheep | hole | foam | napalm | flame.
  * C layout: const WeaponDef ARSENAL[NWEAPONS]; const ProjDef PROJ[NPROJ]. */
 (function (SS) {
   'use strict';
@@ -32,7 +33,29 @@
       split: { kind: 'bananalet', n: 5, jx: 150 * kT, vy0: 180 * kT, vy1: 320 * kT } },
     bananalet: { dmg: 42, impact: 1, arm: 0.12, W: Wr(42), windK: 0, r: 0.07 },
     holy: { dmg: 100, bouncy: 1, rest: 0.3, fric: 0.8, fuse: 3, W: Wr(110), windK: 0, metal: 1, r: 0.12, big: 1 },
-    homing: { dmg: 50, impact: 1, W: 0.8, windK: 1, frag: 1, metal: 1, r: 0.06, homing: { turn: 3.0, accel: 100 * kV, vmax: 1100 * kV, fuel: 4, gLock: 0.3, gFly: 0.08, windLock: 0.25, blend: 0.3, lock0: 0.4, lock1: 1.2 } },   // turn / lock: PoC 1.2 rad/s, 0.8-1.8 s, made 2.5 x as agile: poc5 speeds are lower relative to the map (P.4), so PoC values loop 25 m wide
+    // turn / lock: PoC 1.2 rad/s, 0.8-1.8 s, made 2.5 x as agile: poc5 speeds are lower relative to the map (P.4), so
+    // PoC values loop 25 m wide
+    homing: {
+      dmg: 50,
+      impact: 1,
+      W: 0.8,
+      windK: 1,
+      frag: 1,
+      metal: 1,
+      r: 0.06,
+      homing: {
+        turn: 3.0,
+        accel: 100 * kV,
+        vmax: 1100 * kV,
+        fuel: 4,
+        gLock: 0.3,
+        gFly: 0.08,
+        windLock: 0.25,
+        blend: 0.3,
+        lock0: 0.4,
+        lock1: 1.2
+      }
+    },
     dynamite: { dmg: 75, bouncy: 1, rest: 0.12, fric: 0.6, fuse: 5, W: Wr(72), windK: 0, metal: 1, r: 0.1 },
     sheep: { dmg: 75, sheep: 1, fuse: 10, W: Wr(64), r: 0.3, walk: 85 * kT, hopVy: 215 * kT, hopVx: 95 * kT, hop0: 0.7, hop1: 1.5 },
     blackhole: { dmg: 0, bouncy: 1, rest: 0.35, fric: 0.85, fuse: 2.5, W: 0, windK: 0, metal: 1, r: 0.1, hole: 1 },
@@ -40,18 +63,24 @@
     missile: { dmg: 30, impact: 1, W: Wr(34), windK: 0.6, metal: 1, r: 0.06 },
     napalm: { boom: C.BOOM.FUEL, dmg: 12, impact: 1, W: Wr(18), windK: 0.4, r: 0.07, napalm: { n: 9, v0: 30 * kT, v1: 120 * kT }, fire: 5 },
     flame: { boom: C.BOOM.FUEL, dmg: 3, impact: 1, arm: 0.05, W: 0, windK: 2.6, drag: 2.6, r: 0.04, flame: 1, fire: 1 },
-    fuel: { boom: C.BOOM.FUEL, dmg: 6, impact: 1, arm: 0.12, W: 0, windK: 1.8, drag: 1.25, r: 0.03, flame: 1, fire: 1 }   // PoC napalm-crate fuel gobs (R9 dmg 6)
+    // PoC napalm-crate fuel gobs (R9 dmg 6)
+    fuel: { boom: C.BOOM.FUEL, dmg: 6, impact: 1, arm: 0.12, W: 0, windK: 1.8, drag: 1.25, r: 0.03, flame: 1, fire: 1 }
   };
   /* black hole, sheep, napalm, sniper, tools: constants of the special handlers */
   C.ARMS = {
     // P24.3: what pushes WORMS is on the worm scale kL (they fly under G_WORM = 520 px/s2 x kL); projectiles and bodies
-    // keep kT / kA. Hole on worms: PoC min(1400, 6e5 / (d2 + 600)) px/s2 within 260 px -> 159.5 / (d2 + 2.48) m/s2, 90 max, 16.7 m
+    // keep kT / kA. Hole on worms: PoC min(1400, 6e5 / (d2 + 600)) px/s2 within 260 px -> 159.5 / (d2 + 2.48) m/s2, 90
+    // max, 16.7 m
     HOLE: { LIFE: 3.2, GROW: 0.6, PULL_R: 10,
-      // P29c suction / break-up (poc5, user 2026-10-08): worms within SUCK_R m are drawn in kinematically (velocity eased at
-      // SUCK_BLEND 1/s toward SUCK_V (1 - d / SUCK_R) + 1 m/s inward, gravity cancelled), held inside CAPTURE_R; bodies get
-      // SUCK_K / (d² + 1) m/s² (gravity cancelled toward the core; CAPTURE_DAMP unused by worms), SWIRL share; the ground within
-      // BREAK_R m breaks off in BREAK_BLOB m blobs every BREAK_T s (BREAK_MAX pieces), thrown in at BREAK_V m/s
-      SUCK_R: 6, SUCK_K: 55, SUCK_V: 7, SUCK_BLEND: 4, CAPTURE_R: 1.2, CAPTURE_DAMP: 5, SWIRL: 0.35, BREAK_R: 4.5, BREAK_BLOB: 1.0, BREAK_T: 0.3, BREAK_MAX: 6, BREAK_V: 3, A_MAX: 1400 * kA, A_K: 16.8, A_D2: 0.89, W_PULL_R: 260 * kL, W_A_MAX: 1400 * kL, W_A_K: 6e5 * kL * kL * kL, W_A_D2: 600 * kL * kL, CORE: 1.0, CORE_DPS: 12, CARVE_T: 0.12, CARVE_R0: 0.5, CARVE_R1: 1.5, W_END: Wr(64) },
+      // P29c suction / break-up (poc5, user 2026-10-08): worms within SUCK_R m are drawn in kinematically (velocity
+      // eased at SUCK_BLEND 1/s toward SUCK_V (1 - d / SUCK_R) + 1 m/s inward, gravity cancelled), held inside
+      // CAPTURE_R; bodies get SUCK_K / (d² + 1) m/s² (gravity cancelled toward the core; CAPTURE_DAMP unused by worms),
+      // SWIRL share; the ground within BREAK_R m breaks off in BREAK_BLOB m blobs every BREAK_T s (BREAK_MAX pieces),
+      // thrown in at BREAK_V m/s
+      SUCK_R: 6, SUCK_K: 55, SUCK_V: 7, SUCK_BLEND: 4, CAPTURE_R: 1.2, CAPTURE_DAMP: 5, SWIRL: 0.35, BREAK_R: 4.5, BREAK_BLOB: 1.0,
+      BREAK_T: 0.3, BREAK_MAX: 6, BREAK_V: 3, A_MAX: 1400 * kA, A_K: 16.8, A_D2: 0.89, W_PULL_R: 260 * kL, W_A_MAX: 1400 * kL,
+      W_A_K: 6e5 * kL * kL * kL, W_A_D2: 600 * kL * kL, CORE: 1.0, CORE_DPS: 12, CARVE_T: 0.12, CARVE_R0: 0.5, CARVE_R1: 1.5,
+      W_END: Wr(64) },
     PLANE: { SPEED: 560 * kT, START: 40, ALT: 9, N: 5, GAP: 1.8, DROP_VS: 170 * kT, DROP_VY: -90 * kT },
     NAPALM: { PATCH_R: 0.55, LIFE0: 4, LIFE1: 7, SHELL_FIRE: 6 },
     TESLA: { DELAY: 0.7, W: Wr(24), R1: 3.9, D1: 16, R2: 5.5, D2: 26, BOLT_D: 10, CHAIN_R: 3.9, CONDUCT_R: 1.4, PUSH_UP: 120 * kL },
@@ -59,9 +88,25 @@
     SHOTGUN: { RANGE: 25, DMG: 25, PUSH: 240 * kL, PUSH_UP: 90 * kL, W: 0.012, SHOTS: 2 },
     SNIPER: { V: 3600 * kV, G: 0.5, RANGE: 60, PEN: 0.45, DMG: 45, PUSH: 120 * kL, KEEP: 0.92, PEN_STEP: 7 / 0.45, LIFE: 1.2 },
     BAT: { DELAY: 0.22, REACH: 1.2, DMG: 30, PUSH: 640 * kL, PUSH_UP: 60 * kL },
-    DIG: { TORCH_V: 30 * kT, TORCH_T: 3.2, DRILL_V: 36 * kT, DRILL_T: 2.6, R: 0.62, TICK: 0.05, DMG: 15, PUSH: 160 * kL, WARM: 0.5, COOL: 0.45 },   // P37 W4: WARM s the worm puts on its welding mask and lights the torch before it cuts; COOL s the mask goes back up
+    // P37 W4: WARM s the worm puts on its welding mask and lights the torch before it cuts; COOL s the mask goes back
+    // up
+    DIG: {
+      TORCH_V: 30 * kT,
+      TORCH_T: 3.2,
+      DRILL_V: 36 * kT,
+      DRILL_T: 2.6,
+      R: 0.62,
+      TICK: 0.05,
+      DMG: 15,
+      PUSH: 160 * kL,
+      WARM: 0.5,
+      COOL: 0.45
+    },
     TELEPORT: { BEAM: 1.5, HOLD: 1.5 },
-    GIRDER: { L: 5.9, T: 1.1, D: 1.5, REACH: 14, ANGLES: 8, TURN: 1.9, STEP: Math.PI / 8 },   // P37 W4: ANGLES / STEP = the old 22.5° steps (touch / tests); TURN rad/s = the held keys (free angle); T 1.1 (was 0.6): both faces of the plate must lie on the linear part of its distance field (half thickness >= the 0.5 m voxel), or the faces come out lumpy
+    // P37 W4: ANGLES / STEP = the old 22.5° steps (touch / tests); TURN rad/s = the held keys (free angle); T 1.1 (was
+    // 0.6): both faces of the plate must lie on the linear part of its distance field (half thickness >= the 0.5 m
+    // voxel), or the faces come out lumpy
+    GIRDER: { L: 5.9, T: 1.1, D: 1.5, REACH: 14, ANGLES: 8, TURN: 1.9, STEP: Math.PI / 8 },
     // PoC bellows: 460 (1 - d / R) + 60 px/s within 170 px (10.9 m); worms on kL, shells on kT
     BELLOWS: { RANGE: 170 * kL, COS: 0.82, V0: 460 * kL, V1: 60 * kL, UP: 65 * kL, PV0: 460 * kT, PV1: 60 * kT, PUP: 65 * kT },
     MAGNET: { R: 9.3, A: 650 * kA, TURNS: 4, MAX: 4, ARM: 1, KG_CAP: 180 },
@@ -78,50 +123,307 @@
 
   /* the weapons (PoC order); the bar / grid shows them in this order */
   const A = C.ARSENAL = {
-    bazooka: { name: 'Bazooka', kind: 'charge', ammo: Infinity, key: '1', vmax: 28, payload: 1, info: 'Rocket: bursts on contact; the wind pushes it' },
-    grenade: { name: 'Grenade', kind: 'charge', ammo: Infinity, key: '2', vmax: 28, payload: 1, info: 'Bounces, bursts when its fuse runs out (F: 1-5 s)' },
+    bazooka: {
+      name: 'Bazooka',
+      kind: 'charge',
+      ammo: Infinity,
+      key: '1',
+      vmax: 28,
+      payload: 1,
+      info: 'Rocket: bursts on contact; the wind pushes it'
+    },
+    grenade: {
+      name: 'Grenade',
+      kind: 'charge',
+      ammo: Infinity,
+      key: '2',
+      vmax: 28,
+      payload: 1,
+      info: 'Bounces, bursts when its fuse runs out (F: 1-5 s)'
+    },
     cluster: { name: 'Cluster', kind: 'charge', ammo: 3, key: '3', vmax: 28, payload: 1, crate: 1, info: 'Bursts into five bomblets' },
     shotgun: { name: 'Shotgun', kind: 'hitscan', ammo: Infinity, key: '4', info: 'Two shots per turn' },
     bat: { name: 'Baseball Bat', kind: 'melee', ammo: 2, key: 'Z', retreat: 3, info: 'Knocks a worm far away' },
-    homing: { name: 'Homing', kind: 'charge', target: 1, ammo: 1, key: '5', vmax: 1050 * kV, payload: 1, crate: 1, info: 'Click a target, then fire: the missile steers to it' },
-    dynamite: { name: 'Dynamite', kind: 'drop', ammo: 2, key: '6', payload: 1, crate: 1, info: 'Drop it and run: 5 s fuse (adjustable), big blast' },
-    banana: { name: 'Banana', kind: 'charge', ammo: 1, key: '7', vmax: 28, payload: 1, crate: 1, info: 'Very bouncy; splits into five heavy bomblets' },
-    airstrike: { name: 'Air Strike', kind: 'target', ammo: 1, key: '8', retreat: 4, strike: 1, crate: 1, info: 'Click the target; ← → choose the side the plane comes from' },
-    holy: { name: 'Holy Grenade', kind: 'charge', ammo: 0, key: '9', vmax: 775 * kT, payload: 1, crate: 1, info: 'Adjustable fuse (3 s by default), the biggest blast' },
-    sheep: { name: 'Sheep', kind: 'drop', ammo: 2, key: '0', retreat: 10, payload: 1, crate: 1, info: 'Walks and hops; fire again to set it off' },
-    boulder: { name: 'Boulder', kind: 'charge', ammo: 1, key: 'B', vmax: 730 * kT, payload: 1, crate: 1, info: 'A heavy rock that rolls and crushes' },
-    blackhole: { name: 'Black Hole', kind: 'charge', ammo: 0, key: 'H', vmax: 730 * kT, payload: 1, crate: 1, info: 'Pulls everything in for 3 s, then bursts' },
-    tesla: { name: 'Thunder Strike', kind: 'target', ammo: 1, key: 'L', retreat: 4, crate: 1, info: 'Thunderstorms only: lightning on the target; arcs jump between worms and metal' },
-    napalm: { name: 'Napalm', kind: 'target', ammo: 1, key: 'N', retreat: 4, strike: 1, crate: 1, info: 'Fire bombs burst in the air and rain burning gel' },
+    homing: {
+      name: 'Homing',
+      kind: 'charge',
+      target: 1,
+      ammo: 1,
+      key: '5',
+      vmax: 1050 * kV,
+      payload: 1,
+      crate: 1,
+      info: 'Click a target, then fire: the missile steers to it'
+    },
+    dynamite: {
+      name: 'Dynamite',
+      kind: 'drop',
+      ammo: 2,
+      key: '6',
+      payload: 1,
+      crate: 1,
+      info: 'Drop it and run: 5 s fuse (adjustable), big blast'
+    },
+    banana: {
+      name: 'Banana',
+      kind: 'charge',
+      ammo: 1,
+      key: '7',
+      vmax: 28,
+      payload: 1,
+      crate: 1,
+      info: 'Very bouncy; splits into five heavy bomblets'
+    },
+    airstrike: {
+      name: 'Air Strike',
+      kind: 'target',
+      ammo: 1,
+      key: '8',
+      retreat: 4,
+      strike: 1,
+      crate: 1,
+      info: 'Click the target; ← → choose the side the plane comes from'
+    },
+    holy: {
+      name: 'Holy Grenade',
+      kind: 'charge',
+      ammo: 0,
+      key: '9',
+      vmax: 775 * kT,
+      payload: 1,
+      crate: 1,
+      info: 'Adjustable fuse (3 s by default), the biggest blast'
+    },
+    sheep: {
+      name: 'Sheep',
+      kind: 'drop',
+      ammo: 2,
+      key: '0',
+      retreat: 10,
+      payload: 1,
+      crate: 1,
+      info: 'Walks and hops; fire again to set it off'
+    },
+    boulder: {
+      name: 'Boulder',
+      kind: 'charge',
+      ammo: 1,
+      key: 'B',
+      vmax: 730 * kT,
+      payload: 1,
+      crate: 1,
+      info: 'A heavy rock that rolls and crushes'
+    },
+    blackhole: {
+      name: 'Black Hole',
+      kind: 'charge',
+      ammo: 0,
+      key: 'H',
+      vmax: 730 * kT,
+      payload: 1,
+      crate: 1,
+      info: 'Pulls everything in for 3 s, then bursts'
+    },
+    tesla: {
+      name: 'Thunder Strike',
+      kind: 'target',
+      ammo: 1,
+      key: 'L',
+      retreat: 4,
+      crate: 1,
+      info: 'Thunderstorms only: lightning on the target; arcs jump between worms and metal'
+    },
+    napalm: {
+      name: 'Napalm',
+      kind: 'target',
+      ammo: 1,
+      key: 'N',
+      retreat: 4,
+      strike: 1,
+      crate: 1,
+      info: 'Fire bombs burst in the air and rain burning gel'
+    },
     moai: { name: 'Moai Drop', kind: 'target', ammo: 0, key: 'O', retreat: 4, crate: 1, info: 'A stone head falls from the sky' },
-    mine: { name: 'Mine', kind: 'drop', ammo: 2, key: 'X', payload: 1, crate: 1, info: 'Buried: only your team sees it; arms after 3 s, any worm close by sets it off' },
-    drill: { name: 'Torch / Drill', kind: 'dig', ammo: 2, key: 'Y', retreat: 4, crate: 1, info: 'Aim level to burn a tunnel, down to drill' },
-    rope: { name: 'Ninja Rope', kind: 'rope', ammo: Infinity, key: 'R', info: 'Space shoots / lets go: shoot again in the air at the same angle (press at once: the opposite way). ← → pump the swing, ↑ ↓ reel' },
-    // P37 W2 (sim/traverse.js): the parachute opens by itself in a fast fall while selected (or Space in the air) and drifts
-    // with the wind; the zipline shoots a bolt level or downward and the worm slides down the line
-    parachute: { name: 'Parachute', kind: 'chute', ammo: 3, key: 'M', crate: 1, info: 'Select it, then fall: it opens by itself (or Space in the air); ← → steer, the wind carries you' },
-    zipline: { name: 'Zipline', kind: 'zip', ammo: 2, key: 'N9', crate: 1, info: 'Crossbow: a line to the first surface, aim level or down; you slide down it (Enter drops off)' },
+    mine: {
+      name: 'Mine',
+      kind: 'drop',
+      ammo: 2,
+      key: 'X',
+      payload: 1,
+      crate: 1,
+      info: 'Buried: only your team sees it; arms after 3 s, any worm close by sets it off'
+    },
+    drill: {
+      name: 'Torch / Drill',
+      kind: 'dig',
+      ammo: 2,
+      key: 'Y',
+      retreat: 4,
+      crate: 1,
+      info: 'Aim level to burn a tunnel, down to drill'
+    },
+    rope: {
+      name: 'Ninja Rope',
+      kind: 'rope',
+      ammo: Infinity,
+      key: 'R',
+      info:
+      'Space shoots / lets go: shoot again in the air at the same angle (press at once: the opposite way). ← → pump the swing, ↑ ↓ reel'
+    },
+    // P37 W2 (sim/traverse.js): the parachute opens by itself in a fast fall while selected (or Space in the air) and
+    // drifts with the wind; the zipline shoots a bolt level or downward and the worm slides down the line
+    parachute: {
+      name: 'Parachute',
+      kind: 'chute',
+      ammo: 3,
+      key: 'M',
+      crate: 1,
+      info: 'Select it, then fall: it opens by itself (or Space in the air); ← → steer, the wind carries you'
+    },
+    zipline: {
+      name: 'Zipline',
+      kind: 'zip',
+      ammo: 2,
+      key: 'N9',
+      crate: 1,
+      info: 'Crossbow: a line to the first surface, aim level or down; you slide down it (Enter drops off)'
+    },
     teleport: { name: 'Teleport', kind: 'target', ammo: 2, key: 'T', retreat: 3, crate: 1, info: 'Click a free spot on the section' },
-    girder: { name: 'Girder Plate', kind: 'target', ammo: 3, key: 'G', retreat: 3, crate: 1, info: 'A shiny bolted steel plate, strong but not unbreakable; hold ↑ ↓ to turn it to any angle (Shift: fine)' },
-    bellows: { name: 'Bellows', kind: 'utility', ammo: 3, key: '-', retreat: 3, crate: 1, info: 'A detector blast: sets off and reveals mines, traps and bombs in its cone, blows worms away, puts out fire' },
-    sniper: { name: 'Sniper Rifle', kind: 'hitscan', ammo: 3, key: 'C', retreat: 4, crate: 1, info: 'Fast bullet with drop; goes through thin cover' },
-    foam: { name: 'Foam Mortar', kind: 'charge', ammo: 3, key: 'P', vmax: 730 * kT, payload: 1, crate: 1, info: 'Builds a block of weak foam (floats on water)' },
-    magnet: { name: 'Pocket Magnet', kind: 'drop', ammo: 2, key: 'I', retreat: 3, payload: 1, crate: 1, info: 'Pulls metal shells and mines for 4 turns' },
-    spring: { name: 'Spring Mine', kind: 'drop', ammo: 2, key: 'J', retreat: 3, payload: 1, crate: 1, info: 'Buried trap only your team sees: throws an enemy worm high (20 HP + a hard fall)' },
-    scrambler: { name: 'Fuse Scrambler', kind: 'utility', ammo: 2, key: 'U', retreat: 3, crate: 1, info: 'Adds 2 s to the fuses around you' },
+    girder: {
+      name: 'Girder Plate',
+      kind: 'target',
+      ammo: 3,
+      key: 'G',
+      retreat: 3,
+      crate: 1,
+      info: 'A shiny bolted steel plate, strong but not unbreakable; hold ↑ ↓ to turn it to any angle (Shift: fine)'
+    },
+    bellows: {
+      name: 'Bellows',
+      kind: 'utility',
+      ammo: 3,
+      key: '-',
+      retreat: 3,
+      crate: 1,
+      info: 'A detector blast: sets off and reveals mines, traps and bombs in its cone, blows worms away, puts out fire'
+    },
+    sniper: {
+      name: 'Sniper Rifle',
+      kind: 'hitscan',
+      ammo: 3,
+      key: 'C',
+      retreat: 4,
+      crate: 1,
+      info: 'Fast bullet with drop; goes through thin cover'
+    },
+    foam: {
+      name: 'Foam Mortar',
+      kind: 'charge',
+      ammo: 3,
+      key: 'P',
+      vmax: 730 * kT,
+      payload: 1,
+      crate: 1,
+      info: 'Builds a block of weak foam (floats on water)'
+    },
+    magnet: {
+      name: 'Pocket Magnet',
+      kind: 'drop',
+      ammo: 2,
+      key: 'I',
+      retreat: 3,
+      payload: 1,
+      crate: 1,
+      info: 'Pulls metal shells and mines for 4 turns'
+    },
+    spring: {
+      name: 'Spring Mine',
+      kind: 'drop',
+      ammo: 2,
+      key: 'J',
+      retreat: 3,
+      payload: 1,
+      crate: 1,
+      info: 'Buried trap only your team sees: throws an enemy worm high (20 HP + a hard fall)'
+    },
+    scrambler: {
+      name: 'Fuse Scrambler',
+      kind: 'utility',
+      ammo: 2,
+      key: 'U',
+      retreat: 3,
+      crate: 1,
+      info: 'Adds 2 s to the fuses around you'
+    },
     // P37 W4 (weapons B; sim/gadgets.js, sim/ffield.js): vec = no painted icon, the vector one is used
-    dog: { name: 'Robo Dog', kind: 'drop', ammo: 2, key: '`', retreat: 4, crate: 1, vec: 1, info: 'Thrown a few metres along the aim; arms after 2.5 m and 0.8 s, then runs at the nearest foe, hops small obstacles, blows up on reaching it or when its 8 s timer ends' },
-    punch: { name: 'Knockout Punch', kind: 'melee', ammo: 3, key: 'N0', retreat: 3, crate: 1, vec: 1, info: 'Jump on the spot and uppercut the worm beside you: it flies off, flipping' },
-    sentry: { name: 'Sentry Gun', kind: 'drop', ammo: 1, key: ';', retreat: 3, crate: 1, vec: 1, info: 'Plant it: a spinning laser scanner shoots any foe crossing the beam (100 rounds); a blast can knock it over' },
-    claymore: { name: 'Claymore', kind: 'drop', ammo: 2, key: "'", retreat: 3, crate: 1, vec: 1, info: 'Sticks to a tree, wall or the ground; arms in 10 s; a 3 m laser: walk into it and it fires a cone of pellets' },
-    ffield: { name: 'Force Field', kind: 'drop', ammo: 1, key: '/', retreat: 3, crate: 1, vec: 1, info: 'A glass dome: the next shell bounces off into a random 3D direction; a blast inside is contained' },
-    gravgun: { name: 'Gravity Gun', kind: 'charge', ammo: 5, key: 'N.', vmax: 24, retreat: 3, crate: 1, vec: 1, info: 'Fire: grab the outlined mine / barrel / crate / rock; hold fire and release to throw it' },
+    dog: {
+      name: 'Robo Dog',
+      kind: 'drop',
+      ammo: 2,
+      key: '`',
+      retreat: 4,
+      crate: 1,
+      vec: 1,
+      info: 'Thrown a few metres along the aim; arms after 2.5 m and 0.8 s, then runs at the nearest foe, hops small obstacles, blows up on reaching it or when its 8 s timer ends'
+    },
+    punch: {
+      name: 'Knockout Punch',
+      kind: 'melee',
+      ammo: 3,
+      key: 'N0',
+      retreat: 3,
+      crate: 1,
+      vec: 1,
+      info: 'Jump on the spot and uppercut the worm beside you: it flies off, flipping'
+    },
+    sentry: {
+      name: 'Sentry Gun',
+      kind: 'drop',
+      ammo: 1,
+      key: ';',
+      retreat: 3,
+      crate: 1,
+      vec: 1,
+      info: 'Plant it: a spinning laser scanner shoots any foe crossing the beam (100 rounds); a blast can knock it over'
+    },
+    claymore: {
+      name: 'Claymore',
+      kind: 'drop',
+      ammo: 2,
+      key: "'",
+      retreat: 3,
+      crate: 1,
+      vec: 1,
+      info: 'Sticks to a tree, wall or the ground; arms in 10 s; a 3 m laser: walk into it and it fires a cone of pellets'
+    },
+    ffield: {
+      name: 'Force Field',
+      kind: 'drop',
+      ammo: 1,
+      key: '/',
+      retreat: 3,
+      crate: 1,
+      vec: 1,
+      info: 'A glass dome: the next shell bounces off into a random 3D direction; a blast inside is contained'
+    },
+    gravgun: {
+      name: 'Gravity Gun',
+      kind: 'charge',
+      ammo: 5,
+      key: 'N.',
+      vmax: 24,
+      retreat: 3,
+      crate: 1,
+      vec: 1,
+      info: 'Fire: grab the outlined mine / barrel / crate / rock; hold fire and release to throw it'
+    },
     skip: { name: 'Skip Go', kind: 'skip', ammo: Infinity, key: 'K', info: 'End the turn: select, then press fire' }
   };
   C.ARSENAL_ORDER = Object.keys(A);
   C.CRATE_POOL = C.ARSENAL_ORDER.filter(k => A[k].crate);
   // the poc5 core keeps C.WEAPONS (name, W, fuse, windK, frag ...) for every weapon key: merged views
   for (const k of C.ARSENAL_ORDER) C.WEAPONS[k] = Object.assign({}, C.PROJ[k] || {}, C.WEAPONS[k] || {}, A[k]);
-  for (const k in C.PROJ) if (!C.WEAPONS[k]) C.WEAPONS[k] = Object.assign({ name: k }, C.PROJ[k]);
+  for (const k in C.PROJ)
+    if (!C.WEAPONS[k]) C.WEAPONS[k] = Object.assign({ name: k }, C.PROJ[k]);
   C.WEAPON_ORDER = C.ARSENAL_ORDER.slice();
 })(window.SS = window.SS || {});

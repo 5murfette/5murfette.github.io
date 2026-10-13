@@ -4,27 +4,35 @@
  * plane) into polylines and labels every chain point:
  *   - air normal (s, y) from the density gradient; facing UP / WALL / DOWN (overhang and cave ceilings);
  *   - class from the solid material just inside the surface (W.mat_at 0.3 m in), turned into GRASS / DRY / BURNT where
- *     the point is the column's topmost surface and S.veg has grass there (cover, dryness, char) AND the surface itself can
- *     carry it (nv = the share of the point's cell that is steel, foam, concrete, glass, ice, snow, lava or bedrock, the
- *     veg 0 rows of the one table config MATS[].veg, from NOVEG_EDGE up: no turf on those, whatever grass the column beside
- *     them still has; natural rock under a skin of soil does not count), LAVA where the lava layer covers it; wet = under the simulated sea;
+ *     the point is the column's topmost surface and S.veg has grass there (cover, dryness, char) AND the surface itself
+ *     can carry it (nv = the share of the point's cell that is steel, foam, concrete, glass, ice, snow, lava or
+ *     bedrock, the veg 0 rows of the one table config MATS[].veg, from NOVEG_EDGE up: no turf on those, whatever grass
+ *     the column beside them still has; natural rock under a skin of soil does not count), LAVA where the lava layer
+ *     covers it; wet = under the simulated sea;
  *   - one smoothing pass: a single point whose neighbours agree takes their class (no 0.5 m speckles).
  * Deterministic (no RNG), reads the world and S only; cost ~1-3 ms per section (measured in edgetest).
  * C layout: struct Edge { i32 np, nc; f32 *pts (s, y), *nrm (air normal s, y); u8 *cls, *base (material class),
- *   *face, *nv (built-material share of the cell 0..255), *veg (cover, dry, char, burning 0..255), *wet; i32 *chain (first point, count); u8 *closed; f32 O[2], theta; };
- * ED.refresh(S, sec) re-labels the existing chains (fire, water, lava changed; geometry unchanged). */
+ *   *face, *nv (built-material share of the cell 0..255), *veg (cover, dry, char, burning 0..255), *wet; i32 *chain
+ * (first point, count); u8 *closed; f32 O[2], theta; }; ED.refresh(S, sec) re-labels the existing chains (fire, water,
+ * lava changed; geometry unchanged). */
 (function (SS) {
   'use strict';
   const M = SS.math;
   const C = SS.CFG, MAT = C.MAT;
   const ED = SS.edge = {};
-  const K = ED.CLS = { NONE: 0, GRASS: 1, DRY: 2, BURNT: 3, SOIL: 4, ROCK: 5, SAND: 6, SNOW: 7, ICE: 8, LAVA: 9, BASALT: 10, ASH: 11, SCREE: 12, SANDSTONE: 13 };
+  const K =
+    ED.CLS = {
+      NONE: 0, GRASS: 1, DRY: 2, BURNT: 3, SOIL: 4, ROCK: 5, SAND: 6, SNOW: 7, ICE: 8, LAVA: 9, BASALT: 10, ASH: 11, SCREE: 12,
+      SANDSTONE: 13
+    };
   ED.NAMES = ['none', 'grass', 'dry', 'burnt', 'soil', 'rock', 'sand', 'snow', 'ice', 'lava', 'basalt', 'ash', 'scree', 'sandstone'];
   const F = ED.FACE = { UP: 0, WALL: 1, DOWN: 2 };
   const GRASS_MIN = 64;        // cover (0..255) from which the edge shows grass
   const DRY_MIN = 140;         // dryness (0..255) above which it is dry grass
   const CHAR_MIN = 120;        // char (0..255) above which it is burnt stubble
-  const NOVEG_EDGE = 0.4;      // share of the cell's corner weights that carry nothing from which a point shows no turf (meshgen veg_keep thins the blades over 0.2 - 0.55)
+  // share of the cell's corner weights that carry nothing from which a point shows no turf (meshgen veg_keep thins the
+  // blades over 0.2 - 0.55)
+  const NOVEG_EDGE = 0.4;
 
   function matClass(m) {
     switch (m) {
@@ -47,15 +55,26 @@
   function chains(seg) {
     const ns = seg.length / 4, used = new Uint8Array(ns), nk = ns * 2;
     const key = (s, y) => Math.round(s * 1024) * 262147 + Math.round(y * 1024);
-    // the endpoint table: every endpoint (2 * segment + end) sorted by (key, endpoint): a lookup is a binary search for the first
-    // endpoint of a key, then the run of equal keys in ascending endpoint order (what a hash map of push-lists gave). C: qsort with this total order
+    // the endpoint table: every endpoint (2 * segment + end) sorted by (key, endpoint): a lookup is a binary search for
+    // the first endpoint of a key, then the run of equal keys in ascending endpoint order (what a hash map of
+    // push-lists gave). C: qsort with this total order
     const keys = new Float64Array(nk), ord = new Array(nk);
-    for (let q = 0; q < nk; q++) { keys[q] = key(seg[(q >> 1) * 4 + (q & 1) * 2], seg[(q >> 1) * 4 + (q & 1) * 2 + 1]); ord[q] = q; }
+    for (let q = 0; q < nk; q++) {
+      keys[q] = key(seg[(q >> 1) * 4 + (q & 1) * 2], seg[(q >> 1) * 4 + (q & 1) * 2 + 1]);
+      ord[q] = q;
+    }
     ord.sort((a, b) => (keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : a - b));
     const other = (k, ref) => {
       let lo = 0, hi = nk;
-      while (lo < hi) { const mid = (lo + hi) >> 1; if (keys[ord[mid]] < k) lo = mid + 1; else hi = mid; }
-      for (let q = lo; q < nk && keys[ord[q]] === k; q++) { const r = ord[q]; if ((r >> 1) !== (ref >> 1) && !used[r >> 1]) return r; }
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (keys[ord[mid]] < k) lo = mid + 1;
+        else hi = mid;
+      }
+      for (let q = lo; q < nk && keys[ord[q]] === k; q++) {
+        const r = ord[q];
+        if ((r >> 1) !== (ref >> 1) && !used[r >> 1]) return r;
+      }
       return -1;
     };
     const pts = [], chain = [], closed = [];
@@ -68,14 +87,16 @@
       for (;;) {
         const sg = ref >> 1, e = ref & 1, s = seg[sg * 4 + e * 2], y = seg[sg * 4 + e * 2 + 1];
         fwd.push(s, y);
-        const nx = other(key(s, y), ref); if (nx < 0) break;
+        const nx = other(key(s, y), ref);
+        if (nx < 0) break;
         used[nx >> 1] = 1; ref = (nx >> 1) * 2 + (1 - (nx & 1));
       }
       ref = i0 * 2;
       for (;;) {
         const sg = ref >> 1, e = ref & 1, s = seg[sg * 4 + e * 2], y = seg[sg * 4 + e * 2 + 1];
         bwd.push(s, y);
-        const nx = other(key(s, y), ref); if (nx < 0) break;
+        const nx = other(key(s, y), ref);
+        if (nx < 0) break;
         used[nx >> 1] = 1; ref = (nx >> 1) * 2 + (1 - (nx & 1));
       }
       const start = pts.length / 2;
@@ -83,8 +104,13 @@
       for (let q = 0; q < fwd.length; q += 2) pts.push(fwd[q], fwd[q + 1]);
       let cnt = pts.length / 2 - start;
       // a loop comes back to its first point: drop the duplicate, mark it closed
-      const isClosed = cnt > 2 && Math.abs(pts[start * 2] - pts[pts.length - 2]) < 1e-6 && Math.abs(pts[start * 2 + 1] - pts[pts.length - 1]) < 1e-6;
-      if (isClosed) { pts.length -= 2; cnt--; }
+      const isClosed = cnt > 2
+        && Math.abs(pts[start * 2] - pts[pts.length - 2]) < 1e-6
+        && Math.abs(pts[start * 2 + 1] - pts[pts.length - 1]) < 1e-6;
+      if (isClosed) {
+        pts.length -= 2;
+        cnt--;
+      }
       chain.push(start, cnt); closed.push(isClosed ? 1 : 0);
     }
     return { pts: new Float32Array(pts), chain: new Int32Array(chain), closed: new Uint8Array(closed) };
@@ -99,14 +125,22 @@
       const s = pts[p * 2], y = pts[p * 2 + 1], x = O.x + s * d.x, z = O.z + s * d.z;
       if (geom) {
         const e = 0.2;
-        let gs = W.sample(x + e * d.x, y, z + e * d.z) - W.sample(x - e * d.x, y, z - e * d.z), gy = W.sample(x, y + e, z) - W.sample(x, y - e, z);
+        let gs = W.sample(x + e * d.x, y, z + e * d.z) - W.sample(x - e * d.x, y, z - e * d.z),
+          gy = W.sample(x, y + e, z) - W.sample(x, y - e, z);
         const l = M.len2(gs, gy);
-        if (l < 1e-6) { gs = 0; gy = -1; } else { gs /= l; gy /= l; }
+        if (l < 1e-6) {
+          gs = 0;
+          gy = -1;
+        } else {
+          gs /= l;
+          gy /= l;
+        }
         const ns = -gs, ny = -gy;                                     // into the air
         nrm[p * 2] = ns; nrm[p * 2 + 1] = ny;
         face[p] = ny > 0.45 ? F.UP : ny < -0.45 ? F.DOWN : F.WALL;
         base[p] = matClass(W.mat_at(x - ns * 0.3 * d.x, y - ny * 0.3, z - ns * 0.3 * d.z));
-        nv[p] = Math.round(255 * W.noveg_at(x, y, z));                  // how much of the surface AT the point carries nothing (the table's question; base is the bulk 0.3 m in)
+        // how much of the surface AT the point carries nothing (the table's question; base is the bulk 0.3 m in)
+        nv[p] = Math.round(255 * W.noveg_at(x, y, z));
       }
       const i = M.max(0, M.min(NX - 1, Math.round(x / H))), k = M.max(0, M.min(NZ - 1, Math.round(z / H))), c = k * NX + i;
       const out = W.far && W.outside(x, z);                          // dry worlds (D4): the far dunes beyond the lattice
@@ -116,7 +150,10 @@
       wet[p] = wa && SS.water.surface(S, x, z) > y + 0.05 ? 1 : 0;
       if (top && st && !wet[p] && !out && nv[p] < NOVEG_EDGE * 255) {
         const cv = st.surf[c * 4], dr = st.surf[c * 4 + 1], ch = st.surf[c * 4 + 2], bu = st.surf[c * 4 + 3];
-        veg[p * 4] = cv; veg[p * 4 + 1] = dr; veg[p * 4 + 2] = ch; veg[p * 4 + 3] = bu;
+        veg[p * 4] = cv;
+        veg[p * 4 + 1] = dr;
+        veg[p * 4 + 2] = ch;
+        veg[p * 4 + 3] = bu;
         // the terrain paints the column cover on any top material (thin turf over rock too), so the edge follows it
         if (nrm[p * 2 + 1] > 0.2 && k0 !== K.SNOW && k0 !== K.ICE && k0 !== K.LAVA) {
           if (cv >= GRASS_MIN) k0 = ch >= CHAR_MIN ? K.BURNT : dr >= DRY_MIN ? K.DRY : K.GRASS;
@@ -153,7 +190,8 @@
     return E;
   };
   ED.refresh = function (S, sec) {
-    const E = sec.edge; if (!E) return ED.build(S, sec);
+    const E = sec.edge;
+    if (!E) return ED.build(S, sec);
     label(S, E, false);
     E.vegVer = S.veg ? S.veg.surfVer : 0; E.ver = (ED.ver = (ED.ver | 0) + 1);
     return E;
@@ -161,7 +199,11 @@
   /* class histogram over points (optionally only one facing) — tests and HUD debugging */
   ED.stats = function (E, onlyFace) {
     const h = {};
-    for (let p = 0; p < E.np; p++) if (onlyFace === undefined || E.face[p] === onlyFace) { const nm = ED.NAMES[E.cls[p]]; h[nm] = (h[nm] || 0) + 1; }
+    for (let p = 0; p < E.np; p++)
+      if (onlyFace === undefined || E.face[p] === onlyFace) {
+        const nm = ED.NAMES[E.cls[p]];
+        h[nm] = (h[nm] || 0) + 1;
+      }
     return h;
   };
 })(window.SS = window.SS || {});

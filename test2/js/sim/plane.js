@@ -28,35 +28,53 @@
 
   /* ---------- solid bodies on the plane: S.planeBodies = [PlaneBody] (2D cross-sections) ----------
    * kind 0 = disc radius r centred at (s,y); kind 1 = box half extents (hs, hy). Rebuilt each step by sim.
-   * C: struct PlaneBody { f32 s, y, hs, hy, r; u8 kind, ice; i32 body (the rigid body's id, -1), tree, seg (tree id / segment), struct (bridge id), i16 worm (worm id: a worm's disc, -1) } */
-  P.pb_add = (PB, kind, s, y, hs, hy, r, body, tree, seg, st, worm, ice) => { if (PB.length >= SS.CFG.LIMITS.PLANE_BODIES) return; PB.push({ s, y, kind, hs, hy, r, body, tree, seg, struct: st, worm, ice }); };
+   * C: struct PlaneBody { f32 s, y, hs, hy, r; u8 kind, ice; i32 body (the rigid body's id, -1), tree, seg (tree id /
+   * segment), struct (bridge id), i16 worm (worm id: a worm's disc, -1) } */
+  P.pb_add = (PB, kind, s, y, hs, hy, r, body, tree, seg, st, worm, ice) => {
+    if (PB.length >= SS.CFG.LIMITS.PLANE_BODIES) return;
+    PB.push({ s, y, kind, hs, hy, r, body, tree, seg, struct: st, worm, ice });
+  };
   P.body_at2 = (S, s, y, noWorms) => {                     // noWorms: skip the worm discs (projectiles test worms apart)
     const B = S.planeBodies;
     for (let i = 0; i < B.length; i++) {
       const b = B[i], ds = s - b.s, dy = y - b.y;
       if (noWorms && b.worm >= 0) continue;
-      if (b.kind === 0) { if (ds * ds + dy * dy < b.r * b.r) return i; }
+      if (b.kind === 0) {
+        if (ds * ds + dy * dy < b.r * b.r) return i;
+      }
       else if (Math.abs(ds) < b.hs && Math.abs(dy) < b.hy) return i;
     }
     return -1;
   };
   P.body_normal2 = (S, i, s, y) => {
     const b = S.planeBodies[i], ds = s - b.s, dy = y - b.y;
-    if (b.kind === 0) { const l = M.nz(M.len2(ds, dy), 1); return { s: ds / l, y: dy / l }; }
+    if (b.kind === 0) {
+      const l = M.nz(M.len2(ds, dy), 1);
+      return { s: ds / l, y: dy / l };
+    }
     const px = b.hs - Math.abs(ds), py = b.hy - Math.abs(dy);
     return px < py ? { s: Math.sign(ds) || 1, y: 0 } : { s: 0, y: Math.sign(dy) || 1 };
   };
 
   // Worm collision disc: 12 rim points + centre.
   const CP = [];
-  for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; CP.push(M.cos(a) * SS.CFG.WORM_R, M.sin(a) * SS.CFG.WORM_R); }
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * Math.PI * 2;
+    CP.push(M.cos(a) * SS.CFG.WORM_R, M.sin(a) * SS.CFG.WORM_R);
+  }
   CP.push(0, 0);
-  P.overlap2 = (S, s, y) => { let c = 0; for (let i = 0; i < CP.length; i += 2) if (P.blocked2(S, s + CP[i], y + CP[i + 1])) c++; return c; };
+  P.overlap2 = (S, s, y) => {
+    let c = 0;
+    for (let i = 0; i < CP.length; i += 2)
+      if (P.blocked2(S, s + CP[i], y + CP[i + 1])) c++;
+    return c;
+  };
   P.grounded2 = (S, s, y) => P.blocked2(S, s, y - 0.53) || P.blocked2(S, s - 0.25, y - 0.47) || P.blocked2(S, s + 0.25, y - 0.47);
   P.in_section = (S, p, r) => Math.abs(P.to_plane(S, p).t) <= SS.CFG.HALF + (r || 0);
   // [s0, s1] range of the plane that lies inside the world box.
   P.range = S => {
-    const d = P.dir(S), w = W(); let s0 = -1e9, s1 = 1e9;
+    const d = P.dir(S), w = W();
+    let s0 = -1e9, s1 = 1e9;
     const ax = [[S.O.x, d.x, w.SX], [S.O.z, d.z, w.SZ]];
     for (let i = 0; i < 2; i++) {
       const o = ax[i][0], v = ax[i][1], L = ax[i][2];

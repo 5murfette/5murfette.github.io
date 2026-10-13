@@ -4,31 +4,44 @@
  *
  * World: floating voxel chunks (planet fragments: the material follows the depth in the lost planet, so the cut faces
  * show crust, sandstone, rock, basalt and glassy mantle), a wrecked ship hull (steel, decks, bulkheads, torn ends),
- * crystal spikes, magma pockets, small debris; the chunks carry the planet's heat (glowing veins in hot regions, P68d), no core ball.
- * The voxel field is STATIC (the chunks never move in the sim): the slow tumbling of the sky, the sun and the far debris
- * is drawn by render/eowview.js only (see the notes for the trade-off against rotating per-chunk frames).
- * Gravity: planetoid gravity, a sum of attractors (bodies) with an inverse-square fall-off. Worms wear magnetic suits:
- * a grounded worm sticks to the surface it stands on and walks on any side of a chunk (its "up" is the local surface
- * normal), a worm in the air flies under the summed field with a magnetic landing brake near a surface.
+ * crystal spikes, magma pockets, small debris; the chunks carry the planet's heat (glowing veins in hot regions, P68d),
+ * no core ball. The voxel field is STATIC (the chunks never move in the sim): the slow tumbling of the sky, the sun and
+ * the far debris is drawn by render/eowview.js only (see the notes for the trade-off against rotating per-chunk
+ * frames). Gravity: planetoid gravity, a sum of attractors (bodies) with an inverse-square fall-off. Worms wear
+ * magnetic suits: a grounded worm sticks to the surface it stands on and walks on any side of a chunk (its "up" is the
+ * local surface normal), a worm in the air flies under the summed field with a magnetic landing brake near a surface.
  * Void: a worm far from every chunk (K.VOID_D for K.VOID_T s), outside the box is lost. Touching glowing lava burns.
  *
- * C: struct EowBody { f32 x, y, z, R, k; u8 kind }  (kind 0 chunk, 1 hull part, 2 debris, 3 unused); struct Eow { EowBody b[N]; int n; EowBody core (the old planet centre: layers + a keep-out zone only); EowHot hot[]; EowLost shots[]; }
- * Worm extras (set by E.spawned): vec3 eup (the world up vector), vec2 eu2 (up in the plane), i8 eSense, eLatch, eMv, f32 eVoid, u8 eGround, eFlipC.
- * Deterministic: own RNG streams (seed mixed with Math.imul), SS.math only, no Map / Set, no wall clock. */
+ * C: struct EowBody { f32 x, y, z, R, k; u8 kind }  (kind 0 chunk, 1 hull part, 2 debris, 3 unused); struct Eow {
+ * EowBody b[N]; int n; EowBody core (the old planet centre: layers + a keep-out zone only); EowHot hot[]; EowLost
+ * shots[]; }
+ * Worm extras (set by E.spawned): vec3 eup (the world up vector), vec2 eu2 (up in the plane), i8 eSense, eLatch, eMv,
+ * f32 eVoid, u8 eGround, eFlipC. Deterministic: own RNG streams (seed mixed with Math.imul), SS.math only, no Map /
+ * Set, no wall clock. */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, MAT = C.MAT, P = SS.plane;
   const E = SS.eow = {};
   const W = () => SS.world;
   const K = E.K = {
-    CORE_Y: 20, CORE_R: 4.4,                                     // the lost planet's centre (P68d: no ball, no pull: the keep-out zone of the plan and the origin of the crust layers)
-    ESC_F: 0.05, ESC_T: 0.6, ESC_T2: 8, LOST_T: 3.2, BURN_DT: 0.4, BURN_HP: 8,   // a shell is lost when the field is under ESC_F and it recedes for ESC_T s (stuck: ESC_T2); the lost-shot view lasts LOST_T s; contact with lava: BURN_HP every BURN_DT s
-    WORM_G: 0.55, PROJ_G: 0.8, BODY_G: 0.6, PIECE_G: 0.3,        // gravity at a chunk's surface for worms (x G_WORM; P86: 0.42 -> 0.55, a small jump no longer reaches escape speed), shells (x G), props, drifting pieces
-    MASS_R0: 1.3, MASS_R1: 6, MASS_K0: 0.45, WELL_R0: 5, WELL_R1: 8,   // P86: surface gravity grows with the body's size (uniform density: g ~ R): k = MASS_K0 at radius MASS_R0 up to 1 from MASS_R1; a small rock's well is at least R + WELL_R0 (fades by R + WELL_R1)
+    // the lost planet's centre (P68d: no ball, no pull: the keep-out zone of the plan and the origin of the crust
+    // layers)
+    CORE_Y: 20, CORE_R: 4.4,
+    // a shell is lost when the field is under ESC_F and it recedes for ESC_T s (stuck: ESC_T2); the lost-shot view
+    // lasts LOST_T s; contact with lava: BURN_HP every BURN_DT s
+    ESC_F: 0.05, ESC_T: 0.6, ESC_T2: 8, LOST_T: 3.2, BURN_DT: 0.4, BURN_HP: 8,
+    // gravity at a chunk's surface for worms (x G_WORM; P86: 0.42 -> 0.55, a small jump no longer reaches escape
+    // speed), shells (x G), props, drifting pieces
+    WORM_G: 0.55, PROJ_G: 0.8, BODY_G: 0.6, PIECE_G: 0.3,
+    // P86: surface gravity grows with the body's size (uniform density: g ~ R): k = MASS_K0 at radius MASS_R0 up to 1
+    // from MASS_R1; a small rock's well is at least R + WELL_R0 (fades by R + WELL_R1)
+    MASS_R0: 1.3, MASS_R1: 6, MASS_K0: 0.45, WELL_R0: 5, WELL_R1: 8,
     FADE0: 2.6, FADE1: 4.2, F_MAX: 1.8,                           // the field fades between FADE0 and FADE1 body radii; its cap
     VOID_D: 14, VOID_T: 2.2, OUT_M: 6,                            // lost: m from the nearest surface, for s; m outside the box
-    SAFE: 24, BRAKE_A: 28, V_LAND: 3.2, BRAKE_L: 5, BRAKE_STEP: 0.35,   // magnetic landing: damage above SAFE m/s, deceleration m/s2, soft speed m/s, look-ahead m
-    STEP_DOWN: 1.1, RING: [0.85, 1.6, 2.6], UP_BLEND: 0.3,       // walking: the suit follows a drop of this size; the surface normal probe radii, its smoothing
+    // magnetic landing: damage above SAFE m/s, deceleration m/s2, soft speed m/s, look-ahead m
+    SAFE: 24, BRAKE_A: 28, V_LAND: 3.2, BRAKE_L: 5, BRAKE_STEP: 0.35,
+    // walking: the suit follows a drop of this size; the surface normal probe radii, its smoothing
+    STEP_DOWN: 1.1, RING: [0.85, 1.6, 2.6], UP_BLEND: 0.3,
     REBAKE_PEN: 0.12, REBAKE_SPECK: 22, REBAKE_RETRY: 240, NUB_R: 1.1, HULL_HL: 16, HULL_WY: 4.4, HULL_WZ: 5.4, HULL_T: 1.0
   };
   const TAU = M.TAU;
@@ -37,8 +50,15 @@
   const mass_k = R => K.MASS_K0 + (1 - K.MASS_K0) * clamp((R - K.MASS_R0) / (K.MASS_R1 - K.MASS_R0), 0, 1);
   E.mass_k = mass_k;
   const COS16 = [], SIN16 = [];
-  for (let i = 0; i < 16; i++) { COS16.push(M.cos(i / 16 * TAU)); SIN16.push(M.sin(i / 16 * TAU)); }
-  const RIM = []; for (let i = 0; i < 12; i++) { const t = i / 12 * TAU; RIM.push(M.cos(t) * C.WORM_R, M.sin(t) * C.WORM_R); }
+  for (let i = 0; i < 16; i++) {
+    COS16.push(M.cos(i / 16 * TAU));
+    SIN16.push(M.sin(i / 16 * TAU));
+  }
+  const RIM = [];
+  for (let i = 0; i < 12; i++) {
+    const t = i / 12 * TAU;
+    RIM.push(M.cos(t) * C.WORM_R, M.sin(t) * C.WORM_R);
+  }
 
   /* ================= plan: where everything is (pure function of seed and size) ================= */
   function plan(settings, sx) {
@@ -49,50 +69,118 @@
     let hull = null;
     const HL = K.HULL_HL * sc;
     for (let tries = 0; !hull && tries < 500; tries++) {
-      const a = rr(0, TAU), rad = rr(15, 30) * sc, x = mx + M.cos(a) * rad, z = mz + M.sin(a) * rad, y = rr(11, 29), ax = a + TAU / 4 + rr(-0.6, 0.6), dx = M.cos(ax), dz = M.sin(ax);
+      const a = rr(0, TAU),
+        rad = rr(15, 30) * sc,
+        x = mx + M.cos(a) * rad,
+        z = mz + M.sin(a) * rad,
+        y = rr(11, 29),
+        ax = a + TAU / 4 + rr(-0.6, 0.6),
+        dx = M.cos(ax),
+        dz = M.sin(ax);
       const A = [x - dx * (HL - 4), y, z - dz * (HL - 4)], Bp = [x + dx * (HL - 4), y, z + dz * (HL - 4)];
       if (A[0] < 7 || A[0] > sx - 7 || A[2] < 7 || A[2] > sx - 7 || Bp[0] < 7 || Bp[0] > sx - 7 || Bp[2] < 7 || Bp[2] > sx - 7) continue;
       let ok = M.seg_dist(mx, K.CORE_Y, mz, A, Bp) > K.CORE_R + 8;
-      if (ok) hull = { x, y, z, ax: dx, az: dz, HL, wy: K.HULL_WY, wz: K.HULL_WZ, T: K.HULL_T, seed: 313, A, B: Bp, breach: [], tearU: rr(0.55, 0.72), tearV: rr(0.3, 0.45) };
+      if (ok)
+        hull = {
+          x,
+          y,
+          z,
+          ax: dx,
+          az: dz,
+          HL,
+          wy: K.HULL_WY,
+          wz: K.HULL_WZ,
+          T: K.HULL_T,
+          seed: 313,
+          A,
+          B: Bp,
+          breach: [],
+          tearU: rr(0.55, 0.72),
+          tearV: rr(0.3, 0.45)
+        };
     }
-    if (hull) for (let q = 0; q < 4; q++) { const f = rr(0, TAU); hull.breach.push({ u: rr(-HL * 0.7, HL * 0.8), lat: M.cos(f) * hull.wz * 1.05, ly: M.sin(f) * hull.wy * 1.05, r: rr(1.8, 3.0) }); }   // impact holes through the skin, never through the middle
+    // impact holes through the skin, never through the middle
+    if (hull)
+      for (let q = 0; q < 4; q++) {
+        const f = rr(0, TAU);
+        hull.breach.push({ u: rr(-HL * 0.7, HL * 0.8), lat: M.cos(f) * hull.wz * 1.05, ly: M.sin(f) * hull.wy * 1.05, r: rr(1.8, 3.0) });
+      }
     const nBig = sc > 1.2 ? 8 : 5;
-    const sphere = () => { const u = rr(-1, 1), a = rr(0, TAU), s = Math.sqrt(M.max(0, 1 - u * u)); return { x: s * M.cos(a), y: u, z: s * M.sin(a) }; };
+    const sphere = () => {
+      const u = rr(-1, 1), a = rr(0, TAU), s = Math.sqrt(M.max(0, 1 - u * u));
+      return { x: s * M.cos(a), y: u, z: s * M.sin(a) };
+    };
     for (let tries = 0; chunks.length < nBig && tries < 900; tries++) {
       const R = rr(8, 12.5), rx = R * rr(0.95, 1.2), rz = R * rr(0.95, 1.2), ry = R * rr(0.55, 0.78), Re = M.cbrt(rx * ry * rz);
       const a = rr(0, TAU), rad = rr(17, 31) * sc, x = mx + M.cos(a) * rad, z = mz + M.sin(a) * rad, y = rr(ry + 3, sy - ry - 3);
       if (x < rx + 2 || x > sx - rx - 2 || z < rz + 2 || z > sx - rz - 2) continue;
       if (M.len3(x - mx, y - K.CORE_Y, z - mz) < M.max(rx, M.max(ry, rz)) * 0.9 + K.CORE_R + 3.5) continue;
       let gap = 1e9, ok = true;
-      for (let q = 0; q < chunks.length; q++) { const c = chunks[q], g = M.len3(x - c.x, (y - c.y) * 1.3, z - c.z) - Re - c.R; if (g < 5) { ok = false; break; } if (g < gap) gap = g; }
+      for (let q = 0; q < chunks.length; q++) {
+        const c = chunks[q], g = M.len3(x - c.x, (y - c.y) * 1.3, z - c.z) - Re - c.R;
+        if (g < 5) {
+          ok = false;
+          break;
+        }
+        if (g < gap) gap = g;
+      }
       if (ok && hull && M.seg_dist(x, y, z, hull.A, hull.B) - Re - 6.6 < 4.5) ok = false;
       if (!ok || (chunks.length && gap > 13)) continue;
       const cut = [], bites = [], nCut = 1 + (rr(0, 1) < 0.4 ? 1 : 0);
-      for (let q = 0; q < nCut; q++) { const n = sphere(); cut.push({ nx: n.x, ny: n.y, nz: n.z, off: Re * rr(0.45, 0.72) }); }
-      for (let q = 0, nb = 2 + M.rng_int(rng, 2); q < nb; q++) { const n = sphere(), br = Re * rr(0.2, 0.34); bites.push({ x: x + n.x * Re * 0.92, y: y + n.y * Re * 0.7, z: z + n.z * Re * 0.92, r: br }); }
+      for (let q = 0; q < nCut; q++) {
+        const n = sphere();
+        cut.push({ nx: n.x, ny: n.y, nz: n.z, off: Re * rr(0.45, 0.72) });
+      }
+      for (let q = 0, nb = 2 + M.rng_int(rng, 2); q < nb; q++) {
+        const n = sphere(), br = Re * rr(0.2, 0.34);
+        bites.push({ x: x + n.x * Re * 0.92, y: y + n.y * Re * 0.7, z: z + n.z * Re * 0.92, r: br });
+      }
       chunks.push({ id: chunks.length, x, y, z, rx, ry, rz, R: Re, cut, bites, seed: 11 + chunks.length * 37, lava: false, spikes: [] });
     }
     let nLava = 0;
-    for (const c of chunks) if (nLava < 2 && M.len3(c.x - mx, c.y - K.CORE_Y, c.z - mz) < 29 * sc && c.R > 8.6) { c.lava = true; nLava++; }
+    for (const c of chunks)
+      if (nLava < 2 && M.len3(c.x - mx, c.y - K.CORE_Y, c.z - mz) < 29 * sc && c.R > 8.6) {
+        c.lava = true;
+        nLava++;
+      }
     if (!nLava && chunks.length) chunks[0].lava = true;
-    const spikeOf = c => { for (let q = 0, n = 4 + M.rng_int(rng, 4); q < n; q++) { const d = sphere(); c.spikes.push({ dx: d.x, dy: d.y, dz: d.z, L: rr(3, 5.6), r: rr(0.55, 0.95) }); } };
-    for (let q = 0; q < chunks.length; q++) if (q % 2 === 0 && q < 5) spikeOf(chunks[q]);
+    const spikeOf = c => {
+      for (let q = 0, n = 4 + M.rng_int(rng, 4); q < n; q++) {
+        const d = sphere();
+        c.spikes.push({ dx: d.x, dy: d.y, dz: d.z, L: rr(3, 5.6), r: rr(0.55, 0.95) });
+      }
+    };
+    for (let q = 0; q < chunks.length; q++)
+      if (q % 2 === 0 && q < 5) spikeOf(chunks[q]);
     // debris: small lumps and a few steel plates, 2.5-7 m from a big chunk
-    const nDeb = Math.round(13 * sc * sc);                 // P86: the free rocks are real bodies now (landable, gravity by mass); more of them
+    // P86: the free rocks are real bodies now (landable, gravity by mass); more of them
+    const nDeb = Math.round(13 * sc * sc);
     for (let tries = 0; debris.length < nDeb && tries < 1400 && chunks.length; tries++) {
-      const pj = chunks[M.rng_int(rng, chunks.length)], d = sphere(), Rd = rr(1.3, 3.5), plate = debris.length === 2 || debris.length === 5, Rg = plate ? Rd * 1.9 : Rd, dist = pj.R + Rg + rr(3, 7);
+      const pj = chunks[M.rng_int(rng, chunks.length)],
+        d = sphere(),
+        Rd = rr(1.3, 3.5),
+        plate = debris.length === 2 || debris.length === 5,
+        Rg = plate ? Rd * 1.9 : Rd,
+        dist = pj.R + Rg + rr(3, 7);
       const x = pj.x + d.x * dist, y = pj.y + d.y * dist * 0.7, z = pj.z + d.z * dist;
       if (x < Rd + 3 || x > sx - Rd - 3 || z < Rd + 3 || z > sx - Rd - 3 || y < Rd + 3 || y > sy - Rd - 3) continue;
       if (M.len3(x - mx, y - K.CORE_Y, z - mz) < Rd + K.CORE_R + 3) continue;
       let ok = true;
-      for (const c of chunks) if (M.len3(x - c.x, (y - c.y) * 1.3, z - c.z) - c.R - Rg < 3.5) { ok = false; break; }
-      for (const o of debris) if (ok && M.len3(x - o.x, y - o.y, z - o.z) - o.R * (o.plate ? 1.9 : 1) - Rg < 2.5) ok = false;
+      for (const c of chunks)
+        if (M.len3(x - c.x, (y - c.y) * 1.3, z - c.z) - c.R - Rg < 3.5) {
+          ok = false;
+          break;
+        }
+      for (const o of debris)
+        if (ok && M.len3(x - o.x, y - o.y, z - o.z) - o.R * (o.plate ? 1.9 : 1) - Rg < 2.5) ok = false;
       if (ok && hull && M.seg_dist(x, y, z, hull.A, hull.B) - Rg - 6.6 < 3) ok = false;
       if (!ok) continue;
       debris.push({ id: debris.length, x, y, z, R: Rd, plate, yaw: rr(0, TAU), seed: 101 + debris.length * 13 });
     }
     for (const c of chunks) B.push({ x: c.x, y: c.y, z: c.z, R: c.R, k: 1, kind: 0 });
-    if (hull) for (const u of [-9 * sc, 0, 9 * sc]) B.push({ x: hull.x + hull.ax * u, y: hull.y, z: hull.z + hull.az * u, R: 6.5, k: 0.85, kind: 1 });
+    if (hull)
+      for (const u of [-9 * sc, 0, 9 * sc])
+        B.push({ x: hull.x + hull.ax * u, y: hull.y, z: hull.z + hull.az * u, R: 6.5, k: 0.85, kind: 1 });
     for (const d of debris) B.push({ x: d.x, y: d.y, z: d.z, R: d.plate ? d.R * 1.4 : d.R, k: mass_k(d.plate ? d.R * 1.4 : d.R), kind: 2 });
     const core = { x: mx, y: K.CORE_Y, z: mz, R: K.CORE_R, k: 1, kind: 3 };
     return { sx, chunks, hull, debris, bodies: B, core };
@@ -101,19 +189,30 @@
 
   /* ================= voxel generation ================= */
   let Wd = null, seedS = 0;
-  const LAYERS = [[34, MAT.SOIL], [30, MAT.SANDSTONE], [24, MAT.ROCK], [18, MAT.BASALT], [-1, MAT.CRUST]];   // r0 (m from the core) -> material
+  // r0 (m from the core) -> material
+  const LAYERS = [[34, MAT.SOIL], [30, MAT.SANDSTONE], [24, MAT.ROCK], [18, MAT.BASALT], [-1, MAT.CRUST]];
   const layerAt = (x, y, z, core) => {
     const r0 = M.len3(x - core.x, y - core.y, z - core.z) + (M.noise3(x / 8, y / 8, z / 8, seedS + 5) - 0.5) * 6;
-    for (let i = 0; i < LAYERS.length; i++) if (r0 >= LAYERS[i][0]) return LAYERS[i][1];
+    for (let i = 0; i < LAYERS.length; i++)
+      if (r0 >= LAYERS[i][0]) return LAYERS[i][1];
     return MAT.CRUST;
   };
   function box(x0, y0, z0, x1, y1, z1) {
     const H = Wd.H;
-    return [M.max(0, Math.floor(x0 / H)), M.min(Wd.NX - 1, Math.ceil(x1 / H)), M.max(1, Math.floor(y0 / H)), M.min(Wd.NY - 2, Math.ceil(y1 / H)), M.max(0, Math.floor(z0 / H)), M.min(Wd.NZ - 1, Math.ceil(z1 / H))];
+    return [
+      M.max(0, Math.floor(x0 / H)),
+      M.min(Wd.NX - 1, Math.ceil(x1 / H)),
+      M.max(1, Math.floor(y0 / H)),
+      M.min(Wd.NY - 2, Math.ceil(y1 / H)),
+      M.max(0, Math.floor(z0 / H)),
+      M.min(Wd.NZ - 1, Math.ceil(z1 / H))
+    ];
   }
-  /* P94: who owns a solid voxel. Two bodies whose noisy skins / crystals touched in the lattice were ONE solid component with two bedrock nubs
-   * (7 of 20 seeds): the seam was a place the collapse check and the rigid-piece solver could not make sense of. The generator now records the owner of
-   * every voxel and, after all bodies are filled, cuts a clear gap wherever two bodies touch (separate()). Ids: chunk 1..8, debris 20.., hull 99, crystal 100 + chunk. */
+  /* P94: who owns a solid voxel. Two bodies whose noisy skins / crystals touched in the lattice were ONE solid
+   * component with two bedrock nubs
+   * (7 of 20 seeds): the seam was a place the collapse check and the rigid-piece solver could not make sense of. The
+   * generator now records the owner of every voxel and, after all bodies are filled, cuts a clear gap wherever two
+   * bodies touch (separate()). Ids: chunk 1..8, debris 20.., hull 99, crystal 100 + chunk. */
   const OWN_DEB = 20, OWN_HULL = 99, OWN_SPIKE = 100, GAP_V = 2;
   let own = null;
   const grp = v => v >= OWN_SPIKE ? v - OWN_SPIKE + 1 : v;                       // a crystal belongs to its chunk
@@ -140,210 +239,474 @@
         }
       }
       if (!found) break;
-      for (let q = 0; q < nlo; q++) {                                              // cut the lower-priority body back GAP_V voxels round each contact voxel
+      // cut the lower-priority body back GAP_V voxels round each contact voxel
+      for (let q = 0; q < nlo; q++) {
         const o = lo[q], g = grp(own[o]), i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
-        for (let dk = -GAP_V; dk <= GAP_V; dk++) for (let dj = -GAP_V; dj <= GAP_V; dj++) for (let di = -GAP_V; di <= GAP_V; di++) {
-          const ii = i + di, jj = j + dj, kk = k + dk; if (ii < 0 || jj < 1 || kk < 0 || ii >= NX || jj >= NY - 1 || kk >= NZ) continue;
-          const m = (kk * NY + jj) * NX + ii;
-          if (D[m] > 0 && own[m] && grp(own[m]) === g) { D[m] = -0.5; Mt[m] = MAT.AIR; own[m] = 0; cut++; }
-        }
+        for (let dk = -GAP_V; dk <= GAP_V; dk++)
+          for (let dj = -GAP_V; dj <= GAP_V; dj++)
+            for (let di = -GAP_V; di <= GAP_V; di++) {
+              const ii = i + di, jj = j + dj, kk = k + dk;
+              if (ii < 0 || jj < 1 || kk < 0 || ii >= NX || jj >= NY - 1 || kk >= NZ) continue;
+              const m = (kk * NY + jj) * NX + ii;
+              if (D[m] > 0 && own[m] && grp(own[m]) === g) {
+                D[m] = -0.5;
+                Mt[m] = MAT.AIR;
+                own[m] = 0;
+                cut++;
+              }
+            }
       }
     }
     pl.sep = { overlap: ovl, cut, passes, contacts: passes < 6 ? 0 : -1 };
   }
   function fillChunk(c, core) {
-    const H = Wd.H, NX = Wd.NX, NY = Wd.NY, D = Wd.d, Mt = Wd.mat, rmin = M.min(c.rx, M.min(c.ry, c.rz)), reach = M.max(c.rx, M.max(c.ry, c.rz)) + 3.5;
+    const H = Wd.H,
+      NX = Wd.NX,
+      NY = Wd.NY,
+      D = Wd.d,
+      Mt = Wd.mat,
+      rmin = M.min(c.rx, M.min(c.ry, c.rz)),
+      reach = M.max(c.rx, M.max(c.ry, c.rz)) + 3.5;
     const b = box(c.x - reach, c.y - reach, c.z - reach, c.x + reach, c.y + reach, c.z + reach);
-    for (let k = b[4]; k <= b[5]; k++) for (let j = b[2]; j <= b[3]; j++) for (let i = b[0]; i <= b[1]; i++) {
-      const x = i * H, y = j * H, z = k * H, qx = x - c.x, qy = y - c.y, qz = z - c.z, e = M.len3(qx / c.rx, qy / c.ry, qz / c.rz);
-      if (e > 1.7) continue;
-      let dv = (1 - e) * rmin + (M.fbm3(x / 7.5, y / 7.5, z / 7.5, c.seed, 3) - 0.5) * 6 + (M.noise3(x / 2.4, y / 2.4, z / 2.4, c.seed + 9) - 0.5) * 1.3;
-      for (let q = 0; q < c.cut.length; q++) { const p = c.cut[q]; dv = M.min(dv, p.off - (qx * p.nx + qy * p.ny + qz * p.nz)); }
-      for (let q = 0; q < c.bites.length; q++) { const p = c.bites[q]; dv = M.min(dv, M.len3(x - p.x, y - p.y, z - p.z) - p.r); }
-      if (dv < -3) continue;
-      if (dv > 3) dv = 3;
-      const o = (k * NY + j) * NX + i;
-      if (dv > D[o]) { if (dv > 0) mark_owner(o, 1 + c.id); D[o] = dv; Mt[o] = dv > 0 ? layerAt(x, y, z, core) : MAT.AIR; }
-    }
+    for (let k = b[4]; k <= b[5]; k++)
+      for (let j = b[2]; j <= b[3]; j++)
+        for (let i = b[0]; i <= b[1]; i++) {
+          const x = i * H, y = j * H, z = k * H, qx = x - c.x, qy = y - c.y, qz = z - c.z, e = M.len3(qx / c.rx, qy / c.ry, qz / c.rz);
+          if (e > 1.7) continue;
+          let dv = (1 - e) * rmin
+            + (M.fbm3(x / 7.5, y / 7.5, z / 7.5, c.seed, 3) - 0.5) * 6
+            + (M.noise3(x / 2.4, y / 2.4, z / 2.4, c.seed + 9) - 0.5) * 1.3;
+          for (let q = 0; q < c.cut.length; q++) {
+            const p = c.cut[q];
+            dv = M.min(dv, p.off - (qx * p.nx + qy * p.ny + qz * p.nz));
+          }
+          for (let q = 0; q < c.bites.length; q++) {
+            const p = c.bites[q];
+            dv = M.min(dv, M.len3(x - p.x, y - p.y, z - p.z) - p.r);
+          }
+          if (dv < -3) continue;
+          if (dv > 3) dv = 3;
+          const o = (k * NY + j) * NX + i;
+          if (dv > D[o]) {
+            if (dv > 0) mark_owner(o, 1 + c.id);
+            D[o] = dv;
+            Mt[o] = dv > 0 ? layerAt(x, y, z, core) : MAT.AIR;
+          }
+        }
   }
   function fillDebris(d, core) {
     const H = Wd.H, NX = Wd.NX, NY = Wd.NY, D = Wd.d, Mt = Wd.mat, reach = d.R * (d.plate ? 2.2 : 1) + 3;
     const b = box(d.x - reach, d.y - reach, d.z - reach, d.x + reach, d.y + reach, d.z + reach), cy = M.cos(d.yaw), sy = M.sin(d.yaw);
-    for (let k = b[4]; k <= b[5]; k++) for (let j = b[2]; j <= b[3]; j++) for (let i = b[0]; i <= b[1]; i++) {
-      const x = i * H, y = j * H, z = k * H, qx = x - d.x, qy = y - d.y, qz = z - d.z;
-      let dv;
-      if (d.plate) {                                         // a torn hull plate: a thin slab 2R x 0.45R x 1.3R, jagged edges
-        const lx = qx * cy + qz * sy, lz = -qx * sy + qz * cy, jag = (M.noise3(x / 1.4, y / 1.4, z / 1.4, d.seed) - 0.5) * 1.1;
-        dv = M.min(d.R * 1.7 - Math.abs(lx), M.min(0.75 - Math.abs(qy), d.R * 1.1 - Math.abs(lz))) + jag;
-      } else dv = (d.R - M.len3(qx, qy * 1.25, qz)) + (M.noise3(x / 1.8, y / 1.8, z / 1.8, d.seed) - 0.5) * 1.6;
-      if (dv < -3) continue;
-      if (dv > 3) dv = 3;
-      const o = (k * NY + j) * NX + i;
-      if (dv > D[o]) { if (dv > 0) mark_owner(o, OWN_DEB + d.id); D[o] = dv; Mt[o] = dv > 0 ? (d.plate ? MAT.STEEL : layerAt(x, y, z, core)) : MAT.AIR; }
-    }
-    const o = (Math.round(d.z / H) * NY + Math.round(d.y / H)) * NX + Math.round(d.x / H);   // its anchor: one bedrock voxel (collapse.js: only bedrock / steel hold)
+    for (let k = b[4]; k <= b[5]; k++)
+      for (let j = b[2]; j <= b[3]; j++)
+        for (let i = b[0]; i <= b[1]; i++) {
+          const x = i * H, y = j * H, z = k * H, qx = x - d.x, qy = y - d.y, qz = z - d.z;
+          let dv;
+          if (d.plate) {                                         // a torn hull plate: a thin slab 2R x 0.45R x 1.3R, jagged edges
+            const lx = qx * cy + qz * sy, lz = -qx * sy + qz * cy, jag = (M.noise3(x / 1.4, y / 1.4, z / 1.4, d.seed) - 0.5) * 1.1;
+            dv = M.min(d.R * 1.7 - Math.abs(lx), M.min(0.75 - Math.abs(qy), d.R * 1.1 - Math.abs(lz))) + jag;
+          } else dv = (d.R - M.len3(qx, qy * 1.25, qz)) + (M.noise3(x / 1.8, y / 1.8, z / 1.8, d.seed) - 0.5) * 1.6;
+          if (dv < -3) continue;
+          if (dv > 3) dv = 3;
+          const o = (k * NY + j) * NX + i;
+          if (dv > D[o]) {
+            if (dv > 0) mark_owner(o, OWN_DEB + d.id);
+            D[o] = dv;
+            Mt[o] = dv > 0 ? (d.plate ? MAT.STEEL : layerAt(x, y, z, core)) : MAT.AIR;
+          }
+        }
+    // its anchor: one bedrock voxel (collapse.js: only bedrock / steel hold)
+    const o = (Math.round(d.z / H) * NY + Math.round(d.y / H)) * NX + Math.round(d.x / H);
     if (D[o] > 0.4) Mt[o] = d.plate ? MAT.STEEL : MAT.BEDROCK;
   }
   function fillHull(h) {
     const H = Wd.H, NX = Wd.NX, NY = Wd.NY, D = Wd.d, Mt = Wd.mat, reach = h.HL + 6;
     const b = box(h.x - reach, h.y - reach, h.z - reach, h.x + reach, h.y + reach, h.z + reach), T = h.T;
     const ax = h.ax, az = h.az, lx = -az, lz = ax;
-    for (let k = b[4]; k <= b[5]; k++) for (let j = b[2]; j <= b[3]; j++) for (let i = b[0]; i <= b[1]; i++) {
-      const x = i * H, y = j * H, z = k * H, qx = x - h.x, qy = y - h.y, qz = z - h.z, u = qx * ax + qz * az, lat = qx * lx + qz * lz, ly = qy;
-      if (Math.abs(u) > h.HL + 2 || Math.abs(lat) > h.wz + 2 || Math.abs(ly) > h.wy + 2) continue;
-      const t = Math.abs(u) / h.HL, bow = u > 0 && t > 0.6 ? Math.sqrt(M.max(0.0001, 1 - M.pow((t - 0.6) / 0.4, 2))) : 1;
-      const wyU = h.wy * bow, wzU = h.wz * bow;
-      const e = M.pow(M.pow(Math.abs(ly) / wyU, 3) + M.pow(Math.abs(lat) / wzU, 3), 1 / 3), outer = (1 - e) * M.min(wyU, wzU);
-      let dv = M.min(outer, T - outer), mat = MAT.STEEL;
-      const m = ((u + h.HL) % 5) - 2.5;                                   // frames every 5 m
-      if (dv < 0 && outer > T && outer < T + 0.9 && Math.abs(m) < 0.4) { dv = 0.4; mat = MAT.STEEL; }
-      if (dv < 0 && outer > T - 0.2) {
-        if (Math.abs(ly + 1.2) < 0.5) { dv = 0.5 - Math.abs(ly + 1.2); mat = MAT.CONCRETE; }          // lower deck
-        else if (Math.abs(ly - 1.9) < 0.4 && M.noise3(u / 5, lat / 5, 3, h.seed) > 0.42) { dv = 0.4 - Math.abs(ly - 1.9); mat = MAT.CONCRETE; }   // upper deck, partly gone
-        else for (const ub of [-4, 6]) if (Math.abs(u - ub) < 0.4 && M.noise3(lat / 3, ly / 3, 7 + ub, h.seed) < 0.7) {       // bulkheads with a doorway
-          const dd = (lat / 1.5) * (lat / 1.5) + ((ly + 0.0) / 1.6) * ((ly + 0.0) / 1.6);
-          if (dd > 1) { dv = 0.4 - Math.abs(u - ub); mat = MAT.STEEL; }
+    for (let k = b[4]; k <= b[5]; k++)
+      for (let j = b[2]; j <= b[3]; j++)
+        for (let i = b[0]; i <= b[1]; i++) {
+          const x = i * H,
+            y = j * H,
+            z = k * H,
+            qx = x - h.x,
+            qy = y - h.y,
+            qz = z - h.z,
+            u = qx * ax + qz * az,
+            lat = qx * lx + qz * lz,
+            ly = qy;
+          if (Math.abs(u) > h.HL + 2 || Math.abs(lat) > h.wz + 2 || Math.abs(ly) > h.wy + 2) continue;
+          const t = Math.abs(u) / h.HL, bow = u > 0 && t > 0.6 ? Math.sqrt(M.max(0.0001, 1 - M.pow((t - 0.6) / 0.4, 2))) : 1;
+          const wyU = h.wy * bow, wzU = h.wz * bow;
+          const e = M.pow(M.pow(Math.abs(ly) / wyU, 3) + M.pow(Math.abs(lat) / wzU, 3), 1 / 3), outer = (1 - e) * M.min(wyU, wzU);
+          let dv = M.min(outer, T - outer), mat = MAT.STEEL;
+          const m = ((u + h.HL) % 5) - 2.5;                                   // frames every 5 m
+          if (dv < 0 && outer > T && outer < T + 0.9 && Math.abs(m) < 0.4) {
+            dv = 0.4;
+            mat = MAT.STEEL;
+          }
+          if (dv < 0 && outer > T - 0.2) {
+            // lower deck
+            if (Math.abs(ly + 1.2) < 0.5) {
+              dv = 0.5 - Math.abs(ly + 1.2);
+              mat = MAT.CONCRETE;
+            }
+            // upper deck, partly gone
+            else if (Math.abs(ly - 1.9) < 0.4 && M.noise3(u / 5, lat / 5, 3, h.seed) > 0.42) {
+              dv = 0.4 - Math.abs(ly - 1.9);
+              mat = MAT.CONCRETE;
+            }
+            // bulkheads with a doorway
+            else
+              for (const ub of [-4, 6])
+                if (Math.abs(u - ub) < 0.4 && M.noise3(lat / 3, ly / 3, 7 + ub, h.seed) < 0.7) {
+                  const dd = (lat / 1.5) * (lat / 1.5) + ((ly + 0.0) / 1.6) * ((ly + 0.0) / 1.6);
+                  if (dd > 1) {
+                    dv = 0.4 - Math.abs(u - ub);
+                    mat = MAT.STEEL;
+                  }
+                }
+          }
+          // the stern is torn off along a ragged line
+          dv = M.min(dv, u - (-h.HL * h.tearU + 7 * (M.fbm3(lat / 3.2, ly / 3.2, 5, h.seed, 2) - 0.5)));
+          // ... and the bow frayed
+          if (u > h.HL * 0.86) dv = M.min(dv, h.HL * 0.99 - u + (M.noise3(lat / 2, ly / 2, 9, h.seed) - 0.5) * 3);
+          for (let q = 0; q < h.breach.length; q++) {                         // impact breaches
+            const br = h.breach[q];
+            dv = M.min(
+              dv,
+              M.len3(u - br.u, lat - br.lat, ly - br.ly) - br.r * (1 + 0.28 * (M.noise3(x / 1.5, y / 1.5, z / 1.5, h.seed + q) - 0.5))
+            );
+          }
+          if (dv < -3) continue;
+          if (dv > 3) dv = 3;
+          const o = (k * NY + j) * NX + i;
+          if (dv > D[o]) {
+            if (dv > 0) mark_owner(o, OWN_HULL);
+            D[o] = dv;
+            Mt[o] = dv > 0 ? mat : MAT.AIR;
+          }
         }
-      }
-      dv = M.min(dv, u - (-h.HL * h.tearU + 7 * (M.fbm3(lat / 3.2, ly / 3.2, 5, h.seed, 2) - 0.5)));   // the stern is torn off along a ragged line
-      if (u > h.HL * 0.86) dv = M.min(dv, h.HL * 0.99 - u + (M.noise3(lat / 2, ly / 2, 9, h.seed) - 0.5) * 3);   // ... and the bow frayed
-      for (let q = 0; q < h.breach.length; q++) {                         // impact breaches
-        const br = h.breach[q];
-        dv = M.min(dv, M.len3(u - br.u, lat - br.lat, ly - br.ly) - br.r * (1 + 0.28 * (M.noise3(x / 1.5, y / 1.5, z / 1.5, h.seed + q) - 0.5)));
-      }
-      if (dv < -3) continue;
-      if (dv > 3) dv = 3;
-      const o = (k * NY + j) * NX + i;
-      if (dv > D[o]) { if (dv > 0) mark_owner(o, OWN_HULL); D[o] = dv; Mt[o] = dv > 0 ? mat : MAT.AIR; }
-    }
   }
   const dAt = (x, y, z) => Wd.sample(x, y, z);
-  function nubOf(c, rng) {                                     // a bedrock nub deep inside: it anchors the chunk (collapse.js); returns its direction
+  // a bedrock nub deep inside: it anchors the chunk (collapse.js); returns its direction
+  function nubOf(c, rng) {
     let best = null, bd = -9;
     for (let q = 0; q < 16; q++) {
-      const u = M.rng_range(rng, -1, 1), a = M.rng_range(rng, 0, TAU), s = Math.sqrt(M.max(0, 1 - u * u)), r = c.R * M.rng_range(rng, 0.05, 0.3);
+      const u = M.rng_range(rng, -1, 1),
+        a = M.rng_range(rng, 0, TAU),
+        s = Math.sqrt(M.max(0, 1 - u * u)),
+        r = c.R * M.rng_range(rng, 0.05, 0.3);
       const x = c.x + s * M.cos(a) * r, y = c.y + u * r * 0.7, z = c.z + s * M.sin(a) * r, dv = dAt(x, y, z);
-      if (dv > bd) { bd = dv; best = { x, y, z, ux: s * M.cos(a), uy: u, uz: s * M.sin(a) }; }
+      if (dv > bd) {
+        bd = dv;
+        best = { x, y, z, ux: s * M.cos(a), uy: u, uz: s * M.sin(a) };
+      }
     }
     const H = Wd.H, NX = Wd.NX, NY = Wd.NY, r = M.min(K.NUB_R, M.max(0.7, bd - 0.5)), D = Wd.d, Mt = Wd.mat;
     const b = box(best.x - r - 1, best.y - r - 1, best.z - r - 1, best.x + r + 1, best.y + r + 1, best.z + r + 1);
-    for (let k = b[4]; k <= b[5]; k++) for (let j = b[2]; j <= b[3]; j++) for (let i = b[0]; i <= b[1]; i++) {
-      const o = (k * NY + j) * NX + i, dd = M.len3(i * H - best.x, j * H - best.y, k * H - best.z);
-      if (dd < r + 0.5) { if (D[o] > 0 || dd < r) { Mt[o] = MAT.BEDROCK; if (D[o] < 0.6) D[o] = 0.6; } }
-    }
+    for (let k = b[4]; k <= b[5]; k++)
+      for (let j = b[2]; j <= b[3]; j++)
+        for (let i = b[0]; i <= b[1]; i++) {
+          const o = (k * NY + j) * NX + i, dd = M.len3(i * H - best.x, j * H - best.y, k * H - best.z);
+          if (dd < r + 0.5) {
+            if (D[o] > 0 || dd < r) {
+              Mt[o] = MAT.BEDROCK;
+              if (D[o] < 0.6) D[o] = 0.6;
+            }
+          }
+        }
     return best;
   }
-  function pocketOf(c, nub, rng) {                              // a sealed magma pocket in a crust wall (lava.js is not stepped here: it stays put)
+  // a sealed magma pocket in a crust wall (lava.js is not stepped here: it stays put)
+  function pocketOf(c, nub, rng) {
     const rpx = M.rng_range(rng, 2.3, 3.0), rpy = rpx * 0.75, rpz = rpx * 0.95, H = Wd.H, NX = Wd.NX, NY = Wd.NY, D = Wd.d, Mt = Wd.mat;
     for (let q = 0; q < 40; q++) {
-      const u = M.rng_range(rng, -1, 1), a = M.rng_range(rng, 0, TAU), s = Math.sqrt(M.max(0, 1 - u * u)), r = c.R * M.rng_range(rng, 0.25, 0.55);
+      const u = M.rng_range(rng, -1, 1),
+        a = M.rng_range(rng, 0, TAU),
+        s = Math.sqrt(M.max(0, 1 - u * u)),
+        r = c.R * M.rng_range(rng, 0.25, 0.55);
       const px = c.x + s * M.cos(a) * r, py = c.y + u * r * 0.6, pz = c.z + s * M.sin(a) * r;
       if (nub && M.len3(px - nub.x, py - nub.y, pz - nub.z) < rpx + 1.1 + K.NUB_R + 0.3) continue;
-      if (dAt(px, py, pz) < 2.9 || dAt(px, py + rpy, pz) < 1.3 || dAt(px, py - rpy, pz) < 1.3 || dAt(px + rpx, py, pz) < 1.3 || dAt(px - rpx, py, pz) < 1.3 || dAt(px, py, pz + rpz) < 1.3 || dAt(px, py, pz - rpz) < 1.3) continue;
+      if (
+        dAt(px, py, pz) < 2.9
+        || dAt(px, py + rpy, pz) < 1.3
+        || dAt(px, py - rpy, pz) < 1.3
+        || dAt(px + rpx, py, pz) < 1.3
+        || dAt(px - rpx, py, pz) < 1.3
+        || dAt(px, py, pz + rpz) < 1.3
+        || dAt(px, py, pz - rpz) < 1.3
+      ) continue;
       const w = 1.1, b = box(px - rpx - w - 1, py - rpy - w - 1, pz - rpz - w - 1, px + rpx + w + 1, py + rpy + w + 1, pz + rpz + w + 1);
-      for (let k = b[4]; k <= b[5]; k++) for (let j = b[2]; j <= b[3]; j++) for (let i = b[0]; i <= b[1]; i++) {
-        const o = (k * NY + j) * NX + i, e = M.len3((i * H - px) / rpx, (j * H - py) / rpy, (k * H - pz) / rpz);
-        if (Mt[o] === MAT.BEDROCK) continue;
-        if (e < 1) { Mt[o] = MAT.LAVA; Wd.heat[o] = 250; D[o] = M.max(D[o], 0.8); }
-        else if (e < 1 + w / rpy) { Mt[o] = MAT.CRUST; D[o] = M.max(D[o], 1.0); }
-      }
+      for (let k = b[4]; k <= b[5]; k++)
+        for (let j = b[2]; j <= b[3]; j++)
+          for (let i = b[0]; i <= b[1]; i++) {
+            const o = (k * NY + j) * NX + i, e = M.len3((i * H - px) / rpx, (j * H - py) / rpy, (k * H - pz) / rpz);
+            if (Mt[o] === MAT.BEDROCK) continue;
+            if (e < 1) {
+              Mt[o] = MAT.LAVA;
+              Wd.heat[o] = 250;
+              D[o] = M.max(D[o], 0.8);
+            }
+            else if (e < 1 + w / rpy) {
+              Mt[o] = MAT.CRUST;
+              D[o] = M.max(D[o], 1.0);
+            }
+          }
       return { x: px, y: py, z: pz, rx: rpx, ry: rpy, rz: rpz };
     }
     return null;
   }
   function spikeOf(c, sp) {                                     // a crystal: a tapering ice-blue spike growing out of the surface
-    let r = 0; const D = Wd.d, Mt = Wd.mat, H = Wd.H, NX = Wd.NX, NY = Wd.NY;
-    for (; r < c.R * 2.4; r += 0.25) if (dAt(c.x + sp.dx * r, c.y + sp.dy * r, c.z + sp.dz * r) < 0) break;
+    let r = 0;
+    const D = Wd.d, Mt = Wd.mat, H = Wd.H, NX = Wd.NX, NY = Wd.NY;
+    for (; r < c.R * 2.4; r += 0.25)
+      if (dAt(c.x + sp.dx * r, c.y + sp.dy * r, c.z + sp.dz * r) < 0) break;
     if (r >= c.R * 2.4) return;
     const bx = c.x + sp.dx * (r - 0.9), by = c.y + sp.dy * (r - 0.9), bz = c.z + sp.dz * (r - 0.9), L = sp.L + 0.9;
     const ex = bx + sp.dx * L, ey = by + sp.dy * L, ez = bz + sp.dz * L;
-    const b = box(M.min(bx, ex) - sp.r - 1, M.min(by, ey) - sp.r - 1, M.min(bz, ez) - sp.r - 1, M.max(bx, ex) + sp.r + 1, M.max(by, ey) + sp.r + 1, M.max(bz, ez) + sp.r + 1);
-    for (let k = b[4]; k <= b[5]; k++) for (let j = b[2]; j <= b[3]; j++) for (let i = b[0]; i <= b[1]; i++) {
-      const px = i * H - bx, py = j * H - by, pz = k * H - bz, t = clamp((px * sp.dx + py * sp.dy + pz * sp.dz) / L, 0, 1);
-      const dd = M.len3(px - sp.dx * L * t, py - sp.dy * L * t, pz - sp.dz * L * t), dv = sp.r * (1 - 0.82 * t) - dd;
-      if (dv < -1) continue;
-      const o = (k * NY + j) * NX + i;
-      if (Mt[o] === MAT.BEDROCK || Mt[o] === MAT.LAVA || Mt[o] === MAT.STEEL) continue;
-      if (dv > D[o]) { D[o] = M.min(dv, 1.5); if (dv > 0) { Mt[o] = MAT.ICE; mark_owner(o, OWN_SPIKE + c.id); } }
-    }
+    const b = box(
+      M.min(bx, ex) - sp.r - 1,
+      M.min(by, ey) - sp.r - 1,
+      M.min(bz, ez) - sp.r - 1,
+      M.max(bx, ex) + sp.r + 1,
+      M.max(by, ey) + sp.r + 1,
+      M.max(bz, ez) + sp.r + 1
+    );
+    for (let k = b[4]; k <= b[5]; k++)
+      for (let j = b[2]; j <= b[3]; j++)
+        for (let i = b[0]; i <= b[1]; i++) {
+          const px = i * H - bx, py = j * H - by, pz = k * H - bz, t = clamp((px * sp.dx + py * sp.dy + pz * sp.dz) / L, 0, 1);
+          const dd = M.len3(px - sp.dx * L * t, py - sp.dy * L * t, pz - sp.dz * L * t), dv = sp.r * (1 - 0.82 * t) - dd;
+          if (dv < -1) continue;
+          const o = (k * NY + j) * NX + i;
+          if (Mt[o] === MAT.BEDROCK || Mt[o] === MAT.LAVA || Mt[o] === MAT.STEEL) continue;
+          if (dv > D[o]) {
+            D[o] = M.min(dv, 1.5);
+            if (dv > 0) {
+              Mt[o] = MAT.ICE;
+              mark_owner(o, OWN_SPIKE + c.id);
+            }
+          }
+        }
   }
-  // the generator leaves a few single voxels (hull edges, noise): remove every solid component smaller than `min` voxels
+  // the generator leaves a few single voxels (hull edges, noise): remove every solid component smaller than `min`
+  // voxels
   function specks(w, min) {
     const N = w.N, NX = w.NX, NY = w.NY, SXY = NX * NY, D = w.d, seen = new Uint8Array(N), st = new Int32Array(N);
     for (let o0 = 0; o0 < N; o0++) {
       if (D[o0] <= 0 || seen[o0]) continue;
-      let sp = 0, n = 0; st[sp++] = o0; seen[o0] = 1;
+      let sp = 0, n = 0;
+      st[sp++] = o0;
+      seen[o0] = 1;
       while (sp > 0) {
-        const o = st[--sp]; n++;
+        const o = st[--sp];
+        n++;
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
-        if (i > 0 && !seen[o - 1] && D[o - 1] > 0) { seen[o - 1] = 1; st[sp++] = o - 1; }
-        if (i < NX - 1 && !seen[o + 1] && D[o + 1] > 0) { seen[o + 1] = 1; st[sp++] = o + 1; }
-        if (j > 0 && !seen[o - NX] && D[o - NX] > 0) { seen[o - NX] = 1; st[sp++] = o - NX; }
-        if (j < NY - 1 && !seen[o + NX] && D[o + NX] > 0) { seen[o + NX] = 1; st[sp++] = o + NX; }
-        if (k > 0 && !seen[o - SXY] && D[o - SXY] > 0) { seen[o - SXY] = 1; st[sp++] = o - SXY; }
-        if (k < w.NZ - 1 && !seen[o + SXY] && D[o + SXY] > 0) { seen[o + SXY] = 1; st[sp++] = o + SXY; }
+        if (i > 0 && !seen[o - 1] && D[o - 1] > 0) {
+          seen[o - 1] = 1;
+          st[sp++] = o - 1;
+        }
+        if (i < NX - 1 && !seen[o + 1] && D[o + 1] > 0) {
+          seen[o + 1] = 1;
+          st[sp++] = o + 1;
+        }
+        if (j > 0 && !seen[o - NX] && D[o - NX] > 0) {
+          seen[o - NX] = 1;
+          st[sp++] = o - NX;
+        }
+        if (j < NY - 1 && !seen[o + NX] && D[o + NX] > 0) {
+          seen[o + NX] = 1;
+          st[sp++] = o + NX;
+        }
+        if (k > 0 && !seen[o - SXY] && D[o - SXY] > 0) {
+          seen[o - SXY] = 1;
+          st[sp++] = o - SXY;
+        }
+        if (k < w.NZ - 1 && !seen[o + SXY] && D[o + SXY] > 0) {
+          seen[o + SXY] = 1;
+          st[sp++] = o + SXY;
+        }
       }
       if (n >= min) continue;
       sp = 0; st[sp++] = o0; seen[o0] = 2;                      // a second pass over the same component: clear it
       while (sp > 0) {
-        const o = st[--sp]; D[o] = -0.5; w.mat[o] = 0;
+        const o = st[--sp];
+        D[o] = -0.5;
+        w.mat[o] = 0;
         const i = o % NX, j = Math.floor(o / NX) % NY, k = Math.floor(o / SXY);
-        const nb = [i > 0 ? o - 1 : -1, i < NX - 1 ? o + 1 : -1, j > 0 ? o - NX : -1, j < NY - 1 ? o + NX : -1, k > 0 ? o - SXY : -1, k < w.NZ - 1 ? o + SXY : -1];
-        for (let q = 0; q < 6; q++) { const m = nb[q]; if (m >= 0 && seen[m] === 1 && D[m] > 0) { seen[m] = 2; st[sp++] = m; } }
+        const nb = [
+          i > 0 ? o - 1 : -1,
+          i < NX - 1 ? o + 1 : -1,
+          j > 0 ? o - NX : -1,
+          j < NY - 1 ? o + NX : -1,
+          k > 0 ? o - SXY : -1,
+          k < w.NZ - 1 ? o + SXY : -1
+        ];
+        for (let q = 0; q < 6; q++) {
+          const m = nb[q];
+          if (m >= 0 && seen[m] === 1 && D[m] > 0) {
+            seen[m] = 2;
+            st[sp++] = m;
+          }
+        }
       }
     }
   }
 
-  /* The heat of the shattered planet lives in the pieces: hot regions (the cleaved faces, a few random spots, three of the lumps) where the crust is
-   * cracked by a net of glowing lava veins (LAVA voxels in a shell under the surface, thinner inside, dark CRUST seams round them). Cooling in vacuum is slow
-   * (radiation only), so it glows all match. Done last (after the anchoring pass), so the veins never cost a chunk its support. */
+  /* The heat of the shattered planet lives in the pieces: hot regions (the cleaved faces, a few random spots, three of
+   * the lumps) where the crust is
+   * cracked by a net of glowing lava veins (LAVA voxels in a shell under the surface, thinner inside, dark CRUST seams
+   * round them). Cooling in vacuum is slow (radiation only), so it glows all match. Done last (after the anchoring
+   * pass), so the veins never cost a chunk its support. */
   const peak_T = h => 760 + 440 * M.clamp(h, 0, 1);
   E.peak_T = peak_T;
   function heatVeins(pl, rng) {
     const D = Wd.d, Mt = Wd.mat, H = Wd.H, NX = Wd.NX, NY = Wd.NY, regs = [];
-    const surfPt = (c, nx, ny, nz) => { let r = 0; for (; r < c.R * 2.2; r += 0.25) if (dAt(c.x + nx * r, c.y + ny * r, c.z + nz * r) < 0) break; return r; };
+    const surfPt = (c, nx, ny, nz) => {
+      let r = 0;
+      for (; r < c.R * 2.2; r += 0.25)
+        if (dAt(c.x + nx * r, c.y + ny * r, c.z + nz * r) < 0) break;
+      return r;
+    };
     for (let ci = 0; ci < pl.chunks.length; ci++) {
-      const c = pl.chunks[ci], dc = M.len3(c.x - pl.core.x, c.y - pl.core.y, c.z - pl.core.z), base = M.clamp(1.05 - dc / 55, 0.45, 1);   // nearer the old centre: hotter
-      for (const p of c.cut) { const r = M.max(0, p.off - 0.8); regs.push({ x: c.x + p.nx * r, y: c.y + p.ny * r, z: c.z + p.nz * r, r: c.R * M.rng_range(rng, 0.5, 0.7), heat: base, kind: 'cleave' }); }
+      // nearer the old centre: hotter
+      const c = pl.chunks[ci], dc = M.len3(c.x - pl.core.x, c.y - pl.core.y, c.z - pl.core.z), base = M.clamp(1.05 - dc / 55, 0.45, 1);
+      for (const p of c.cut) {
+        const r = M.max(0, p.off - 0.8);
+        regs.push({
+          x: c.x + p.nx * r,
+          y: c.y + p.ny * r,
+          z: c.z + p.nz * r,
+          r: c.R * M.rng_range(rng, 0.5, 0.7),
+          heat: base,
+          kind: 'cleave'
+        });
+      }
       for (let q = 0, n = 1 + M.rng_int(rng, 2); q < n; q++) {
-        const u = M.rng_range(rng, -1, 1), a = M.rng_range(rng, 0, TAU), s2 = Math.sqrt(M.max(0, 1 - u * u)), nx = s2 * M.cos(a), nz = s2 * M.sin(a), r = surfPt(c, nx, u, nz);
-        regs.push({ x: c.x + nx * r, y: c.y + u * r, z: c.z + nz * r, r: M.rng_range(rng, 3.2, 5.4), heat: base * M.rng_range(rng, 0.7, 1), kind: 'spot' });
+        const u = M.rng_range(rng, -1, 1),
+          a = M.rng_range(rng, 0, TAU),
+          s2 = Math.sqrt(M.max(0, 1 - u * u)),
+          nx = s2 * M.cos(a),
+          nz = s2 * M.sin(a),
+          r = surfPt(c, nx, u, nz);
+        regs.push({
+          x: c.x + nx * r,
+          y: c.y + u * r,
+          z: c.z + nz * r,
+          r: M.rng_range(rng, 3.2, 5.4),
+          heat: base * M.rng_range(rng, 0.7, 1),
+          kind: 'spot'
+        });
       }
     }
-    let nl = 0; for (const d of pl.debris) if (!d.plate && nl < 3) { regs.push({ x: d.x, y: d.y, z: d.z, r: d.R * 1.5, heat: 1, kind: 'lump' }); nl++; }
+    let nl = 0;
+    for (const d of pl.debris)
+      if (!d.plate && nl < 3) {
+        regs.push({ x: d.x, y: d.y, z: d.z, r: d.R * 1.5, heat: 1, kind: 'lump' });
+        nl++;
+      }
     const seed = seedS + 303;
     for (const g of regs) {
       const b = box(g.x - g.r - 1, g.y - g.r - 1, g.z - g.r - 1, g.x + g.r + 1, g.y + g.r + 1, g.z + g.r + 1);
-      for (let k = b[4]; k <= b[5]; k++) for (let j = b[2]; j <= b[3]; j++) for (let i = b[0]; i <= b[1]; i++) {
-        const o = (k * NY + j) * NX + i; if (D[o] <= 0) continue;
-        const m = Mt[o]; if (m === MAT.STEEL || m === MAT.BEDROCK || m === MAT.ICE || m === MAT.LAVA || m === MAT.CONCRETE) continue;
-        const x = i * H, y = j * H, z = k * H, d = M.len3(x - g.x, y - g.y, z - g.z) / g.r; if (d >= 1) continue;
-        if (D[o] >= 1.4) continue;                                           // only the skin: veins deep inside would cut a chunk off its anchor (lava carries nothing, collapse.js)
-        const h = (1 - d) * g.heat, ridge = Math.abs(M.noise3(x / 2.7, y / 2.7, z / 2.7, seed) - 0.5) * 2, thr = 0.07 + 0.34 * h;
-        if (ridge < thr) { Mt[o] = MAT.LAVA; Wd.heat[o] = 250; }
-        else if (ridge < thr * 1.9 + 0.04) Mt[o] = MAT.CRUST;
-      }
+      for (let k = b[4]; k <= b[5]; k++)
+        for (let j = b[2]; j <= b[3]; j++)
+          for (let i = b[0]; i <= b[1]; i++) {
+            const o = (k * NY + j) * NX + i;
+            if (D[o] <= 0) continue;
+            const m = Mt[o];
+            if (m === MAT.STEEL || m === MAT.BEDROCK || m === MAT.ICE || m === MAT.LAVA || m === MAT.CONCRETE) continue;
+            const x = i * H, y = j * H, z = k * H, d = M.len3(x - g.x, y - g.y, z - g.z) / g.r;
+            if (d >= 1) continue;
+            // only the skin: veins deep inside would cut a chunk off its anchor (lava carries nothing, collapse.js)
+            if (D[o] >= 1.4) continue;
+            const h = (1 - d) * g.heat, ridge = Math.abs(M.noise3(x / 2.7, y / 2.7, z / 2.7, seed) - 0.5) * 2, thr = 0.07 + 0.34 * h;
+            if (ridge < thr) {
+              Mt[o] = MAT.LAVA;
+              Wd.heat[o] = 250;
+            }
+            else if (ridge < thr * 1.9 + 0.04) Mt[o] = MAT.CRUST;
+          }
     }
-    pl.hot = regs.map(g => ({ x: g.x, y: g.y, z: g.z, r: g.r, heat: g.heat, T: peak_T(g.heat) }));         // T: the seam centre's temperature in deg C (the blackbody table of EOW_RESEARCH.md: 1000-1200 yellow at the hottest)
-    for (const q of pl.pockets) { q.r = M.max(M.max(q.rx, q.ry), q.rz); q.T = 1120; }                          // sealed magma: yellow-orange inside, the thin crust round it glows dull red
+    // T: the seam centre's temperature in deg C (the blackbody table of EOW_RESEARCH.md: 1000-1200 yellow at the
+    // hottest)
+    pl.hot = regs.map(g => ({ x: g.x, y: g.y, z: g.z, r: g.r, heat: g.heat, T: peak_T(g.heat) }));
+    // sealed magma: yellow-orange inside, the thin crust round it glows dull red
+    for (const q of pl.pockets) {
+      q.r = M.max(M.max(q.rx, q.ry), q.rz);
+      q.T = 1120;
+    }
   }
   E.gen_begin = function (world, settings) {
     Wd = world; seedS = (settings.seed | 0) * 131 + 35;
-    world.eow = true; world.under = false; world.dry = false; world.SEA = -1; world.far = null; world.circ = null; world.frz = null; world.biome = 'eow';
+    world.eow = true;
+    world.under = false;
+    world.dry = false;
+    world.SEA = -1;
+    world.far = null;
+    world.circ = null;
+    world.frz = null;
+    world.biome = 'eow';
     world.d.fill(-3); world.mat.fill(0); world.heat.fill(0);
     const pl = plan(settings, world.SX);
-    world.features = { biome: 'eow', volcano: null, volcanoes: [], canals: [], lavaInit: null, pockets: [], vents: [], spires: [], bridges: [], iceShelf: false, lavaPresent: false, eow: pl };
-    pl.nubs = []; pl.pockets = []; own = new Uint8Array(world.N); ovl = 0;
-    return { settings, biome: 'eow', spec: null, stage: 0, k: 0, label: 'Shattering the planet', under: false, eow: true, plan: pl, rng: M.rng_make((seedS * 7919 + 13) >>> 0) };
+    world.features = {
+      biome: 'eow',
+      volcano: null,
+      volcanoes: [],
+      canals: [],
+      lavaInit: null,
+      pockets: [],
+      vents: [],
+      spires: [],
+      bridges: [],
+      iceShelf: false,
+      lavaPresent: false,
+      eow: pl
+    };
+    pl.nubs = [];
+    pl.pockets = [];
+    own = new Uint8Array(world.N);
+    ovl = 0;
+    return {
+      settings,
+      biome: 'eow',
+      spec: null,
+      stage: 0,
+      k: 0,
+      label: 'Shattering the planet',
+      under: false,
+      eow: true,
+      plan: pl,
+      rng: M.rng_make((seedS * 7919 + 13) >>> 0)
+    };
   };
   E.gen_step = function (job) {
     const pl = job.plan, w = Wd;
     switch (job.stage) {
-      case 0: { for (const c of pl.chunks) fillChunk(c, pl.core); job.stage = 1; job.label = 'Wrecking the ship'; return 0.35; }
-      case 1: { for (const d of pl.debris) fillDebris(d, pl.core); if (pl.hull) fillHull(pl.hull); job.stage = 2; job.label = 'Growing crystals and magma'; return 0.6; }
+      case 0: {
+        for (const c of pl.chunks) fillChunk(c, pl.core);
+        job.stage = 1;
+        job.label = 'Wrecking the ship';
+        return 0.35;
+      }
+      case 1: {
+        for (const d of pl.debris) fillDebris(d, pl.core);
+        if (pl.hull) fillHull(pl.hull);
+        job.stage = 2;
+        job.label = 'Growing crystals and magma';
+        return 0.6;
+      }
       case 2: {
-        for (const c of pl.chunks) { const nub = nubOf(c, job.rng); pl.nubs.push(nub); if (c.lava) { const p = pocketOf(c, nub, job.rng); if (p) pl.pockets.push(p); } }
-        for (const c of pl.chunks) for (const sp of c.spikes) spikeOf(c, sp);
+        for (const c of pl.chunks) {
+          const nub = nubOf(c, job.rng);
+          pl.nubs.push(nub);
+          if (c.lava) {
+            const p = pocketOf(c, nub, job.rng);
+            if (p) pl.pockets.push(p);
+          }
+        }
+        for (const c of pl.chunks)
+          for (const sp of c.spikes) spikeOf(c, sp);
         job.stage = 3; job.label = 'Checking structural support'; return 0.85;
       }
       case 3: {
@@ -360,22 +723,48 @@
   };
   /* the menu preview: the top view heights of the plan (no voxels), same shape as worldgen.preview */
   E.preview = function (settings, n, sx) {
-    const pl = plan(settings, sx), out = { n, sx, sea: -1, under: false, dry: false, h: new Float32Array(n * n), lava: new Uint8Array(n * n), volcanoes: [], biome: 'eow', shape: 'islands', eow: pl };
-    for (let k = 0; k < n; k++) for (let i = 0; i < n; i++) {
-      const x = i / (n - 1) * sx, z = k / (n - 1) * sx; let h = 0;
-      for (const c of pl.chunks) { const e = (x - c.x) * (x - c.x) / (c.rx * c.rx) + (z - c.z) * (z - c.z) / (c.rz * c.rz); if (e < 1) h = M.max(h, c.y + c.ry * Math.sqrt(1 - e)); }
-      for (const d of pl.debris) { const e = M.len2(x - d.x, z - d.z); if (e < d.R) h = M.max(h, d.y + Math.sqrt(d.R * d.R - e * e)); }
-      if (pl.hull) { const dd = M.seg_dist(x, pl.hull.y, z, pl.hull.A, pl.hull.B); if (dd < pl.hull.wz) h = M.max(h, pl.hull.y + pl.hull.wy * (1 - dd / pl.hull.wz * 0.5)); }
-      out.h[k * n + i] = h;
-    }
+    const pl = plan(settings, sx),
+      out = {
+        n,
+        sx,
+        sea: -1,
+        under: false,
+        dry: false,
+        h: new Float32Array(n * n),
+        lava: new Uint8Array(n * n),
+        volcanoes: [],
+        biome: 'eow',
+        shape: 'islands',
+        eow: pl
+      };
+    for (let k = 0; k < n; k++)
+      for (let i = 0; i < n; i++) {
+        const x = i / (n - 1) * sx, z = k / (n - 1) * sx;
+        let h = 0;
+        for (const c of pl.chunks) {
+          const e = (x - c.x) * (x - c.x) / (c.rx * c.rx) + (z - c.z) * (z - c.z) / (c.rz * c.rz);
+          if (e < 1) h = M.max(h, c.y + c.ry * Math.sqrt(1 - e));
+        }
+        for (const d of pl.debris) {
+          const e = M.len2(x - d.x, z - d.z);
+          if (e < d.R) h = M.max(h, d.y + Math.sqrt(d.R * d.R - e * e));
+        }
+        if (pl.hull) {
+          const dd = M.seg_dist(x, pl.hull.y, z, pl.hull.A, pl.hull.B);
+          if (dd < pl.hull.wz) h = M.max(h, pl.hull.y + pl.hull.wy * (1 - dd / pl.hull.wz * 0.5));
+        }
+        out.h[k * n + i] = h;
+      }
     return out;
   };
 
 
-  /* P94: a rigid piece comes to rest. It is baked back into the field only when it (1) does not interpenetrate another rigid body and
-   * (2) after the stamp is ONE solid with an anchor (collapse.find_floating over the stamped box finds nothing loose). Otherwise the stamp is undone
-   * and the piece stays a sleeping rigid body: it never merges into another body or hangs loose in the field, so the next blast cannot find a loose
-   * seam to cut again (the endless "crumble"). Returns the voxels added, or -1 when declined. sim/bodies.js calls this instead of collapse.rebake in this world. */
+  /* P94: a rigid piece comes to rest. It is baked back into the field only when it (1) does not interpenetrate another
+   * rigid body and
+   * (2) after the stamp is ONE solid with an anchor (collapse.find_floating over the stamped box finds nothing loose).
+   * Otherwise the stamp is undone and the piece stays a sleeping rigid body: it never merges into another body or hangs
+   * loose in the field, so the next blast cannot find a loose seam to cut again (the endless "crumble"). Returns the
+   * voxels added, or -1 when declined. sim/bodies.js calls this instead of collapse.rebake in this world. */
   E.rebake = function (S, b) {
     const w = W(), g = b.grid, H = w.H, NX = w.NX, NY = w.NY, tp = { x: 0, y: 0, z: 0 }, to = { x: 0, y: 0, z: 0 };
     for (const o of S.bodies) {                                                  // (1) a shell sphere of another body inside this one's
@@ -386,7 +775,10 @@
         M.q_rot(b.q, b.pts[i * 4], b.pts[i * 4 + 1], b.pts[i * 4 + 2], tp);
         for (let k = 0; k < o.np; k++) {
           M.q_rot(o.q, o.pts[k * 4], o.pts[k * 4 + 1], o.pts[k * 4 + 2], to);
-          const ex = o.pos.x + to.x - b.pos.x - tp.x, ey = o.pos.y + to.y - b.pos.y - tp.y, ez = o.pos.z + to.z - b.pos.z - tp.z, rr = b.pts[i * 4 + 3] + o.pts[k * 4 + 3] - K.REBAKE_PEN;
+          const ex = o.pos.x + to.x - b.pos.x - tp.x,
+            ey = o.pos.y + to.y - b.pos.y - tp.y,
+            ez = o.pos.z + to.z - b.pos.z - tp.z,
+            rr = b.pts[i * 4 + 3] + o.pts[k * 4 + 3] - K.REBAKE_PEN;
           if (ex * ex + ey * ey + ez * ez < rr * rr) return -1;
         }
       }
@@ -395,19 +787,49 @@
     const i0 = M.max(1, Math.floor((b.pos.x - r) / H)), i1 = M.min(w.NX - 2, Math.ceil((b.pos.x + r) / H));
     const j0 = M.max(2, Math.floor((b.pos.y - r) / H)), j1 = M.min(w.NY - 2, Math.ceil((b.pos.y + r) / H));
     const k0 = M.max(1, Math.floor((b.pos.z - r) / H)), k1 = M.min(w.NZ - 2, Math.ceil((b.pos.z + r) / H));
-    const nx = i1 - i0 + 1, ny = j1 - j0 + 1, nz = k1 - k0 + 1, sd = new Float32Array(nx * ny * nz), sm = new Uint8Array(nx * ny * nz), sh = new Float32Array(nx * ny * nz), sc = w.crack ? new Uint8Array(nx * ny * nz) : null;
+    const nx = i1 - i0 + 1,
+      ny = j1 - j0 + 1,
+      nz = k1 - k0 + 1,
+      sd = new Float32Array(nx * ny * nz),
+      sm = new Uint8Array(nx * ny * nz),
+      sh = new Float32Array(nx * ny * nz),
+      sc = w.crack ? new Uint8Array(nx * ny * nz) : null;
     let q = 0;
-    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++, q++) { const o = (k * NY + j) * NX + i; sd[q] = w.d[o]; sm[q] = w.mat[o]; sh[q] = w.heat[o]; if (sc) sc[q] = w.crack[o]; }
+    for (let k = k0; k <= k1; k++)
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++, q++) {
+          const o = (k * NY + j) * NX + i;
+          sd[q] = w.d[o];
+          sm[q] = w.mat[o];
+          sh[q] = w.heat[o];
+          if (sc) sc[q] = w.crack[o];
+        }
     const added = SS.collapse.rebake(w, g, b.com0, b.pos, b.q);
     const loose = SS.collapse.find_floating(w, { i0, i1, j0, j1, k0, k1 });
-    let big = 0; for (let c = 0; c < loose.length; c++) if (loose[c].length >= K.REBAKE_SPECK) big++;
-    if (!big) {                                                                   // (2) one anchored solid (a stamp leaves a few single loose voxels at the seam: wiped)
-      for (let c = 0; c < loose.length; c++) for (let m = 0; m < loose[c].length; m++) { const o = loose[c][m]; w.d[o] = -0.5; w.mat[o] = MAT.AIR; }
+    let big = 0;
+    for (let c = 0; c < loose.length; c++)
+      if (loose[c].length >= K.REBAKE_SPECK) big++;
+    // (2) one anchored solid (a stamp leaves a few single loose voxels at the seam: wiped)
+    if (!big) {
+      for (let c = 0; c < loose.length; c++)
+        for (let m = 0; m < loose[c].length; m++) {
+          const o = loose[c][m];
+          w.d[o] = -0.5;
+          w.mat[o] = MAT.AIR;
+        }
       if (loose.length) w.mark(i0, j0, k0, i1, j1, k1);
       return added;
     }
     q = 0;
-    for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++, q++) { const o = (k * NY + j) * NX + i; w.d[o] = sd[q]; w.mat[o] = sm[q]; w.heat[o] = sh[q]; if (sc) w.crack[o] = sc[q]; }
+    for (let k = k0; k <= k1; k++)
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++, q++) {
+          const o = (k * NY + j) * NX + i;
+          w.d[o] = sd[q];
+          w.mat[o] = sm[q];
+          w.heat[o] = sh[q];
+          if (sc) w.crack[o] = sc[q];
+        }
     w.mark(i0, j0, k0, i1, j1, k1);
     return -1;
   };
@@ -415,33 +837,77 @@
   /* ================= state ================= */
   E.init = function (S) {
     const w = W();
-    if (!w.eow || !w.features || !w.features.eow) { S.eow = null; return; }
+    if (!w.eow || !w.features || !w.features.eow) {
+      S.eow = null;
+      return;
+    }
     const pl = w.features.eow;
     S.eow = { bodies: pl.bodies, core: pl.core, lost: 0, shots: [], hot: pl.hot || [], pockets: pl.pockets || [] };
     S.settings.weather = 'clear'; S.settings.wind = 'calm';                  // no weather in space
   };
-  const ensure = w => { if (!w.eup) { w.eup = { x: 0, y: 1, z: 0 }; w.eu2 = { s: 0, y: 1 }; w.eVoid = 0; w.eSense = 1; w.eLatch = 0; w.eMv = 0; w.eGround = false; w.eFlipC = false; w.eStill = 0; w.eAirPrev = false; w.eJet = 0; w.eJb = -1; w.eJh = 0; w.eJd = { x: 0, y: 1, z: 0 }; } return w; };
+  const ensure = w => {
+    if (!w.eup) {
+      w.eup = { x: 0, y: 1, z: 0 };
+      w.eu2 = { s: 0, y: 1 };
+      w.eVoid = 0;
+      w.eSense = 1;
+      w.eLatch = 0;
+      w.eMv = 0;
+      w.eGround = false;
+      w.eFlipC = false;
+      w.eStill = 0;
+      w.eAirPrev = false;
+      w.eJet = 0;
+      w.eJb = -1;
+      w.eJh = 0;
+      w.eJd = { x: 0, y: 1, z: 0 };
+    }
+    return w;
+  };
   E.spawned = function (S) {
     for (const w of S.worms) ensure(w);
-    const nj = S.settings.jetpacks == null ? K.JET.N : M.clamp(S.settings.jetpacks | 0, 0, 9);            // P86: jetpack charges per team (setting, default 3)
-    S.eow.jet = []; for (let t = 0; t < S.teams.length; t++) S.eow.jet.push({ n: nj, on: true });
-    SS.sim.log(S, 'End of the world: magnetic suits hold you to any surface. Hot rock burns, the void is fatal, there is no air. Jetpacks (' + nj + ' per team, J) save a worm drifting away.', 0x9fd0ff);
+    // P86: jetpack charges per team (setting, default 3)
+    const nj = S.settings.jetpacks == null ? K.JET.N : M.clamp(S.settings.jetpacks | 0, 0, 9);
+    S.eow.jet = [];
+    for (let t = 0; t < S.teams.length; t++) S.eow.jet.push({ n: nj, on: true });
+    SS.sim.log(
+      S,
+      'End of the world: magnetic suits hold you to any surface. Hot rock burns, the void is fatal, there is no air. Jetpacks ('
+        + nj
+        + ' per team, J) save a worm drifting away.',
+      0x9fd0ff
+    );
   };
 
   /* ================= gravity field ================= */
   // dimensionless pull (1 = the surface of one chunk) at a point: sum over the bodies, toward each centre
   function field(S, x, y, z, out) {
-    const B = S.eow.bodies; let gx = 0, gy = 0, gz = 0;
+    const B = S.eow.bodies;
+    let gx = 0, gy = 0, gz = 0;
     for (let i = 0; i < B.length; i++) {
-      const b = B[i], dx = b.x - x, dy = b.y - y, dz = b.z - z, r2 = dx * dx + dy * dy + dz * dz, R = b.R, f1 = M.max(K.FADE1 * R, R + K.WELL_R1);
+      const b = B[i],
+        dx = b.x - x,
+        dy = b.y - y,
+        dz = b.z - z,
+        r2 = dx * dx + dy * dy + dz * dz,
+        R = b.R,
+        f1 = M.max(K.FADE1 * R, R + K.WELL_R1);
       if (r2 > f1 * f1) continue;
       const r = Math.sqrt(r2), f0 = M.max(K.FADE0 * R, R + K.WELL_R0);
       let f = r < R ? b.k * r / R : b.k * R * R / r2;
       if (r > f0) f *= 1 - M.smoothstep(f0, f1, r);
-      const q = f / M.max(r, 1e-6); gx += dx * q; gy += dy * q; gz += dz * q;
+      const q = f / M.max(r, 1e-6);
+      gx += dx * q;
+      gy += dy * q;
+      gz += dz * q;
     }
     const l = M.len3(gx, gy, gz);
-    if (l > K.F_MAX) { const k = K.F_MAX / l; gx *= k; gy *= k; gz *= k; }
+    if (l > K.F_MAX) {
+      const k = K.F_MAX / l;
+      gx *= k;
+      gy *= k;
+      gz *= k;
+    }
     out.x = gx; out.y = gy; out.z = gz;
     return out;
   }
@@ -449,53 +915,101 @@
   const fg = { x: 0, y: 0, z: 0 };
   // m/s2 on a shell at a world point, projected on the plane (dx, dz = the plane's direction): out.s, out.y
   E.proj_acc = function (S, x, y, z, dx, dz, out) {
-    field(S, x, y, z, fg); const a = C.G * K.PROJ_G;
+    field(S, x, y, z, fg);
+    const a = C.G * K.PROJ_G;
     out.s = (fg.x * dx + fg.z * dz) * a; out.y = fg.y * a; return out;
   };
   // the same for a worm (G_WORM x its gravity factor)
   function worm_acc(S, w, x, y, z, dx, dz, out) {
-    field(S, x, y, z, fg); const a = C.G_WORM * K.WORM_G * SS.sim.gravity_k(S, w);
-    out.s = (fg.x * dx + fg.z * dz) * a; out.y = fg.y * a; out.x = fg.x * a; out.z = fg.z * a; return out;
+    field(S, x, y, z, fg);
+    const a = C.G_WORM * K.WORM_G * SS.sim.gravity_k(S, w);
+    out.s = (fg.x * dx + fg.z * dz) * a;
+    out.y = fg.y * a;
+    out.x = fg.x * a;
+    out.z = fg.z * a;
+    return out;
   }
-  E.rope_g = function (S, a, h) {                                            // the ninja rope's pendulum (traverse.js rope_step) under the field
+  // the ninja rope's pendulum (traverse.js rope_step) under the field
+  E.rope_g = function (S, a, h) {
     const c = M.cos(S.theta), sn = M.sin(S.theta), s = P.to_plane(S, a.pos).s, o = { s: 0, y: 0, x: 0, z: 0 };
-    const q = P.to_world(S, s, a.pos.y); worm_acc(S, a, q.x, q.y, q.z, c, sn, o);
+    const q = P.to_world(S, s, a.pos.y);
+    worm_acc(S, a, q.x, q.y, q.z, c, sn, o);
     a.vs += o.s * h; a.vy += o.y * h;
   };
   // a rigid body (prop, crate, drifting piece): the field instead of -y; pieces of a broken chunk drift (PIECE_G)
   E.body_g = function (S, b, dt) {
-    field(S, b.pos.x, b.pos.y, b.pos.z, fg); const a = C.G * K.BODY_G * (b.kind === 'chunk' ? K.PIECE_G / K.BODY_G : 1) * dt;
+    field(S, b.pos.x, b.pos.y, b.pos.z, fg);
+    const a = C.G * K.BODY_G * (b.kind === 'chunk' ? K.PIECE_G / K.BODY_G : 1) * dt;
     b.vel.x += fg.x * a; b.vel.y += fg.y * a; b.vel.z += fg.z * a;
   };
-  // a shrapnel fragment in vacuum (P68g): no air drag, only the summed field bends its path (it keeps its speed until it hits something)
+  // a shrapnel fragment in vacuum (P68g): no air drag, only the summed field bends its path (it keeps its speed until
+  // it hits something)
   E.frag_g = function (S, f, h) {
-    field(S, f.x, f.y, f.z, fg); const a = C.G * K.PROJ_G * h;
+    field(S, f.x, f.y, f.z, fg);
+    const a = C.G * K.PROJ_G * h;
     f.vx += fg.x * a; f.vy += fg.y * a; f.vz += fg.z * a;
   };
   // unit vector of "down" at a body (for the asleep support probe)
   E.gdir = function (S, p, out) {
-    field(S, p.x, p.y, p.z, fg); const l = M.len3(fg.x, fg.y, fg.z);
-    if (l < 1e-6) { out.x = 0; out.y = -1; out.z = 0; } else { out.x = fg.x / l; out.y = fg.y / l; out.z = fg.z / l; }
+    field(S, p.x, p.y, p.z, fg);
+    const l = M.len3(fg.x, fg.y, fg.z);
+    if (l < 1e-6) {
+      out.x = 0;
+      out.y = -1;
+      out.z = 0;
+    } else {
+      out.x = fg.x / l;
+      out.y = fg.y / l;
+      out.z = fg.z / l;
+    }
     return out;
   };
   // graves float where the worm died (no ground to fall to in space)
-  // P86: a grave is a small object like any other: it falls along the field to the rock under it and stands on that surface's local up (g.eu); in empty space (no pull) it floats where it is
+  // P86: a grave is a small object like any other: it falls along the field to the rock under it and stands on that
+  // surface's local up (g.eu); in empty space (no pull) it floats where it is
   E.grave = function (S, o, g) {
     const w = W(), dt = C.STEP, l = down_at(S, g.x, g.y, g.z, cg);
     if (!g.eu) g.eu = { x: 0, y: 1, z: 0 };
-    if (l >= 0.03) { if (g.rest) local_up(w, g.x, g.y, g.z, -cg.x, -cg.y, -cg.z, g.eu); else { g.eu.x = -cg.x; g.eu.y = -cg.y; g.eu.z = -cg.z; } }
+    if (l >= 0.03) {
+      if (g.rest) local_up(w, g.x, g.y, g.z, -cg.x, -cg.y, -cg.z, g.eu);
+      else {
+        g.eu.x = -cg.x;
+        g.eu.y = -cg.y;
+        g.eu.z = -cg.z;
+      }
+    }
     if (g.rest) {
-      if (l < 0.03 || w.sample(g.x + cg.x * 0.12, g.y + cg.y * 0.12, g.z + cg.z * 0.12) > 0) { g.vy = 0; if (g.landT < 0 && !o.gravePending) g.landT = S.time; return; }
+      if (l < 0.03 || w.sample(g.x + cg.x * 0.12, g.y + cg.y * 0.12, g.z + cg.z * 0.12) > 0) {
+        g.vy = 0;
+        if (g.landT < 0 && !o.gravePending) g.landT = S.time;
+        return;
+      }
       g.rest = false; g.gv = 0;
     }
-    if (l < 0.03) { g.rest = true; g.vy = 0; if (g.landT < 0 && !o.gravePending) g.landT = S.time; return; }       // no pull here: it floats
+    // no pull here: it floats
+    if (l < 0.03) {
+      g.rest = true;
+      g.vy = 0;
+      if (g.landT < 0 && !o.gravePending) g.landT = S.time;
+      return;
+    }
     g.gv = (g.gv || 0) + C.G_WORM * K.WORM_G * M.min(1, l) * dt;
     const n = M.max(1, Math.ceil(g.gv * dt / 0.05)), h = dt / n;
     for (let i = 0; i < n && !g.rest; i++) {
       const nx = g.x + cg.x * g.gv * h, ny = g.y + cg.y * g.gv * h, nz = g.z + cg.z * g.gv * h;
       if (w.sample(nx + cg.x * 0.06, ny + cg.y * 0.06, nz + cg.z * 0.06) > 0) {                     // ground: settle with the base 6 cm in
-        let x = nx, y = ny, z = nz; for (let k = 0; k < 40 && w.sample(x + cg.x * 0.06, y + cg.y * 0.06, z + cg.z * 0.06) > 0; k++) { x -= cg.x * 0.05; y -= cg.y * 0.05; z -= cg.z * 0.05; }
-        g.x = x; g.y = y; g.z = z; g.rest = true; g.vy = 0; break;
+        let x = nx, y = ny, z = nz;
+        for (let k = 0; k < 40 && w.sample(x + cg.x * 0.06, y + cg.y * 0.06, z + cg.z * 0.06) > 0; k++) {
+          x -= cg.x * 0.05;
+          y -= cg.y * 0.05;
+          z -= cg.z * 0.05;
+        }
+        g.x = x;
+        g.y = y;
+        g.z = z;
+        g.rest = true;
+        g.vy = 0;
+        break;
       }
       g.x = nx; g.y = ny; g.z = nz;
     }
@@ -503,29 +1017,59 @@
   };
   // nearest chunk surface (estimate), the void test
   function surf_dist(S, x, y, z) {
-    const B = S.eow.bodies; let m = 1e9;
-    for (let i = 0; i < B.length; i++) { const b = B[i]; if (b.kind === 3) continue; const d = M.len3(x - b.x, y - b.y, z - b.z) - b.R * 1.08; if (d < m) m = d; }
+    const B = S.eow.bodies;
+    let m = 1e9;
+    for (let i = 0; i < B.length; i++) {
+      const b = B[i];
+      if (b.kind === 3) continue;
+      const d = M.len3(x - b.x, y - b.y, z - b.z) - b.R * 1.08;
+      if (d < m) m = d;
+    }
     return m;
   }
   E.surf_dist = surf_dist;
 
   /* ================= hazards: hot rock and the void ================= */
   E.hazard = function (S, w, dt) {
-    const e = S.eow; if (!e || w.dead || w.drowning) return;
+    const e = S.eow;
+    if (!e || w.dead || w.drowning) return;
     ensure(w);
     const sim = SS.sim, wd = W();
     // hot rock (glowing lava veins, magma): standing on it or touching it burns, like lava elsewhere
-    { const up = w.eup, d = P.dir(S), ts = w.eu2.y, ty = -w.eu2.s, bx = w.pos.x - up.x * 0.75, by = w.pos.y - up.y * 0.75, bz = w.pos.z - up.z * 0.75, L = MAT.LAVA;
-      const hot = wd.mat_at(bx, by, bz) === L || wd.mat_at(bx + ts * d.x * 0.4, by + ty * 0.4, bz + ts * d.z * 0.4) === L || wd.mat_at(bx - ts * d.x * 0.4, by - ty * 0.4, bz - ts * d.z * 0.4) === L || wd.mat_at(w.pos.x, w.pos.y, w.pos.z) === L;
+    {
+      const up = w.eup,
+        d = P.dir(S),
+        ts = w.eu2.y,
+        ty = -w.eu2.s,
+        bx = w.pos.x - up.x * 0.75,
+        by = w.pos.y - up.y * 0.75,
+        bz = w.pos.z - up.z * 0.75,
+        L = MAT.LAVA;
+      const hot = wd.mat_at(bx, by, bz) === L
+        || wd.mat_at(bx + ts * d.x * 0.4, by + ty * 0.4, bz + ts * d.z * 0.4) === L
+        || wd.mat_at(bx - ts * d.x * 0.4, by - ty * 0.4, bz - ts * d.z * 0.4) === L
+        || wd.mat_at(w.pos.x, w.pos.y, w.pos.z) === L;
       if (hot) {
         w.eBurn = (w.eBurn || 0) + dt;
-        if (w.eBurn >= K.BURN_DT) { w.eBurn -= K.BURN_DT; sim.emit(S, 'eowburn', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z }); w.burnT = S.time; sim.hurt(S, w, K.BURN_HP, C.DS.LAVA); if (w.dead) return; }
+        if (w.eBurn >= K.BURN_DT) {
+          w.eBurn -= K.BURN_DT;
+          sim.emit(S, 'eowburn', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
+          w.burnT = S.time;
+          sim.hurt(S, w, K.BURN_HP, C.DS.LAVA);
+          if (w.dead) return;
+        }
       } else if (w.eBurn > 0) w.eBurn = M.max(0, w.eBurn - dt);
     }
-    const out = w.pos.x < -K.OUT_M || w.pos.z < -K.OUT_M || w.pos.x > wd.SX + K.OUT_M || w.pos.z > wd.SZ + K.OUT_M || w.pos.y > wd.SY + K.OUT_M;
-    if (w.pos.y < -0.8) w.eVoid = K.VOID_T + 1;                              // below the lattice: gone at once (before the sea logic mistakes the void for water)
+    const out = w.pos.x < -K.OUT_M
+      || w.pos.z < -K.OUT_M
+      || w.pos.x > wd.SX + K.OUT_M
+      || w.pos.z > wd.SZ + K.OUT_M
+      || w.pos.y > wd.SY + K.OUT_M;
+    // below the lattice: gone at once (before the sea logic mistakes the void for water)
+    if (w.pos.y < -0.8) w.eVoid = K.VOID_T + 1;
     const far = surf_dist(S, w.pos.x, w.pos.y, w.pos.z) > K.VOID_D;
-    if (out || far) w.eVoid += dt; else if (w.eVoid > 0) w.eVoid = M.max(0, w.eVoid - 2 * dt);
+    if (out || far) w.eVoid += dt;
+    else if (w.eVoid > 0) w.eVoid = M.max(0, w.eVoid - 2 * dt);
     if (w.eVoid > (out ? 0.3 : K.VOID_T)) {
       SS.sim.emit(S, 'eowvoid', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z });
       sim.log(S, `${w.name} drifted off into the void.`, 0xffb27a);
@@ -536,121 +1080,290 @@
 
   /* ================= the active worm: 2D in the section, any orientation ================= */
   const cl = { s: 0, y: 0 };
-  // outward surface normal in the plane around (s, y): away from the solid points on rings of growing radius; false = nothing solid within 2.6 m
+  // outward surface normal in the plane around (s, y): away from the solid points on rings of growing radius; false =
+  // nothing solid within 2.6 m
   function ring_up(S, s, y, out) {
     for (let ri = 0; ri < K.RING.length; ri++) {
-      const r = K.RING[ri]; let ns = 0, ny = 0, n = 0;
-      for (let i = 0; i < 16; i++) if (P.sample2(S, s + COS16[i] * r, y + SIN16[i] * r) > 0) { ns -= COS16[i]; ny -= SIN16[i]; n++; }
-      if (n && n < 16) { const l = M.len2(ns, ny); if (l > 0.05) { out.s = ns / l; out.y = ny / l; return true; } }
+      const r = K.RING[ri];
+      let ns = 0, ny = 0, n = 0;
+      for (let i = 0; i < 16; i++)
+        if (P.sample2(S, s + COS16[i] * r, y + SIN16[i] * r) > 0) {
+          ns -= COS16[i];
+          ny -= SIN16[i];
+          n++;
+        }
+      if (n && n < 16) {
+        const l = M.len2(ns, ny);
+        if (l > 0.05) {
+          out.s = ns / l;
+          out.y = ny / l;
+          return true;
+        }
+      }
     }
     return false;
   }
   function rim_normal(S, s, y, out) {
     let ns = 0, ny = 0, n = 0;
-    for (let i = 0; i < RIM.length; i += 2) if (P.blocked2(S, s + RIM[i], y + RIM[i + 1])) { ns -= RIM[i]; ny -= RIM[i + 1]; n++; }
+    for (let i = 0; i < RIM.length; i += 2)
+      if (P.blocked2(S, s + RIM[i], y + RIM[i + 1])) {
+        ns -= RIM[i];
+        ny -= RIM[i + 1];
+        n++;
+      }
     if (!n) return false;
-    const l = M.len2(ns, ny); if (l < 1e-6) { out.s = 0; out.y = 1; } else { out.s = ns / l; out.y = ny / l; }
+    const l = M.len2(ns, ny);
+    if (l < 1e-6) {
+      out.s = 0;
+      out.y = 1;
+    } else {
+      out.s = ns / l;
+      out.y = ny / l;
+    }
     return true;
   }
   // the suit's foot test along the local up (u) and tangent (t)
   const grounded = (S, s, y, us, uy) => {
     const ts = uy, ty = -us;
-    return P.blocked2(S, s - us * 0.53, y - uy * 0.53) || P.blocked2(S, s - us * 0.47 - ts * 0.25, y - uy * 0.47 - ty * 0.25) || P.blocked2(S, s - us * 0.47 + ts * 0.25, y - uy * 0.47 + ty * 0.25);
+    return P.blocked2(S, s - us * 0.53, y - uy * 0.53)
+      || P.blocked2(S, s - us * 0.47 - ts * 0.25, y - uy * 0.47 - ty * 0.25)
+      || P.blocked2(S, s - us * 0.47 + ts * 0.25, y - uy * 0.47 + ty * 0.25);
   };
   function set_up(S, a, us, uy) {
-    const l = M.len2(us, uy) || 1; us /= l; uy /= l; a.eu2.s = us; a.eu2.y = uy;
-    const c = M.cos(S.theta), sn = M.sin(S.theta); a.eup.x = us * c; a.eup.z = us * sn; a.eup.y = uy;
+    const l = M.len2(us, uy) || 1;
+    us /= l;
+    uy /= l;
+    a.eu2.s = us;
+    a.eu2.y = uy;
+    const c = M.cos(S.theta), sn = M.sin(S.theta);
+    a.eup.x = us * c;
+    a.eup.z = us * sn;
+    a.eup.y = uy;
   }
   const wa = { s: 0, y: 0, x: 0, z: 0 }, wn = { s: 0, y: 0 }, wk = { x: 0, y: 0, z: 0 };
-  function set_pos(S, a, s, y) { const p = P.to_world(S, s, y); a.pos.x = p.x; a.pos.y = y; a.pos.z = p.z; }
-  // a launch from the ground (jump / hop / salto) sets (vs, vy) in the upright convention: turn it into the plane's world frame about the worm's up
+  function set_pos(S, a, s, y) {
+    const p = P.to_world(S, s, y);
+    a.pos.x = p.x;
+    a.pos.y = y;
+    a.pos.z = p.z;
+  }
+  // a launch from the ground (jump / hop / salto) sets (vs, vy) in the upright convention: turn it into the plane's
+  // world frame about the worm's up
   E.jump_fix = function (S, a) {
     ensure(a);
-    const launch = a.air && !a.eAirPrev, salto = a.air && a.flip && a.flipAt === S.time && a.flipRope !== a.flipAt && !a.eFlipC;   // (eAirPrev: the air flag at the end of the last tick)
+    // (eAirPrev: the air flag at the end of the last tick)
+    const launch = a.air && !a.eAirPrev, salto = a.air && a.flip && a.flipAt === S.time && a.flipRope !== a.flipAt && !a.eFlipC;
     if (!launch && !salto) return;
     const us = a.eu2.s, uy = a.eu2.y, ts = uy, ty = -us, sx = ts;           // t = the clockwise tangent
     const dirS = a.vs >= 0 ? 1 : -1, mag = Math.abs(a.vs);
     let es, ey;
-    if (Math.abs(sx) > 0.25) { const k = sx * dirS >= 0 ? 1 : -1; es = ts * k; ey = ty * k; } else { es = ts * a.eSense * dirS; ey = ty * a.eSense * dirS; }
+    if (Math.abs(sx) > 0.25) {
+      const k = sx * dirS >= 0 ? 1 : -1;
+      es = ts * k;
+      ey = ty * k;
+    } else {
+      es = ts * a.eSense * dirS;
+      ey = ty * a.eSense * dirS;
+    }
     a.vs = es * mag + us * a.vy; a.vy = ey * mag + uy * a.vy;
-    a.eGround = false; a.eAirPrev = true; if (salto) a.eFlipC = true;
+    a.eGround = false;
+    a.eAirPrev = true;
+    if (salto) a.eFlipC = true;
   };
   E.step2d = function (S, a, dt, mv) {
-    const sim = SS.sim, WD = C.WORM_DYN; ensure(a);
-    const q = P.to_plane(S, a.pos); let s = q.s, y = a.pos.y;
+    const sim = SS.sim, WD = C.WORM_DYN;
+    ensure(a);
+    const q = P.to_plane(S, a.pos);
+    let s = q.s, y = a.pos.y;
     a.walking = false;
     if (!a.air) {
-      if (!a.eGround) { a.eGround = true; a.eFlipC = false; if (ring_up(S, s, y, cl)) set_up(S, a, cl.s, cl.y); }
+      if (!a.eGround) {
+        a.eGround = true;
+        a.eFlipC = false;
+        if (ring_up(S, s, y, cl)) set_up(S, a, cl.s, cl.y);
+      }
       let us = a.eu2.s, uy = a.eu2.y;
-      if (ring_up(S, s, y, cl)) { set_up(S, a, us * (1 - K.UP_BLEND) + cl.s * K.UP_BLEND, uy * (1 - K.UP_BLEND) + cl.y * K.UP_BLEND); us = a.eu2.s; uy = a.eu2.y; }
+      if (ring_up(S, s, y, cl)) {
+        set_up(S, a, us * (1 - K.UP_BLEND) + cl.s * K.UP_BLEND, uy * (1 - K.UP_BLEND) + cl.y * K.UP_BLEND);
+        us = a.eu2.s;
+        uy = a.eu2.y;
+      }
       const ts = uy, ty = -us;                                          // clockwise tangent
-      // the direction of a walk: a fresh key press picks the screen direction; a held key keeps its sense around the curve
-      if (mv && mv !== a.eMv) { if (Math.abs(ts) > 0.35) a.eSense = mv * (ts >= 0 ? 1 : -1); else a.eSense = a.eLatch ? a.eSense * (mv === a.eLatch ? 1 : -1) : mv; a.eLatch = mv; }
+      // the direction of a walk: a fresh key press picks the screen direction; a held key keeps its sense around the
+      // curve
+      if (mv && mv !== a.eMv) {
+        if (Math.abs(ts) > 0.35) a.eSense = mv * (ts >= 0 ? 1 : -1);
+        else a.eSense = a.eLatch ? a.eSense * (mv === a.eLatch ? 1 : -1) : mv;
+        a.eLatch = mv;
+      }
       a.eMv = mv;
       if (mv) {
-        const hs = a.eSense * sim.walk_speed(S, a), ds = hs * dt, base = P.overlap2(S, s, y), top = S.worms.some(o => o !== a && !o.dead && M.len3(o.pos.x - a.pos.x, o.pos.y - a.pos.y, o.pos.z - a.pos.z) < 2 * C.WORM_R) ? WD.STEP_UP_WORM : WD.STEP_UP;
+        const hs = a.eSense * sim.walk_speed(S, a),
+          ds = hs * dt,
+          base = P.overlap2(S, s, y),
+          top = S.worms.some(o => o !== a && !o.dead && M.len3(o.pos.x - a.pos.x, o.pos.y - a.pos.y, o.pos.z - a.pos.z) < 2 * C.WORM_R)
+            ? WD.STEP_UP_WORM
+            : WD.STEP_UP;
         const ns = s + ts * ds, ny0 = y + ty * ds;
         let moved = false;
-        for (let l = 0; l <= top + 1e-6; l += 0.04) if (P.overlap2(S, ns + us * l, ny0 + uy * l) <= base) { s = ns + us * l; y = ny0 + uy * l; moved = true; break; }
-        if (moved) { a.walking = true; const sx = ts * a.eSense; if (Math.abs(sx) > 0.2) a.facing = sx > 0 ? 1 : -1; }
+        for (let l = 0; l <= top + 1e-6; l += 0.04)
+          if (P.overlap2(S, ns + us * l, ny0 + uy * l) <= base) {
+            s = ns + us * l;
+            y = ny0 + uy * l;
+            moved = true;
+            break;
+          }
+        if (moved) {
+          a.walking = true;
+          const sx = ts * a.eSense;
+          if (Math.abs(sx) > 0.2) a.facing = sx > 0 ? 1 : -1;
+        }
       }
       let snapped = grounded(S, s, y, us, uy);
-      if (!snapped) for (let l = 0.04; l <= K.STEP_DOWN + 1e-6; l += 0.04) {
-        const cs = s - us * l, cy = y - uy * l, ob = P.overlap2(S, cs, cy) > P.overlap2(S, s, y);
-        if (grounded(S, cs, cy, us, uy) || ob) { const lb = l - (ob ? 0.04 : 0); s -= us * lb; y -= uy * lb; snapped = true; break; }
+      if (!snapped)
+        for (let l = 0.04; l <= K.STEP_DOWN + 1e-6; l += 0.04) {
+          const cs = s - us * l, cy = y - uy * l, ob = P.overlap2(S, cs, cy) > P.overlap2(S, s, y);
+          if (grounded(S, cs, cy, us, uy) || ob) {
+            const lb = l - (ob ? 0.04 : 0);
+            s -= us * lb;
+            y -= uy * lb;
+            snapped = true;
+            break;
+          }
+        }
+      if (!snapped) {
+        a.air = true;
+        a.eGround = false;
+        const hs = mv ? a.eSense * sim.walk_speed(S, a) * 0.9 : 0;
+        a.vs = ts * hs;
+        a.vy = ty * hs;
+        a.walking = false;
       }
-      if (!snapped) { a.air = true; a.eGround = false; const hs = mv ? a.eSense * sim.walk_speed(S, a) * 0.9 : 0; a.vs = ts * hs; a.vy = ty * hs; a.walking = false; }
-      else { a.vs = 0; a.vy = 0; }
+      else {
+        a.vs = 0;
+        a.vy = 0;
+      }
       set_pos(S, a, s, y);
       if (!a.air) return;
     }
     // ---- in the air: the field, the magnetic landing brake, contacts ----
     s = P.to_plane(S, a.pos).s; y = a.pos.y;
     const c0 = M.cos(S.theta), s0 = M.sin(S.theta), sp0 = M.len2(a.vs, a.vy), nsub = M.max(1, Math.ceil(sp0 * dt / 0.08)), h = dt / nsub;
-    if (sp0 > WD.V_MAX) { const kk = WD.V_MAX / sp0; a.vs *= kk; a.vy *= kk; }
+    if (sp0 > WD.V_MAX) {
+      const kk = WD.V_MAX / sp0;
+      a.vs *= kk;
+      a.vy *= kk;
+    }
     for (let k = 0; k < nsub && a.air; k++) {
       wk.x = S.O.x + s * c0; wk.z = S.O.z + s * s0;
       worm_acc(S, a, wk.x, y, wk.z, c0, s0, wa); a.vs += wa.s * h; a.vy += wa.y * h;
-      // the suit's brake: a surface ahead within BRAKE_L m caps the approach speed (a landing at ~V_LAND, never a crash)
+      // the suit's brake: a surface ahead within BRAKE_L m caps the approach speed (a landing at ~V_LAND, never a
+      // crash)
       const sp = M.len2(a.vs, a.vy);
       if (sp > K.V_LAND) {
-        const vs = a.vs / sp, vy = a.vy / sp; let dist = -1;
-        for (let r = 0.4; r <= K.BRAKE_L; r += K.BRAKE_STEP) if (P.sample2(S, s + vs * r, y + vy * r) > 0) { dist = r; break; }
+        const vs = a.vs / sp, vy = a.vy / sp;
+        let dist = -1;
+        for (let r = 0.4; r <= K.BRAKE_L; r += K.BRAKE_STEP)
+          if (P.sample2(S, s + vs * r, y + vy * r) > 0) {
+            dist = r;
+            break;
+          }
         if (dist >= 0) {
           const cap = K.V_LAND + Math.sqrt(2 * K.BRAKE_A * M.max(0, dist - 0.5));
-          if (sp > cap) { const nsp = M.max(cap, sp - K.BRAKE_A * h * 1.6); a.vs *= nsp / sp; a.vy *= nsp / sp; }
+          if (sp > cap) {
+            const nsp = M.max(cap, sp - K.BRAKE_A * h * 1.6);
+            a.vs *= nsp / sp;
+            a.vy *= nsp / sp;
+          }
         }
       }
       const ns = s + a.vs * h, ny = y + a.vy * h;
-      if (P.overlap2(S, ns, ny) <= P.overlap2(S, s, y) && !rim_normal(S, ns, ny, wn)) { s = ns; y = ny; continue; }
-      if (!rim_normal(S, ns, ny, wn)) { wn.s = 0; wn.y = 1; }
+      if (P.overlap2(S, ns, ny) <= P.overlap2(S, s, y) && !rim_normal(S, ns, ny, wn)) {
+        s = ns;
+        y = ny;
+        continue;
+      }
+      if (!rim_normal(S, ns, ny, wn)) {
+        wn.s = 0;
+        wn.y = 1;
+      }
       const vn = a.vs * wn.s + a.vy * wn.y;
-      if (vn >= 0) { if (P.overlap2(S, ns, ny) <= P.overlap2(S, s, y)) { s = ns; y = ny; } continue; }
+      if (vn >= 0) {
+        if (P.overlap2(S, ns, ny) <= P.overlap2(S, s, y)) {
+          s = ns;
+          y = ny;
+        }
+        continue;
+      }
       const imp = -vn, ts = -wn.y, ty = wn.s, vt = a.vs * ts + a.vy * ty;
       if (imp > K.SAFE) {                                              // a blast threw it into rock: it hurts, bounces
         const dmg = M.min(WD.GLANCE_MAX, Math.round((imp - K.SAFE) * WD.GLANCE_K));
         a.vs = ts * vt * WD.FRIC - wn.s * vn * WD.BOUNCE; a.vy = ty * vt * WD.FRIC - wn.y * vn * WD.BOUNCE;
-        SS.sim.emit(S, 'land', { wormId: a.id, x: a.pos.x, y: a.pos.y, z: a.pos.z, speed: imp, mat: W().mat_at(a.pos.x, a.pos.y - 0.7, a.pos.z), hard: 1 });
-        set_pos(S, a, s, y); if (dmg > 0) sim.hurt(S, a, dmg, C.DS.LANDING); if (!sim.ctl(S, a)) return;
-        if (M.len2(a.vs, a.vy) < WD.SOFT_V) land(S, a, wn, imp); continue;
+        SS.sim.emit(S, 'land', {
+          wormId: a.id,
+          x: a.pos.x,
+          y: a.pos.y,
+          z: a.pos.z,
+          speed: imp,
+          mat: W().mat_at(a.pos.x, a.pos.y - 0.7, a.pos.z),
+          hard: 1
+        });
+        set_pos(S, a, s, y);
+        if (dmg > 0) sim.hurt(S, a, dmg, C.DS.LANDING);
+        if (!sim.ctl(S, a)) return;
+        if (M.len2(a.vs, a.vy) < WD.SOFT_V) land(S, a, wn, imp);
+        continue;
       }
-      land(S, a, wn, imp); s = P.to_plane(S, a.pos).s; y = a.pos.y; return;
+      land(S, a, wn, imp);
+      s = P.to_plane(S, a.pos).s;
+      y = a.pos.y;
+      return;
     }
     set_pos(S, a, s, y);
     // a worm wedged in rock (the disc mostly inside): the nearest free spot
-    if (P.overlap2(S, s, y) >= 9) { const f = sim.wedge_free(S, a); if (f) { a.pos.x = f.x; a.pos.y = f.y; a.pos.z = f.z; a.vs = a.vy = 0; } }
+    if (P.overlap2(S, s, y) >= 9) {
+      const f = sim.wedge_free(S, a);
+      if (f) {
+        a.pos.x = f.x;
+        a.pos.y = f.y;
+        a.pos.z = f.z;
+        a.vs = a.vy = 0;
+      }
+    }
   };
   function land(S, a, n, imp) {
-    a.air = false; a.vs = 0; a.vy = 0; a.flip = false; a.hop = false; a.slide = false; a.stillT = 0; a.eGround = true; a.eFlipC = false;
+    a.air = false;
+    a.vs = 0;
+    a.vy = 0;
+    a.flip = false;
+    a.hop = false;
+    a.slide = false;
+    a.stillT = 0;
+    a.eGround = true;
+    a.eFlipC = false;
     set_up(S, a, n.s, n.y);
-    if (imp > 2) SS.sim.emit(S, 'land', { wormId: a.id, x: a.pos.x, y: a.pos.y - 0.45, z: a.pos.z, speed: imp, mat: W().mat_at(a.pos.x - a.eup.x * 0.7, a.pos.y - a.eup.y * 0.7, a.pos.z - a.eup.z * 0.7) });
+    if (imp > 2)
+      SS.sim.emit(S, 'land', {
+        wormId: a.id,
+        x: a.pos.x,
+        y: a.pos.y - 0.45,
+        z: a.pos.z,
+        speed: imp,
+        mat: W().mat_at(a.pos.x - a.eup.x * 0.7, a.pos.y - a.eup.y * 0.7, a.pos.z - a.eup.z * 0.7)
+      });
     if (imp > 9.6) a.squash = S.time;
   }
 
   /* ================= the other worms: 3D bodies under the field ================= */
   const nv = { x: 0, y: 1, z: 0 }, ng = { x: 0, y: 0, z: 0 };
   function probe3(w, x, y, z, r) {
-    return w.sample(x, y, z) > 0 || w.sample(x + r, y, z) > 0 || w.sample(x - r, y, z) > 0 || w.sample(x, y + r, z) > 0 || w.sample(x, y - r, z) > 0 || w.sample(x, y, z + r) > 0 || w.sample(x, y, z - r) > 0;
+    return w.sample(x, y, z) > 0
+      || w.sample(x + r, y, z) > 0
+      || w.sample(x - r, y, z) > 0
+      || w.sample(x, y + r, z) > 0
+      || w.sample(x, y - r, z) > 0
+      || w.sample(x, y, z + r) > 0
+      || w.sample(x, y, z - r) > 0;
   }
   E.body3d = function (S, b, dt) {
     ensure(b);
@@ -660,68 +1373,180 @@
       if (w.sample(b.pos.x - up.x * (foot + 0.06), b.pos.y - up.y * (foot + 0.06), b.pos.z - up.z * (foot + 0.06)) > 0) return;
       b.rest = false; b.eStill = 0;
     }
-    if (w.sample(b.pos.x, b.pos.y, b.pos.z) > 0.3) { const f = sim.wedge_free(S, b); if (f) { b.pos.x = f.x; b.pos.y = f.y; b.pos.z = f.z; b.vel.x = b.vel.y = b.vel.z = 0; } }
+    if (w.sample(b.pos.x, b.pos.y, b.pos.z) > 0.3) {
+      const f = sim.wedge_free(S, b);
+      if (f) {
+        b.pos.x = f.x;
+        b.pos.y = f.y;
+        b.pos.z = f.z;
+        b.vel.x = b.vel.y = b.vel.z = 0;
+      }
+    }
     const sp0 = M.len3(b.vel.x, b.vel.y, b.vel.z);
-    if (sp0 > WD.V_MAX) { const k = WD.V_MAX / sp0; b.vel.x *= k; b.vel.y *= k; b.vel.z *= k; }
+    if (sp0 > WD.V_MAX) {
+      const k = WD.V_MAX / sp0;
+      b.vel.x *= k;
+      b.vel.y *= k;
+      b.vel.z *= k;
+    }
     const n = M.max(1, Math.ceil(M.len3(b.vel.x, b.vel.y, b.vel.z) * dt / 0.08)), h = dt / n, a = C.G_WORM * K.WORM_G * sim.gravity_k(S, b);
     let touched = false;
     for (let i = 0; i < n && !b.rest; i++) {
       sim.plane_lock(S, b);
-      field(S, b.pos.x, b.pos.y, b.pos.z, fg); b.vel.x += fg.x * a * h; b.vel.y += fg.y * a * h; b.vel.z += fg.z * a * h;
+      field(S, b.pos.x, b.pos.y, b.pos.z, fg);
+      b.vel.x += fg.x * a * h;
+      b.vel.y += fg.y * a * h;
+      b.vel.z += fg.z * a * h;
       const nx = b.pos.x + b.vel.x * h, ny = b.pos.y + b.vel.y * h, nz = b.pos.z + b.vel.z * h;
-      if (!probe3(w, nx, ny, nz, foot)) { b.pos.x = nx; b.pos.y = ny; b.pos.z = nz; continue; }
+      if (!probe3(w, nx, ny, nz, foot)) {
+        b.pos.x = nx;
+        b.pos.y = ny;
+        b.pos.z = nz;
+        continue;
+      }
       // contact: the normal of the terrain around the new centre
-      w.normal(nx, ny, nz, nv); if (w.sample(nx, ny, nz) <= 0) { const dl = M.len3(b.vel.x, b.vel.y, b.vel.z) || 1; const vx = -b.vel.x / dl, vy = -b.vel.y / dl, vz = -b.vel.z / dl; if (nv.x * vx + nv.y * vy + nv.z * vz < 0) { nv.x = vx; nv.y = vy; nv.z = vz; } }
+      w.normal(nx, ny, nz, nv);
+      if (w.sample(nx, ny, nz) <= 0) {
+        const dl = M.len3(b.vel.x, b.vel.y, b.vel.z) || 1;
+        const vx = -b.vel.x / dl, vy = -b.vel.y / dl, vz = -b.vel.z / dl;
+        if (nv.x * vx + nv.y * vy + nv.z * vz < 0) {
+          nv.x = vx;
+          nv.y = vy;
+          nv.z = vz;
+        }
+      }
       touched = true;
       const vn = b.vel.x * nv.x + b.vel.y * nv.y + b.vel.z * nv.z;
-      if (vn >= 0) { b.pos.x = nx; b.pos.y = ny; b.pos.z = nz; continue; }
+      if (vn >= 0) {
+        b.pos.x = nx;
+        b.pos.y = ny;
+        b.pos.z = nz;
+        continue;
+      }
       const imp = -vn, tx = b.vel.x - vn * nv.x, ty = b.vel.y - vn * nv.y, tz = b.vel.z - vn * nv.z;
       if (imp > WD.FALL_SAFE) {
         const dmg = M.min(WD.GLANCE_MAX, Math.round((imp - WD.FALL_SAFE) * WD.GLANCE_K));
-        SS.sim.emit(S, 'land', { wormId: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, speed: imp, mat: w.mat_at(b.pos.x, b.pos.y - foot, b.pos.z), hard: 1 });
-        b.vel.x = tx * WD.FRIC - nv.x * vn * WD.BOUNCE; b.vel.y = ty * WD.FRIC - nv.y * vn * WD.BOUNCE; b.vel.z = tz * WD.FRIC - nv.z * vn * WD.BOUNCE; b.slide = true;
+        SS.sim.emit(S, 'land', {
+          wormId: b.id,
+          x: b.pos.x,
+          y: b.pos.y,
+          z: b.pos.z,
+          speed: imp,
+          mat: w.mat_at(b.pos.x, b.pos.y - foot, b.pos.z),
+          hard: 1
+        });
+        b.vel.x = tx * WD.FRIC - nv.x * vn * WD.BOUNCE;
+        b.vel.y = ty * WD.FRIC - nv.y * vn * WD.BOUNCE;
+        b.vel.z = tz * WD.FRIC - nv.z * vn * WD.BOUNCE;
+        b.slide = true;
         sim.hurt(S, b, dmg, C.DS.LANDING);
       } else if (!b.slide && imp < WD.SOFT_V * 2) {
-        if (imp > 3) SS.sim.emit(S, 'land', { wormId: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, speed: imp, mat: w.mat_at(b.pos.x, b.pos.y - foot, b.pos.z) });
-        b.vel.x = b.vel.y = b.vel.z = 0; b.rest = true; b.eStill = 0; b.eup.x = nv.x; b.eup.y = nv.y; b.eup.z = nv.z; b.eu2.s = 0;
+        if (imp > 3)
+          SS.sim.emit(S, 'land', {
+            wormId: b.id,
+            x: b.pos.x,
+            y: b.pos.y,
+            z: b.pos.z,
+            speed: imp,
+            mat: w.mat_at(b.pos.x, b.pos.y - foot, b.pos.z)
+          });
+        b.vel.x = b.vel.y = b.vel.z = 0;
+        b.rest = true;
+        b.eStill = 0;
+        b.eup.x = nv.x;
+        b.eup.y = nv.y;
+        b.eup.z = nv.z;
+        b.eu2.s = 0;
         set_up3(S, b);
-      } else { b.vel.x = tx * WD.FRIC - nv.x * vn * WD.BOUNCE; b.vel.y = ty * WD.FRIC - nv.y * vn * WD.BOUNCE; b.vel.z = tz * WD.FRIC - nv.z * vn * WD.BOUNCE; }
+      } else {
+        b.vel.x = tx * WD.FRIC - nv.x * vn * WD.BOUNCE;
+        b.vel.y = ty * WD.FRIC - nv.y * vn * WD.BOUNCE;
+        b.vel.z = tz * WD.FRIC - nv.z * vn * WD.BOUNCE;
+      }
       // out of the rock along the normal (never deeper)
       let k = 0, px = b.pos.x, py = b.pos.y, pz = b.pos.z;
-      for (; k < 30 && probe3(w, px, py, pz, foot); k++) { px += nv.x * 0.04; py += nv.y * 0.04; pz += nv.z * 0.04; }
-      if (k < 30) { b.pos.x = px; b.pos.y = py; b.pos.z = pz; }
+      for (; k < 30 && probe3(w, px, py, pz, foot); k++) {
+        px += nv.x * 0.04;
+        py += nv.y * 0.04;
+        pz += nv.z * 0.04;
+      }
+      if (k < 30) {
+        b.pos.x = px;
+        b.pos.y = py;
+        b.pos.z = pz;
+      }
     }
     if (!b.rest && touched) {
       const sp = M.len3(b.vel.x, b.vel.y, b.vel.z);
-      if (sp < WD.STILL_V) { b.eStill += dt; if (b.eStill > WD.STILL_T || (!b.slide && sp < WD.SOFT_V)) { b.vel.x = b.vel.y = b.vel.z = 0; b.rest = true; b.slide = false; b.eStill = 0; w.normal(b.pos.x - b.eup.x * foot, b.pos.y - b.eup.y * foot, b.pos.z - b.eup.z * foot, ng); if (M.len3(ng.x, ng.y, ng.z) > 0.5) { b.eup.x = ng.x; b.eup.y = ng.y; b.eup.z = ng.z; } set_up3(S, b); } }
+      if (sp < WD.STILL_V) {
+        b.eStill += dt;
+        if (b.eStill > WD.STILL_T || (!b.slide && sp < WD.SOFT_V)) {
+          b.vel.x = b.vel.y = b.vel.z = 0;
+          b.rest = true;
+          b.slide = false;
+          b.eStill = 0;
+          w.normal(b.pos.x - b.eup.x * foot, b.pos.y - b.eup.y * foot, b.pos.z - b.eup.z * foot, ng);
+          if (M.len3(ng.x, ng.y, ng.z) > 0.5) {
+            b.eup.x = ng.x;
+            b.eup.y = ng.y;
+            b.eup.z = ng.z;
+          }
+          set_up3(S, b);
+        }
+      }
       else b.eStill = 0;
     }
   };
 
   /* ================= the CPU: hops across the gaps between chunks (P68d) =================
-   * The normal planner shoots, walks along the ground or swings on the rope in a world with gravity -y. Here, when no shot is
-   * found, SS.ai calls cpu_move: the worm walks toward its target along the surface and, from each spot, the FORWARD JUMP is
-   * simulated under the field and the suit's landing brake (the same air step as step2d). When a jump lands closer to the
-   * target or opens a clear line, it jumps. State in pl.mv (kind 9): st scan / wind / fly, dir, tmax, t0. */
+   * The normal planner shoots, walks along the ground or swings on the rope in a world with gravity -y. Here, when no
+   * shot is found, SS.ai calls cpu_move: the worm walks toward its target along the surface and, from each spot, the
+   * FORWARD JUMP is simulated under the field and the suit's landing brake (the same air step as step2d). When a jump
+   * lands closer to the target or opens a clear line, it jumps. State in pl.mv (kind 9): st scan / wind / fly, dir,
+   * tmax, t0. */
   const fl = { s: 0, y: 0, t: 0, vn: 0, ok: false };
-  // where a jump launched at (s0, y0) with the plane velocity (vs, vy) comes down (the air loop of step2d without the contacts' damage)
+  // where a jump launched at (s0, y0) with the plane velocity (vs, vy) comes down (the air loop of step2d without the
+  // contacts' damage)
   function predict_flight(S, a, s0, y0, vs, vy, out) {
-    const c0 = M.cos(S.theta), s1 = M.sin(S.theta), h = 1 / 40; let s = s0, y = y0;
+    const c0 = M.cos(S.theta), s1 = M.sin(S.theta), h = 1 / 40;
+    let s = s0, y = y0;
     out.ok = false; out.t = 0;
     for (let t = 0; t < 4.5; t += h) {
       const x = S.O.x + s * c0, z = S.O.z + s * s1;
       worm_acc(S, a, x, y, z, c0, s1, wa); vs += wa.s * h; vy += wa.y * h;
       const sp = M.len2(vs, vy);
       if (sp > K.V_LAND) {
-        const ux = vs / sp, uy = vy / sp; let dist = -1;
-        for (let r = 0.4; r <= K.BRAKE_L; r += K.BRAKE_STEP) if (P.sample2(S, s + ux * r, y + uy * r) > 0) { dist = r; break; }
-        if (dist >= 0) { const cap = K.V_LAND + Math.sqrt(2 * K.BRAKE_A * M.max(0, dist - 0.5)); if (sp > cap) { const nsp = M.max(cap, sp - K.BRAKE_A * h * 1.6); vs *= nsp / sp; vy *= nsp / sp; } }
+        const ux = vs / sp, uy = vy / sp;
+        let dist = -1;
+        for (let r = 0.4; r <= K.BRAKE_L; r += K.BRAKE_STEP)
+          if (P.sample2(S, s + ux * r, y + uy * r) > 0) {
+            dist = r;
+            break;
+          }
+        if (dist >= 0) {
+          const cap = K.V_LAND + Math.sqrt(2 * K.BRAKE_A * M.max(0, dist - 0.5));
+          if (sp > cap) {
+            const nsp = M.max(cap, sp - K.BRAKE_A * h * 1.6);
+            vs *= nsp / sp;
+            vy *= nsp / sp;
+          }
+        }
       }
       const ns = s + vs * h, ny = y + vy * h;
       if (!(P.overlap2(S, ns, ny) <= P.overlap2(S, s, y) && !rim_normal(S, ns, ny, wn))) {
-        if (!rim_normal(S, ns, ny, wn)) { wn.s = 0; wn.y = 1; }
+        if (!rim_normal(S, ns, ny, wn)) {
+          wn.s = 0;
+          wn.y = 1;
+        }
         const vn = vs * wn.s + vy * wn.y;
-        if (vn < 0) { out.s = s; out.y = y; out.t = t; out.vn = -vn; out.ok = t > 0.15; return out; }
+        if (vn < 0) {
+          out.s = s;
+          out.y = y;
+          out.t = t;
+          out.vn = -vn;
+          out.ok = t > 0.15;
+          return out;
+        }
       }
       s = ns; y = ny;
       const wx = S.O.x + s * c0, wz = S.O.z + s * s1;
@@ -729,13 +1554,23 @@
     }
     return out;
   }
-  const clear2 = (S, s0, y0, s1, y1) => { const L = M.len2(s1 - s0, y1 - y0), n = Math.ceil(L / 0.25); for (let i = 2; i < n - 1; i++) { const f = i / n; if (P.solid2(S, s0 + (s1 - s0) * f, y0 + (y1 - y0) * f)) return false; } return true; };
-  // the best forward jump from here: { v, dir } or null (v = how much better the landing is for the target at plane point (ts, ty))
+  const clear2 = (S, s0, y0, s1, y1) => {
+    const L = M.len2(s1 - s0, y1 - y0), n = Math.ceil(L / 0.25);
+    for (let i = 2; i < n - 1; i++) {
+      const f = i / n;
+      if (P.solid2(S, s0 + (s1 - s0) * f, y0 + (y1 - y0) * f)) return false;
+    }
+    return true;
+  };
+  // the best forward jump from here: { v, dir } or null (v = how much better the landing is for the target at plane
+  // point (ts, ty))
   function best_hop(S, a, ts, ty) {
     const ap = P.to_plane(S, a.pos), us = a.eu2.s, uy = a.eu2.y, tsx = uy, tyy = -us, mag = SS.sim.jump_vs(S, a), vyU = C.WORM_DYN.JUMP_VY;
-    const d0 = M.len2(ts - ap.s, ty - a.pos.y); let best = null;
+    const d0 = M.len2(ts - ap.s, ty - a.pos.y);
+    let best = null;
     for (let di = 0; di < 2; di++) {
-      const f = di === 0 ? 1 : -1;                                          // the key: screen right / left (jump_fix: a clear screen tangent follows the key)
+      // the key: screen right / left (jump_fix: a clear screen tangent follows the key)
+      const f = di === 0 ? 1 : -1;
       const k = Math.abs(tsx) > 0.25 ? (tsx * f >= 0 ? 1 : -1) : a.eSense * f;
       const vs = tsx * k * mag + us * vyU, vy = tyy * k * mag + uy * vyU;
       predict_flight(S, a, ap.s, a.pos.y, vs, vy, fl);
@@ -749,28 +1584,49 @@
     return best;
   }
   E.best_hop = best_hop;
-  /* The rope hop (P68g): when no jump lands closer (the gap is too wide, or the way is blocked) the CPU hooks the other piece: a fan of hook rays in the plane
-   * (both facings, aim -1.4 .. 1.4), the first solid on each is a candidate if it lies on a DIFFERENT piece than the worm, the line is free for the worm's body,
-   * and it is much nearer the target. The rope is then reeled in (the constraint draws the worm along the straight line) and let go near the hook. */
+  /* The rope hop (P68g): when no jump lands closer (the gap is too wide, or the way is blocked) the CPU hooks the other
+   * piece: a fan of hook rays in the plane
+   * (both facings, aim -1.4 .. 1.4), the first solid on each is a candidate if it lies on a DIFFERENT piece than the
+   * worm, the line is free for the worm's body, and it is much nearer the target. The rope is then reeled in (the
+   * constraint draws the worm along the straight line) and let go near the hook. */
   const rp = { aim: 0, f: 1, hb: -1 };
   function rope_plan(S, a, ts, tw, out) {
-    const ap = P.to_plane(S, a.pos), bw = body_of(S, a.pos.x, a.pos.y, a.pos.z), bt = body_of(S, tw.x, tw.y, tw.z), base = P.overlap2(S, ap.s, a.pos.y), d0 = M.len2(ts - ap.s, tw.y - a.pos.y);
-    const SY = W().SY; let bv = 6;
+    const ap = P.to_plane(S, a.pos),
+      bw = body_of(S, a.pos.x, a.pos.y, a.pos.z),
+      bt = body_of(S, tw.x, tw.y, tw.z),
+      base = P.overlap2(S, ap.s, a.pos.y),
+      d0 = M.len2(ts - ap.s, tw.y - a.pos.y);
+    const SY = W().SY;
+    let bv = 6;
     out.f = 0;
     for (let fi = 0; fi < 2; fi++) {
       const f = fi === 0 ? 1 : -1;
       for (let q = -7; q <= 7; q++) {
-        const aim = q * 0.2, ds = f * M.cos(aim), dy = M.sin(aim); let s = ap.s + ds * 0.4, y = a.pos.y + dy * 0.4, hit = -1, ok = true;
+        const aim = q * 0.2, ds = f * M.cos(aim), dy = M.sin(aim);
+        let s = ap.s + ds * 0.4, y = a.pos.y + dy * 0.4, hit = -1, ok = true;
         for (let r = 0.4; r < C.ROPE_MAX; r += 0.1) {
           s += ds * 0.1; y += dy * 0.1;
-          if (P.solid2(S, s, y)) { hit = r; break; }
+          if (P.solid2(S, s, y)) {
+            hit = r;
+            break;
+          }
           if (y < 0.2 || y > SY + 2) break;
-          if (r > 0.9 && (r * 10 + 0.5 | 0) % 4 === 0 && P.overlap2(S, s, y) > base) { ok = false; break; }       // the worm's body must fit along the line
+          // the worm's body must fit along the line
+          if (r > 0.9 && (r * 10 + 0.5 | 0) % 4 === 0 && P.overlap2(S, s, y) > base) {
+            ok = false;
+            break;
+          }
         }
         if (!ok || hit < 3.5) continue;
-        const hw = P.to_world(S, s, y), hb = body_of(S, hw.x, y, hw.z); if (hb < 0 || hb === bw) continue;
+        const hw = P.to_world(S, s, y), hb = body_of(S, hw.x, y, hw.z);
+        if (hb < 0 || hb === bw) continue;
         const v = (d0 - M.len2(ts - s, tw.y - y)) - 0.15 * hit + (hb === bt ? 8 : 0);
-        if (v > bv) { bv = v; out.aim = aim; out.f = f; out.hb = hb; }
+        if (v > bv) {
+          bv = v;
+          out.aim = aim;
+          out.f = f;
+          out.hb = hb;
+        }
       }
     }
     return out.f !== 0;
@@ -778,44 +1634,136 @@
   E.rope_plan = rope_plan;
   E.cpu_move = function (S, pl, a) {
     if (!S.eow || pl.moves >= 4 || a.air || S.rope) return false;
-    const AIx = SS.ai, tgt = AIx.foe(S, pl, pl.fi) || (pl.foes0 && AIx.foe_of(S, pl, pl.foes0[0])); if (!tgt || tgt.alien) return false;
+    const AIx = SS.ai, tgt = AIx.foe(S, pl, pl.fi) || (pl.foes0 && AIx.foe_of(S, pl, pl.foes0[0]));
+    if (!tgt || tgt.alien) return false;
     if (Math.abs(P.to_plane(S, tgt.pos).t) > 3) return false;               // the target is not on this section
     ensure(a); pl.moves++;
-    pl.mv = { kind: 9, st: 'scan', t0: S.time, tmax: 10, rNext: 0, noHop: !!pl.noHop, tChk: S.time, lastS: P.to_plane(S, a.pos).s, nextEval: 0, stuck: 0, t1: 0, tid: tgt.id };
+    pl.mv = {
+      kind: 9,
+      st: 'scan',
+      t0: S.time,
+      tmax: 10,
+      rNext: 0,
+      noHop: !!pl.noHop,
+      tChk: S.time,
+      lastS: P.to_plane(S, a.pos).s,
+      nextEval: 0,
+      stuck: 0,
+      t1: 0,
+      tid: tgt.id
+    };
     pl.phase = 'move'; return true;
   };
   // one sim step of the move; true = done (the planner searches again from wherever the worm is)
   E.cpu_step = function (S, pl, a, inp) {
-    const m = pl.mv; if (!m) return true;
-    if (S.time - m.t0 > m.tmax) { pl.mv = null; return true; }
-    if (m.st === 'fly') { if (!a.air && !S.rope) { pl.mv = null; return true; } return false; }
-    if (m.st === 'rfire') { S.weapon = 'rope'; S.aim = m.ra; a.facing = m.rf; inp.fire_pressed = 1; m.st = 'rhook'; m.t1 = S.time; return false; }          // P68g: the ninja rope between pieces
+    const m = pl.mv;
+    if (!m) return true;
+    if (S.time - m.t0 > m.tmax) {
+      pl.mv = null;
+      return true;
+    }
+    if (m.st === 'fly') {
+      if (!a.air && !S.rope) {
+        pl.mv = null;
+        return true;
+      }
+      return false;
+    }
+    // P68g: the ninja rope between pieces
+    if (m.st === 'rfire') {
+      S.weapon = 'rope';
+      S.aim = m.ra;
+      a.facing = m.rf;
+      inp.fire_pressed = 1;
+      m.st = 'rhook';
+      m.t1 = S.time;
+      return false;
+    }
     if (m.st === 'rhook') {
-      if (S.rope && S.rope.hooked) { m.st = 'rreel'; m.tR = S.time; }
-      else if (!S.hook && S.time - m.t1 > 0.05) { pl.mv = null; return true; }                                  // the hook found nothing
+      if (S.rope && S.rope.hooked) {
+        m.st = 'rreel';
+        m.tR = S.time;
+      }
+      // the hook found nothing
+      else if (!S.hook && S.time - m.t1 > 0.05) {
+        pl.mv = null;
+        return true;
+      }
       return false;
     }
-    if (m.st === 'rreel') {                                                  // reel in (the rope is straight: the worm is drawn along it), let go near the other piece
-      if (!S.rope) { m.st = 'fly'; return false; }
+    // reel in (the rope is straight: the worm is drawn along it), let go near the other piece
+    if (m.st === 'rreel') {
+      if (!S.rope) {
+        m.st = 'fly';
+        return false;
+      }
       inp.up = 1;
-      const hbd = S.eow.bodies[m.hb], sd = hbd ? M.len3(a.pos.x - hbd.x, a.pos.y - hbd.y, a.pos.z - hbd.z) - hbd.R * 1.08 : 0;   // inside the other piece's pull (the suit's brake lands it) or at the hook
-      if (sd < 6 || S.rope.len < 2.4 || S.time - m.tR > 8) { inp.jump = 1; m.st = 'fly'; m.t2 = S.time; }
+      // inside the other piece's pull (the suit's brake lands it) or at the hook
+      const hbd = S.eow.bodies[m.hb], sd = hbd ? M.len3(a.pos.x - hbd.x, a.pos.y - hbd.y, a.pos.z - hbd.z) - hbd.R * 1.08 : 0;
+      if (sd < 6 || S.rope.len < 2.4 || S.time - m.tR > 8) {
+        inp.jump = 1;
+        m.st = 'fly';
+        m.t2 = S.time;
+      }
       return false;
     }
-    if (m.st === 'wind') { if (a.air) { m.st = 'fly'; return false; } if (S.time - m.t1 > 1.2) { pl.mv = null; return true; } return false; }
-    if (a.air || S.rope) { m.st = 'fly'; return false; }
-    const tgt = S.worms[m.tid]; if (!tgt || tgt.dead) { pl.mv = null; return true; }
+    if (m.st === 'wind') {
+      if (a.air) {
+        m.st = 'fly';
+        return false;
+      }
+      if (S.time - m.t1 > 1.2) {
+        pl.mv = null;
+        return true;
+      }
+      return false;
+    }
+    if (a.air || S.rope) {
+      m.st = 'fly';
+      return false;
+    }
+    const tgt = S.worms[m.tid];
+    if (!tgt || tgt.dead) {
+      pl.mv = null;
+      return true;
+    }
     const ap = P.to_plane(S, a.pos), tp = P.to_plane(S, tgt.pos), dir = tp.s >= ap.s ? 1 : -1;
-    if (M.len2(tp.s - ap.s, tgt.pos.y - a.pos.y) < 4.5) { pl.mv = null; return true; }       // close enough: shoot / melee from here
+    // close enough: shoot / melee from here
+    if (M.len2(tp.s - ap.s, tgt.pos.y - a.pos.y) < 4.5) {
+      pl.mv = null;
+      return true;
+    }
     if (S.time >= m.nextEval) {
       m.nextEval = S.time + 0.2;
-      const b = m.noHop ? null : best_hop(S, a, tp.s, tgt.pos.y);                                        // (noHop: a test seam, the rope path alone)
-      if (b && b.v >= 5) { a.facing = b.dir; inp.jump = 1; m.st = 'wind'; m.t1 = S.time; return false; }
-      if (S.time >= m.rNext && SS.weapons.can_use(S, 'rope') && rope_plan(S, a, tp.s, tgt.pos, rp)) { m.ra = rp.aim; m.rf = rp.f; m.hb = rp.hb; m.st = 'rfire'; m.tmax += 12; return false; }   // no hop lands closer: hook the other piece
+      // (noHop: a test seam, the rope path alone)
+      const b = m.noHop ? null : best_hop(S, a, tp.s, tgt.pos.y);
+      if (b && b.v >= 5) {
+        a.facing = b.dir;
+        inp.jump = 1;
+        m.st = 'wind';
+        m.t1 = S.time;
+        return false;
+      }
+      // no hop lands closer: hook the other piece
+      if (S.time >= m.rNext && SS.weapons.can_use(S, 'rope') && rope_plan(S, a, tp.s, tgt.pos, rp)) {
+        m.ra = rp.aim;
+        m.rf = rp.f;
+        m.hb = rp.hb;
+        m.st = 'rfire';
+        m.tmax += 12;
+        return false;
+      }
       if (S.time >= m.rNext) m.rNext = S.time + 1.5;
     }
     inp.move = dir;
-    if (S.time - m.tChk > 1.0) { if (Math.abs(ap.s - m.lastS) < 0.3 && ++m.stuck >= 2) { pl.mv = null; return true; } m.lastS = ap.s; m.tChk = S.time; }
+    if (S.time - m.tChk > 1.0) {
+      if (Math.abs(ap.s - m.lastS) < 0.3 && ++m.stuck >= 2) {
+        pl.mv = null;
+        return true;
+      }
+      m.lastS = ap.s;
+      m.tChk = S.time;
+    }
     return false;
   };
 
@@ -823,173 +1771,379 @@
   const cg = { x: 0, y: -1, z: 0 };
   // unit down at a point (the field's direction; straight down in the dead centre of a saddle)
   function down_at(S, x, y, z, out) {
-    field(S, x, y, z, fg); const l = M.len3(fg.x, fg.y, fg.z);
-    if (l < 0.03) { out.x = 0; out.y = -1; out.z = 0; return 0; }
-    out.x = fg.x / l; out.y = fg.y / l; out.z = fg.z / l; return l;
+    field(S, x, y, z, fg);
+    const l = M.len3(fg.x, fg.y, fg.z);
+    if (l < 0.03) {
+      out.x = 0;
+      out.y = -1;
+      out.z = 0;
+      return 0;
+    }
+    out.x = fg.x / l;
+    out.y = fg.y / l;
+    out.z = fg.z / l;
+    return l;
   }
   /* ---- supply crates in space (P86) ----
-   * No parachute, ever: there is no air. A crate appears at a random point of the box with a small random drift (0.5 - 1.8 m/s). In open space it just coasts;
-   * when a body's pull catches it (the summed field, BODY_G) it falls along the field, lands on that body (its up = the surface normal there) and stays.
-   * One that escapes every well is lost: the shell's rule (esc3), with the long time constants of a slow object. State: c.eV (velocity), c.eUp (local up once landed), c.eEsc. */
+   * No parachute, ever: there is no air. A crate appears at a random point of the box with a small random drift (0.5 -
+   * 1.8 m/s). In open space it just coasts; when a body's pull catches it (the summed field, BODY_G) it falls along the
+   * field, lands on that body (its up = the surface normal there) and stays. One that escapes every well is lost: the
+   * shell's rule (esc3), with the long time constants of a slow object. State: c.eV (velocity), c.eUp (local up once
+   * landed), c.eEsc. */
   const CRK = K.CRATE = { V0: 0.5, V1: 1.8, ESC_T: 20, AGE: 600, FREE: 0.6, FREE_F: 0.12, CLEAR: 2.0 };
   const cn = { x: 0, y: 1, z: 0 };
-  E.crate_init = function (c) { c.eV = { x: 0, y: 0, z: 0 }; c.eUp = { x: 0, y: 1, z: 0 }; c.eEsc = 0; return c; };
+  E.crate_init = function (c) {
+    c.eV = { x: 0, y: 0, z: 0 };
+    c.eUp = { x: 0, y: 1, z: 0 };
+    c.eEsc = 0;
+    return c;
+  };
   // a drifting start: a random direction, 0.5 - 1.8 m/s (S.armRng, the supply stream)
   E.crate_drift = function (S, c) {
-    const R = S.armRng, u = M.rng_range(R, -1, 1), a = M.rng_range(R, 0, TAU), s2 = Math.sqrt(M.max(0, 1 - u * u)), v = M.rng_range(R, CRK.V0, CRK.V1);
+    const R = S.armRng,
+      u = M.rng_range(R, -1, 1),
+      a = M.rng_range(R, 0, TAU),
+      s2 = Math.sqrt(M.max(0, 1 - u * u)),
+      v = M.rng_range(R, CRK.V0, CRK.V1);
     if (!c.eV) E.crate_init(c);
-    c.eV.x = s2 * M.cos(a) * v; c.eV.y = u * v; c.eV.z = s2 * M.sin(a) * v; return c;
+    c.eV.x = s2 * M.cos(a) * v;
+    c.eV.y = u * v;
+    c.eV.z = s2 * M.sin(a) * v;
+    return c;
   };
-  const clearAt = (w, x, y, z, r) => w.sample(x, y, z) < -0.5 && w.sample(x + r, y, z) < 0 && w.sample(x - r, y, z) < 0 && w.sample(x, y + r, z) < 0 && w.sample(x, y - r, z) < 0 && w.sample(x, y, z + r) < 0 && w.sample(x, y, z - r) < 0;
-  // a random spot in the box, in the open: 60 % in the weak-field gaps (it floats for a while), the rest anywhere (a well catches it at once)
+  const clearAt = (w, x, y, z, r) => w.sample(x, y, z) < -0.5
+    && w.sample(x + r, y, z) < 0
+    && w.sample(x - r, y, z) < 0
+    && w.sample(x, y + r, z) < 0
+    && w.sample(x, y - r, z) < 0
+    && w.sample(x, y, z + r) < 0
+    && w.sample(x, y, z - r) < 0;
+  // a random spot in the box, in the open: 60 % in the weak-field gaps (it floats for a while), the rest anywhere (a
+  // well catches it at once)
   E.crate_spot = function (S) {
     const w = W(), R = S.armRng, free = M.rng_next(R) < CRK.FREE;
     for (let t = 0; t < 60; t++) {
       const x = M.rng_range(R, 8, w.SX - 8), y = M.rng_range(R, 6, w.SY - 6), z = M.rng_range(R, 8, w.SZ - 8);
       if (!clearAt(w, x, y, z, CRK.CLEAR)) continue;
-      field(S, x, y, z, fg); if (free && M.len3(fg.x, fg.y, fg.z) > CRK.FREE_F && t < 50) continue;
+      field(S, x, y, z, fg);
+      if (free && M.len3(fg.x, fg.y, fg.z) > CRK.FREE_F && t < 50) continue;
       if (S.eow.hot && E.hot_near(S, x, y, z)) continue;
       return { x, y, z };
     }
     return null;
   };
-  // the supply of one turn (hook in weapons.js turn_start; per-type rates of the crate settings when the rules branch provides them, else the old chance)
+  // the supply of one turn (hook in weapons.js turn_start; per-type rates of the crate settings when the rules branch
+  // provides them, else the old chance)
   E.crate_turn = function (S, first) {
     if (first || S.turnNo < 2 || !S.active) return;
-    const WP = SS.weapons, CR = WP.CRATE, R = S.armRng, rate = typeof WP.crate_chance === 'function' ? WP.crate_chance(S, 'weapon') : CR.CHANCE;
+    const WP = SS.weapons,
+      CR = WP.CRATE,
+      R = S.armRng,
+      rate = typeof WP.crate_chance === 'function' ? WP.crate_chance(S, 'weapon') : CR.CHANCE;
     if (M.rng_next(R) >= rate) return;
     if (!WP.crate_room(S, false)) return;
-    const p = E.crate_spot(S); if (!p) return;
-    const kind = M.rng_next(R) < CR.HEALTH ? 'health' : 'weapon', w0 = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(M.rng_next(R)) : C.CRATE_POOL[Math.floor(M.rng_next(R) * C.CRATE_POOL.length)]) : null, weapon = w0 && E.no_air(w0) ? 'bazooka' : w0;
-    const c = WP.crate_make(S, kind, weapon, null, p); E.crate_drift(S, c); S.crates.push(c);
+    const p = E.crate_spot(S);
+    if (!p) return;
+    const kind = M.rng_next(R) < CR.HEALTH ? 'health' : 'weapon',
+      w0 = kind === 'weapon'
+        ? (SS.balance ? SS.balance.crate_pick(M.rng_next(R)) : C.CRATE_POOL[Math.floor(M.rng_next(R) * C.CRATE_POOL.length)])
+        : null,
+      weapon = w0 && E.no_air(w0) ? 'bazooka' : w0;
+    const c = WP.crate_make(S, kind, weapon, null, p);
+    E.crate_drift(S, c);
+    S.crates.push(c);
     SS.sim.emit(S, 'banner', { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
   };
-  // P84 x P86: the round's crate plan (skills.crate_plan) chose this turn and the kind; in space it appears at a random spot and drifts
+  // P84 x P86: the round's crate plan (skills.crate_plan) chose this turn and the kind; in space it appears at a random
+  // spot and drifts
   E.crate_drop = function (S, kind) {
     const WP = SS.weapons, R = S.armRng;
     if (!WP.crate_room(S, false)) return;
-    const p = E.crate_spot(S); if (!p) return;
-    const w0 = kind === 'weapon' ? (SS.balance ? SS.balance.crate_pick(M.rng_next(R)) : C.CRATE_POOL[Math.floor(M.rng_next(R) * C.CRATE_POOL.length)]) : null;
-    const c = WP.crate_make(S, kind, w0 && E.no_air(w0) ? 'bazooka' : w0, null, p); E.crate_drift(S, c); S.crates.push(c);
+    const p = E.crate_spot(S);
+    if (!p) return;
+    const w0 = kind === 'weapon'
+      ? (SS.balance ? SS.balance.crate_pick(M.rng_next(R)) : C.CRATE_POOL[Math.floor(M.rng_next(R) * C.CRATE_POOL.length)])
+      : null;
+    const c = WP.crate_make(S, kind, w0 && E.no_air(w0) ? 'bazooka' : w0, null, p);
+    E.crate_drift(S, c);
+    S.crates.push(c);
     SS.sim.emit(S, 'banner', { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
   };
   // a tool delivery / the overload at a random spot (skills.js hooks)
   E.crate_add = function (S, kind, weapon, tool) {
-    const p = E.crate_spot(S); if (!p) return null;
-    const c = SS.weapons.crate_make(S, kind, weapon && E.no_air(weapon) ? 'bazooka' : weapon, tool, p); E.crate_drift(S, c); S.crates.push(c); return c;
+    const p = E.crate_spot(S);
+    if (!p) return null;
+    const c = SS.weapons.crate_make(S, kind, weapon && E.no_air(weapon) ? 'bazooka' : weapon, tool, p);
+    E.crate_drift(S, c);
+    S.crates.push(c);
+    return c;
   };
-  // the surface normal around a point, smoothed over 0.45 m (a voxel's gradient alone is noisy on a rough face): the unit sum of the normals at the point and at its six neighbours
+  // the surface normal around a point, smoothed over 0.45 m (a voxel's gradient alone is noisy on a rough face): the
+  // unit sum of the normals at the point and at its six neighbours
   const sn = { x: 0, y: 0, z: 0 };
   function smooth_normal(w, x, y, z, out) {
-    let ax = 0, ay = 0, az = 0; const r = 0.45;
+    let ax = 0, ay = 0, az = 0;
+    const r = 0.45;
     for (let i = 0; i < 7; i++) {
-      const o = i === 0 ? 0 : r, dx = i === 1 ? o : i === 2 ? -o : 0, dy = i === 3 ? o : i === 4 ? -o : 0, dz = i === 5 ? o : i === 6 ? -o : 0;
-      w.normal(x + dx, y + dy, z + dz, sn); ax += sn.x; ay += sn.y; az += sn.z;
+      const o = i === 0 ? 0 : r,
+        dx = i === 1 ? o : i === 2 ? -o : 0,
+        dy = i === 3 ? o : i === 4 ? -o : 0,
+        dz = i === 5 ? o : i === 6 ? -o : 0;
+      w.normal(x + dx, y + dy, z + dz, sn);
+      ax += sn.x;
+      ay += sn.y;
+      az += sn.z;
     }
-    const l = M.len3(ax, ay, az); if (l < 1e-6) { out.x = out.y = out.z = 0; return out; }
-    out.x = ax / l; out.y = ay / l; out.z = az / l; return out;
+    const l = M.len3(ax, ay, az);
+    if (l < 1e-6) {
+      out.x = out.y = out.z = 0;
+      return out;
+    }
+    out.x = ax / l;
+    out.y = ay / l;
+    out.z = az / l;
+    return out;
   }
-  // the local up of a resting object: the smoothed surface normal under it when it agrees with the pull's opposite (u0), else u0 (a spike, a crevice)
+  // the local up of a resting object: the smoothed surface normal under it when it agrees with the pull's opposite
+  // (u0), else u0 (a spike, a crevice)
   const lu = { x: 0, y: 1, z: 0 };
   function local_up(w, x, y, z, u0x, u0y, u0z, out) {
     smooth_normal(w, x - u0x * 0.2, y - u0y * 0.2, z - u0z * 0.2, lu);
-    if (M.len3(lu.x, lu.y, lu.z) > 0.3 && lu.x * u0x + lu.y * u0y + lu.z * u0z > 0.5) { out.x = lu.x; out.y = lu.y; out.z = lu.z; } else { out.x = u0x; out.y = u0y; out.z = u0z; }
+    if (M.len3(lu.x, lu.y, lu.z) > 0.3 && lu.x * u0x + lu.y * u0y + lu.z * u0z > 0.5) {
+      out.x = lu.x;
+      out.y = lu.y;
+      out.z = lu.z;
+    } else {
+      out.x = u0x;
+      out.y = u0y;
+      out.z = u0z;
+    }
     return out;
   }
-  const cprobe = (w, x, y, z, r) => w.sample(x, y, z) > 0 || w.sample(x + r, y, z) > 0 || w.sample(x - r, y, z) > 0 || w.sample(x, y + r, z) > 0 || w.sample(x, y - r, z) > 0 || w.sample(x, y, z + r) > 0 || w.sample(x, y, z - r) > 0;
+  const cprobe = (w, x, y, z, r) => w.sample(x, y, z) > 0
+    || w.sample(x + r, y, z) > 0
+    || w.sample(x - r, y, z) > 0
+    || w.sample(x, y + r, z) > 0
+    || w.sample(x, y - r, z) > 0
+    || w.sample(x, y, z + r) > 0
+    || w.sample(x, y, z - r) > 0;
   E.crate_up = function (S, c) { return c.eUp || cn; };
-  // one step of a free crate: the field pulls it, it lands on whatever it touches (up = that surface's normal); false = lost to space (remove it)
+  // one step of a free crate: the field pulls it, it lands on whatever it touches (up = that surface's normal); false =
+  // lost to space (remove it)
   E.crate_step = function (S, c, dt) {
-    const w = W(); if (!c.eV) E.crate_init(c);
+    const w = W();
+    if (!c.eV) E.crate_init(c);
     const v = c.eV, sp0 = M.len3(v.x, v.y, v.z), n = M.max(1, Math.ceil(sp0 * dt / 0.15)), h = dt / n, a = C.G * K.BODY_G * h;
     for (let i = 0; i < n; i++) {
-      field(S, c.pos.x, c.pos.y, c.pos.z, fg); v.x += fg.x * a; v.y += fg.y * a; v.z += fg.z * a;
+      field(S, c.pos.x, c.pos.y, c.pos.z, fg);
+      v.x += fg.x * a;
+      v.y += fg.y * a;
+      v.z += fg.z * a;
       const nx = c.pos.x + v.x * h, ny = c.pos.y + v.y * h, nz = c.pos.z + v.z * h;
-      if (!cprobe(w, nx, ny, nz, 0.32)) { c.pos.x = nx; c.pos.y = ny; c.pos.z = nz; continue; }
-      smooth_normal(w, nx, ny, nz, cn); if (M.len3(cn.x, cn.y, cn.z) < 0.3) { const l = M.len3(v.x, v.y, v.z) || 1; cn.x = -v.x / l; cn.y = -v.y / l; cn.z = -v.z / l; }
+      if (!cprobe(w, nx, ny, nz, 0.32)) {
+        c.pos.x = nx;
+        c.pos.y = ny;
+        c.pos.z = nz;
+        continue;
+      }
+      smooth_normal(w, nx, ny, nz, cn);
+      if (M.len3(cn.x, cn.y, cn.z) < 0.3) {
+        const l = M.len3(v.x, v.y, v.z) || 1;
+        cn.x = -v.x / l;
+        cn.y = -v.y / l;
+        cn.z = -v.z / l;
+      }
       const vn = -(v.x * cn.x + v.y * cn.y + v.z * cn.z);
-      c.eUp = { x: cn.x, y: cn.y, z: cn.z }; c.landed = true; v.x = v.y = v.z = 0; c.eEsc = 0;
-      for (let k = 0; k < 40 && cprobe(w, c.pos.x, c.pos.y, c.pos.z, 0.3); k++) { c.pos.x += cn.x * 0.05; c.pos.y += cn.y * 0.05; c.pos.z += cn.z * 0.05; }
+      c.eUp = { x: cn.x, y: cn.y, z: cn.z };
+      c.landed = true;
+      v.x = v.y = v.z = 0;
+      c.eEsc = 0;
+      for (let k = 0; k < 40 && cprobe(w, c.pos.x, c.pos.y, c.pos.z, 0.3); k++) {
+        c.pos.x += cn.x * 0.05;
+        c.pos.y += cn.y * 0.05;
+        c.pos.z += cn.z * 0.05;
+      }
       if (vn > 3) SS.sim.emit(S, 'cratedrop', { x: c.pos.x, y: c.pos.y, z: c.pos.z, v: vn });
       return true;
     }
     const e = esc3(S, c.pos.x, c.pos.y, c.pos.z, v.x, v.y, v.z, c.eEsc || 0, dt, CRK.ESC_T, CRK.ESC_T);
-    if (e < 0 || S.time - c.t0 > CRK.AGE || c.pos.x < -K.OUT_M * 2 || c.pos.z < -K.OUT_M * 2 || c.pos.x > w.SX + K.OUT_M * 2 || c.pos.z > w.SZ + K.OUT_M * 2 || c.pos.y > w.SY + K.OUT_M * 2 || c.pos.y < 0) {
+    if (
+      e < 0
+      || S.time - c.t0 > CRK.AGE
+      || c.pos.x < -K.OUT_M * 2
+      || c.pos.z < -K.OUT_M * 2
+      || c.pos.x > w.SX + K.OUT_M * 2
+      || c.pos.z > w.SZ + K.OUT_M * 2
+      || c.pos.y > w.SY + K.OUT_M * 2
+      || c.pos.y < 0
+    ) {
       SS.sim.emit(S, 'cratelost', { x: c.pos.x, y: c.pos.y, z: c.pos.z });
       SS.sim.log(S, 'A supply crate drifted off into space.', 0x9fd0ff); return false;
     }
     c.eEsc = e; return true;
   };
   // a landed crate whose ground (along its up) was blasted away is free again
-  E.crate_loose = function (S, c) { const u = c.eUp || cn; return !cprobe(W(), c.pos.x - u.x * 0.4, c.pos.y - u.y * 0.4, c.pos.z - u.z * 0.4, 0.2); };
+  E.crate_loose = function (S, c) {
+    const u = c.eUp || cn;
+    return !cprobe(W(), c.pos.x - u.x * 0.4, c.pos.y - u.y * 0.4, c.pos.z - u.z * 0.4, 0.2);
+  };
   // a crate thrown by the gravity gun (weapons.js flyCrate): the field instead of -y
-  E.crate_g = function (S, c, dt) { field(S, c.pos.x, c.pos.y, c.pos.z, fg); const a = C.G * K.BODY_G * dt; c.vel.x += fg.x * a; c.vel.y += fg.y * a; c.vel.z += fg.z * a; };
+  E.crate_g = function (S, c, dt) {
+    field(S, c.pos.x, c.pos.y, c.pos.z, fg);
+    const a = C.G * K.BODY_G * dt;
+    c.vel.x += fg.x * a;
+    c.vel.y += fg.y * a;
+    c.vel.z += fg.z * a;
+  };
   // after a thrown crate touched down: its up from the terrain's normal, placed along it
   E.crate_settle = function (S, c) {
-    const w = W(); smooth_normal(w, c.pos.x, c.pos.y, c.pos.z, cn); if (M.len3(cn.x, cn.y, cn.z) < 0.3) { cn.x = 0; cn.y = 1; cn.z = 0; }
-    c.eUp = { x: cn.x, y: cn.y, z: cn.z }; if (c.eV) c.eV.x = c.eV.y = c.eV.z = 0;
-    for (let k = 0; k < 40 && cprobe(w, c.pos.x, c.pos.y, c.pos.z, 0.3); k++) { c.pos.x += cn.x * 0.05; c.pos.y += cn.y * 0.05; c.pos.z += cn.z * 0.05; }
+    const w = W();
+    smooth_normal(w, c.pos.x, c.pos.y, c.pos.z, cn);
+    if (M.len3(cn.x, cn.y, cn.z) < 0.3) {
+      cn.x = 0;
+      cn.y = 1;
+      cn.z = 0;
+    }
+    c.eUp = { x: cn.x, y: cn.y, z: cn.z };
+    if (c.eV) c.eV.x = c.eV.y = c.eV.z = 0;
+    for (let k = 0; k < 40 && cprobe(w, c.pos.x, c.pos.y, c.pos.z, 0.3); k++) {
+      c.pos.x += cn.x * 0.05;
+      c.pos.y += cn.y * 0.05;
+      c.pos.z += cn.z * 0.05;
+    }
   };
   // left the box / every well while thrown: lost
-  E.crate_out = function (S, c) { const w = W(); return c.pos.x < -K.OUT_M * 2 || c.pos.z < -K.OUT_M * 2 || c.pos.x > w.SX + K.OUT_M * 2 || c.pos.z > w.SZ + K.OUT_M * 2 || c.pos.y > w.SY + K.OUT_M * 2 || c.pos.y < 0; };
+  E.crate_out = function (S, c) {
+    const w = W();
+    return c.pos.x < -K.OUT_M * 2
+      || c.pos.z < -K.OUT_M * 2
+      || c.pos.x > w.SX + K.OUT_M * 2
+      || c.pos.z > w.SZ + K.OUT_M * 2
+      || c.pos.y > w.SY + K.OUT_M * 2
+      || c.pos.y < 0;
+  };
 
   const sa = { s: 0, y: 0, x: 0, z: 0 };
-  // the sheep walks on any side of a chunk: sheepStep of weapons.js in the frame of the local up (u) and tangent (t = u rotated clockwise)
+  // the sheep walks on any side of a chunk: sheepStep of weapons.js in the frame of the local up (u) and tangent (t = u
+  // rotated clockwise)
   E.sheep = function (S, p, dt, pd) {
     const R = 0.3, WP = SS.weapons, sim = SS.sim, d = P.dir(S), wl = P.to_world(S, p.s, p.y);
     down_at(S, wl.x, p.y, wl.z, cg);
-    let gs = cg.x * d.x + cg.z * d.z, gy = cg.y; const gl = M.len2(gs, gy) || 1; gs /= gl; gy /= gl;
+    let gs = cg.x * d.x + cg.z * d.z, gy = cg.y;
+    const gl = M.len2(gs, gy) || 1;
+    gs /= gl;
+    gy /= gl;
     const us = -gs, uy = -gy, ts = uy, ty = -us;
     if (p.eT == null) p.eT = p.dir;                                  // +1: along t
-    if (p.eU == null) { p.eU = 1; p.eT = Math.abs(ts) > 0.3 ? p.dir * (ts >= 0 ? 1 : -1) : p.dir; }
+    if (p.eU == null) {
+      p.eU = 1;
+      p.eT = Math.abs(ts) > 0.3 ? p.dir * (ts >= 0 ? 1 : -1) : p.dir;
+    }
     E.proj_acc(S, wl.x, p.y, wl.z, d.x, d.z, sa); p.vs += sa.s * dt; p.vy += sa.y * dt;
     let ns = p.s + p.vs * dt, ny = p.y + p.vy * dt;
     const below = P.blocked2(S, p.s - us * (R + 0.04), p.y - uy * (R + 0.04)), vu = p.vs * us + p.vy * uy;
-    if (P.blocked2(S, ns - us * R, ny - uy * R) && vu < 0) { ns = p.s; ny = p.y; p.vs -= us * vu; p.vy -= uy * vu; }                // landed: no more speed into the ground
+    // landed: no more speed into the ground
+    if (P.blocked2(S, ns - us * R, ny - uy * R) && vu < 0) {
+      ns = p.s;
+      ny = p.y;
+      p.vs -= us * vu;
+      p.vy -= uy * vu;
+    }
     const fs = p.eT * ts, fy = p.eT * ty;                           // forward in the plane
     if (P.blocked2(S, ns + us * 0.1, ny + uy * 0.1) || P.blocked2(S, ns + fs * R, ny + fy * R)) {
-      let up = 0; while (up < 0.5 && P.blocked2(S, ns + fs * R + us * up, ny + fy * R + uy * up)) up += 0.1;
-      if (up < 0.5 && below) { ns += us * up; ny += uy * up; } else { ns = p.s; ny = p.y; p.block += dt; p.vs *= 0.5; p.vy *= 0.5; }
+      let up = 0;
+      while (up < 0.5 && P.blocked2(S, ns + fs * R + us * up, ny + fy * R + uy * up)) up += 0.1;
+      if (up < 0.5 && below) {
+        ns += us * up;
+        ny += uy * up;
+      } else {
+        ns = p.s;
+        ny = p.y;
+        p.block += dt;
+        p.vs *= 0.5;
+        p.vy *= 0.5;
+      }
     } else p.block = 0;
     if (below) {
       p.vs = fs * pd.walk; p.vy = fy * pd.walk; p.hopT -= dt;
-      if (p.block > 0.35) { p.eT = -p.eT; p.block = 0; }
+      if (p.block > 0.35) {
+        p.eT = -p.eT;
+        p.block = 0;
+      }
       if (p.hopT <= 0) {
         p.vs = fs * pd.hopVx + us * pd.hopVy; p.vy = fy * pd.hopVx + uy * pd.hopVy; p.hopT = M.rng_range(S.armRng, pd.hop0, pd.hop1);
         if (M.rng_next(S.armRng) < 0.4) sim.emit(S, 'baa', { x: wl.x, y: p.y, z: wl.z });
       }
     }
-    for (let k = 0; k < 14 && P.blocked2(S, ns - us * R * 0.6, ny - uy * R * 0.6); k++) { ns += us * 0.05; ny += uy * 0.05; }   // never sink into the ground
+    // never sink into the ground
+    for (let k = 0; k < 14 && P.blocked2(S, ns - us * R * 0.6, ny - uy * R * 0.6); k++) {
+      ns += us * 0.05;
+      ny += uy * 0.05;
+    }
     p.s = ns; p.y = ny; p.dir = Math.abs(fs) > 0.2 ? (fs >= 0 ? 1 : -1) : p.dir;
     p.eus = us; p.euy = uy;                                          // (render: the sheep lies along its surface)
     const wp = P.to_world(S, p.s, p.y);
     if (p.y < 0.5 || surf_dist(S, wp.x, p.y, wp.z) > K.VOID_D) return 'gone';
     p.fuse -= dt;
-    if (p.fuse <= 0) { WP.detonate(S, p, wp); return 'gone'; }
+    if (p.fuse <= 0) {
+      WP.detonate(S, p, wp);
+      return 'gone';
+    }
     return true;
   };
   // devices (magnet, spring trap ...) fall along the field instead of -y: d.gv = the speed along it
   E.dev_fall = function (S, d, dt) {
-    const w = W(); down_at(S, d.pos.x, d.pos.y, d.pos.z, cg);
+    const w = W();
+    down_at(S, d.pos.x, d.pos.y, d.pos.z, cg);
     if (!d.eu) d.eu = { x: 0, y: 1, z: 0 };
     const below = w.sample(d.pos.x + cg.x * 0.18, d.pos.y + cg.y * 0.18, d.pos.z + cg.z * 0.18) > 0;
-    if (below) local_up(w, d.pos.x, d.pos.y, d.pos.z, -cg.x, -cg.y, -cg.z, d.eu); else { d.eu.x = -cg.x; d.eu.y = -cg.y; d.eu.z = -cg.z; }   // P86: its local up (sentry, mine, claymore ... follow it, render and aim): the surface it rests on, else the pull's opposite
-    if (below) { d.gv = 0; d.vy = 0; for (let k = 0; k < 40 && w.sample(d.pos.x + cg.x * 0.1, d.pos.y + cg.y * 0.1, d.pos.z + cg.z * 0.1) > 0; k++) { d.pos.x -= cg.x * 0.05; d.pos.y -= cg.y * 0.05; d.pos.z -= cg.z * 0.05; } return true; }
-    d.gv = (d.gv || 0) + C.G * K.PROJ_G * dt; d.pos.x += cg.x * d.gv * dt; d.pos.y += cg.y * d.gv * dt; d.pos.z += cg.z * d.gv * dt;
+    // P86: its local up (sentry, mine, claymore ... follow it, render and aim): the surface it rests on, else the
+    // pull's opposite
+    if (below) local_up(w, d.pos.x, d.pos.y, d.pos.z, -cg.x, -cg.y, -cg.z, d.eu);
+    else {
+      d.eu.x = -cg.x;
+      d.eu.y = -cg.y;
+      d.eu.z = -cg.z;
+    }
+    if (below) {
+      d.gv = 0;
+      d.vy = 0;
+      for (let k = 0; k < 40 && w.sample(d.pos.x + cg.x * 0.1, d.pos.y + cg.y * 0.1, d.pos.z + cg.z * 0.1) > 0; k++) {
+        d.pos.x -= cg.x * 0.05;
+        d.pos.y -= cg.y * 0.05;
+        d.pos.z -= cg.z * 0.05;
+      }
+      return true;
+    }
+    d.gv = (d.gv || 0) + C.G * K.PROJ_G * dt;
+    d.pos.x += cg.x * d.gv * dt;
+    d.pos.y += cg.y * d.gv * dt;
+    d.pos.z += cg.z * d.gv * dt;
     return surf_dist(S, d.pos.x, d.pos.y, d.pos.z) < K.VOID_D && d.pos.y > 0.3;
   };
 
   /* ================= spawns away from the heat (P68g) ================= */
-  // true when a glowing vein (lava) is within 1.5 m of the point: no worm, crate or prop spawns there (rock that burns, and its glow)
+  // true when a glowing vein (lava) is within 1.5 m of the point: no worm, crate or prop spawns there (rock that burns,
+  // and its glow)
   E.hot_near = function (S, x, y, z) {
-    const R = 1.5, Hs = S.eow.hot, Pk = S.eow.pockets, w = W(); let near = false;
-    for (let i = 0; i < Hs.length && !near; i++) { const g = Hs[i]; near = M.len3(x - g.x, y - g.y, z - g.z) < g.r + R + 1.5; }
-    for (let i = 0; i < Pk.length && !near; i++) { const g = Pk[i]; near = M.len3(x - g.x, y - g.y, z - g.z) < g.r + R + 1.5; }
-    if (!near) return false;
-    for (let k = -3; k <= 3; k++) for (let j = -3; j <= 3; j++) for (let i = -3; i <= 3; i++) {
-      const dx = i * 0.5, dy = j * 0.5, dz = k * 0.5; if (dx * dx + dy * dy + dz * dz > R * R) continue;
-      if (w.mat_at(x + dx, y + dy, z + dz) === MAT.LAVA) return true;
+    const R = 1.5, Hs = S.eow.hot, Pk = S.eow.pockets, w = W();
+    let near = false;
+    for (let i = 0; i < Hs.length && !near; i++) {
+      const g = Hs[i];
+      near = M.len3(x - g.x, y - g.y, z - g.z) < g.r + R + 1.5;
     }
+    for (let i = 0; i < Pk.length && !near; i++) {
+      const g = Pk[i];
+      near = M.len3(x - g.x, y - g.y, z - g.z) < g.r + R + 1.5;
+    }
+    if (!near) return false;
+    for (let k = -3; k <= 3; k++)
+      for (let j = -3; j <= 3; j++)
+        for (let i = -3; i <= 3; i++) {
+          const dx = i * 0.5, dy = j * 0.5, dz = k * 0.5;
+          if (dx * dx + dy * dy + dz * dz > R * R) continue;
+          if (w.mat_at(x + dx, y + dy, z + dz) === MAT.LAVA) return true;
+        }
     return false;
   };
 
@@ -997,81 +2151,156 @@
   const dq = { s: 0, y: 0 };
   // the dog's start next to the worm along the worm's own surface frame (up = a.eu2); false = no room
   E.dog_spawn = function (S, a, ap, f) {
-    const KD = C.TOOLB.DOG; ensure(a);
-    let us = a.eu2.s, uy = a.eu2.y; const l = M.len2(us, uy) || 1; us /= l; uy /= l;
+    const KD = C.TOOLB.DOG;
+    ensure(a);
+    let us = a.eu2.s, uy = a.eu2.y;
+    const l = M.len2(us, uy) || 1;
+    us /= l;
+    uy /= l;
     const ts = uy, ty = -us, fk = Math.abs(ts) > 0.3 ? (ts * f >= 0 ? 1 : -1) : 1, lo = 0.5 - KD.R - 0.05;
     let s0 = ap.s + ts * fk * 0.75 - us * lo, y0 = a.pos.y + ty * fk * 0.75 - uy * lo, up = 0;
-    while (P.blocked2(S, s0, y0) && up < 0.7) { s0 += us * 0.05; y0 += uy * 0.05; up += 0.05; }
+    while (P.blocked2(S, s0, y0) && up < 0.7) {
+      s0 += us * 0.05;
+      y0 += uy * 0.05;
+      up += 0.05;
+    }
     if (P.blocked2(S, s0, y0)) return null;
     dq.s = s0; dq.y = y0; return dq;
   };
-  // stepDog of gadgets.js in the frame of the local up u (against the field) and the forward tangent f; wp = the dog's world position
+  // stepDog of gadgets.js in the frame of the local up u (against the field) and the forward tangent f; wp = the dog's
+  // world position
   E.dog_step = function (S, d, dt, wp) {
     const KD = C.TOOLB.DOG, R = KD.R, dr = P.dir(S);
-    E.proj_acc(S, wp.x, d.y, wp.z, dr.x, dr.z, sa); const g = M.max(M.len2(sa.s, sa.y), 0.5);
+    E.proj_acc(S, wp.x, d.y, wp.z, dr.x, dr.z, sa);
+    const g = M.max(M.len2(sa.s, sa.y), 0.5);
     let us = d.eus == null ? 0 : d.eus, uy = d.euy == null ? 1 : d.euy;
-    if (M.len2(sa.s, sa.y) > 0.3) { us = -sa.s / g; uy = -sa.y / g; }
+    if (M.len2(sa.s, sa.y) > 0.3) {
+      us = -sa.s / g;
+      uy = -sa.y / g;
+    }
     d.eus = us; d.euy = uy;
     const ts = uy, ty = -us;
     if (Math.abs(ts) > 0.3) d.eT = d.dir * (ts >= 0 ? 1 : -1);
     else {                                                              // on a wall: climb toward the target's height
-      let tg = null; for (let i = 0; i < S.worms.length; i++) if (S.worms[i].id === d.target) tg = S.worms[i];
+      let tg = null;
+      for (let i = 0; i < S.worms.length; i++)
+        if (S.worms[i].id === d.target) tg = S.worms[i];
       d.eT = tg && Math.abs(tg.pos.y - d.y) > 0.5 && Math.abs(ty) > 0.3 ? (tg.pos.y > d.y ? 1 : -1) * (ty >= 0 ? 1 : -1) : (d.eT || d.dir);
     }
     const fs = d.eT * ts, fy = d.eT * ty;
     let vu = d.vs * us + d.vy * uy, vt = d.vs * fs + d.vy * fy;
     const grounded = P.blocked2(S, d.s - us * (R + 0.06), d.y - uy * (R + 0.06)) && vu <= 0.01;
     vt += (KD.SPEED - vt) * M.min(1, (grounded ? KD.ACC : 2) * dt);
-    const ahead = R + 0.06 + Math.abs(vt) * dt, px = d.s + fs * ahead, py = d.y + fy * ahead; let need = 0;
-    while (need <= KD.HOP_MAX + 0.01 && (P.blocked2(S, px + us * (need - R + 0.1), py + uy * (need - R + 0.1)) || P.blocked2(S, px + us * (need + R * 0.6), py + uy * (need + R * 0.6)))) need += 0.07;
+    const ahead = R + 0.06 + Math.abs(vt) * dt, px = d.s + fs * ahead, py = d.y + fy * ahead;
+    let need = 0;
+    while (
+      need <= KD.HOP_MAX + 0.01
+      && (
+        P.blocked2(S, px + us * (need - R + 0.1), py + uy * (need - R + 0.1))
+        || P.blocked2(S, px + us * (need + R * 0.6), py + uy * (need + R * 0.6))
+      )
+    ) need += 0.07;
     d.state = grounded ? 0 : 2;
     if (need > 0.001 && grounded) {
-      if (need <= KD.STEP_UP) { d.s += us * need; d.y += uy * need; vu = 0; }
-      else if (need <= KD.HOP_MAX) { vu = Math.sqrt(2 * g * (need + 0.35)); d.hop = 0.3; d.state = 2; SS.sim.emit(S, 'doghop', { x: wp.x, y: wp.y, z: wp.z }); }
-      else { vt = 0; d.state = 1; d.blockT += dt; }
+      if (need <= KD.STEP_UP) {
+        d.s += us * need;
+        d.y += uy * need;
+        vu = 0;
+      }
+      else if (need <= KD.HOP_MAX) {
+        vu = Math.sqrt(2 * g * (need + 0.35));
+        d.hop = 0.3;
+        d.state = 2;
+        SS.sim.emit(S, 'doghop', { x: wp.x, y: wp.y, z: wp.z });
+      }
+      else {
+        vt = 0;
+        d.state = 1;
+        d.blockT += dt;
+      }
     } else if (need > 0.001) vt = M.min(Math.abs(vt), 1.2) * 0.5;
     if (d.state !== 1) d.blockT = 0;
     d.hop = M.max(0, d.hop - dt); vu -= g * dt;
     let ns = d.s + (vt * fs + vu * us) * dt, ny = d.y + (vt * fy + vu * uy) * dt;
-    if (P.blocked2(S, ns + fs * R, ny + fy * R) && !(need <= 0.001)) { ns = d.s; ny = d.y; }
-    if (vu <= 0 && P.blocked2(S, ns - us * R, ny - uy * R)) { let lift = 0; while (P.blocked2(S, ns - us * (R - 0.02), ny - uy * (R - 0.02)) && lift < 0.6) { ns += us * 0.02; ny += uy * 0.02; lift += 0.02; } vu = 0; }
+    if (P.blocked2(S, ns + fs * R, ny + fy * R) && !(need <= 0.001)) {
+      ns = d.s;
+      ny = d.y;
+    }
+    if (vu <= 0 && P.blocked2(S, ns - us * R, ny - uy * R)) {
+      let lift = 0;
+      while (P.blocked2(S, ns - us * (R - 0.02), ny - uy * (R - 0.02)) && lift < 0.6) {
+        ns += us * 0.02;
+        ny += uy * 0.02;
+        lift += 0.02;
+      }
+      vu = 0;
+    }
     if (vu > 0 && P.blocked2(S, ns + us * R, ny + uy * R)) vu = 0;
-    d.s = ns; d.y = ny; d.vs = vt * fs + vu * us; d.vy = vt * fy + vu * uy;
+    d.s = ns;
+    d.y = ny;
+    d.vs = vt * fs + vu * us;
+    d.vy = vt * fy + vu * uy;
     if (grounded) d.dist += Math.abs(vt) * dt;
     const wl = P.to_world(S, d.s, d.y);
-    if (d.y < 0.4 || surf_dist(S, wl.x, d.y, wl.z) > K.VOID_D) { const i = S.dogs.indexOf(d); if (i >= 0) S.dogs.splice(i, 1); }
+    if (d.y < 0.4 || surf_dist(S, wl.x, d.y, wl.z) > K.VOID_D) {
+      const i = S.dogs.indexOf(d);
+      if (i >= 0) S.dogs.splice(i, 1);
+    }
   };
 
   /* ================= vacuum rules (P68d) =================
-   * No air: nothing that needs air works (see docs/notes/P68c.md "Arsenal in vacuum"). no_air(key) = the weapon is disabled in this world. */
-  const NO_AIR = { airstrike: 1, napalm: 1, moai: 1, tesla: 1, parachute: 1, bellows: 1, flamethrower: 1, raven: 1, boomerang: 1, gas: 1, acid: 1 };
+   * No air: nothing that needs air works (see docs/notes/P68c.md "Arsenal in vacuum"). no_air(key) = the weapon is
+   * disabled in this world. */
+  const NO_AIR = {
+    airstrike: 1, napalm: 1, moai: 1, tesla: 1, parachute: 1, bellows: 1, flamethrower: 1, raven: 1, boomerang: 1, gas: 1, acid: 1
+  };
   E.no_air = key => NO_AIR[key] === 1;
   // the index of the body (chunk / hull part / debris) whose surface is nearest to a point (-1: none within 14 m)
   function body_of(S, x, y, z) {
-    const B = S.eow.bodies; let bi = -1, bd = 14;
-    for (let i = 0; i < B.length; i++) { const b = B[i], d = M.len3(x - b.x, y - b.y, z - b.z) - b.R * 1.08; if (d < bd) { bd = d; bi = i; } }
+    const B = S.eow.bodies;
+    let bi = -1, bd = 14;
+    for (let i = 0; i < B.length; i++) {
+      const b = B[i], d = M.len3(x - b.x, y - b.y, z - b.z) - b.R * 1.08;
+      if (d < bd) {
+        bd = d;
+        bi = i;
+      }
+    }
     return bi;
   }
   E.body_of = body_of;
-  // a blast in vacuum: no air shock wave. Only the near-field gas push (inside the crater radius) and, through the rock, a jolt for a worm on the SAME piece
+  // a blast in vacuum: no air shock wave. Only the near-field gas push (inside the crater radius) and, through the
+  // rock, a jolt for a worm on the SAME piece
   E.blast_k = function (S, c, Wkg, w, e) {
     const Rk = 2.83 * M.cbrt(Wkg);
     if (e.r <= Rk * 1.05) return;
     const k = body_of(S, c.x, c.y, c.z) === body_of(S, w.pos.x, w.pos.y, w.pos.z) ? 0.35 * (1 - M.smoothstep(Rk, 2.1 * Rk, e.r)) : 0;
     e.dv *= k; e.dmg *= k;
   };
-  // a shell that has left every gravity well: lost to space. true = remove it (never explodes); it keeps drifting in S.eow.shots for the lost-shot view
-  // the lost-shot rule, shared by the sim (proj_escape) and the CPU's prediction (P68g: it never plans a shot that leaves every well):
-  // eEsc = the seconds spent so far where the field is below ESC_F; returns the new value, or -1 = lost to space
+  // a shell that has left every gravity well: lost to space. true = remove it (never explodes); it keeps drifting in
+  // S.eow.shots for the lost-shot view the lost-shot rule, shared by the sim (proj_escape) and the CPU's prediction
+  // (P68g: it never plans a shot that leaves every well): eEsc = the seconds spent so far where the field is below
+  // ESC_F; returns the new value, or -1 = lost to space
   function esc3(S, x, y, z, vx, vy, vz, eEsc, dt, tRec, tStuck) {
     const wd = W();
-    field(S, x, y, z, fg); const l = M.len3(fg.x, fg.y, fg.z);
+    field(S, x, y, z, fg);
+    const l = M.len3(fg.x, fg.y, fg.z);
     if (l >= K.ESC_F) return 0;
     const out = x < 0 || z < 0 || x > wd.SX || z > wd.SZ || y > wd.SY + 2 || y < 1;
     // receding from the nearest body (any body within the fade range)
-    const B = S.eow.bodies; let bn = -1, bd = 1e9, rec = true;
-    for (let i = 0; i < B.length; i++) { const dd = M.len3(x - B[i].x, y - B[i].y, z - B[i].z) - B[i].R; if (dd < bd) { bd = dd; bn = i; } }
-    if (bn >= 0) { const b = B[bn]; rec = (vx * (x - b.x) + vz * (z - b.z) + vy * (y - b.y)) > 0; }
+    const B = S.eow.bodies;
+    let bn = -1, bd = 1e9, rec = true;
+    for (let i = 0; i < B.length; i++) {
+      const dd = M.len3(x - B[i].x, y - B[i].y, z - B[i].z) - B[i].R;
+      if (dd < bd) {
+        bd = dd;
+        bn = i;
+      }
+    }
+    if (bn >= 0) {
+      const b = B[bn];
+      rec = (vx * (x - b.x) + vz * (z - b.z) + vy * (y - b.y)) > 0;
+    }
     eEsc += dt;
     return eEsc > (rec ? tRec : tStuck) || (out && rec) ? -1 : eEsc;
   }
@@ -1080,9 +2309,26 @@
   E.esc_step = esc_step;
   E.proj_escape = function (S, p, dt) {
     const d = P.dir(S), wl = P.to_world(S, p.s, p.y), e = esc_step(S, wl.x, p.y, wl.z, p.vs, p.vy, d, p.eEsc || 0, dt);
-    if (e >= 0) { p.eEsc = e; return false; }
+    if (e >= 0) {
+      p.eEsc = e;
+      return false;
+    }
     p.eEsc = 0;
-    S.eow.shots.push({ id: p.id | 0, type: p.type, owner: p.owner, x0: wl.x, y0: p.y, z0: wl.z, x: wl.x, y: p.y, z: wl.z, vx: p.vs * d.x, vy: p.vy, vz: p.vs * d.z, t0: S.time });
+    S.eow.shots.push({
+      id: p.id | 0,
+      type: p.type,
+      owner: p.owner,
+      x0: wl.x,
+      y0: p.y,
+      z0: wl.z,
+      x: wl.x,
+      y: p.y,
+      z: wl.z,
+      vx: p.vs * d.x,
+      vy: p.vy,
+      vz: p.vs * d.z,
+      t0: S.time
+    });
     if (S.eow.shots.length > 8) S.eow.shots.shift();
     SS.sim.emit(S, 'eowlost', { x: wl.x, y: p.y, z: wl.z, type: p.type, owner: p.owner, speed: M.len2(p.vs, p.vy) });
     SS.sim.log(S, `${(C.WEAPONS[p.type] || {}).name || p.type} escaped into space.`, 0x9fd0ff);
@@ -1092,57 +2338,122 @@
   E.step = function (S, dt) {
     jet_tick(S, dt);
     const L = S.eow.shots;
-    for (let i = L.length - 1; i >= 0; i--) { const q = L[i]; if (S.time - q.t0 > K.LOST_T) { L.splice(i, 1); continue; } q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt; }
+    for (let i = L.length - 1; i >= 0; i--) {
+      const q = L[i];
+      if (S.time - q.t0 > K.LOST_T) {
+        L.splice(i, 1);
+        continue;
+      }
+      q.x += q.vx * dt;
+      q.y += q.vy * dt;
+      q.z += q.vz * dt;
+    }
   };
   /* ================= local frames for placed objects (P86) =================
-   * A placed object's "up" is the pull's opposite where it sits (d.eu, kept by dev_fall), never the world's y. frame() gives the right-handed basis (e1, u, e2 = e1 x u):
-   * with u = (0, 1, 0) it is the old world basis (x, y, z), so on flat ground nothing changes; the sentry's yaw / pitch, its beam and the claymore's blast are measured in it. */
+   * A placed object's "up" is the pull's opposite where it sits (d.eu, kept by dev_fall), never the world's y. frame()
+   * gives the right-handed basis (e1, u, e2 = e1 x u): with u = (0, 1, 0) it is the old world basis (x, y, z), so on
+   * flat ground nothing changes; the sentry's yaw / pitch, its beam and the claymore's blast are measured in it. */
   const FR0 = { e1x: 1, e1y: 0, e1z: 0, ux: 0, uy: 1, uz: 0, e2x: 0, e2y: 0, e2z: 1 };
   E.frame = function (u, out) {
     const ux = u ? u.x : 0, uy = u ? u.y : 1, uz = u ? u.z : 0;
-    let rx = 1, rz = 0; if (Math.abs(ux) > 0.9) { rx = 0; rz = 1; }
-    const k = rx * ux + rz * uz; let ex = rx - ux * k, ey = -uy * k, ez = rz - uz * k; const l = M.len3(ex, ey, ez) || 1; ex /= l; ey /= l; ez /= l;
-    out.e1x = ex; out.e1y = ey; out.e1z = ez; out.ux = ux; out.uy = uy; out.uz = uz;
+    let rx = 1, rz = 0;
+    if (Math.abs(ux) > 0.9) {
+      rx = 0;
+      rz = 1;
+    }
+    const k = rx * ux + rz * uz;
+    let ex = rx - ux * k, ey = -uy * k, ez = rz - uz * k;
+    const l = M.len3(ex, ey, ez) || 1;
+    ex /= l;
+    ey /= l;
+    ez /= l;
+    out.e1x = ex;
+    out.e1y = ey;
+    out.e1z = ez;
+    out.ux = ux;
+    out.uy = uy;
+    out.uz = uz;
     out.e2x = ey * uz - ez * uy; out.e2y = ez * ux - ex * uz; out.e2z = ex * uy - ey * ux;
     return out;
   };
   // the unit direction of (yaw, pitch) in a frame; out = world vector
   E.fdir = function (F, yaw, pitch, out) {
     const cy = M.cos(yaw) * M.cos(pitch), sp = M.sin(pitch), sy = M.sin(yaw) * M.cos(pitch);
-    out.x = F.e1x * cy + F.ux * sp + F.e2x * sy; out.y = F.e1y * cy + F.uy * sp + F.e2y * sy; out.z = F.e1z * cy + F.uz * sp + F.e2z * sy; return out;
+    out.x = F.e1x * cy + F.ux * sp + F.e2x * sy;
+    out.y = F.e1y * cy + F.uy * sp + F.e2y * sy;
+    out.z = F.e1z * cy + F.uz * sp + F.e2z * sy;
+    return out;
   };
   // a world vector in the frame: out = (along e1, along u, along e2)
   E.floc = function (F, x, y, z, out) {
-    out.x = x * F.e1x + y * F.e1y + z * F.e1z; out.y = x * F.ux + y * F.uy + z * F.uz; out.z = x * F.e2x + y * F.e2y + z * F.e2z; return out;
+    out.x = x * F.e1x + y * F.e1y + z * F.e1z;
+    out.y = x * F.ux + y * F.uy + z * F.uz;
+    out.z = x * F.e2x + y * F.e2y + z * F.e2z;
+    return out;
   };
-  // a claymore lying on a surface: its up is the pull's opposite, its blast / laser runs along the planting direction (the horizontal one, turned onto the surface)
+  // a claymore lying on a surface: its up is the pull's opposite, its blast / laser runs along the planting direction
+  // (the horizontal one, turned onto the surface)
   const cu3 = { x: 0, y: 1, z: 0 };
   E.clay_frame = function (S, c) {
-    down_at(S, c.pos.x, c.pos.y, c.pos.z, cg); local_up(W(), c.pos.x, c.pos.y, c.pos.z, -cg.x, -cg.y, -cg.z, cu3); const ux = cu3.x, uy = cu3.y, uz = cu3.z;
+    down_at(S, c.pos.x, c.pos.y, c.pos.z, cg);
+    local_up(W(), c.pos.x, c.pos.y, c.pos.z, -cg.x, -cg.y, -cg.z, cu3);
+    const ux = cu3.x, uy = cu3.y, uz = cu3.z;
     if (!c.d0) c.d0 = { x: c.dir.x, y: c.dir.y, z: c.dir.z };
-    let tx = c.d0.x, ty = c.d0.y, tz = c.d0.z; const k = tx * ux + ty * uy + tz * uz; tx -= ux * k; ty -= uy * k; tz -= uz * k;
+    let tx = c.d0.x, ty = c.d0.y, tz = c.d0.z;
+    const k = tx * ux + ty * uy + tz * uz;
+    tx -= ux * k;
+    ty -= uy * k;
+    tz -= uz * k;
     let l = M.len3(tx, ty, tz);
-    if (l < 0.3) { tx = -c.pn.z * uy; ty = c.pn.z * ux - c.pn.x * uz; tz = c.pn.x * uy; l = M.len3(tx, ty, tz); }      // (the up lies along the planting direction: use the section's normal x up)
+    // (the up lies along the planting direction: use the section's normal x up)
+    if (l < 0.3) {
+      tx = -c.pn.z * uy;
+      ty = c.pn.z * ux - c.pn.x * uz;
+      tz = c.pn.x * uy;
+      l = M.len3(tx, ty, tz);
+    }
     if (l < 1e-4) return;
-    c.nrm.x = ux; c.nrm.y = uy; c.nrm.z = uz; c.dir.x = tx / l; c.dir.y = ty / l; c.dir.z = tz / l;
+    c.nrm.x = ux;
+    c.nrm.y = uy;
+    c.nrm.z = uz;
+    c.dir.x = tx / l;
+    c.dir.y = ty / l;
+    c.dir.z = tz / l;
   };
 
   /* ================= jetpacks (P86) =================
-   * Replaces the parachute (no air in space). Each team has K.JET.N charges (setting `jetpacks`, default 3) and an ON / OFF switch (key J, the HUD chip) that stays as set when the
-   * turn passes: an armed jetpack protects every worm of its team, on or off turn. Each tick, per worm that is in the air, the path it is on is predicted under the field
-   * (esc3: it stays in a weak field and recedes, or sits far from every surface, for longer than a moment, or leaves the box) and if it will be lost a charge engages: the
-   * worm thrusts toward the nearest body (a short-range controller: a speed that shrinks with the distance, so it arrives at a few m/s) until it touches. 0 charges: it is lost. */
-  const JK = K.JET = { N: 3, A: 30, V: 8, T: 14, GAIN: 6, PRED_H: 0.1, PRED_T: 7, CHECK: 3, T_REC: 1.2, T_STUCK: 3, FAR_T: 1.2, LAND_V: 2.5 };
+   * Replaces the parachute (no air in space). Each team has K.JET.N charges (setting `jetpacks`, default 3) and an ON /
+   * OFF switch (key J, the HUD chip) that stays as set when the turn passes: an armed jetpack protects every worm of
+   * its team, on or off turn. Each tick, per worm that is in the air, the path it is on is predicted under the field
+   * (esc3: it stays in a weak field and recedes, or sits far from every surface, for longer than a moment, or leaves
+   * the box) and if it will be lost a charge engages: the worm thrusts toward the nearest body (a short-range
+   * controller: a speed that shrinks with the distance, so it arrives at a few m/s) until it touches. 0 charges: it is
+   * lost. */
+  const JK =
+    K.JET = { N: 3, A: 30, V: 8, T: 14, GAIN: 6, PRED_H: 0.1, PRED_T: 7, CHECK: 3, T_REC: 1.2, T_STUCK: 3, FAR_T: 1.2, LAND_V: 2.5 };
   E.jet_toggle = function (S, a) {
-    const j = S.eow && S.eow.jet && S.eow.jet[a.team]; if (!j) return;
-    j.on = !j.on; if (!j.on) for (const w of S.worms) if (w.team === a.team) w.eJet = 0;
+    const j = S.eow && S.eow.jet && S.eow.jet[a.team];
+    if (!j) return;
+    j.on = !j.on;
+    if (!j.on)
+      for (const w of S.worms)
+        if (w.team === a.team) w.eJet = 0;
     SS.sim.emit(S, 'eowjetmode', { team: a.team, on: j.on ? 1 : 0, n: j.n });
     SS.sim.log(S, 'Jetpacks ' + (j.on ? 'ARMED' : 'OFF') + ' (' + j.n + ' left).', j.on ? 0x9fd0ff : 0xffb27a);
   };
   const pv = { x: 0, y: 0, z: 0 };
   // the worm's 3D velocity into v (the active worm lives in the section: vs / vy)
   function vel3(S, w, v) {
-    if (SS.sim.ctl(S, w)) { const d = P.dir(S); v.x = w.vs * d.x; v.y = w.vy; v.z = w.vs * d.z; } else { v.x = w.vel.x; v.y = w.vel.y; v.z = w.vel.z; }
+    if (SS.sim.ctl(S, w)) {
+      const d = P.dir(S);
+      v.x = w.vs * d.x;
+      v.y = w.vy;
+      v.z = w.vs * d.z;
+    } else {
+      v.x = w.vel.x;
+      v.y = w.vel.y;
+      v.z = w.vel.z;
+    }
     return v;
   }
   // will a worm at p with velocity v leave every well (or hover far from every surface) before it touches rock?
@@ -1150,54 +2461,113 @@
     const wd = W(), h = JK.PRED_H, a = C.G_WORM * K.WORM_G * SS.sim.gravity_k(S, w) * h;
     let x = p.x, y = p.y, z = p.z, vx = v.x, vy = v.y, vz = v.z, e = 0, far = 0;
     for (let t = 0; t < JK.PRED_T; t += h) {
-      field(S, x, y, z, fg); vx += fg.x * a; vy += fg.y * a; vz += fg.z * a;
+      field(S, x, y, z, fg);
+      vx += fg.x * a;
+      vy += fg.y * a;
+      vz += fg.z * a;
       x += vx * h; y += vy * h; z += vz * h;
       if (wd.sample(x, y, z) > 0) return false;
       if (x < -K.OUT_M || z < -K.OUT_M || x > wd.SX + K.OUT_M || z > wd.SZ + K.OUT_M || y > wd.SY + K.OUT_M || y < -0.8) return true;
-      e = esc3(S, x, y, z, vx, vy, vz, e, h, JK.T_REC, JK.T_STUCK); if (e < 0) return true;
-      far = surf_dist(S, x, y, z) > K.VOID_D - 2 ? far + h : 0; if (far > JK.FAR_T) return true;
+      e = esc3(S, x, y, z, vx, vy, vz, e, h, JK.T_REC, JK.T_STUCK);
+      if (e < 0) return true;
+      far = surf_dist(S, x, y, z) > K.VOID_D - 2 ? far + h : 0;
+      if (far > JK.FAR_T) return true;
     }
     return false;
   }
   E.jet_escapes = (S, w) => escapes(S, w, w.pos, vel3(S, w, pv));
   // the nearest body to thrust toward (the active worm: in its section plane, by the radius the plane cuts)
   function jet_target(S, w) {
-    const B = S.eow.bodies, act = SS.sim.ctl(S, w); let bi = -1, bd = 1e9;
+    const B = S.eow.bodies, act = SS.sim.ctl(S, w);
+    let bi = -1, bd = 1e9;
     if (act) {
       const q = P.to_plane(S, w.pos);
       for (let i = 0; i < B.length; i++) {
-        const bq = P.to_plane(S, B[i]), t = bq.t, R = B[i].R; if (Math.abs(t) > R * 0.85) continue;
-        const d = M.len2(bq.s - q.s, B[i].y - w.pos.y) - Math.sqrt(R * R - t * t); if (d < bd) { bd = d; bi = i; }
+        const bq = P.to_plane(S, B[i]), t = bq.t, R = B[i].R;
+        if (Math.abs(t) > R * 0.85) continue;
+        const d = M.len2(bq.s - q.s, B[i].y - w.pos.y) - Math.sqrt(R * R - t * t);
+        if (d < bd) {
+          bd = d;
+          bi = i;
+        }
       }
     }
-    if (bi < 0) for (let i = 0; i < B.length; i++) { const d = M.len3(B[i].x - w.pos.x, B[i].y - w.pos.y, B[i].z - w.pos.z) - B[i].R; if (d < bd) { bd = d; bi = i; } }
+    if (bi < 0)
+      for (let i = 0; i < B.length; i++) {
+        const d = M.len3(B[i].x - w.pos.x, B[i].y - w.pos.y, B[i].z - w.pos.z) - B[i].R;
+        if (d < bd) {
+          bd = d;
+          bi = i;
+        }
+      }
     return bi;
   }
   const jt = { x: 0, y: 0, z: 0 };
-  // one tick of a thrusting worm: steer toward the body, a speed that shrinks with the distance; false = done (it touched, or the time is up)
+  // one tick of a thrusting worm: steer toward the body, a speed that shrinks with the distance; false = done (it
+  // touched, or the time is up)
   function jet_thrust(S, w, dt) {
     const act = SS.sim.ctl(S, w), grounded = act ? !w.air : w.rest;
-    if (grounded || w.dead || w.drowning || w.swim || (act && S.rope)) { w.eJet = 0; return; }
-    const bi = jet_target(S, w); if (bi < 0) { w.eJet = 0; return; }
-    const b = S.eow.bodies[bi], d = P.dir(S); w.eJb = bi;
+    if (grounded || w.dead || w.drowning || w.swim || (act && S.rope)) {
+      w.eJet = 0;
+      return;
+    }
+    const bi = jet_target(S, w);
+    if (bi < 0) {
+      w.eJet = 0;
+      return;
+    }
+    const b = S.eow.bodies[bi], d = P.dir(S);
+    w.eJb = bi;
     vel3(S, w, pv);
     let dx = b.x - w.pos.x, dy = b.y - w.pos.y, dz = b.z - w.pos.z;
-    if (act) { const q = P.to_plane(S, w.pos), bq = P.to_plane(S, b); dx = (bq.s - q.s) * d.x; dz = (bq.s - q.s) * d.z; }
+    if (act) {
+      const q = P.to_plane(S, w.pos), bq = P.to_plane(S, b);
+      dx = (bq.s - q.s) * d.x;
+      dz = (bq.s - q.s) * d.z;
+    }
     const L = M.len3(dx, dy, dz) || 1, dist = M.max(0, L - b.R), sp = M.clamp(1.5 + 1.2 * Math.sqrt(2 * dist), 2.5, JK.V);
-    let ax = (dx / L * sp - pv.x) * JK.GAIN, ay = (dy / L * sp - pv.y) * JK.GAIN, az = (dz / L * sp - pv.z) * JK.GAIN; const al = M.len3(ax, ay, az);
-    if (al > JK.A) { const k = JK.A / al; ax *= k; ay *= k; az *= k; }
-    if (act) { w.vs += (ax * d.x + az * d.z) * dt; w.vy += ay * dt; } else { w.vel.x += ax * dt; w.vel.y += ay * dt; w.vel.z += az * dt; }
-    const l2 = M.len3(ax, ay, az) || 1; w.eJd.x = ax / l2; w.eJd.y = ay / l2; w.eJd.z = az / l2;             // (render: the plume leaves opposite)
+    let ax = (dx / L * sp - pv.x) * JK.GAIN, ay = (dy / L * sp - pv.y) * JK.GAIN, az = (dz / L * sp - pv.z) * JK.GAIN;
+    const al = M.len3(ax, ay, az);
+    if (al > JK.A) {
+      const k = JK.A / al;
+      ax *= k;
+      ay *= k;
+      az *= k;
+    }
+    if (act) {
+      w.vs += (ax * d.x + az * d.z) * dt;
+      w.vy += ay * dt;
+    } else {
+      w.vel.x += ax * dt;
+      w.vel.y += ay * dt;
+      w.vel.z += az * dt;
+    }
+    // (render: the plume leaves opposite)
+    const l2 = M.len3(ax, ay, az) || 1;
+    w.eJd.x = ax / l2;
+    w.eJd.y = ay / l2;
+    w.eJd.z = az / l2;
     w.eJet -= dt; w.eJh -= dt;
-    if (w.eJh <= 0) { w.eJh = 0.5; SS.sim.emit(S, 'eowjet', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, n: S.eow.jet[w.team].n, phase: 1 }); }
+    if (w.eJh <= 0) {
+      w.eJh = 0.5;
+      SS.sim.emit(S, 'eowjet', { wormId: w.id, x: w.pos.x, y: w.pos.y, z: w.pos.z, n: S.eow.jet[w.team].n, phase: 1 });
+    }
   }
   function jet_tick(S, dt) {
-    const J = S.eow.jet; if (!J) return;
-    for (let t = 0; t < J.length; t++) if (SS.game.is_cpu(S, t)) J[t].on = J[t].n > 0;          // the CPU keeps it armed while it has charges (a deliberate jump is planned to land, so it never wastes one)
+    const J = S.eow.jet;
+    if (!J) return;
+    // the CPU keeps it armed while it has charges (a deliberate jump is planned to land, so it never wastes one)
+    for (let t = 0; t < J.length; t++)
+      if (SS.game.is_cpu(S, t)) J[t].on = J[t].n > 0;
     for (let i = 0; i < S.worms.length; i++) {
-      const w = S.worms[i]; if (w.dead || !w.eup) continue;
-      if (w.eJet > 0) { jet_thrust(S, w, dt); continue; }
-      const j = J[w.team]; if (!j || !j.on || j.n <= 0 || (S.tick + w.id) % JK.CHECK !== 0) continue;
+      const w = S.worms[i];
+      if (w.dead || !w.eup) continue;
+      if (w.eJet > 0) {
+        jet_thrust(S, w, dt);
+        continue;
+      }
+      const j = J[w.team];
+      if (!j || !j.on || j.n <= 0 || (S.tick + w.id) % JK.CHECK !== 0) continue;
       const act = SS.sim.ctl(S, w);
       if (w.drowning || w.swim || (act ? (!w.air || S.rope) : w.rest)) continue;
       if (!escapes(S, w, w.pos, vel3(S, w, pv))) continue;
@@ -1208,22 +2578,42 @@
     }
   }
   E.hash = function (S, mix) {
-    const e = S.eow; if (!e) return;
-    if (e.jet) for (const j of e.jet) { mix(j.n); mix(j.on ? 1 : 0); }
-    for (const w of S.worms) { mix(w.eJet > 0 ? 1 : 0); if (w.dead && w.grave) { mix(w.grave.x); mix(w.grave.y); mix(w.grave.z); } }
-    for (const c of S.crates) if (c.eV) { mix(c.eV.x); mix(c.eV.y); mix(c.eV.z); }
+    const e = S.eow;
+    if (!e) return;
+    if (e.jet)
+      for (const j of e.jet) {
+        mix(j.n);
+        mix(j.on ? 1 : 0);
+      }
+    for (const w of S.worms) {
+      mix(w.eJet > 0 ? 1 : 0);
+      if (w.dead && w.grave) {
+        mix(w.grave.x);
+        mix(w.grave.y);
+        mix(w.grave.z);
+      }
+    }
+    for (const c of S.crates)
+      if (c.eV) {
+        mix(c.eV.x);
+        mix(c.eV.y);
+        mix(c.eV.z);
+      }
   };
 
   /* ================= the walk's facing in the worm's own frame (P86) =================
-   * The sim's facing is the SCREEN side (aim, shots). The body is drawn along its own tangent t (clockwise: ts = u.y), so on the underside the screen side and the body's
-   * forward are opposite: the animation ran backwards there. look_face gives the draw facing: along a floor / ceiling (|ts| > 0.25) the screen side times sign(ts); on a wall,
-   * where the screen says nothing, the walking sense (eSense); in the air the last grounded one. prev = the last result (or 0). */
+   * The sim's facing is the SCREEN side (aim, shots). The body is drawn along its own tangent t (clockwise: ts = u.y),
+   * so on the underside the screen side and the body's forward are opposite: the animation ran backwards there.
+   * look_face gives the draw facing: along a floor / ceiling (|ts| > 0.25) the screen side times sign(ts); on a wall,
+   * where the screen says nothing, the walking sense (eSense); in the air the last grounded one. prev = the last result
+   * (or 0). */
   E.look_face = function (f, ts, eSense, flying, prev) {
     if (flying && prev) return prev;
     if (Math.abs(ts) > 0.25) return f * (ts >= 0 ? 1 : -1);
     return eSense >= 0 ? 1 : -1;
   };
-  // the aim angle in the worm's own frame (forward along fr * t, up u) for a screen aim: a = S.aim, f = the screen facing (sim), fr = the draw facing
+  // the aim angle in the worm's own frame (forward along fr * t, up u) for a screen aim: a = S.aim, f = the screen
+  // facing (sim), fr = the draw facing
   E.look_aim = function (aim, f, fr, us, uy) {
     const ts = uy, ty = -us, ax = f * M.cos(aim), ay = M.sin(aim);
     return M.atan2(ax * us + ay * uy, fr * (ax * ts + ay * ty));
@@ -1231,6 +2621,8 @@
 
   // keep the plane-frame up (eu2) of a 3D worm in step with its world up (for the renderer and the next turn)
   function set_up3(S, b) {
-    const d = P.dir(S); b.eu2.s = b.eup.x * d.x + b.eup.z * d.z; b.eu2.y = b.eup.y;
+    const d = P.dir(S);
+    b.eu2.s = b.eup.x * d.x + b.eup.z * d.z;
+    b.eu2.y = b.eup.y;
   }
 })(window.SS = window.SS || {});

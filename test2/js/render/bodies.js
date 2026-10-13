@@ -18,7 +18,12 @@
     const rockMap = tx.rock && tx.rock.isTexture && !tx.rock.isDataArrayTexture ? tx.rock : null;
     mats = {
       crate: new T.MeshStandardMaterial({ map: tx.crate || null, color: tx.crate ? 0xffffff : 0x8a6a48, roughness: 0.8 }),
-      barrel: new T.MeshStandardMaterial({ map: tx.barrel || null, color: tx.barrel ? 0xffffff : 0xb03a22, roughness: 0.45, metalness: 0.35 }),
+      barrel: new T.MeshStandardMaterial({
+        map: tx.barrel || null,
+        color: tx.barrel ? 0xffffff : 0xb03a22,
+        roughness: 0.45,
+        metalness: 0.35
+      }),
       barrelCap: new T.MeshStandardMaterial({ color: 0x7a2a1a, roughness: 0.5, metalness: 0.4 }),
       mine: new T.MeshStandardMaterial({ color: 0x2d3229, roughness: 0.55, metalness: 0.6 }),
       boulder: new T.MeshStandardMaterial({ map: rockMap, color: rockMap ? 0xb8b0a6 : 0x7c746a, roughness: 0.95, flatShading: true }),
@@ -28,12 +33,17 @@
     };
   };
 
-  function std(geo, mat) { const m = new T.Mesh(geo, mat); m.castShadow = m.receiveShadow = true; return m; }
+  function std(geo, mat) {
+    const m = new T.Mesh(geo, mat);
+    m.castShadow = m.receiveShadow = true;
+    return m;
+  }
   /* P24.10 props (PoC PROPS, original shapes): a car (hull, cabin, glass, wheels, lights; paint by id; charred when
    * wrecked), metal junk (fridge, vending machine with a lit panel, red phone booth), stone monuments (fluted
    * column, obelisk). Local frame = the body's (centre of mass at the origin, x = length). */
   const CAR_PAINT = [0xb3261e, 0x1f5fbf, 0xe0b42a, 0x2e7d4f, 0xe8e6e0, 0x2a2a2e];
-  const CAR_TINT = [0xffffff, 0xd8a0a0, 0xf2dc8a, 0x9ec8a8, 0xe8e8e8, 0x808088];   // (the baked sedan is light blue: paint 0 keeps it; the others multiply)
+  // (the baked sedan is light blue: paint 0 keeps it; the others multiply)
+  const CAR_TINT = [0xffffff, 0xd8a0a0, 0xf2dc8a, 0x9ec8a8, 0xe8e8e8, 0x808088];
   const PM = {};
   function pm() {
     if (PM.glass) return PM;
@@ -51,61 +61,120 @@
     PM.sign = new T.MeshStandardMaterial({ color: 0xf4f0e0, emissive: 0xfff0c0, emissiveIntensity: 0.7 });
     return PM;
   }
-  const box = (w, h, d, mat, x, y, z) => { const m = std(new T.BoxGeometry(w, h, d), mat); m.position.set(x || 0, y || 0, z || 0); return m; };
+  const box = (w, h, d, mat, x, y, z) => {
+    const m = std(new T.BoxGeometry(w, h, d), mat);
+    m.position.set(x || 0, y || 0, z || 0);
+    return m;
+  };
   // ASSET: prop_car_* (models/prop_car_[sedan,hatch,pickup,van].glb + wreck)
   function carMesh(b, meshes, g) {
     const bk = SS.models && SS.models.mesh('prop_car_sedan');
     if (bk) {
-      /* P42i: the baked AI sedan (assets/models.js, used for every paint id: tinted by a colour multiply on a cloned material),
-       * stretched to the sim car L x H x W; its wheels reach the contact spheres (y -0.66) a little below, like the box car.
-       * A wreck: the same model charred (dark multiply, no sheen) */
+      /* P42i: the baked AI sedan (assets/models.js, used for every paint id: tinted by a colour multiply on a cloned
+       * material),
+       * stretched to the sim car L x H x W; its wheels reach the contact spheres (y -0.66) a little below, like the box
+       * car. A wreck: the same model charred (dark multiply, no sheen) */
       const bm = bk.children[0], sz = SS.MODELS.prop_car_sedan.size, K0 = SS.CFG.PROPS.CAR;
       bm.material = Array.isArray(bm.material) ? bm.material.map(m => m.clone()) : bm.material.clone();
       for (const m of [].concat(bm.material)) {
         m.userData = { ownMat: true };
-        if (b.wreck) { m.color.setRGB(0.24, 0.14, 0.1); m.roughness = 0.95; m.metalness = 0; }
+        if (b.wreck) {
+          m.color.setRGB(0.24, 0.14, 0.1);
+          m.roughness = 0.95;
+          m.metalness = 0;
+        }
         else if (b.paint % 6 !== 0) m.color.setHex(CAR_TINT[(b.paint | 0) % 6]);
       }
-      if (b.wreck) for (let k = 1; k < bk.children.length; k++) bk.children[k].visible = false;      // P65i: the glass panes are gone
+      // P65i: the glass panes are gone
+      if (b.wreck)
+        for (let k = 1; k < bk.children.length; k++) bk.children[k].visible = false;
       bk.scale.set(K0.L / sz[0], K0.H / sz[1], K0.W / sz[2]); bk.position.y = -0.075;
       g.add(bk); return;
     }
-    const P = pm(), K = SS.CFG.PROPS.CAR, paint = b.wreck ? P.char : new T.MeshStandardMaterial({ color: CAR_PAINT[(b.paint | 0) % 6], roughness: 0.35, metalness: 0.45 });
+    const P = pm(),
+      K = SS.CFG.PROPS.CAR,
+      paint = b.wreck ? P.char : new T.MeshStandardMaterial({ color: CAR_PAINT[(b.paint | 0) % 6], roughness: 0.35, metalness: 0.45 });
     const L = K.L, W = K.W;
     meshes.push(box(L, 0.62, W, paint, 0, -0.28, 0));                                // hull
     meshes.push(box(L * 0.52, 0.55, W * 0.88, paint, -0.25, 0.3, 0));                  // cabin
-    if (!b.wreck) for (const z of [-W * 0.44 - 0.01, W * 0.44 + 0.01]) meshes.push(box(L * 0.46, 0.38, 0.02, P.glass, -0.25, 0.33, z));
-    if (!b.wreck) { meshes.push(box(0.02, 0.38, W * 0.8, P.glass, -0.25 + L * 0.26 + 0.01, 0.33, 0)); meshes.push(box(0.02, 0.36, W * 0.8, P.glass, -0.25 - L * 0.26 - 0.01, 0.33, 0)); }
-    for (const x of [-L * 0.32, L * 0.32]) for (const z of [-W / 2, W / 2]) {
-      const wh = std(new T.CylinderGeometry(0.34, 0.34, 0.24, 18), P.rubber); wh.rotation.x = Math.PI / 2; wh.position.set(x, -0.55, z); meshes.push(wh);
-      const hb = std(new T.CylinderGeometry(0.17, 0.17, 0.26, 12), P.hub); hb.rotation.x = Math.PI / 2; hb.position.set(x, -0.55, z); meshes.push(hb);
+    if (!b.wreck)
+      for (const z of [-W * 0.44 - 0.01, W * 0.44 + 0.01]) meshes.push(box(L * 0.46, 0.38, 0.02, P.glass, -0.25, 0.33, z));
+    if (!b.wreck) {
+      meshes.push(box(0.02, 0.38, W * 0.8, P.glass, -0.25 + L * 0.26 + 0.01, 0.33, 0));
+      meshes.push(box(0.02, 0.36, W * 0.8, P.glass, -0.25 - L * 0.26 - 0.01, 0.33, 0));
     }
-    if (!b.wreck) for (const z of [-W * 0.32, W * 0.32]) { meshes.push(box(0.04, 0.12, 0.26, P.head, L / 2 + 0.01, -0.15, z)); meshes.push(box(0.04, 0.12, 0.22, P.tail, -L / 2 - 0.01, -0.12, z)); }
+    for (const x of [-L * 0.32, L * 0.32])
+      for (const z of [-W / 2, W / 2]) {
+        const wh = std(new T.CylinderGeometry(0.34, 0.34, 0.24, 18), P.rubber);
+        wh.rotation.x = Math.PI / 2;
+        wh.position.set(x, -0.55, z);
+        meshes.push(wh);
+        const hb = std(new T.CylinderGeometry(0.17, 0.17, 0.26, 12), P.hub);
+        hb.rotation.x = Math.PI / 2;
+        hb.position.set(x, -0.55, z);
+        meshes.push(hb);
+      }
+    if (!b.wreck)
+      for (const z of [-W * 0.32, W * 0.32]) {
+        meshes.push(box(0.04, 0.12, 0.26, P.head, L / 2 + 0.01, -0.15, z));
+        meshes.push(box(0.04, 0.12, 0.22, P.tail, -L / 2 - 0.01, -0.12, z));
+      }
     meshes.push(box(0.12, 0.16, W + 0.04, P.dark, L / 2, -0.45, 0), box(0.12, 0.16, W + 0.04, P.dark, -L / 2, -0.45, 0));
   }
   // the lit vending-machine panel: one shared 64 x 96 canvas texture (P38-R2: one per prop was created and never freed)
   let VEND_TX = null;
   function vendTx() {
     if (VEND_TX) return VEND_TX;
-    const cv = document.createElement('canvas'); cv.width = 64; cv.height = 96; const x = cv.getContext('2d'); x.fillStyle = '#0d141b'; x.fillRect(0, 0, 64, 96);
-    const cols = ['#ff4d4d', '#ffd23f', '#4ea8ff', '#79d98b', '#ff9f43']; for (let r = 0; r < 5; r++) for (let k = 0; k < 4; k++) { x.fillStyle = cols[(r + k) % 5]; x.fillRect(6 + k * 14, 8 + r * 17, 9, 12); }
+    const cv = document.createElement('canvas');
+    cv.width = 64;
+    cv.height = 96;
+    const x = cv.getContext('2d');
+    x.fillStyle = '#0d141b';
+    x.fillRect(0, 0, 64, 96);
+    const cols = ['#ff4d4d', '#ffd23f', '#4ea8ff', '#79d98b', '#ff9f43'];
+    for (let r = 0; r < 5; r++)
+      for (let k = 0; k < 4; k++) {
+        x.fillStyle = cols[(r + k) % 5];
+        x.fillRect(6 + k * 14, 8 + r * 17, 9, 12);
+      }
     VEND_TX = new T.CanvasTexture(cv); VEND_TX.userData.shared = true; return VEND_TX;
   }
   // ASSET: prop_fridge / prop_vending / prop_phonebooth (models/prop_*.glb)
   function junkMesh(b, meshes, g) {
     const P = pm(), [w, h, d] = SS.CFG.PROPS.JUNK[b.prop];
     const bk = SS.models && SS.models.mesh('prop_' + b.prop);
-    if (bk) { g.add(bk); return; }                                  // P59: the baked model, fitted to the sim box at bake time (models.json "fit")
+    // P59: the baked model, fitted to the sim box at bake time (models.json "fit")
+    if (bk) {
+      g.add(bk);
+      return;
+    }
     if (b.prop === 'fridge') {
       meshes.push(box(w, h, d, new T.MeshStandardMaterial({ color: [0xf2f2ee, 0xd8e8ef, 0xf6e6c8][b.id % 3], roughness: 0.3 })));
-      meshes.push(box(w + 0.01, 0.02, d + 0.01, P.dark, 0, h * 0.13, 0), box(0.05, 0.36, 0.05, P.chrome, w * 0.36, h * 0.3, d / 2 + 0.03), box(0.05, 0.5, 0.05, P.chrome, w * 0.36, -h * 0.15, d / 2 + 0.03));
+      meshes.push(
+        box(w + 0.01, 0.02, d + 0.01, P.dark, 0, h * 0.13, 0),
+        box(0.05, 0.36, 0.05, P.chrome, w * 0.36, h * 0.3, d / 2 + 0.03),
+        box(0.05, 0.5, 0.05, P.chrome, w * 0.36, -h * 0.15, d / 2 + 0.03)
+      );
     } else if (b.prop === 'vending') {
       meshes.push(box(w, h, d, new T.MeshStandardMaterial({ color: [0xb3141c, 0x1f5fbf, 0x1a1a1a][b.id % 3], roughness: 0.4 })));
-      const tx = vendTx(); const panel = new T.Mesh(new T.PlaneGeometry(w * 0.62, h * 0.68), new T.MeshStandardMaterial({ map: tx, emissive: 0xffffff, emissiveMap: tx, emissiveIntensity: 0.9 }));
-      panel.position.set(-w * 0.1, h * 0.08, d / 2 + 0.005); meshes.push(panel); meshes.push(box(0.16, 0.36, 0.04, P.chrome, w * 0.36, h * 0.08, d / 2 + 0.02));
+      const tx = vendTx();
+      const panel = new T.Mesh(
+        new T.PlaneGeometry(w * 0.62, h * 0.68),
+        new T.MeshStandardMaterial({ map: tx, emissive: 0xffffff, emissiveMap: tx, emissiveIntensity: 0.9 })
+      );
+      panel.position.set(-w * 0.1, h * 0.08, d / 2 + 0.005);
+      meshes.push(panel);
+      meshes.push(box(0.16, 0.36, 0.04, P.chrome, w * 0.36, h * 0.08, d / 2 + 0.02));
     } else {                                                                              // the red phone booth
-      meshes.push(box(w, h * 0.9, d, P.red, 0, -h * 0.05, 0), box(w + 0.1, 0.16, d + 0.1, P.red, 0, h * 0.42, 0), box(w * 0.8, 0.1, d * 0.8, P.red, 0, h * 0.5, 0));
-      for (const z of [d / 2 + 0.01, -d / 2 - 0.01]) for (let r = 0; r < 4; r++) for (let c = 0; c < 2; c++) meshes.push(box(w * 0.3, h * 0.15, 0.02, P.paneG, -w * 0.18 + c * w * 0.36, -h * 0.25 + r * h * 0.17, z));
+      meshes.push(
+        box(w, h * 0.9, d, P.red, 0, -h * 0.05, 0),
+        box(w + 0.1, 0.16, d + 0.1, P.red, 0, h * 0.42, 0),
+        box(w * 0.8, 0.1, d * 0.8, P.red, 0, h * 0.5, 0)
+      );
+      for (const z of [d / 2 + 0.01, -d / 2 - 0.01])
+        for (let r = 0; r < 4; r++)
+          for (let c = 0; c < 2; c++)
+            meshes.push(box(w * 0.3, h * 0.15, 0.02, P.paneG, -w * 0.18 + c * w * 0.36, -h * 0.25 + r * h * 0.17, z));
       meshes.push(box(w * 0.7, 0.12, d + 0.02, P.sign, 0, h * 0.36, 0));
     }
   }
@@ -114,19 +183,40 @@
     const P = pm(), [r0, h] = SS.CFG.PROPS.STONE[b.prop];
     if (b.prop === 'column') {
       const shaft = std(new T.CylinderGeometry(r0 * 0.85, r0 * 0.92, h * 0.86, 20), P.stone), pa = shaft.geometry.attributes.position;
-      for (let i = 0; i < pa.count; i++) { const x = pa.getX(i), z = pa.getZ(i), a = Math.atan2(z, x), k = 1 - 0.05 * Math.pow(Math.abs(Math.cos(a * 10)), 3); pa.setX(i, x * k); pa.setZ(i, z * k); }   // flutes
+      // flutes
+      for (let i = 0; i < pa.count; i++) {
+        const x = pa.getX(i), z = pa.getZ(i), a = Math.atan2(z, x), k = 1 - 0.05 * Math.pow(Math.abs(Math.cos(a * 10)), 3);
+        pa.setX(i, x * k);
+        pa.setZ(i, z * k);
+      }
       shaft.geometry.computeVertexNormals(); meshes.push(shaft);
-      meshes.push(box(r0 * 2.3, h * 0.07, r0 * 2.3, P.stone, 0, h / 2 - h * 0.035, 0), box(r0 * 2.3, h * 0.07, r0 * 2.3, P.stone, 0, -h / 2 + h * 0.035, 0));
+      meshes.push(
+        box(r0 * 2.3, h * 0.07, r0 * 2.3, P.stone, 0, h / 2 - h * 0.035, 0),
+        box(r0 * 2.3, h * 0.07, r0 * 2.3, P.stone, 0, -h / 2 + h * 0.035, 0)
+      );
     } else {
-      const sh = std(new T.CylinderGeometry(r0 * 0.5, r0, h * 0.9, 4, 1), P.stone); sh.rotation.y = Math.PI / 4; sh.position.y = -h * 0.05; meshes.push(sh);
-      const tip = std(new T.ConeGeometry(r0 * 0.5 * 1.414 / 1.414, h * 0.1, 4), P.stone); tip.rotation.y = Math.PI / 4; tip.position.y = h * 0.45; meshes.push(tip);
+      const sh = std(new T.CylinderGeometry(r0 * 0.5, r0, h * 0.9, 4, 1), P.stone);
+      sh.rotation.y = Math.PI / 4;
+      sh.position.y = -h * 0.05;
+      meshes.push(sh);
+      const tip = std(new T.ConeGeometry(r0 * 0.5 * 1.414 / 1.414, h * 0.1, 4), P.stone);
+      tip.rotation.y = Math.PI / 4;
+      tip.position.y = h * 0.45;
+      meshes.push(tip);
     }
   }
   // ASSET: prop_crate, prop_barrel, prop_boulder_[1-4], mine (models/*.glb)
   function propMesh(b, g, meshes) {
-    const baked = (b.prop === 'crate' || b.prop === 'barrel') && SS.models && SS.models.mesh('prop_' + b.prop);   // baked model (assets/models.js) when present
-    if (baked) { g.add(baked); return; }
-    if (b.prop === 'crate') { const h = b.half.x * 2; meshes.push(std(new T.BoxGeometry(h, h, h), mats.crate)); }
+    // baked model (assets/models.js) when present
+    const baked = (b.prop === 'crate' || b.prop === 'barrel') && SS.models && SS.models.mesh('prop_' + b.prop);
+    if (baked) {
+      g.add(baked);
+      return;
+    }
+    if (b.prop === 'crate') {
+      const h = b.half.x * 2;
+      meshes.push(std(new T.BoxGeometry(h, h, h), mats.crate));
+    }
     else if (b.prop === 'barrel') {
       const P = SS.CFG.PROPS.BARREL, side = std(new T.CylinderGeometry(P.R, P.R, P.H * 0.96, 20, 1, true), mats.barrel);
       const cap = std(new T.CylinderGeometry(P.R * 0.97, P.R * 0.97, P.H, 20, 1, false), mats.barrelCap);
@@ -140,11 +230,23 @@
        * emissive lamp sphere stays (the game blinks it) and covers the baked bulb */
       const body = bm ? bm.children[0] : std(new T.CylinderGeometry(P.R * 0.8, P.R, 0.12, 18), mats.mine);
       if (bm) body.position.y = 0.034;
-      const lamp = new T.Mesh(new T.SphereGeometry(bm ? 0.042 : 0.035, 10, 8), new T.MeshStandardMaterial({ color: 0x401010, emissive: 0xff2010, emissiveIntensity: 0.2, transparent: !!bm, opacity: bm ? 0.85 : 1 }));
+      const lamp = new T.Mesh(
+        new T.SphereGeometry(bm ? 0.042 : 0.035, 10, 8),
+        new T.MeshStandardMaterial({
+          color: 0x401010,
+          emissive: 0xff2010,
+          emissiveIntensity: 0.2,
+          transparent: !!bm,
+          opacity: bm ? 0.85 : 1
+        })
+      );
       lamp.position.y = bm ? 0.1 : 0.07; meshes.push(body, lamp);
     } else if (b.prop === 'boulder') {
       // the collision shell (12 jittered icosahedron spheres): push an icosphere's vertices out to the shell
-      const pts = SS.scatter.boulder_pts(b.shapeId || b.id), geo = new T.IcosahedronGeometry(0.42, 1), pa = geo.attributes.position, v = new T.Vector3();
+      const pts = SS.scatter.boulder_pts(b.shapeId || b.id),
+        geo = new T.IcosahedronGeometry(0.42, 1),
+        pa = geo.attributes.position,
+        v = new T.Vector3();
       for (let i = 0; i < pa.count; i++) {
         v.fromBufferAttribute(pa, i).normalize();
         let r = 0.28;
@@ -158,30 +260,53 @@
       }
       geo.computeVertexNormals();
       const beachRock = SS.world.biome === 'beach' && SS.models && SS.models.has('beach_rock_M0');
-      const bk = beachRock ? SS.models.mesh(['beach_rock_M0', 'beach_rock_M1', 'beach_rock_M2'][((SS.math.hash3(b.shapeId || b.id, 9, 3) * 3) | 0) % 3]) : SS.models && SS.models.mesh('prop_boulder');
+      const bk = beachRock
+        ? SS.models.mesh(['beach_rock_M0', 'beach_rock_M1', 'beach_rock_M2'][((SS.math.hash3(b.shapeId || b.id, 9, 3) * 3) | 0) % 3])
+        : SS.models && SS.models.mesh('prop_boulder');
       if (bk && beachRock) {
-        /* P116: the beach's loose boulders are the same smooth granite meshes as the cove's rocks (beach_rock_M*): fitted to the shell's bounding box, the pivot (the stone's centre) corrected by the model's box */
+        /* P116: the beach's loose boulders are the same smooth granite meshes as the cove's rocks (beach_rock_M*):
+         * fitted to the shell's bounding box, the pivot (the stone's centre) corrected by the model's box */
         geo.computeBoundingBox();
         const bb = geo.boundingBox, md = SS.MODELS[bk.userData.model], mb = md.bbox, sz = md.size;
-        const ex = bb.max.x - bb.min.x, ey = bb.max.y - bb.min.y, ez = bb.max.z - bb.min.z, sx = ex / sz[0], sy = ey / sz[1], sz2 = ez / sz[2];
+        const ex = bb.max.x - bb.min.x,
+          ey = bb.max.y - bb.min.y,
+          ez = bb.max.z - bb.min.z,
+          sx = ex / sz[0],
+          sy = ey / sz[1],
+          sz2 = ez / sz[2];
         bk.scale.set(sx, sy, sz2);
-        bk.position.set((bb.min.x + bb.max.x) / 2 - (mb[0] + mb[3]) / 2 * sx, (bb.min.y + bb.max.y) / 2 - (mb[1] + mb[4]) / 2 * sy, (bb.min.z + bb.max.z) / 2 - (mb[2] + mb[5]) / 2 * sz2);
+        bk.position.set(
+          (bb.min.x + bb.max.x) / 2 - (mb[0] + mb[3]) / 2 * sx,
+          (bb.min.y + bb.max.y) / 2 - (mb[1] + mb[4]) / 2 * sy,
+          (bb.min.z + bb.max.z) / 2 - (mb[2] + mb[5]) / 2 * sz2
+        );
         geo.dispose(); g.add(bk);
       } else if (bk) {
-        /* P59: the baked mossy rock, fitted to the bounding box of THIS shell (the sim collides with the shell): turned by a hash-chosen
-         * quarter turn about Y first (so equal shells do not look alike), then stretched per axis; sits on the shell's centre */
+        /* P59: the baked mossy rock, fitted to the bounding box of THIS shell (the sim collides with the shell): turned
+         * by a hash-chosen
+         * quarter turn about Y first (so equal shells do not look alike), then stretched per axis; sits on the shell's
+         * centre */
         geo.computeBoundingBox();
-        const bb = geo.boundingBox, sz = SS.MODELS.prop_boulder.size, q = (SS.math.hash3(b.shapeId || b.id, 7, 3) * 4) | 0, sw = (q & 1) === 1;
+        const bb = geo.boundingBox,
+          sz = SS.MODELS.prop_boulder.size,
+          q = (SS.math.hash3(b.shapeId || b.id, 7, 3) * 4) | 0,
+          sw = (q & 1) === 1;
         const ex = bb.max.x - bb.min.x, ey = bb.max.y - bb.min.y, ez = bb.max.z - bb.min.z;
         const mx = sw ? sz[2] : sz[0], mz = sw ? sz[0] : sz[2];
-        const bm = bk.children[0]; bm.rotation.y = q * Math.PI / 2;
+        const bm = bk.children[0];
+        bm.rotation.y = q * Math.PI / 2;
         bk.scale.set(ex / mx, ey / sz[1], ez / mz);
         bk.position.set((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2);
         geo.dispose(); g.add(bk);
       } else meshes.push(std(geo, mats.boulder));
     } else if (b.prop === 'car') carMesh(b, meshes, g);
     else if (SS.CFG.PROPS.JUNK[b.prop]) junkMesh(b, meshes, g);
-    else if (SS.CFG.PROPS.STONE[b.prop]) { const bk = SS.models && SS.models.mesh('prop_' + b.prop); if (bk) g.add(bk); else stoneMesh(b, meshes); }   // P65e: baked weathered stone
+    // P65e: baked weathered stone
+    else if (SS.CFG.PROPS.STONE[b.prop]) {
+      const bk = SS.models && SS.models.mesh('prop_' + b.prop);
+      if (bk) g.add(bk);
+      else stoneMesh(b, meshes);
+    }
     else meshes.push(std(new T.BoxGeometry(1, 1, 1), mats.prop));
     for (const m of meshes) g.add(m);
   }
@@ -201,14 +326,22 @@
       geo.setAttribute('depth', new T.BufferAttribute(m.depth, 1));
       // texture space = where the rock came from (local + com0), so the strata and grass stay glued to the piece
       const tp = new Float32Array(m.pos.length), c0 = b.com0;
-      for (let i = 0; i < tp.length; i += 3) { tp[i] = m.pos[i] + c0.x; tp[i + 1] = m.pos[i + 1] + c0.y; tp[i + 2] = m.pos[i + 2] + c0.z; }
+      for (let i = 0; i < tp.length; i += 3) {
+        tp[i] = m.pos[i] + c0.x;
+        tp[i + 1] = m.pos[i + 1] + c0.y;
+        tp[i + 2] = m.pos[i + 2] + c0.z;
+      }
       geo.setAttribute('tpos', new T.BufferAttribute(tp, 3));
       geo.setIndex(new T.BufferAttribute(m.idx, 1));
       geo.computeBoundingSphere();
       const BM = TR.bodyMaterials();
-      const slab = new T.Mesh(geo, BM.slab); slab.castShadow = slab.receiveShadow = true; slab.customDepthMaterial = TR.slabDepthMaterial();
-      const pre = new T.Mesh(geo, BM.pre); pre.renderOrder = 4;
-      const far = new T.Mesh(geo, BM.far); far.renderOrder = 5;
+      const slab = new T.Mesh(geo, BM.slab);
+      slab.castShadow = slab.receiveShadow = true;
+      slab.customDepthMaterial = TR.slabDepthMaterial();
+      const pre = new T.Mesh(geo, BM.pre);
+      pre.renderOrder = 4;
+      const far = new T.Mesh(geo, BM.far);
+      far.renderOrder = 5;
       near = new T.Mesh(geo, BM.near); near.renderOrder = 7;
       meshes.push(slab, pre, far, near); g.add(slab, pre, far, near); ctx = [pre, far];
     } else if (b.prop) {
@@ -216,7 +349,10 @@
       if (b.prop === 'mine') lamp = meshes[1];
     } else if (b.kind === 'struct' && b.members && SS.structView) {
       const sg = SS.structView.pieceGroup(b);          // M: a fallen piece of a steel bridge
-      if (sg) { for (const m of sg.meshes) meshes.push(m); g.add(sg.group); }
+      if (sg) {
+        for (const m of sg.meshes) meshes.push(m);
+        g.add(sg.group);
+      }
     } else if (b.kind === 'log' && b.log && SS.treeView && SS.treeView.logGroup) {
       const lg = SS.treeView.logGroup(b.log);       // broken tree part: same bark / foliage look as the standing trees
       for (const m of lg.meshes) meshes.push(m);
@@ -236,34 +372,58 @@
         me.position.set(l.x, l.y, l.z); meshes.push(me); g.add(me);
       }
     } else if (b.kind === 'moai' && SS.armsView) {         // P7: the moai drop's stone head
-      const mg = SS.armsView.moaiGroup(); for (const m of mg.meshes) meshes.push(m); g.add(mg.group);
+      const mg = SS.armsView.moaiGroup();
+      for (const m of mg.meshes) meshes.push(m);
+      g.add(mg.group);
     } else {
-      const geo = b.kind === 'ball' ? new T.SphereGeometry(b.r, 16, 12) : b.half ? new T.BoxGeometry(b.half.x * 2, b.half.y * 2, b.half.z * 2) : new T.SphereGeometry(Math.max(0.1, b.rb * 0.6), 12, 8);
-      const me = std(geo, mats.prop); meshes.push(me); g.add(me);
+      const geo = b.kind === 'ball'
+        ? new T.SphereGeometry(b.r, 16, 12)
+        : b.half
+        ? new T.BoxGeometry(b.half.x * 2, b.half.y * 2, b.half.z * 2)
+        : new T.SphereGeometry(Math.max(0.1, b.rb * 0.6), 12, 8);
+      const me = std(geo, mats.prop);
+      meshes.push(me);
+      g.add(me);
     }
     scene.add(g);
     return { g, meshes, ctx, near, lamp, flame: null, prop: b.prop };
   }
   function drop(id, it) {
     scene.remove(it.g);
-    for (const m of it.meshes) { m.geometry.dispose(); if (m === it.lamp) m.material.dispose(); }
-    it.g.traverse(o => { if (o.isMesh && o.material && o.material.userData && o.material.userData.ownMat) o.material.dispose(); if (o.isMesh && o.userData.skirt) o.geometry.dispose(); });
+    for (const m of it.meshes) {
+      m.geometry.dispose();
+      if (m === it.lamp) m.material.dispose();
+    }
+    it.g.traverse(o => {
+      if (o.isMesh && o.material && o.material.userData && o.material.userData.ownMat) o.material.dispose();
+      if (o.isMesh && o.userData.skirt) o.geometry.dispose();
+    });
     if (it.flame) freeFlame(it.flame);
     items.delete(id);
   }
-  // flames: persistent handles of the fire system (render/flame.js); position.set / scale.set(width, height) give the source
+  // flames: persistent handles of the fire system (render/flame.js); position.set / scale.set(width, height) give the
+  // source
   const FLv = () => SS.flameView;
   function getFlame(seed) { return FLv() ? FLv().handle(seed) : { position: { set() {} }, scale: { set() {} } }; }
-  function freeFlame(f) { if (FLv() && f && f.live !== undefined) FLv().free(f); }
+  function freeFlame(f) {
+    if (FLv() && f && f.live !== undefined) FLv().free(f);
+  }
 
-  /* explosions of this frame (view.js 'explode'): a barrel whose body vanished next to one of them detonated (the sim emits no propbreak for it) */
+  /* explosions of this frame (view.js 'explode'): a barrel whose body vanished next to one of them detonated (the sim
+   * emits no propbreak for it) */
   const blasts = [];
-  BV.noteBlast = function (e) { if (blasts.length < 32) blasts.push(e); };
+  BV.noteBlast = function (e) {
+    if (blasts.length < 32) blasts.push(e);
+  };
   function blastedAt(p) {
-    for (const e of blasts) if (Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) < 0.4) return true;
+    for (const e of blasts)
+      if (Math.hypot(e.x - p.x, e.y - p.y, e.z - p.z) < 0.4) return true;
     return false;
   }
-  BV.clear = function () { if (SS.models && SS.models.clear) SS.models.clear(); for (const [id, it] of items) drop(id, it); };
+  BV.clear = function () {
+    if (SS.models && SS.models.clear) SS.models.clear();
+    for (const [id, it] of items) drop(id, it);
+  };
   BV.frame = function (S, view) {
     const dtF = Math.min(0.05, view.time ? Math.max(0, view.time - time) : 1 / 60);
     if (SS.models && SS.models.update) SS.models.update(dtF);
@@ -276,60 +436,114 @@
     for (const b of S.bodies || []) {
       seen.add(b.id);
       let it = items.get(b.id);
-      if (it && b.prop === 'car' && it.wreck !== !!b.wreck) {   // a car blew up: the wreck look; its glass, bonnet, doors and the insides fly out of the fireball (P65i: baked chunks of prop_car_sedan, chunk order = models.json panels)
-        if (b.wreck && SS.models && SS.models.has('prop_car_sedan')) SS.models.shatter('prop_car_sedan', it.g, b.id, (i, c) => c.glass || !c.chunk || i === 1 || (i >= 4 && i <= 7));
+      // a car blew up: the wreck look; its glass, bonnet, doors and the insides fly out of the fireball (P65i: baked
+      // chunks of prop_car_sedan, chunk order = models.json panels)
+      if (it && b.prop === 'car' && it.wreck !== !!b.wreck) {
+        if (b.wreck && SS.models && SS.models.has('prop_car_sedan'))
+          SS.models.shatter('prop_car_sedan', it.g, b.id, (i, c) => c.glass || !c.chunk || i === 1 || (i >= 4 && i <= 7));
         drop(b.id, it); it = null;
       }
-      if (!it) { it = build(b); if (!it) continue; it.wreck = !!b.wreck; items.set(b.id, it); }
+      if (!it) {
+        it = build(b);
+        if (!it) continue;
+        it.wreck = !!b.wreck;
+        items.set(b.id, it);
+      }
       it.g.position.set(b.pos.x, b.pos.y, b.pos.z); it.g.quaternion.set(b.q.x, b.q.y, b.q.z, b.q.w);
       for (const m of it.ctx) m.visible = ctx;
       if (it.near) it.near.visible = nearOn;
       let shown = true;
-      if (b.kind === 'chunk') { const tc = (b.pos.x - O.x) * n.x + (b.pos.z - O.z) * n.z; shown = insp || SS.section.frontOn || tc >= -back - (b.rb || 1) || ctx; }   // P105: whole-piece culling by its centre (the shader no longer cuts a piece at the back)
+      // P105: whole-piece culling by its centre (the shader no longer cuts a piece at the back)
+      if (b.kind === 'chunk') {
+        const tc = (b.pos.x - O.x) * n.x + (b.pos.z - O.z) * n.z;
+        shown = insp || SS.section.frontOn || tc >= -back - (b.rb || 1) || ctx;
+      }
       else {
         const t = (b.pos.x - O.x) * n.x + (b.pos.z - O.z) * n.z, r = b.rb || 0.5;
         shown = insp || SS.section.frontOn || (t <= r && (t >= -back - r || ctx));
       }
       if (b.prop === 'mine' && shown) shown = SS.view.trapVisible(S, b.team, b.planted, b.revealed || b.armed);   // buried mines
       it.g.visible = shown;
-      if (b.prop && shown && SS.groundView) SS.groundView.conform(b, it, dtF, time);        // P65b: lean / sink onto the ground + the contact shadow
-      if (it.lamp) it.lamp.material.emissiveIntensity = b.disarmed ? 0 : b.armed ? (Math.sin(time * 18) > 0 ? 3.5 : 0.1) : (Math.sin(time * 2.5) > 0.6 ? 1.2 : 0.15);
+      // P65b: lean / sink onto the ground + the contact shadow
+      if (b.prop && shown && SS.groundView) SS.groundView.conform(b, it, dtF, time);
+      if (it.lamp)
+        it.lamp.material.emissiveIntensity = b.disarmed
+          ? 0
+          : b.armed
+          ? (Math.sin(time * 18) > 0 ? 3.5 : 0.1)
+          : (Math.sin(time * 2.5) > 0.6 ? 1.2 : 0.15);
       // burning prop: a flame above it (barrels flare harder towards the end of their burn)
       if (b.burn >= 0 && shown) {
         if (!it.flame) it.flame = getFlame((b.id * 0.618) % 1);
         const grow = Math.min(1, b.burnT / 0.6), big = b.prop === 'barrel' ? 1 + 0.6 * Math.min(1, b.burnT / Math.max(0.1, b.burn)) : 1.2;
-        it.flame.position.set(b.pos.x, b.pos.y - b.rb * 0.4, b.pos.z); if (b.prop === 'car') it.flame.scale.set(2.3 * grow, 1.9 * grow, 1); else it.flame.scale.set(1.1 * big * grow, 1.7 * big * grow, 1);
-      } else if (it.flame) { freeFlame(it.flame); it.flame = null; }
+        it.flame.position.set(b.pos.x, b.pos.y - b.rb * 0.4, b.pos.z);
+        if (b.prop === 'car') it.flame.scale.set(2.3 * grow, 1.9 * grow, 1);
+        else it.flame.scale.set(1.1 * big * grow, 1.7 * big * grow, 1);
+      } else if (it.flame) {
+        freeFlame(it.flame);
+        it.flame = null;
+      }
     }
     for (const [id, it] of items) {
       if (seen.has(id)) continue;
-      if (it.prop === 'barrel' && it.g.visible && blasts.length && blastedAt(it.g.position) && SS.models) SS.models.shatter('prop_barrel', it.g, id);   // the barrel detonated: its baked chunks fly out of the fireball
+      // the barrel detonated: its baked chunks fly out of the fireball
+      if (it.prop === 'barrel' && it.g.visible && blasts.length && blastedAt(it.g.position) && SS.models)
+        SS.models.shatter('prop_barrel', it.g, id);
       drop(id, it);
     }
     blasts.length = 0;
-    // burning ground (napalm / oil / gel / grass): the heat field submits flame sources to the fire system (render/fire.js -> render/flame.js)
+    // burning ground (napalm / oil / gel / grass): the heat field submits flame sources to the fire system
+    // (render/fire.js -> render/flame.js)
     if (SS.fireView) SS.fireView.emit(S);
   };
   BV.flame = seed => getFlame(seed);          // shared flame billboards (actors.js: burning worms)
   BV.unflame = f => freeFlame(f);
-  /* P37 W4 (gravity gun): a glowing cyan outline round a body (an inflated back-face shell of each of its meshes, pulsing);
+  /* P37 W4 (gravity gun): a glowing cyan outline round a body (an inflated back-face shell of each of its meshes,
+   * pulsing);
    * level 0 removes it, 1 = the aimed one, < 1 dimmer, > 1 the held one. Called every frame for the grabbable set. */
   let outMat = null;
   const outlineMaterial = () => outMat || (outMat = new T.ShaderMaterial({
-    uniforms: { uT: { value: 0 }, uLevel: { value: 1 } }, transparent: true, depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide,
+    uniforms: { uT: { value: 0 }, uLevel: { value: 1 } }, transparent: true, depthWrite: false, blending: T.AdditiveBlending,
+    side: T.DoubleSide,
     vertexShader: 'varying float vF; void main(){ vec4 mv = modelViewMatrix * vec4(position + normal * 0.09, 1.0); vec3 n = normalize(normalMatrix * normal); vF = abs(dot(n, normalize(-mv.xyz))); gl_Position = projectionMatrix * mv; }',
     fragmentShader: 'varying float vF; uniform float uT, uLevel; void main(){ float p = 0.7 + 0.3 * sin(uT * 7.0), rim = pow(1.0 - vF, 1.5); float a = (0.16 + 0.8 * rim) * p * uLevel; gl_FragColor = vec4(vec3(0.4, 0.95, 1.0) * a, a); }'
   }));
   BV.outline = function (id, level, t) {
-    const it = items.get(id); if (!it) return;
-    if (!(level > 0)) { if (it.outs) { for (const m of it.outs) m.parent && m.parent.remove(m); it.outs = null; if (it.outMat) { it.outMat.dispose(); it.outMat = null; } } return; }
+    const it = items.get(id);
+    if (!it) return;
+    if (!(level > 0)) {
+      if (it.outs) {
+        for (const m of it.outs) m.parent && m.parent.remove(m);
+        it.outs = null;
+        if (it.outMat) {
+          it.outMat.dispose();
+          it.outMat = null;
+        }
+      }
+      return;
+    }
     if (!it.outs) {
-      it.outs = []; const mat = it.outMat = outlineMaterial().clone(), meshes = []; it.g.traverse(o => { if (o.isMesh && o.geometry && o.geometry.attributes.normal && !o.userData.skirt) meshes.push(o); });
-      for (const o of meshes) { const m = new T.Mesh(o.geometry, mat); m.renderOrder = 9; m.castShadow = false; m.frustumCulled = false; o.add(m); it.outs.push(m); }
+      it.outs = [];
+      const mat = it.outMat = outlineMaterial().clone(), meshes = [];
+      it.g.traverse(o => {
+        if (o.isMesh && o.geometry && o.geometry.attributes.normal && !o.userData.skirt) meshes.push(o);
+      });
+      for (const o of meshes) {
+        const m = new T.Mesh(o.geometry, mat);
+        m.renderOrder = 9;
+        m.castShadow = false;
+        m.frustumCulled = false;
+        o.add(m);
+        it.outs.push(m);
+      }
     }
     it.outMat.uniforms.uT.value = t || time; it.outMat.uniforms.uLevel.value = Math.min(1.6, level);
   };
-  BV.groupOf = id => { const it = items.get(id); return it ? it.g : null; };       // the live group of a body (view.js: a baked prop breaks into its chunks)
+  // the live group of a body (view.js: a baked prop breaks into its chunks)
+  BV.groupOf = id => {
+    const it = items.get(id);
+    return it ? it.g : null;
+  };
   BV.count = () => items.size;
   BV.__items = () => items;                       // tools only (groundshot)
   BV.flameCount = () => [...items.values()].filter(it => it.flame).length + (SS.fireView ? SS.fireView.stats().cells : 0);

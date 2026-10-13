@@ -36,7 +36,8 @@
   };
   const BIOME = {             // multipliers / overrides per map: dry desert air has few, high clouds
     desert: { cuK: 0.35, baseK: 1.7 }, canyon: { cuK: 0.7, baseK: 1.3 }, alpine: { cuK: 1.1, baseK: 0.9 },
-    temperate: { cuK: 1, baseK: 1 }, beach: { cuK: 1.15, baseK: 0.9 }, volcanic: { cuK: 0.8, baseK: 1, plume: true, tint: [0.62, 0.55, 0.5] }
+    temperate: { cuK: 1, baseK: 1 }, beach: { cuK: 1.15, baseK: 0.9 },
+    volcanic: { cuK: 0.8, baseK: 1, plume: true, tint: [0.62, 0.55, 0.5] }
   };
   // visibility (m) for the aerial perspective, per biome x weather
   const VIS = { beach: 42000, temperate: 45000, alpine: 70000, canyon: 32000, desert: 20000, volcanic: 14000 };
@@ -48,7 +49,8 @@
     tA: { value: null }, tB: { value: null }, tC: { value: null }, tLut: { value: null },
     uSun: { value: new T.Vector3(0, 1, 0) }, uSunC: { value: new T.Vector3(1, 1, 1) }, uAmb: { value: new T.Vector3(0.3, 0.35, 0.45) },
     uE: { value: 1.6 }, uVis: { value: 40000 }, uTime: { value: 0 }, uDrift: { value: new T.Vector2() }, uCam: { value: new T.Vector3() },
-    uF: { value: FIELD }, uFarZ: { value: 1 }, uWind: { value: new T.Vector2(1, 0) }, uTint: { value: new T.Vector3(1, 1, 1) }, uDark: { value: 0 }, uOv: { value: 0 }
+    uF: { value: FIELD }, uFarZ: { value: 1 }, uWind: { value: new T.Vector2(1, 0) }, uTint: { value: new T.Vector3(1, 1, 1) },
+    uDark: { value: 0 }, uOv: { value: 0 }
   };
 
   const VERT = /* glsl */`
@@ -56,15 +58,24 @@
     attribute vec4 iA;          // x = atlas cell, y = rotation, z = cloud phase (0..1), w = life period (s; 0 = static)
     attribute vec4 iS;          // x = height in its cloud (0 base .. 1 top), y = sun visibility, z = rank (0 core .. 1 rim), w = darkness
     attribute vec2 iV;          // vertical motion (m/s, plume puffs rise) and growth with age (plume)
-    uniform vec3 uSun, uCam; uniform vec2 uDrift, uWind; uniform float uF, uTime, uFarZ;
-    varying vec2 vUv; varying vec3 vL; varying vec4 vS; varying float vA, vD; varying vec3 vDir;
+    uniform vec3 uSun, uCam;
+    uniform vec2 uDrift, uWind;
+    uniform float uF, uTime, uFarZ;
+    varying vec2 vUv;
+    varying vec3 vL;
+    varying vec4 vS;
+    varying float vA, vD;
+    varying vec3 vDir;
     void main(){
-      vec3 c = iPos.xyz; float sz = iPos.w;
+      vec3 c = iPos.xyz;
+      float sz = iPos.w;
       // life: grows from the core outward, matures, dissipates (period iA.w); the rim puffs come last / go first
       float a = 1.0;
       if (iA.w > 0.0) {
         float ph = fract(uTime / iA.w + iA.z), env = smoothstep(0.0, 0.3, ph) * (1.0 - smoothstep(0.72, 1.0, ph));
-        float r0 = iS.z * 0.75; a = smoothstep(r0, r0 + 0.25, env); sz *= 0.55 + 0.45 * a;
+        float r0 = iS.z * 0.75;
+        a = smoothstep(r0, r0 + 0.25, env);
+        sz *= 0.55 + 0.45 * a;
       }
       if (iV.x != 0.0) {          // plume puffs: rise and spread through their own cycle (iA.w), recycled at the vent
         float ph = fract(uTime / iA.w + iA.z);
@@ -85,19 +96,32 @@
       int cell = int(iA.x + 0.5);
       vUv = (vec2(float(cell % 4), float(3 - cell / 4)) + (q * 0.5 + 0.5)) / 4.0;
       // the sun in the sprite's frame (camera right / up / back, turned by the sprite's rotation)
-      vec3 r = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]), u = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]), b = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+      vec3 r = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]), u = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]),
+        b = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
       vec2 l2 = vec2(dot(uSun, r), dot(uSun, u));
       vL = vec3(mat2(ca, -sa, sa, ca) * l2, dot(uSun, b));
       // per-corner view direction in world space (the sky behind each fragment, not behind the sprite's centre: near
       // the horizon the sky changes fast and a centre lookup left big sprites brighter than the sky around them)
       // haze sits in the boundary layer: the optical distance shrinks with the path's mean height (aerosol scale
       // height 1.2 km), so high cloud tops / the plume stay crisp while low distant clouds melt into the horizon
-      vS = iS; vA = a; vD = length(c - cameraPosition) * exp(-0.5 * max(c.y + cameraPosition.y, 0.0) / 1200.0); vDir = (vec4(normalize(vc), 0.0) * viewMatrix).xyz;
+      vS = iS;
+      vA = a;
+      vD = length(c - cameraPosition) * exp(-0.5 * max(c.y + cameraPosition.y, 0.0) / 1200.0);
+      vDir = (vec4(normalize(vc), 0.0) * viewMatrix).xyz;
     }`;
   const FRAG = /* glsl */`
-    uniform sampler2D tA, tB, tC, tLut; uniform vec3 uSunC, uAmb, uTint; uniform float uE, uVis, uDark, uOv;
-    varying vec2 vUv; varying vec3 vL; varying vec4 vS; varying float vA, vD; varying vec3 vDir;
-    vec2 lutUV(vec3 d){ float el = asin(clamp(d.y, -1.0, 1.0)); return vec2(atan(d.z, d.x) / 6.2831853 + 0.5, 0.5 + 0.5 * sign(el) * sqrt(abs(el) / 1.5707963)); }
+    uniform sampler2D tA, tB, tC, tLut;
+    uniform vec3 uSunC, uAmb, uTint;
+    uniform float uE, uVis, uDark, uOv;
+    varying vec2 vUv;
+    varying vec3 vL;
+    varying vec4 vS;
+    varying float vA, vD;
+    varying vec3 vDir;
+    vec2 lutUV(vec3 d){
+      float el = asin(clamp(d.y, -1.0, 1.0));
+      return vec2(atan(d.z, d.x) / 6.2831853 + 0.5, 0.5 + 0.5 * sign(el) * sqrt(abs(el) / 1.5707963));
+    }
     void main(){
       float al = texture2D(tC, vUv).r * vA;
       if (al < 0.003) discard;
@@ -131,13 +155,20 @@
     geo.setIndex([0, 1, 2, 0, 2, 3]);
     I = { pos: new Float32Array(MAXN * 4), a: new Float32Array(MAXN * 4), s: new Float32Array(MAXN * 4), v: new Float32Array(MAXN * 2) };
     for (const [k, w] of [['iPos', 4], ['iA', 4], ['iS', 4], ['iV', 2]]) {
-      const at = new T.InstancedBufferAttribute(new Float32Array(MAXN * w), w); at.setUsage(T.DynamicDrawUsage); geo.setAttribute(k, at);
+      const at = new T.InstancedBufferAttribute(new Float32Array(MAXN * w), w);
+      at.setUsage(T.DynamicDrawUsage);
+      geo.setAttribute(k, at);
     }
     geo.instanceCount = 0;
-    mat = new T.ShaderMaterial({ uniforms: U, vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, depthTest: true,
-      blending: T.CustomBlending, blendSrc: T.OneFactor, blendDst: T.OneMinusSrcAlphaFactor, blendSrcAlpha: T.OneFactor, blendDstAlpha: T.OneMinusSrcAlphaFactor });
+    mat = new T.ShaderMaterial({ uniforms: U, vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false,
+      depthTest: true,
+      blending: T.CustomBlending, blendSrc: T.OneFactor, blendDst: T.OneMinusSrcAlphaFactor, blendSrcAlpha: T.OneFactor,
+      blendDstAlpha: T.OneMinusSrcAlphaFactor });
     SS.section.exempt(mat, 'sky: clouds');
-    mesh = new T.Mesh(geo, mat); mesh.frustumCulled = false; mesh.renderOrder = -9; scene.add(mesh);
+    mesh = new T.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = -9;
+    scene.add(mesh);
     if (SS.skyView && SS.skyView.ENV_LAYER) mesh.layers.enable(SS.skyView.ENV_LAYER);   // also in the water's reflections
   };
 
@@ -157,17 +188,24 @@
         if (x * x + y * y + z * z <= 1) break;
       }
       const px = cx + x * rx, py = y0 + y * h + puffR * 0.35, pz = cz + z * rz, o = n * 4;
-      I.pos[o] = px; I.pos[o + 1] = py; I.pos[o + 2] = pz; I.pos[o + 3] = puffR * RR(2.6, 3.2);
+      I.pos[o] = px;
+      I.pos[o + 1] = py;
+      I.pos[o + 2] = pz;
+      I.pos[o + 3] = puffR * RR(2.6, 3.2);
       const flat = y < 0.25;                    // base puffs use the flat-bottomed renders (cells 2, 3 of each 8)
       I.a[o] = flat ? [2, 3, 10, 11][M.rng_int(rng, 4)] : M.rng_int(rng, 16); I.a[o + 1] = flat ? RR(-0.12, 0.12) : RR(-0.5, 0.5);
       I.a[o + 2] = ph; I.a[o + 3] = per;
-      I.s[o] = y; I.s[o + 1] = 1; I.s[o + 2] = Math.min(1, Math.hypot(x, y * 0.7, z)); I.s[o + 3] = dark;
+      I.s[o] = y;
+      I.s[o + 1] = 1;
+      I.s[o + 2] = Math.min(1, Math.hypot(x, y * 0.7, z));
+      I.s[o + 3] = dark;
       I.v[n * 2] = 0; I.v[n * 2 + 1] = 0;
       n++;
     }
     // sun visibility: count the cloud's puffs within ~1 puff radius of the ray from each puff toward the sun
     for (let p = first; p < n; p++) {
-      let od = 0; const ax = I.pos[p * 4], ay = I.pos[p * 4 + 1], az = I.pos[p * 4 + 2];
+      let od = 0;
+      const ax = I.pos[p * 4], ay = I.pos[p * 4 + 1], az = I.pos[p * 4 + 2];
       for (let q = first; q < n; q++) {
         if (q === p) continue;
         const dx = I.pos[q * 4] - ax, dy = I.pos[q * 4 + 1] - ay, dz = I.pos[q * 4 + 2] - az, t = dx * sun.x + dy * sun.y + dz * sun.z;
@@ -192,9 +230,18 @@
     plumeAt = { x: cx, z: cz };
     for (let k = 0; k < np && n < MAXN; k++) {
       const o = n * 4, per = RR(240, 420);
-      I.pos[o] = cx + RR(-250, 250); I.pos[o + 1] = 600 + RR(0, 300); I.pos[o + 2] = cz + RR(-250, 250); I.pos[o + 3] = RR(350, 550);
-      I.a[o] = M.rng_int(rng, 16); I.a[o + 1] = RR(-3, 3); I.a[o + 2] = k / np; I.a[o + 3] = per;
-      I.s[o] = 0.4; I.s[o + 1] = RR(0.25, 0.5); I.s[o + 2] = 0; I.s[o + 3] = 0.85;
+      I.pos[o] = cx + RR(-250, 250);
+      I.pos[o + 1] = 600 + RR(0, 300);
+      I.pos[o + 2] = cz + RR(-250, 250);
+      I.pos[o + 3] = RR(350, 550);
+      I.a[o] = M.rng_int(rng, 16);
+      I.a[o + 1] = RR(-3, 3);
+      I.a[o + 2] = k / np;
+      I.a[o + 3] = per;
+      I.s[o] = 0.4;
+      I.s[o + 1] = RR(0.25, 0.5);
+      I.s[o + 2] = 0;
+      I.s[o + 3] = 0.85;
       I.v[n * 2] = RR(7500, 9000) / per; I.v[n * 2 + 1] = RR(2.5, 4.5);
       n++;
     }
@@ -215,11 +262,21 @@
     }
     for (let c = 0; c < K.scud; c++) {         // low ragged pieces under the deck
       const w = RR(300, 900);
-      addCloud(RR(-FIELD, FIELD), RR(-FIELD, FIELD), base * RR(0.45, 0.7), w * 0.5, w * RR(0.15, 0.3), w * 0.4, 'scud', { dark: K.dark + 0.15 });
+      addCloud(RR(-FIELD, FIELD), RR(-FIELD, FIELD), base * RR(0.45, 0.7), w * 0.5, w * RR(0.15, 0.3), w * 0.4, 'scud', {
+        dark: K.dark + 0.15
+      });
     }
-    for (let c = 0; c < K.cb; c++) { const a = RR(0, 6.283), d = RR(9000, 20000); addCb(Math.cos(a) * d, Math.sin(a) * d, base); }
-    if (B.plume) { const a = RR(0, 6.283); addPlume(Math.cos(a) * 15000, Math.sin(a) * 15000); }
-    geo.instanceCount = n; order = new Uint32Array(n); for (let i = 0; i < n; i++) order[i] = i;
+    for (let c = 0; c < K.cb; c++) {
+      const a = RR(0, 6.283), d = RR(9000, 20000);
+      addCb(Math.cos(a) * d, Math.sin(a) * d, base);
+    }
+    if (B.plume) {
+      const a = RR(0, 6.283);
+      addPlume(Math.cos(a) * 15000, Math.sin(a) * 15000);
+    }
+    geo.instanceCount = n;
+    order = new Uint32Array(n);
+    for (let i = 0; i < n; i++) order[i] = i;
     sortT = -1;
     U.uTint.value.set(...(B.tint || [1, 1, 1]));
     U.uDark.value = K.dark; U.uOv.value = sp ? sp.ov : 0;   // under a deck the sun barely reaches the clouds
@@ -229,11 +286,16 @@
       const t = sky.sunT || [1, 1, 1], tp = sky.top || [0.3, 0.5, 0.9], av = sky.avg || tp;
       const lin = v => Math.pow(Math.max(0, v), 2.2);
       U.uSunC.value.set(t[0], t[1], t[2]);
-      U.uAmb.value.set(lin(av[0]) * 0.55 + lin(tp[0]) * 0.45, lin(av[1]) * 0.55 + lin(tp[1]) * 0.45, lin(av[2]) * 0.55 + lin(tp[2]) * 0.45).multiplyScalar(1.1);
+      U.uAmb.value.set(lin(av[0]) * 0.55 + lin(tp[0]) * 0.45, lin(av[1]) * 0.55 + lin(tp[1]) * 0.45, lin(av[2]) * 0.55 + lin(tp[2]) * 0.45)
+        .multiplyScalar(1.1);
     }
     // night: moonlit clouds (the sky's sun is under the horizon)
     const vs = SS.view && SS.view.state;
-    if (vs && vs.tod === 'night' && vs.moonDir) { U.uSun.value.set(vs.moonDir[0], vs.moonDir[1], vs.moonDir[2]).normalize(); U.uSunC.value.set(0.12, 0.15, 0.24); U.uAmb.value.set(0.03, 0.04, 0.065); }
+    if (vs && vs.tod === 'night' && vs.moonDir) {
+      U.uSun.value.set(vs.moonDir[0], vs.moonDir[1], vs.moonDir[2]).normalize();
+      U.uSunC.value.set(0.12, 0.15, 0.24);
+      U.uAmb.value.set(0.03, 0.04, 0.065);
+    }
     CL.count = n;
   };
 
@@ -243,8 +305,14 @@
     if (!mesh || !n) return;
     const w = S.wind, sp = w ? Math.max(2, w.speed) * 2 : 4, dir = w ? w.dir : 0.7;
     drift.x += Math.cos(dir) * sp * dt; drift.y += Math.sin(dir) * sp * dt;
-    U.uDrift.value.copy(drift); U.uTime.value = view.time; U.uWind.value.set(Math.cos(dir), Math.sin(dir)); U.uCam.value.copy(camera.position);
-    if (view.time - sortT > 0.5 || sortT < 0) { sortT = view.time; sortNow(camera.position); }
+    U.uDrift.value.copy(drift);
+    U.uTime.value = view.time;
+    U.uWind.value.set(Math.cos(dir), Math.sin(dir));
+    U.uCam.value.copy(camera.position);
+    if (view.time - sortT > 0.5 || sortT < 0) {
+      sortT = view.time;
+      sortNow(camera.position);
+    }
   };
   const dist = new Float32Array(MAXN);
   function sortNow(cp) {
@@ -253,13 +321,18 @@
       const pl = I.v[i * 2] !== 0;
       let rx = I.pos[i * 4] + (pl ? 0 : dx0) - cp.x, rz = I.pos[i * 4 + 2] + (pl ? 0 : dz0) - cp.z;
       rx = ((rx + F) % (2 * F) + 2 * F) % (2 * F) - F; rz = ((rz + F) % (2 * F) + 2 * F) % (2 * F) - F;
-      const ry = I.pos[i * 4 + 1] - cp.y; dist[i] = rx * rx + ry * ry + rz * rz;
+      const ry = I.pos[i * 4 + 1] - cp.y;
+      dist[i] = rx * rx + ry * ry + rz * rz;
     }
     order.sort((a, b) => dist[b] - dist[a]);
     const P = geo.attributes.iPos.array, A = geo.attributes.iA.array, Sx = geo.attributes.iS.array, V = geo.attributes.iV.array;
     for (let k = 0; k < n; k++) {
       const i = order[k];
-      for (let c = 0; c < 4; c++) { P[k * 4 + c] = I.pos[i * 4 + c]; A[k * 4 + c] = I.a[i * 4 + c]; Sx[k * 4 + c] = I.s[i * 4 + c]; }
+      for (let c = 0; c < 4; c++) {
+        P[k * 4 + c] = I.pos[i * 4 + c];
+        A[k * 4 + c] = I.a[i * 4 + c];
+        Sx[k * 4 + c] = I.s[i * 4 + c];
+      }
       V[k * 2] = I.v[i * 2]; V[k * 2 + 1] = I.v[i * 2 + 1];
     }
     for (const k of ['iPos', 'iA', 'iS', 'iV']) geo.attributes[k].needsUpdate = true;
