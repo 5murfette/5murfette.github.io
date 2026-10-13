@@ -15,11 +15,31 @@
 <canvas id="view"></canvas>
 <div id="vignette"></div>
 <div id="labels"></div>
-<div id="banner"></div>
-<div id="labbadge"></div>
 <div id="perkui"></div>
-<div id="topbar"><div id="tbTurn" class="panel tb"></div><div id="tbTime" class="panel tb"></div><div id="tbWind" class="panel tb"></div><div id="tbWx" class="panel tb"></div></div>
-<button id="mutebtn" class="ibtn" title="Sound on / off (F2)" aria-label="Sound on / off">🔊</button>
+<!-- the HUD's top row is one grid: left column | top bar and announcements | right column (tools, weather, maps, kill feed), so nothing in it can overlap -->
+<div id="hudtop">
+  <div id="lcol">
+    <div id="hud" class="panel"><div class="hl"><div id="hudl"></div><button id="hudtog" class="dtg" type="button" aria-expanded="false" aria-controls="hudb" title="Aim details (F3)" aria-label="Aim details"><span>i</span></button></div><div id="hudb"></div></div>
+    <div id="teams" class="panel"></div>
+    <div id="log" class="panel" aria-live="off"></div>
+  </div>
+  <div id="topbar"><div id="tbTurn" class="panel tb"></div><div id="tbTime" class="panel tb"></div><div id="tbWind" class="panel tb"></div></div>
+  <div id="ctop"><div id="netpanel"></div><div id="labbadge"></div><div id="rotnow"></div><div id="banner"></div></div>
+  <div id="rcol">
+    <div id="tools">
+      <button id="dbgbtn" class="ibtn" title="Debug toolbox (F9)" aria-label="Debug toolbox" style="display:none">🛠</button>
+      <button id="mutebtn" class="ibtn" title="Sound on / off (F2)" aria-label="Sound on / off">🔊</button>
+      <button id="mapbtn" class="ibtn" title="Maps" aria-label="Show or hide the maps" aria-pressed="false">Maps</button>
+      <button id="menubtn" class="ibtn" title="Pause menu (M / Esc)">☰ Menu</button>
+    </div>
+    <div id="tbWx" class="panel"></div>
+    <div id="maps" class="panel">
+      <figure><figcaption>Current section (side view)</figcaption><canvas id="secmap" width="320" height="120"></canvas></figure>
+      <figure><figcaption>World from above</figcaption><canvas id="topmap" width="170" height="170"></canvas></figure>
+    </div>
+    <div id="feed" aria-live="polite"></div>
+  </div>
+</div>
 <div id="weapons" class="panel"></div>
 <!-- P24.4 touch pad (shown on touch devices: body.touch): the PoC #touch controls -->
 <div id="touch">
@@ -30,7 +50,6 @@
 </div>
 <div id="winfo" class="panel"></div>
 <div id="over" class="hidden" role="dialog" aria-label="Game over"><div class="ttl"><svg class="crown" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M2.5 7l5 4.5L12 3.5l4.5 8L21.5 7l-1.8 11H4.3zM4.6 19.5h14.8v2H4.6z"/></svg><h2></h2><p></p></div><div class="card"><div class="stand"></div><div class="btns"><button class="bbtn" id="bRematch">Rematch</button><button class="bbtn ghost" id="bSetup">Change setup</button></div><div class="hint">Enter: rematch</div></div></div>
-<div id="lcol"><div id="hud" class="panel"></div><div id="teams" class="panel"></div><div id="log" class="panel" aria-live="off"></div></div>
 <div id="help" class="panel hidden">
   <h1>Burrow Brawl <span style="font-weight:400;color:var(--dim);font-size:12px">— controls (F1 / ? hides)</span></h1>
   <table>
@@ -50,21 +69,13 @@
     <tr><td><kbd>mouse</kbd></td><td>aim with the cursor · hold the left button to charge, release to fire</td></tr>
     <tr><td><kbd>V</kbd> hold</td><td>inspect: ghosts of off-section worms</td></tr>
     <tr><td><kbd>`</kbd> · <kbd>Home</kbd></td><td>slice view thin / thick / full · recentre</td></tr>
+    <tr><td><kbd>F3</kbd></td><td>aim details on / off: angle, height, facing, distance to the target (the small <kbd>i</kbd> on the top-left panel does the same, also by touch)</td></tr>
     <tr><td><kbd>M</kbd> / <kbd>Esc</kbd></td><td>menu (setup, online play)</td></tr>
     <tr><td>wheel · drag</td><td>zoom · pan (orbit while <kbd>V</kbd> held)</td></tr>
   </table>
   <p>The glowing outline is the 2D collision slice. After an attack you have a few seconds to retreat; the section stays locked until the aftermath settles.</p>
 </div>
-<div id="rcol">
-<div id="maps" class="panel">
-  <figure><figcaption>Current section (side view)</figcaption><canvas id="secmap" width="320" height="120"></canvas></figure>
-  <figure><figcaption>World from above</figcaption><canvas id="topmap" width="170" height="170"></canvas></figure>
-</div>
-<div id="feed" aria-live="polite"></div>
-</div>
 <div id="wtip" class="panel" role="tooltip"></div>
-<button id="dbgbtn" class="ibtn" title="Debug toolbox (F9)" aria-label="Debug toolbox" style="display:none">🛠</button>
-<button id="menubtn" class="ibtn" title="Pause menu (M / Esc)">☰ Menu</button>
 <div id="menu"></div>
 <script src="vendor/three.min.js"></script>
 <script src="js/render/section.js"></script>
@@ -208,6 +219,7 @@
 <script src="js/render/lens.js"></script>
 <script src="js/render/cine.js"></script>
 <script src="js/render/reactq.js"></script>
+<script src="js/render/anticcam.js"></script>
 <script src="js/render/seccut.js"></script>
 <script src="js/render/view.js"></script>
 <script src="js/ui/icons.js"></script>

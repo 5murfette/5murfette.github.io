@@ -4,12 +4,14 @@
  * plane) into polylines and labels every chain point:
  *   - air normal (s, y) from the density gradient; facing UP / WALL / DOWN (overhang and cave ceilings);
  *   - class from the solid material just inside the surface (W.mat_at 0.3 m in), turned into GRASS / DRY / BURNT where
- *     the point is the column's topmost surface and S.veg has grass there (cover, dryness, char), LAVA where the
- *     lava layer covers it; wet = under the simulated sea;
+ *     the point is the column's topmost surface and S.veg has grass there (cover, dryness, char) AND the surface itself can
+ *     carry it (nv = the share of the point's cell that is steel, foam, concrete, glass, ice, snow, lava or bedrock, the
+ *     veg 0 rows of the one table config MATS[].veg, from NOVEG_EDGE up: no turf on those, whatever grass the column beside
+ *     them still has; natural rock under a skin of soil does not count), LAVA where the lava layer covers it; wet = under the simulated sea;
  *   - one smoothing pass: a single point whose neighbours agree takes their class (no 0.5 m speckles).
  * Deterministic (no RNG), reads the world and S only; cost ~1-3 ms per section (measured in edgetest).
  * C layout: struct Edge { i32 np, nc; f32 *pts (s, y), *nrm (air normal s, y); u8 *cls, *base (material class),
- *   *face, *veg (cover, dry, char, burning 0..255), *wet; i32 *chain (first point, count); u8 *closed; f32 O[2], theta; };
+ *   *face, *nv (built-material share of the cell 0..255), *veg (cover, dry, char, burning 0..255), *wet; i32 *chain (first point, count); u8 *closed; f32 O[2], theta; };
  * ED.refresh(S, sec) re-labels the existing chains (fire, water, lava changed; geometry unchanged). */
 (function (SS) {
   'use strict';
@@ -22,6 +24,7 @@
   const GRASS_MIN = 64;        // cover (0..255) from which the edge shows grass
   const DRY_MIN = 140;         // dryness (0..255) above which it is dry grass
   const CHAR_MIN = 120;        // char (0..255) above which it is burnt stubble
+  const NOVEG_EDGE = 0.4;      // share of the cell's corner weights that carry nothing from which a point shows no turf (meshgen veg_keep thins the blades over 0.2 - 0.55)
 
   function matClass(m) {
     switch (m) {
@@ -91,7 +94,7 @@
   function label(S, E, geom) {
     const W = SS.world, H = W.H, NX = W.NX, NZ = W.NZ, d = { x: M.cos(E.theta), z: M.sin(E.theta) }, O = E.O;
     const st = S.veg, lv = S.lava && SS.lava ? S.lava : null, wa = S.water && SS.water ? S.water : null;
-    const np = E.np, pts = E.pts, nrm = E.nrm, cls = E.cls, face = E.face, veg = E.veg, wet = E.wet, base = E.base;
+    const np = E.np, pts = E.pts, nrm = E.nrm, cls = E.cls, face = E.face, veg = E.veg, wet = E.wet, base = E.base, nv = E.nv;
     for (let p = 0; p < np; p++) {
       const s = pts[p * 2], y = pts[p * 2 + 1], x = O.x + s * d.x, z = O.z + s * d.z;
       if (geom) {
@@ -103,6 +106,7 @@
         nrm[p * 2] = ns; nrm[p * 2 + 1] = ny;
         face[p] = ny > 0.45 ? F.UP : ny < -0.45 ? F.DOWN : F.WALL;
         base[p] = matClass(W.mat_at(x - ns * 0.3 * d.x, y - ny * 0.3, z - ns * 0.3 * d.z));
+        nv[p] = Math.round(255 * W.noveg_at(x, y, z));                  // how much of the surface AT the point carries nothing (the table's question; base is the bulk 0.3 m in)
       }
       const i = M.max(0, M.min(NX - 1, Math.round(x / H))), k = M.max(0, M.min(NZ - 1, Math.round(z / H))), c = k * NX + i;
       const out = W.far && W.outside(x, z);                          // dry worlds (D4): the far dunes beyond the lattice
@@ -110,7 +114,7 @@
       let k0 = base[p];
       veg[p * 4] = veg[p * 4 + 1] = veg[p * 4 + 2] = veg[p * 4 + 3] = 0;
       wet[p] = wa && SS.water.surface(S, x, z) > y + 0.05 ? 1 : 0;
-      if (top && st && !wet[p] && !out) {
+      if (top && st && !wet[p] && !out && nv[p] < NOVEG_EDGE * 255) {
         const cv = st.surf[c * 4], dr = st.surf[c * 4 + 1], ch = st.surf[c * 4 + 2], bu = st.surf[c * 4 + 3];
         veg[p * 4] = cv; veg[p * 4 + 1] = dr; veg[p * 4 + 2] = ch; veg[p * 4 + 3] = bu;
         // the terrain paints the column cover on any top material (thin turf over rock too), so the edge follows it
@@ -141,7 +145,7 @@
     const E = {
       np, nc: ch.chain.length / 2, pts: ch.pts, chain: ch.chain, closed: ch.closed,
       nrm: new Float32Array(np * 2), cls: new Uint8Array(np), base: new Uint8Array(np), face: new Uint8Array(np),
-      veg: new Uint8Array(np * 4), wet: new Uint8Array(np), O: { x: sec.O.x, z: sec.O.z }, theta: sec.theta,
+      veg: new Uint8Array(np * 4), wet: new Uint8Array(np), nv: new Uint8Array(np), O: { x: sec.O.x, z: sec.O.z }, theta: sec.theta,
       vegVer: S.veg ? S.veg.surfVer : 0, ver: (ED.ver = (ED.ver | 0) + 1)
     };
     label(S, E, true);

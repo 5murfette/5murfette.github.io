@@ -234,6 +234,9 @@
     beach: { stone: 0.28, twig: 0.3, tuft: 1.1, flower: 0.5, scrub: 0, snow: 0 }      // P116: a few pebbles on the sand, driftwood twigs, lush grass and flowers on the jungle floor
   };
   const SC = SS.CFG.MATS;
+  /* the kinds that grow (not near heat; not on a built, frozen, molten or glass top, see the organic-top table, config MATS[].veg) */
+  const PLANT = { tuft: 1, flower: 1, scrub: 1, twig: 1, mushA: 1, mushB: 1, fern: 1, log: 1, stump: 1, fungi: 1, cactus: 1, barrel: 1, pear: 1, jbush: 1, bigleaf: 1, coconut: 1 };
+  CL.plant = kind => !!PLANT[kind];
   function matCol(m) { const c = SC[m] ? SC[m].rgb : 0x808080; return [(c >> 16 & 255) / 255, (c >> 8 & 255) / 255, (c & 255) / 255]; }
 
   CL.onChunk = function (ci, c) {
@@ -245,7 +248,7 @@
     const under = !!W.under, eow = !!W.eow, vents = (W.features && W.features.vents) || [], dd = (window.P96_DECOR != null ? window.P96_DECOR : 1) * 1.7;   // (window.P96_DECOR: a tuning / shot hook, a multiplier of every decor density; 0 = none)
     let total = 0;
     if (SS.grass && SS.grass.hotMap && S) SS.grass.hotMap(S);                                       // P102: heat distance field (lava, vents, burning ground)
-    const hotR = SS.grass ? SS.grass.HOT_R : 4, PLANT = { tuft: 1, flower: 1, scrub: 1, twig: 1, mushA: 1, mushB: 1, fern: 1, log: 1, stump: 1, fungi: 1, cactus: 1, barrel: 1, pear: 1 };
+    const hotR = SS.grass ? SS.grass.HOT_R : 4;
     const snowy = S && S.weather ? S.weather.snowCover || 0 : 0;
     for (let i = 0; i < I.length && total < MAXC; i += 3) {
       const a = I[i], b = I[i + 1], c2 = I[i + 2];
@@ -290,6 +293,10 @@
         if (biome === 'beach' && W.features.beach && W.features.beach.huts) for (const h of W.features.beach.huts) dh = Math.min(dh, Math.hypot(h.x - ax, h.z - az));
         if (dd > 0 && !snowy) decorKinds(kinds, biome, { mt, isSoil, isSand, isSnow, isRock, isDark, patch, patch2, gr, ny, flat, under, ax, ay, az, vents, dd, shore, sea, dh });
       }
+      // the organic-top table (config MATS[].veg): nothing that grows is placed on a built, frozen, molten or glass top (a 2D concrete floor's weeds, the volcanic dead scrub on obsidian
+      // are gone with it), and on the triangle's own spot (the corners' share of such materials, interpolated) a plant thins out exactly as the terrain's turf and the blades do
+      const nvA = SS.meshgen.noveg(d, a), nvB = SS.meshgen.noveg(d, b), nvC = SS.meshgen.noveg(d, c2);
+      if (SS.CFG.veg_level(mt) === 0 || (nvA >= 0.55 && nvB >= 0.55 && nvC >= 0.55)) for (let k = kinds.length - 1; k >= 0; k--) if (PLANT[kinds[k][0]]) kinds.splice(k, 1);
       for (let k = 0; k < kinds.length; k++) {
         const kd = kinds[k], kind = kd[0];
         let cnt = area * kd[1] * dens; const base = Math.floor(cnt);
@@ -301,6 +308,7 @@
           const x = ax + ux * r1 + vx * r2, y = ay + uy * r1 + vy * r2, z = az + uz * r1 + vz * r2;
           if (SS.heroView && SS.heroView.blocked(x, z)) continue;                // P101: nothing grows inside a hero set piece
           if (PLANT[kind] && SS.grass.hotDist(x, z) < hotR) continue;                                 // P102: no plants on or near lava / vents / fire
+          if (PLANT[kind]) { const nv = nvA + (nvB - nvA) * r1 + (nvC - nvA) * r2; if (nv > 0.2 && M.hash3(qx + q * 3 + k, qy + 13, qz - q * 5) >= SS.meshgen.veg_keep(nv)) continue; }      // thinned out toward foam, steel, concrete, glass, ice, snow, lava
           let sc, r, g, bl, sink = 0.3;
           const dc = DEC[kind];
           if (dc) {
@@ -356,7 +364,7 @@
         cc.setRGB(L[o + 8], L[o + 9], L[o + 10], T.SRGBColorSpace); im.setColorAt(i, cc);
       }
       im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
-      im.receiveShadow = true; im.castShadow = false; im.userData.chunk = c;
+      im.receiveShadow = true; im.castShadow = false; im.userData.chunk = c; im.userData.kind = kind;
       im.computeBoundingSphere(); if (im.boundingSphere) { im.boundingSphere.radius += 2.2; im.frustumCulled = true; } else im.frustumCulled = false;
       scene.add(im); set.push(im);
     }
@@ -409,6 +417,11 @@
     }
   }
 
+  /* tools / tests: fn(kind, x, y, z) for every instance of every chunk (read back from the instance matrices) */
+  CL.each = function (fn) {
+    const m = new T.Matrix4(), v = new T.Vector3();
+    for (const s of per.values()) for (const im of s) for (let i = 0; i < im.count; i++) { im.getMatrixAt(i, m); v.setFromMatrixPosition(m); fn(im.userData.kind, v.x, v.y, v.z); }
+  };
   /* debug: instance counts per kind (all chunks), and within `r` m of (x, z) when given */
   CL.kinds = function (x, z, r) {
     const o = {}, m = new T.Matrix4(), v = new T.Vector3();

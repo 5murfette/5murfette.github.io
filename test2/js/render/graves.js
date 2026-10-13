@@ -194,14 +194,15 @@
     const age = g.rest && g.landT >= 0 ? S.time - g.landT : -1;
     // grass and flowers grow (ease-out over ~4 s from 0.4 s after landing; a falling grave keeps none)
     const k = age < 0.4 ? 0 : Math.min(1, (age - 0.4) / 4), e = 1 - Math.pow(1 - k, 3);
-    u.green.visible = k > 0 && !S.eow;                                       // (P86: no grass and flowers on a grave in vacuum)
+    if (u.vegOk === undefined && g.rest) u.vegOk = SS.world.noveg_at(g.x, g.y - 0.15, g.z) < 0.4;   // only a top that can carry it grows grass and flowers (the organic-top table, config MATS.veg): a grave on concrete, steel, foam, glass, ice, snow, lava or bedrock stays bare
+    u.green.visible = k > 0 && !S.eow && u.vegOk !== false;                  // (P86: no grass and flowers on a grave in vacuum)
     for (let i = 0; i < u.plants.length; i++) {
       const p = u.plants[i], ki = Math.max(0.001, Math.min(1, e * 1.25 - (i % 5) * 0.05));
       if (p.userData.h !== 1) { p.scale.set(1, p.userData.h * ki, 1); p.rotation.z = p.userData.rz + Math.sin(t * 1.7 + i) * 0.08; }   // blades (sway a little)
       else p.scale.setScalar(ki);
     }
     // butterflies: once, 1.2 s after landing; they flutter up and away and fade
-    if (age > 1.2 && !u.flies && !u.done && !S.eow) { u.flies = butterflies(grp); u.done = true; }
+    if (age > 1.2 && !u.flies && !u.done && !S.eow && u.vegOk !== false) { u.flies = butterflies(grp); u.done = true; }
     if (u.flies) {
       let alive = 0;
       for (const b of u.flies) {

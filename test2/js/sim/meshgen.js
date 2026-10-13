@@ -426,9 +426,27 @@
     return out;
   };
 
+  /* the share (0..1) of vertex v's material weight that can carry no vegetation at all: the veg 0 rows of the organic-top table (config MATS[].veg: steel, foam,
+   * concrete, glass, ice, snow, lava, bedrock). Slot s of mA / mB / mC / mD is material 1 + s / 5 + s / 9 + s / 13 + s. Natural rock under a skin of soil (veg 1) does NOT
+   * count: the cover of the column says whether the skin is there. keep(nv) = how much of the vegetation survives that share: the shader paints foam, steel and
+   * concrete from 0.2 to 0.55 of their weight, so the plants thin out over the same range. */
+  G.noveg = function (mesh, v) {
+    const L = SS.CFG.VEG_LEVEL, A = mesh.mA, B = mesh.mB, Cm = mesh.mC, D = mesh.mD; let s = 0;
+    for (let q = 0; q < 4; q++) {
+      if (!L[1 + q]) s += A[v * 4 + q];
+      if (!L[5 + q]) s += B[v * 4 + q];
+      if (!L[9 + q]) s += Cm[v * 4 + q];
+      if (D && !L[13 + q]) s += D[v * 4 + q];
+    }
+    return s >= 255 ? 1 : s / 255;
+  };
+  G.veg_keep = nv => 1 - M.smoothstep(0.2, 0.55, nv);
+
   /* Grass blades on up-facing, sky-exposed triangles of a chunk mesh (stable world-anchored hashing).
    * grassAt(x,z) -> 0..1 coverage; dens = quality density factor (scales the count only, not the coverage threshold,
-   * so sparse cover does not vanish on lower quality). Output per blade: x, y, z, yaw, height, kind. */
+   * so sparse cover does not vanish on lower quality). Output per blade: x, y, z, yaw, height, kind.
+   * a blade is kept with the probability veg_keep(noveg) at its own spot (the three vertices' no-vegetation shares, interpolated): none stands on foam, steel,
+   * concrete, glass, ice, snow or lava, whatever cover the column beside them still has. */
   G.grass = function (mesh, grassAt, sea, max, dens, hotAt, hotR) {
     if (dens === undefined) dens = 1;
     const W = SS.world, P = mesh.pos, N = mesh.nrm, I = mesh.idx, D = mesh.depth, out = [];
@@ -440,6 +458,8 @@
       if (ay < sea + 0.6) continue;
       if (Math.abs(W.top_at(ax, az) - ay) > 0.7) continue;          // only sky-exposed surfaces grow grass
       let g = grassAt(ax, az); if (g < 0.04) continue;
+      const nvA = G.noveg(mesh, a), nvB = G.noveg(mesh, b), nvC = G.noveg(mesh, cc);
+      if (nvA >= 0.55 && nvB >= 0.55 && nvC >= 0.55) continue;      // all three corners are built / frozen / molten: nothing stands here
       const ux = P[b * 3] - ax, uy = P[b * 3 + 1] - ay, uz = P[b * 3 + 2] - az;
       const vx = P[cc * 3] - ax, vy = P[cc * 3 + 1] - ay, vz = P[cc * 3 + 2] - az;
       const area = 0.5 * M.len3(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
@@ -451,6 +471,8 @@
         let r1 = M.hash3(qx + q * 7, qy, qz + 1), r2 = M.hash3(qx, qy + q * 13, qz + 2);
         if (r1 + r2 > 1) { r1 = 1 - r1; r2 = 1 - r2; }
         const h3 = M.hash3(qx + q, qy - q, qz + 5);
+        const nv = nvA + (nvB - nvA) * r1 + (nvC - nvA) * r2;
+        if (nv > 0.2 && M.hash3(qx + q * 3, qy + 11, qz - q * 5) >= G.veg_keep(nv)) continue;     // not on foam, steel, concrete, glass, ice, snow, lava (the organic-top table)
         if (hotAt && hotAt(ax + ux * r1 + vx * r2, az + uz * r1 + vz * r2) < hotR) continue;     // P102: no grass on or near lava, vents or burning ground
         out.push(ax + ux * r1 + vx * r2, ay + uy * r1 + vy * r2 - 0.02, az + uz * r1 + vz * r2, M.hash3(qx - q, qy, qz + 9) * 6.283,
           0.2 + 0.34 * M.hash3(qx, qy, qz + q + 3) * (0.6 + patch * 0.8), h3 > 0.965 ? (h3 > 0.985 ? 2 : 1) : 0);

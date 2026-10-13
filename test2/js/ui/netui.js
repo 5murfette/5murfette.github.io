@@ -8,17 +8,17 @@
   'use strict';
   const NU = SS.netui = {};
   let box = null, hooked = false, curSettings = null;
-  const css = `#netui{position:fixed;left:50%;top:8%;transform:translateX(-50%);width:min(720px,94vw);max-height:84vh;overflow:auto;z-index:40;
-    background:linear-gradient(180deg,rgba(40,30,22,.97),rgba(18,14,12,.98));border:1px solid rgba(236,226,200,.16);border-radius:20px;padding:18px 20px;font:500 15px var(--f-ui);color:#efe9da;
+  const css = `#netui{position:fixed;left:50%;top:max(8px,3vh);transform:translateX(-50%);box-sizing:border-box;width:min(calc(var(--mu) * 762),94vw);max-height:calc(100vh - max(8px,3vh) - 8px);overflow:auto;z-index:40;
+    background:linear-gradient(180deg,rgba(40,30,22,.97),rgba(18,14,12,.98));border:1px solid rgba(236,226,200,.16);border-radius:20px;padding:calc(var(--mu) * 18) calc(var(--mu) * 20);font:500 calc(var(--mu) * 15) var(--f-ui);color:#efe9da;
     box-shadow:0 0 0 100vmax rgba(8,6,4,.62),0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,214,150,.1);animation:nucard .3s var(--ease,ease-out) both}
     @keyframes nucard{from{opacity:0;transform:translateX(-50%) translateY(14px)}to{opacity:1;transform:translateX(-50%)}}
     #netui :focus-visible{outline:2px solid #ffb02e;outline-offset:2px}#netui button:hover:not(:disabled){filter:brightness(1.1)}#netui button:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 #8a5200}
-    #netui h2{margin:0 0 4px;font:400 22px var(--f-display);color:#ffb02e}#netui h3{margin:0 0 6px;font:400 14px var(--f-display);color:#ffb02e;letter-spacing:.04em}
-    #netui .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}#netui .col{background:rgba(255,255,255,.04);border-radius:12px;padding:12px}
-    #netui .code{font:400 42px var(--f-display);letter-spacing:.12em;color:#efe9da;text-align:center;margin:6px 0;user-select:all}
-    #netui input,#netui textarea{width:100%;box-sizing:border-box;background:rgba(255,255,255,.07);color:#efe9da;border:1px solid rgba(236,226,200,.2);border-radius:8px;padding:6px 8px;font:600 14px var(--f-ui);margin:3px 0}
-    #netui textarea{height:58px;font:11px ui-monospace,monospace}
-    #netui button{margin:6px 6px 0 0;padding:7px 14px;border-radius:10px;border:0;background:#ffb02e;color:#2a1606;font:400 14px var(--f-display);cursor:pointer;box-shadow:0 3px 0 #8a5200}
+    #netui h2{margin:0 0 4px;font:400 calc(var(--mu) * 22) var(--f-display);color:#ffb02e}#netui h3{margin:0 0 6px;font:400 calc(var(--mu) * 14) var(--f-display);color:#ffb02e;letter-spacing:.04em}
+    #netui .cols{display:grid;grid-template-columns:1fr 1fr;gap:calc(var(--mu) * 14);margin-top:calc(var(--mu) * 10)}#netui .col{background:rgba(255,255,255,.04);border-radius:12px;padding:calc(var(--mu) * 12)}
+    #netui .code{font:400 calc(var(--mu) * 42) var(--f-display);letter-spacing:.12em;color:#efe9da;text-align:center;margin:6px 0;user-select:all}
+    #netui input,#netui textarea{width:100%;box-sizing:border-box;background:rgba(255,255,255,.07);color:#efe9da;border:1px solid rgba(236,226,200,.2);border-radius:8px;padding:calc(var(--mu) * 6) calc(var(--mu) * 8);font:600 calc(var(--mu) * 14) var(--f-ui);margin:3px 0}
+    #netui textarea{height:calc(var(--mu) * 58);font:calc(var(--mu) * 11) ui-monospace,monospace}
+    #netui button{margin:6px 6px 0 0;padding:calc(var(--mu) * 7) calc(var(--mu) * 14);border-radius:10px;border:0;background:#ffb02e;color:#2a1606;font:400 calc(var(--mu) * 14) var(--f-display);cursor:pointer;box-shadow:0 3px 0 #8a5200}
     #netui button.ghost{background:rgba(255,255,255,.1);color:#efe9da;box-shadow:0 3px 0 rgba(0,0,0,.4)}#netui button:disabled{opacity:.4;cursor:default}
     #netui .pl{margin:4px 0;color:#79d98b}#netui .st{margin-top:8px;color:#9ba7a9;min-height:18px}#netui details{margin-top:12px}#netui summary{cursor:pointer;color:#9ba7a9}
     @media (max-width:640px){#netui .cols{grid-template-columns:1fr}}`;

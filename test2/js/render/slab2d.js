@@ -84,7 +84,7 @@
   /* the surface map (r = grass cover, g = dryness) of the sim has one texel per lattice column and row; the slab is a prism, so every row repeats the plane's cover. Render-only
    * copy with the rows behind the plane varied: grass patches that open and close with the depth (on soil), bare gaps, a few thin tufts on the rest of the ground. The row at the plane
    * and its neighbour are untouched (window 0), so the cut face agrees with what the sim says. Returns buf itself when there is nothing to change. */
-  const CM = SS.CFG.MAT;
+  const C = SS.CFG;
   let snap = null;
   S2.reset = function () { snap = null; };                       // a new world: the next shapeSurf takes a fresh snapshot of the column tops
   S2.shapeSurf = function (buf, n) {
@@ -99,16 +99,13 @@
       for (let i = 0; i < NX; i++) {
         const c = k * NX + i, j = W.topJ[c];
         if (j <= 0 || W.top[c] < W.SEA + 0.5) continue;
-        const m = W.mat[(k * NY + j) * NX + i];
-        if (m !== CM.SOIL && m !== CM.SAND) continue;
+        if (C.veg_cover(W.mat[(k * NY + j) * NX + i]) < 1) continue;                       // the organic-top table (config MATS.veg / .cover): only a ground that carries a full turf (soil) is varied; scree and ash stay as the sim has them
         if (Math.abs(W.top[c] - snap.top[c]) > 0.12 || out[c * 4 + 2] > 6) continue;
         const x = i * H, z = k * H, cov = out[c * 4] / 255;
         const f1 = M.fbm2(x / 3.2, z / 0.9, seed, 3), f2 = M.fbm2(x / 11, z / 4, seed + 5, 2);
-        if (m === CM.SOIL) {
-          const gr = M.smoothstep(0.42, 0.62, f1 + 0.3 * (f2 - 0.5)) * (bio === 'desert' || bio === 'volcanic' ? 0.0 : 1.0);
-          const v = cov > 0.04 ? cov * (1 - w * 0.55 * (1 - M.smoothstep(0.3, 0.55, f1))) : gr * 0.85 * w;       // covered: thinner in places; bare: patches that start behind the plane
-          out[c * 4] = Math.round(M.clamp(v, 0, 1) * 255);
-        }
+        const gr = M.smoothstep(0.42, 0.62, f1 + 0.3 * (f2 - 0.5)) * (bio === 'desert' || bio === 'volcanic' ? 0.0 : 1.0);
+        const v = cov > 0.04 ? cov * (1 - w * 0.55 * (1 - M.smoothstep(0.3, 0.55, f1))) : gr * 0.85 * w;       // covered: thinner in places; bare: patches that start behind the plane
+        out[c * 4] = Math.round(M.clamp(v, 0, 1) * 255);
       }
     }
     return out;

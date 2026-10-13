@@ -14,14 +14,75 @@
   const lastHTML = {};
   // names come from the network (guest team names): everything interpolated into HTML is escaped
   const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const setHTML = (id, s) => { if (lastHTML[id] !== s) { lastHTML[id] = s; $(id).innerHTML = s; } };
+  const setHTML = (id, s) => {
+    if (lastHTML[id] === s) return false;
+    lastHTML[id] = s;
+    $(id).innerHTML = s;
+    return true;
+  };
   const setText = (el, s) => { if (el._s !== s) { el._s = s; el.textContent = s; } };
+
+  /* the aim details (angle, height, facing, target distance) show on demand: the small i button on the HUD panel or F3; the choice is kept
+   * in this browser */
+  const DETAIL_KEY = 'burrowBrawl3d.hudDetail';
+  let detailOpen = false, drawS = null;
+  try {
+    detailOpen = localStorage.getItem(DETAIL_KEY) === '1';
+  } catch (e) {
+    detailOpen = false;
+  }
+  U.toggleDetail = function (on) {
+    detailOpen = on == null ? !detailOpen : !!on;
+    try {
+      localStorage.setItem(DETAIL_KEY, detailOpen ? '1' : '0');
+    } catch (e) {
+      /* private mode */
+    }
+    const b = $('hudtog');
+    if (b) {
+      b.setAttribute('aria-expanded', detailOpen ? 'true' : 'false');
+      b.classList.toggle('on', detailOpen);
+    }
+    document.body.classList.toggle('dets-on', detailOpen);
+    if (drawS) drawHUD(drawS);
+  };
+  /* the HUD unit in px (the CSS --u: 1 in a 1280 x 720 window): the label spacing below follows the size of the labels */
+  let uPx = 1, uStick = null;
+  function readUnit() {
+    if (uStick) uPx = uStick.getBoundingClientRect().width || 1;
+  }
+  function makeUnitStick() {
+    uStick = document.createElement('i');
+    uStick.id = 'ustick';
+    uStick.style.cssText = 'position:fixed;left:-99px;top:0;width:var(--u);height:1px;visibility:hidden;pointer-events:none';
+    document.body.appendChild(uStick);
+    readUnit();
+    addEventListener('resize', readUnit);
+  }
+  /* the two buttons that belong to the HUD panels: the aim details (i) and, in a compact window, the maps */
+  function wireButtons() {
+    const tog = $('hudtog');
+    tog.addEventListener('click', e => {
+      U.toggleDetail();
+      e.currentTarget.blur();
+    });
+    tog.setAttribute('aria-expanded', detailOpen ? 'true' : 'false');
+    document.body.classList.toggle('dets-on', detailOpen);
+    $('mapbtn').addEventListener('click', e => {
+      const on = !document.body.classList.contains('maps-on');
+      document.body.classList.toggle('maps-on', on);
+      e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false');
+      e.currentTarget.blur();
+    });
+  }
 
   U.init = function (cam, cv) {
     camera = cam; canvas = cv;
     labels = $('labels'); secC = $('secmap'); secX = secC.getContext('2d'); secBase = document.createElement('canvas');
     topC = $('topmap'); topX = topC.getContext('2d'); topBase = document.createElement('canvas');
     fuseEl = document.createElement('div'); fuseEl.className = 'fuse'; labels.appendChild(fuseEl);
+    makeUnitStick();
+    wireButtons();
     if (SS.offscreen) SS.offscreen.init(labels, cam, cv);
     $('bRematch').onclick = () => { if (performance.now() - overT0 > 400) U.onRematch && U.onRematch(); };      // P118d: a key that skipped the celebration (and repeats) must not rematch by itself
     $('bSetup').onclick = () => { if (performance.now() - overT0 > 400) U.onSetup && U.onSetup(); };
@@ -72,7 +133,7 @@
     if (e.dot) for (let i = pops.length - 1; i >= 0; i--) if (pops[i]._dot && pops[i]._w === e.worm && S.time - pops[i]._t < 0.5) return;
     const el = document.createElement('div'); el.className = 'pop' + (e.dot ? ' dot' : amt >= 60 ? ' crit' : amt >= 30 ? ' big' : '');
     el.innerHTML = '<span class="pn">-' + amt + '</span>'; el.style.color = css(C.TEAMS[e.worm.team].rgb);
-    el._dx = ((popN++ % 3) - 1) * 24; el._dot = !!e.dot; addPop(el, e.worm, S.time);
+    el._dx = ((popN++ % 3) - 1) * 24 * uPx; el._dot = !!e.dot; addPop(el, e.worm, S.time);
   }
   function gainPop(S, e) {
     const el = document.createElement('div'); el.className = 'pop gain';
@@ -98,6 +159,15 @@
     const b = $('banner'); b.innerHTML = ''; b.appendChild(document.createTextNode(title));
     if (sub) { const sm = document.createElement('small'); sm.textContent = sub; b.appendChild(sm); }
     b.style.color = color; b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
+    if (!b._end) {
+      b._end = 1;
+      /* an announcement that is over takes no room in the column */
+      b.addEventListener('animationend', e => {
+        if (e.animationName !== 'ban') return;
+        b.classList.remove('show');
+        b.textContent = '';
+      });
+    }
   }
   U.onEvent = function (S, e) {
     curS = S;
@@ -120,7 +190,13 @@
     if (e.type === 'labbank') banner('Bank shot x' + e.k.toFixed(1), e.bounces + (e.bounces > 1 ? ' ricochets' : ' ricochet'), 'var(--accent)');
     if (e.type === 'pickup' && e.worm) gainPop(S, e);
     if (e.type === 'jacket' && e.worm) jacketPop(S, e);                                           // P89
-    if (e.type === 'reset') { overShown = null; teamN = -1; if (feedEl) feedEl.innerHTML = ''; for (const k in gridBtn) gridBtn[k].s = ''; }
+    if (e.type === 'reset') {
+      overShown = null;
+      document.body.classList.remove('over', 'overcard');
+      teamN = -1;
+      if (feedEl) feedEl.innerHTML = '';
+      for (const k in gridBtn) gridBtn[k].s = '';
+    }
   };
 
   /* drop every worm label, damage pop and speech bubble (they hold worm objects: a replay restore / a new game
@@ -144,7 +220,7 @@
   let netEl = null, netLast = '';
   function netPanel() {
     const NT = SS.net; if (!NT || !NT.active) { if (netEl) netEl.style.display = 'none'; return; }
-    if (!netEl) { netEl = document.createElement('div'); netEl.id = 'netpanel'; document.body.appendChild(netEl); }
+    if (!netEl) netEl = $('netpanel');
     const st = NT.stats(), now = performance.now(), quiet = st.lastRecv ? now - st.lastRecv : 1e9, rtt = st.rtt ? Math.round(st.rtt) : null;
     const rsS = NT.resyncState ? NT.resyncState() : 'ok', state = rsS === 'failed' ? ['DESYNC', 'bad'] : rsS === 'wait' ? ['resyncing', 'warn'] : rsS === 'verify' ? ['checking', 'warn'] : quiet > 4000 ? ['no signal', 'bad'] : st.hashOk > 0 ? ['in sync', 'ok'] : ['checking', 'warn'];
     const ping = rtt == null ? '—' : rtt + ' ms', cls = state[1] === 'bad' || (rtt != null && rtt > 250) ? 'bad' : (rtt != null && rtt > 120) || state[1] === 'warn' ? 'warn' : 'ok';
@@ -158,25 +234,44 @@
   /* P37-6: "ROTATE NOW" splash with the countdown of the free rotation window (sim/rotlock.js), display font */
   let rotEl = null, rotTxt = '';
   function rotSplash(S) {
-    if (!rotEl) { rotEl = document.createElement('div'); rotEl.id = 'rotnow'; document.body.appendChild(rotEl); }
+    if (!rotEl) rotEl = $('rotnow');
     const a = S.active, mine = a && !(SS.game && SS.game.is_cpu(S, a.team)) && !(SS.net && SS.net.active && a.team !== SS.net.team);
     const l = mine && SS.rotlock && SS.rotlock.enabled(S) ? SS.rotlock.left(S) : -1, txt = l > 0 ? 'ROTATE NOW<b>' + Math.ceil(l) + '</b>' : '';
     if (txt !== rotTxt) { rotTxt = txt; if (txt) rotEl.innerHTML = txt; rotEl.classList.toggle('on', !!txt); }
     rotEl.classList.toggle('low', l > 0 && l <= 3);
   }
-  /* P86: End of the World: the jetpack chips, one per team (charges left, ON / OFF); a click / key J toggles the active team's (sim: S.eow.jet) */
+  /* End of the World: the jetpack chips, one per team (charges left, ON / OFF), a row in the left column; a click / key J toggles the active team's (sim: S.eow.jet) */
   let jetEl = null, jetTxt = '';
   function jetChips(S) {
     if (!jetEl) {
-      jetEl = document.createElement('div'); jetEl.id = 'eowJet';
-      jetEl.style.cssText = 'position:fixed;left:12px;bottom:118px;z-index:12;display:none;font:700 12px/1 "Barlow Semi Condensed",system-ui,sans-serif;color:#dbe9ff;pointer-events:auto';
+      jetEl = document.createElement('div');
+      jetEl.id = 'eowJet';
       jetEl.addEventListener('click', () => { if (SS.input) SS.input.jetReq = 1; });
-      document.body.appendChild(jetEl);
+      $('lcol').insertBefore(jetEl, $('log'));
     }
-    const J = S.eow && S.eow.jet; if (!J) { if (jetTxt) { jetTxt = ''; jetEl.style.display = 'none'; } return; }
-    const a = S.active; let txt = '';
-    for (let t = 0; t < J.length; t++) txt += '<div style="display:flex;gap:6px;align-items:center;margin:2px 0;padding:4px 8px;border-radius:6px;background:rgba(8,12,22,.72);border:1px solid ' + (a && a.team === t ? '#9fd0ff' : 'rgba(255,255,255,.12)') + ';cursor:pointer"><i style="width:9px;height:9px;border-radius:50%;background:' + css(C.TEAMS[t].rgb) + '"></i>JETPACK <b style="color:' + (J[t].on && J[t].n > 0 ? '#9fd0ff' : '#ff9a7a') + '">' + (J[t].n > 0 ? (J[t].on ? 'ON' : 'OFF') : 'EMPTY') + '</b> x' + J[t].n + (a && a.team === t ? ' <span style="opacity:.6">[J]</span>' : '') + '</div>';
-    if (txt !== jetTxt) { jetTxt = txt; jetEl.innerHTML = txt; jetEl.style.display = 'block'; }
+    const J = S.eow && S.eow.jet;
+    if (!J) {
+      if (jetTxt) { jetTxt = ''; jetEl.classList.remove('on'); }
+      return;
+    }
+    const a = S.active;
+    let txt = '';
+    for (let t = 0; t < J.length; t++) {
+      const state = J[t].n > 0 ? (J[t].on ? 'ON' : 'OFF') : 'EMPTY';
+      const mine = a && a.team === t;
+      let tip = 'Jetpacks of ' + esc(SS.sim.team_name(S, t)) + ': ' + J[t].n + ' left, ' + state.toLowerCase();
+      if (mine) tip += ' (click or J to switch)';
+      const color = J[t].on && J[t].n > 0 ? '#9fd0ff' : '#ff9a7a';
+      txt += '<div class="jc' + (mine ? ' cur' : '') + '" title="' + tip + '">'
+        + '<i style="background:' + css(C.TEAMS[t].rgb) + '"></i>JETPACK '
+        + '<b style="color:' + color + '">' + state + '</b> x' + J[t].n + (mine ? ' <span>[J]</span>' : '')
+        + '</div>';
+    }
+    if (txt !== jetTxt) {
+      jetTxt = txt;
+      jetEl.innerHTML = txt;
+      jetEl.classList.add('on');
+    }
   }
   /* P42: the Lab badge: the active experimental mechanics (sim/lab.js) */
   let labEl = null, labTxt = '';
@@ -263,6 +358,7 @@
     return (pk ? ` <em class="tperk" title="perks: ${esc(SS.lab.perk_list(S, t))}">${pk}</em>` : '') + (st > 0 ? ` <em class="tstreak" title="streak: +${st * 10} % blast damage">x${st}</em>` : '');
   }
   U.draw = function (S) {
+    drawS = S;
     netPanel(); rotSplash(S); jetChips(S); labBadge(S); perkPanel(S); alienLabels(S);
     if (SS.offscreen) SS.offscreen.draw(S);
     const a = S.active, insp = M.clamp(S.inspect, 0, 1);
@@ -281,7 +377,7 @@
       setText(el.children[3], String(Math.max(0, Math.round(w.hp))));                                   // PoC: the HP number
       el.style.opacity = inSec ? 1 : insp;
       let ly = sp.y;
-      for (let g = 0; g < 4; g++) { let hit = false; for (let j = 0; j < placed.length; j++) if (Math.abs(placed[j].x - sp.x) < 84 && Math.abs(placed[j].y - ly) < 40) { ly = placed[j].y - 40; hit = true; } if (!hit) break; }
+      for (let g = 0; g < 4; g++) { let hit = false; for (let j = 0; j < placed.length; j++) if (Math.abs(placed[j].x - sp.x) < 84 * uPx && Math.abs(placed[j].y - ly) < 40 * uPx) { ly = placed[j].y - 40 * uPx; hit = true; } if (!hit) break; }
       placed.push({ x: sp.x, y: ly });
       el.style.transform = `translate(${sp.x}px,${ly}px) translate(-50%,-100%)`;
       el.classList.toggle('ghost', !inSec); el.classList.toggle('active', w === a); el.classList.toggle('low', w.hp > 0 && w.hp <= 0.3 * (w.hp0 || 100));
@@ -289,7 +385,7 @@
     for (let i = pops.length - 1; i >= 0; i--) {
       const el = pops[i], age = S.time - el._t;
       if (age > (el._bub ? 1.9 : 1.6) || age < 0) { dropPop(i); continue; }
-      if (el._bub) { const bp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.25, z: el._w.pos.z }); el.style.transform = `translate(${bp.x}px,${bp.y - 58}px) translate(-50%,-100%)`; el.style.opacity = Math.min(1, (1.9 - age) * 3); continue; }
+      if (el._bub) { const bp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.25, z: el._w.pos.z }); el.style.transform = `translate(${bp.x}px,${bp.y - 58 * uPx}px) translate(-50%,-100%)`; el.style.opacity = Math.min(1, (1.9 - age) * 3); continue; }
       const sp = project({ x: el._w.pos.x, y: el._w.pos.y + 1.5 + age * 0.8, z: el._w.pos.z });
       el.style.transform = `translate(${sp.x + el._dx}px,${sp.y}px) translate(-50%,-100%)`; el.style.opacity = age < 1 ? 1 : Math.max(0, 1 - (age - 1) / 0.6);
     }
@@ -338,18 +434,29 @@
     if (w.dry) return ` <span class="sdt">◌ ${Math.round(S.playR)} m</span>`;
     return (S.sdRise || 0) >= 0.05 ? ` <span class="sdt">▲ ${(S.sdRise).toFixed(1)} m</span>` : '';
   }
+  /* the height of the top bar is a CSS variable (--tb-h): the win title sits right under it, and a fixed overlay cannot know it */
+  let tbH = 0;
+  function fitTop() {
+    const h = $('topbar').offsetHeight;
+    if (h && h !== tbH) {
+      tbH = h;
+      document.documentElement.style.setProperty('--tb-h', h + 'px');
+    }
+  }
+  addEventListener('resize', () => setTimeout(fitTop, 0));
   /* P9 top bar (PoC): turn · time · wind · weather */
   function drawTop(S, a, team, tc) {
-    setHTML('tbTurn', `<div class="lbl">Turn</div><div class="tn" style="--team:${tc}">${esc(team.name)}</div><div class="wn">${esc(a.name)}${SS.game && SS.game.is_cpu(S, a.team) ? ' · CPU' : SS.net && SS.net.active ? (a.team === SS.net.team ? ' · you' : ' · friend') : ''}</div>`);
+    let moved = setHTML('tbTurn', `<div class="lbl">Turn</div><div class="tn" style="--team:${tc}">${esc(team.name)}</div><div class="wn">${esc(a.name)}${SS.game && SS.game.is_cpu(S, a.team) ? ' · CPU' : SS.net && SS.net.active ? (a.team === SS.net.team ? ' · you' : ' · friend') : ''}</div>`);
     const retreat = S.retreatT > 0, place = S.phase === 'place', t = place ? S.placeT : retreat ? S.retreatT : S.turnT, lim = S.settings.turnTime > 0;
     const tlow = retreat || ((lim || place) && t < 10), tfrac = lim && S.phase === 'play' && !retreat && !place ? Math.max(0, Math.min(1, Math.ceil(t) / S.settings.turnTime)) : 0;
-    setHTML('tbTime', `<div class="lbl">${place ? 'Deploy' : retreat ? 'Retreat' : S.sudden ? 'Sudden death' + sdTrend(S) : 'Time'}</div><b class="${tlow ? 'low' : ''}">${place || retreat || (lim && S.phase === 'play') ? Math.max(0, Math.ceil(t)) : S.phase === 'play' ? '∞' : '–'}</b>${tfrac > 0 ? `<i class="tbar${tlow ? ' low' : ''}" style="width:${(tfrac * 100).toFixed(1)}%"></i>` : ''}`);
+    const timeMoved = setHTML('tbTime', `<div class="lbl">${place ? 'Deploy' : retreat ? 'Retreat' : S.sudden ? 'Sudden death' + sdTrend(S) : 'Time'}</div><b class="${tlow ? 'low' : ''}">${place || retreat || (lim && S.phase === 'play') ? Math.max(0, Math.ceil(t)) : S.phase === 'play' ? '∞' : '–'}</b>${tfrac > 0 ? `<i class="tbar${tlow ? ' low' : ''}" style="width:${(tfrac * 100).toFixed(1)}%"></i>` : ''}`);
     const w = S.wind, d = P.dir(S); let along = 0, sp = 0;
     if (w && !SS.world.under) { along = w.mean.x * d.x + w.mean.z * d.z; sp = Math.hypot(w.mean.x, w.mean.z); }
     const f = Math.min(1, Math.abs(along) / 12) * 50;
-    setHTML('tbWind', `<div class="lbl">Wind</div><div class="wbar"><i class="${along < 0 ? 'l' : 'r'}" style="left:${along < 0 ? 50 - f : 50}%;width:${f.toFixed(1)}%"></i></div><div class="wt">${Math.abs(along) < 0.3 ? (SS.world.eow ? 'no air' : 'calm') : (along < 0 ? '◀ ' : '') + Math.abs(along).toFixed(1) + ' m/s' + (along > 0 ? ' ▶' : '')}</div>`);
+    const windMoved = setHTML('tbWind', `<div class="lbl">Wind</div><div class="wbar"><i class="${along < 0 ? 'l' : 'r'}" style="left:${along < 0 ? 50 - f : 50}%;width:${f.toFixed(1)}%"></i></div><div class="wt">${Math.abs(along) < 0.3 ? (SS.world.eow ? 'no air' : 'calm') : (along < 0 ? '◀ ' : '') + Math.abs(along).toFixed(1) + ' m/s' + (along > 0 ? ' ▶' : '')}</div>`);
     const we = S.weather, name = we ? ((C.WEATHER_NAME && C.WEATHER_NAME[we.kind]) || we.kind) : 'Caves';
-    setHTML('tbWx', `<div class="lbl">Weather</div><div class="wxn">${SS.world.eow ? 'Open space' : SS.world.under ? 'Underground' : (WX_ICON[we && we.kind] || '') + ' ' + name}</div><div class="wxs">${SS.world.eow ? 'vacuum, no wind' : SS.world.under ? 'no wind' : (SS.ice && SS.ice.air_temp ? Math.round(SS.ice.air_temp(S)) + ' °C · ' : '') + sp.toFixed(1) + ' m/s full wind'}${SS.view.timeOfDay && !SS.world.under && !SS.world.eow && SS.view.timeOfDay(S) !== 'day' ? ' · ' + SS.view.timeOfDay(S) : ''}</div>`);
+    setHTML('tbWx', `<div class="wxn">${SS.world.eow ? 'Open space' : SS.world.under ? 'Underground' : (WX_ICON[we && we.kind] || '') + ' ' + name}</div><div class="wxs">${SS.world.eow ? 'vacuum, no wind' : SS.world.under ? 'no wind' : (SS.ice && SS.ice.air_temp ? Math.round(SS.ice.air_temp(S)) + ' °C · ' : '') + sp.toFixed(1) + ' m/s full wind'}${SS.view.timeOfDay && !SS.world.under && !SS.world.eow && SS.view.timeOfDay(S) !== 'day' ? ' · ' + SS.view.timeOfDay(S) : ''}</div>`);
+    if (moved || timeMoved || windMoved || !tbH) fitTop();
   }
   /* P9 weapon grid (built per match), info line */
   let gridBuilt = null; const gridBtn = {};
@@ -373,11 +480,58 @@
     const ord = cat.ks || C.ARSENAL_ORDER;
     for (const k of C.ARSENAL_ORDER) { const g = gridBtn[k]; if (g) { g.b.classList.toggle('off', !!cat.ks && cat.ks.indexOf(k) < 0); g.b.style.order = ord.indexOf(k); } }
     for (const t of el.querySelectorAll('.wtab')) { const on = t.dataset.c === id; t.classList.toggle('on', on); t.setAttribute('aria-selected', on ? 'true' : 'false'); }
-    fitGH();
+    fitTiles(); fitGH();
   }
   /* --gh = the bar's height: the info line, the debug panel and the tooltip sit above it (the tab and the window size change it) */
-  function fitGH() { const el = $('weapons'); if (el && el.offsetHeight > 0) document.documentElement.style.setProperty('--gh', (el.offsetHeight + 12) + 'px'); }
-  if (typeof addEventListener === 'function') addEventListener('resize', () => setTimeout(fitGH, 0));
+  function fitGH() {
+    const el = $('weapons');
+    if (!el || el.offsetHeight <= 0) return;
+    const gh = innerHeight - el.getBoundingClientRect().top + 2 * uPx;
+    document.documentElement.style.setProperty('--gh', gh + 'px');
+  }
+  /* A tile label never loses letters. The tiles start square; a name wider than its tile wraps at its space (the .two tiles); when a word still does not fit
+   * the tiles of the bar get wider (--wr, up to 1.35 x), and only then a word shrinks (not below 8.5 px). Runs when the tab, the tile size or the font changes. */
+  function tilesFit(grid, shrink) {
+    let ok = true;
+    for (const t of grid.querySelectorAll('.wpn:not(.off)')) {
+      const n = t.querySelector('.n');
+      if (!n) continue;
+      t.classList.remove('two');
+      n.style.fontSize = '';
+      if (n.scrollWidth <= n.clientWidth + 0.5) continue;
+      if (n.textContent.indexOf(' ') > 0) t.classList.add('two');
+      if (n.scrollWidth <= n.clientWidth + 0.5) continue;
+      if (!shrink) { ok = false; continue; }
+      let fs = parseFloat(getComputedStyle(n).fontSize);
+      while (n.scrollWidth > n.clientWidth + 0.5 && fs > 8.5) {
+        fs -= 0.5;
+        n.style.fontSize = fs + 'px';
+      }
+    }
+    return ok;
+  }
+  function fitTiles() {
+    const el = $('weapons'), grid = el && el.querySelector('.wgrid');
+    if (!grid || !el.offsetHeight) return;
+    for (const wr of [1, 1.12, 1.25, 1.35]) {
+      grid.style.setProperty('--wr', wr);
+      if (tilesFit(grid, false)) return;
+    }
+    tilesFit(grid, true);
+  }
+  /* the size observer must not change the size it observes in the same frame (a "ResizeObserver loop" error): the fit runs in the next frame */
+  let fitQueued = false;
+  function scheduleFit() {
+    if (fitQueued) return;
+    fitQueued = true;
+    requestAnimationFrame(() => {
+      fitQueued = false;
+      fitGH();
+      fitTiles();
+    });
+  }
+  if (typeof addEventListener === 'function') addEventListener('resize', () => setTimeout(() => { fitGH(); fitTiles(); }, 0));
+  if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) document.fonts.ready.then(fitTiles);
 
   // ASSET: weapon_icons, hud_panels (ui/icons/*.png, ui/hud/*.png)
   function buildGrid(S) {
@@ -397,6 +551,8 @@
     gridBuilt = S ? S.settings.art || 'painted' : 'painted';
     if (!el._tip) {                                                       // (once: the grid element stays, its buttons are rebuilt)
       el._tip = 1;
+      // the touch bag opens from display: none, and a window or tile size changes the bar
+      if (typeof ResizeObserver !== 'undefined') new ResizeObserver(scheduleFit).observe(el);
       el.addEventListener('click', e => { const t = e.target.closest ? e.target.closest('.wtab') : null; if (t) { showTab(t.dataset.c); t.blur(); } });
       el.addEventListener('pointerover', e => { const b = e.target.closest ? e.target.closest('.wpn') : null; if (b) showTip(b.dataset.k, b); });
       el.addEventListener('pointerleave', hideTip);
@@ -486,6 +642,7 @@
     const show = S.phase === 'over', el = $('over');
     if (show !== overShown) {
       overShown = show; overRes = false; clearTimeout(overFocusT); el.classList.toggle('hidden', !show); el.classList.remove('res');
+      document.body.classList.toggle('over', show); document.body.classList.remove('overcard');
       if (!show) return;
       const t = S.over, names = S.worms.filter(w => !w.dead).map(w => w.name).join(', ');
       el.style.setProperty('--team', t >= 0 ? css(SS.sim.team_rgb(S, t)) : 'var(--accent)');
@@ -503,7 +660,7 @@
     if (!show) return;
     const ready = !SS.cine || SS.cine.panelReady(S);
     if (ready !== overRes) {
-      overRes = ready; el.classList.toggle('res', ready);
+      overRes = ready; el.classList.toggle('res', ready); document.body.classList.toggle('overcard', ready);
       if (ready) { overT0 = performance.now(); overFocusT = setTimeout(() => { if (overShown && overRes && !overGuest) $('bRematch').focus(); }, 500); }
     }
   }
@@ -541,28 +698,60 @@
     const tip = 'Life jackets: ' + g.n + ' left, ' + (g.on ? 'on' : 'off') + (mine ? ' (click or ; to switch)' : '') + '. A worm that lands in water inflates one and swims back to the shore.';
     return st + (mine ? ' mine' : '') + '|' + tip + '|' + VEST + '<em>' + g.n + '</em>';
   }
+  /* the aim line: the one thing the panel always says, in plain words (the weapon and what matters about it right now) */
+  function aimLine(S, wp, pd) {
+    if (S.phase === 'place') return 'Place your worm';
+    if (S.phase === 'perk') return 'Choosing perks';
+    if (S.phase === 'over') return 'Match over';
+    const name = (C.ARSENAL[S.weapon] || wp).name;
+    if (S.phase !== 'play') return S.retreatT > 0 ? 'Retreat to cover' : 'Waiting for the shot to land';
+    if (S.charging) return name + ' · power ' + Math.round(100 * Math.max(C.WORM_DYN.MIN_POWER, S.power)) + ' %';
+    if (S.rope) return 'Rope ' + (S.rope.hooked ? 'hooked' : 're-hooking') + ' · ' + S.rope.len.toFixed(1) + ' m';
+    const par = SS.weaponsA && SS.weaponsA.param(S, S.weapon);
+    if (par) return name + ' · ' + par.name + ' ' + par.value + ' ' + par.unit;
+    if (pd.W) return pd.fuse ? name + ' · ' + pd.fuse + ' s fuse' : name + ' · explodes on contact';
+    if (wp.kind === 'rope') return name + ' · reaches ' + C.ROPE_MAX.toFixed(0) + ' m';
+    return name;
+  }
+  const COMPASS8 = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+  /* the detail rows (F3 / the i button): aim angle, height, which way the view faces, the target's distance, whether the view may turn */
+  function detailRows(S, a, tg, flat, brg) {
+    const up = S.aim * 180 / Math.PI;
+    const deg = Math.round(Math.abs(up));
+    const aim = deg < 2 ? 'level' : deg + '° ' + (up > 0 ? 'up' : 'down');
+    const off = tg ? Math.abs(P.to_plane(S, tg.pos).t) : 0;
+    let view = '<span class="ok">free to rotate (Q / E)</span>';
+    if (S.phase !== 'play') view = '<span class="lock">locked while the shot resolves</span>';
+    else if (SS.sim.heading_window && SS.sim.heading_window(S)) view = '<span class="ok">turns only toward the play area or a worm</span>';
+    let target = '<b>none</b>' + (flat ? '' : ' (Tab picks one)');
+    if (tg) {
+      target = '<b>' + esc(tg.name) + '</b>, ' + M.v3_dist(tg.pos, a.pos).toFixed(1) + ' m away';
+      target += off < 0.5 ? ', in line' : ', ' + off.toFixed(1) + ' m off the view';
+    }
+    let compass = '';
+    if (!flat) {
+      compass = '<div class="compass" title="The view faces ' + COMPASS8[Math.round(brg / 45) % 8] + '">'
+        + '<div class="needle" style="transform:rotate(' + brg + 'deg)"></div><span>' + brg.toFixed(0).padStart(3, '0') + '°</span></div>';
+    }
+    return '<div class="hrow">' + compass + '<div class="facts">'
+      + '<div>Aim <b>' + aim + '</b> · height <b>' + a.pos.y.toFixed(1) + ' m</b></div>'
+      + '<div>Target ' + target + '</div>'
+      + '<div>' + (flat ? 'Fixed side view' : 'View ' + view) + '</div>'
+      + '</div></div>';
+  }
   function drawHUD(S) {
     const a = S.active;
     if (!a) return;
-    const ap = P.to_plane(S, a.pos), team = { name: SS.sim.team_name(S, a.team), rgb: SS.sim.team_rgb(S, a.team) }, tc = css(team.rgb);
+    const team = { name: SS.sim.team_name(S, a.team), rgb: SS.sim.team_rgb(S, a.team) }, tc = css(team.rgb);
     const tg = S.target && !S.target.dead ? S.target : null;
     const wp = C.WEAPONS[S.weapon];
     const brg = bearing(S.theta), flat = SS.world.flat;                // P68a: 2D = one fixed plane
     drawTop(S, a, team, tc); drawWeapons(S, a); drawOver(S);
-    const vmax = wp.vmax || 28, pd = C.PROJ[S.weapon] || {};
-    setHTML('hud', `
-      <div class="power ${S.charging ? 'on' : ''}"><i style="width:${(S.power * 100).toFixed(0)}%"></i><span>${S.charging ? (vmax * Math.max(C.WORM_DYN.MIN_POWER, S.power)).toFixed(1) + ' m/s' : pd.W ? pd.W.toFixed(2) + ' kg TNT-eq' + (pd.mortar ? ' · burst ' + S.wa.mortarH + ' m (+ / −)' : pd.fuse ? ' · ' + (SS.weaponsA ? SS.weaponsA.fuse_of(S, S.weapon) : pd.fuseSet ? S.fuse : pd.fuse) + ' s fuse' + (pd.fuseSet ? ' (+ / −)' : '') : ' · contact fuse') : wp.kind === 'rope' ? 'reach ' + C.ROPE_MAX + ' m' : wp.name}</span></div>
-      <div class="hrow">${flat ? '' : `<div class="compass"><div class="needle" style="transform:rotate(${brg}deg)"></div><span>${brg.toFixed(0).padStart(3, '0')}°</span></div>`}
-        <div class="facts">
-          <div>${flat ? '2D slice <span class="ok">fixed side view</span>' : 'Section ' + (S.phase !== 'play' ? '<span class="lock">locked · attack resolving</span>' : SS.sim.heading_window && SS.sim.heading_window(S) ? '<span class="ok">turns only toward the play area or a worm</span>' : '<span class="ok">free to rotate</span>')}</div>
-          <div>Aim ${Math.round(S.aim * 180 / Math.PI)}° · alt ${a.pos.y.toFixed(1)} m · s ${ap.s.toFixed(1)} m</div>
-          <div>Target ${tg ? `<b>${esc(tg.name)}</b> ${M.v3_dist(tg.pos, a.pos).toFixed(1)} m · ${Math.abs(P.to_plane(S, tg.pos).t).toFixed(1)} m off` : '–'}</div>
-          ${S.rope ? `<div>Rope ${S.rope.hooked ? 'hooked' : '<span class="lock">re-hooking…</span>'} · ${S.rope.len.toFixed(1)} m</div>` : ''}
-        </div></div>
-      ${iceRow(S, a)}
-      ${hotRow(S, a)}
-      ${skillsRow(a)}
-      `);
+    const pd = C.PROJ[S.weapon] || {};
+    const fill = (S.power * 100).toFixed(0);
+    setHTML('hudl', '<div class="power ' + (S.charging ? 'on' : '') + '"><i style="width:' + fill + '%"></i>'
+      + '<span>' + esc(aimLine(S, wp, pd)) + '</span></div>');
+    setHTML('hudb', `${hotRow(S, a)}${iceRow(S, a)}${detailOpen ? detailRows(S, a, tg, flat, brg) : ''}${skillsRow(a)}`);
     const tot = (S.teams || []).map((t, i) => teamHP(S, i));
     // P1: N teams; bars relative to the team's starting total (worms x starting HP)
     drawTeams(S, a, tot);
@@ -574,17 +763,62 @@
   const LOG_KEEP = /sudden death|final stand|crate|win after|nobody survived|\bdies\b|\bdied\b|killed|buried|sank|drifted|wandered|head off|escaped|infected|bursts out|collaps|streak|void|explod|take over|weather turns|moon phase|meteor/i;
   const LOG_NOISE = /^(rope|nothing within|no terrain|cannot drop|the line|stand on|click a target|view locked|section locked|section aligned|debug|the parachute opens)|section aligned with|rotate with|on the map: get in|ruined buildings|on the island|a \d+ m side-on|a crashed derelict|magnetic suits|no room there/i;
   let logOpen = false;
+  /* A log line wraps at spaces, like any text. One that needs more than --log-lines lines at the panel's width is cut at a space and ends in an ellipsis: never
+   * inside a word. The widths come from a hidden span with the log's own font (cached per text and window size). */
+  let logGeom = '', logW = 0, logLines = 2, logMax = 3, measureEl = null;
+  const fitCache = new Map();
+  if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) document.fonts.ready.then(() => fitCache.clear());
+  function logGeometry(el) {
+    const key = innerWidth + 'x' + innerHeight;
+    if (key === logGeom) return;
+    logGeom = key; fitCache.clear();
+    const cs = getComputedStyle(el), col = $('lcol');
+    logW = col.clientWidth - 2 - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    logLines = parseInt(cs.getPropertyValue('--log-lines'), 10) || 2;
+    logMax = parseInt(cs.getPropertyValue('--log-n'), 10) || 3;
+  }
+  function textWidth(t, imp) {
+    if (!measureEl) { measureEl = document.createElement('span'); $('lcol').appendChild(measureEl); }
+    measureEl.className = 'lmeasure' + (imp ? ' imp' : '');
+    measureEl.textContent = t;
+    return measureEl.getBoundingClientRect().width;
+  }
+  function fitLine(text, imp) {
+    if (logW < 60) return text;
+    const key = (imp ? 'i' : 'n') + logW + '|' + logLines + '|' + text;
+    const hit = fitCache.get(key);
+    if (hit !== undefined) return hit;
+    const room = logW - 2, space = textWidth('a a', imp) - textWidth('aa', imp), words = text.split(' '), lines = [[]];
+    let x = 0;
+    for (const w of words) {
+      const ww = textWidth(w, imp), cur = lines[lines.length - 1];
+      if (cur.length && x + space + ww > room) { lines.push([w]); x = ww; } else { cur.push(w); x = cur.length > 1 ? x + space + ww : ww; }
+    }
+    let out = text;
+    if (lines.length > logLines) {
+      const keep = lines.slice(0, logLines), last = keep[keep.length - 1];
+      while (last.length > 1 && textWidth(last.join(' ') + '…', imp) > room) last.pop();
+      out = keep.map(l => l.join(' ')).join(' ').replace(/[ ,;:.\-–]+$/, '') + '…';
+    }
+    if (fitCache.size > 400) fitCache.clear();
+    fitCache.set(key, out);
+    return out;
+  }
   function drawLog(S) {
     const el = $('log'); if (!el) return;
     if (!el._tog) { el._tog = 1; el.addEventListener('click', e => { if (e.target.closest && e.target.closest('.lt')) { logOpen = !logOpen; if (lastS) drawLog(lastS); } }); }
+    if (!logOpen) logGeometry(el);
     let out = '', n = 0;
     for (const l of S.log) {
       const age = S.time - l.t, imp = LOG_KEEP.test(l.text);
       if (!logOpen) {
         if (LOG_NOISE.test(l.text) && !imp) continue;
-        const life = imp ? 12 : 7; if (age > life || n >= 3) continue;
-        const op = Math.min(1, Math.max(0, (life - age) / 2.5));
-        out += `<div class="${imp ? 'imp' : ''}" style="color:${css(l.rgb)};opacity:${Math.round(op * 20) / 20}">${esc(l.text)}</div>`; n++;
+        const life = imp ? 12 : 7; if (age > life || n >= logMax) continue;
+        const op = Math.min(1, Math.max(0, (life - age) / 2.5)), shown = fitLine(l.text, imp);
+        const full = shown !== l.text ? ' data-full="' + esc(l.text) + '"' : '';
+        const style = 'color:' + css(l.rgb) + ';opacity:' + Math.round(op * 20) / 20;
+        out += '<div class="' + (imp ? 'imp' : '') + '" style="' + style + '"' + full + '>' + esc(shown) + '</div>';
+        n++;
       } else out += `<div class="full" style="color:${css(l.rgb)}">${esc(l.text)}</div>`;
     }
     el.classList.toggle('quiet', !logOpen && n === 0); el.classList.toggle('open', logOpen);
@@ -690,6 +924,7 @@
   function drawTopMap(S) {
     const fig = topC.parentNode, hide = !!SS.world.flat;               // P68a: no plan view of a one-slice map
     if (fig && fig.style && (fig.style.display === 'none') !== hide) fig.style.display = hide ? 'none' : '';
+    if (document.body.classList.contains('flat') !== hide) document.body.classList.toggle('flat', hide);
     if (hide) return;
     const vs = SS.view.state;
     if (!vs.heightmap) return;

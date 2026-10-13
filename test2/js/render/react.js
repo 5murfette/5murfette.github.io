@@ -34,6 +34,8 @@
   }
   RX.init = function () {};
   RX.clear = function () { st.length = 0; clock = 0; };
+  /* seconds the worm's face still shows a hit (pain, or the daze after a big one): read-only, for the antic camera (render/anticcam.js) */
+  RX.faceLeft = w => { const s = st[w.id]; return s ? M.max(s.painT, s.dazeT > 0.25 ? s.dazeT : 0) : 0; };
 
   RX.onEvent = function (S, e) {
     const F = SS.fx;

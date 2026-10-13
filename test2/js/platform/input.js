@@ -7,6 +7,7 @@
   I.pressed = new Set();   // edge-triggered key codes since last step
   I.mouseRot = 0;          // accumulated right-drag rotation (pixels * gain)
   I.wheel = 0;
+  I.zoomToggle = false;    // P119b: the 🔍 button of the touch pad (consumed by main.js frameRender)
   I.panX = 0; I.panY = 0;  // accumulated left-drag (pixels): camera pan, or orbit while inspecting (view only)
   I.panReset = false;
   I.clicks = [];           // P9: left clicks without a drag (client x, y): targets on the section
@@ -29,7 +30,7 @@
   let WKEY = null;
   const wkeys = () => { if (!WKEY) { WKEY = {}; const A = SS.CFG.ARSENAL; for (const k in A) WKEY[CODE(A[k].key)] = k; } return WKEY; };
 
-  const HANDLED = new Set(['Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter', 'Slash', 'Quote']);   // (Slash / Quote: Firefox's quick find)
+  const HANDLED = new Set(['Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Backspace', 'Enter', 'Slash', 'Quote', 'F1', 'F3']);   // (Slash / Quote: Firefox's quick find; F1: the browser's help page; F3: find next)
   I.attach = function (canvas, onKey) {
     addEventListener('keydown', e => {
       if (e.target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) return;
@@ -88,7 +89,7 @@
       const down = e => {
         e.preventDefault(); btn.classList.add('on');
         if (k === 'weapons') { const w = document.getElementById('weapons'); if (w) w.classList.toggle('closed'); return; }
-        if (k === 'zoom') { I.wheel += I.zoomedOut ? -6 : 6; I.zoomedOut = !I.zoomedOut; return; }
+        if (k === 'zoom') { I.zoomToggle = true; return; }                         // (P119b: main.js hands it to SS.view.zoomToggle: far = 6 notches out, near = exactly back)
         I.pressed.add(k); I.keys.add(k);
       };
       const up = e => { e.preventDefault(); btn.classList.remove('on'); if (k !== 'weapons' && k !== 'zoom') I.keys.delete(k); };

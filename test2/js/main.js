@@ -80,7 +80,7 @@
   /* 9b lockstep (platform/net.js): the peer owning the active worm's team drives (steps at once, sends its input);
    * the other replays the inputs in order and waits for the next one. false = waiting. */
   let netGame = false, pendingAlign = 0, pendingStart = null, pendingResync = null;
-  const PRES = ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine', 'quality'];      // presentation settings stay the guest's own across a resync
+  const PRES = ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine', 'anticCam', 'quality'];      // presentation settings stay the guest's own across a resync
   function applyResync(d) {
     const NT = SS.net, mine = {}; for (const k of PRES) if (S.settings && S.settings[k] !== undefined) mine[k] = S.settings[k];
     if (d.fields && SS.netdiag && (S.netStep | 0) === d.k) { const diff = SS.netdiag.diff(SS.netdiag.fields(S), d.fields).filter(k => k !== 'settings'); console.warn('resync: fields that differed from the host at step ' + d.k + ':', diff.join(', ') || '(none: only derived data)'); NT.lastDiff = diff; }
@@ -114,6 +114,7 @@
   function frameRender(dt) {
     const I = SS.input;
     if (I.wheel) { SS.view.zoom(I.wheel); I.wheel = 0; }
+    if (I.zoomToggle) { I.zoomToggle = false; SS.view.zoomToggle(); }
     if (I.panX || I.panY) { SS.view.drag(I.panX, I.panY, S); I.panX = I.panY = 0; }
     // PoC edgeScroll: the mouse parked in the outer 10 % of the view scrolls the camera (not while dragging / firing)
     if (I.mouseIn && !I.held && !I.mfire && running && !menuOpen && !paused && !(S.inspect > 0.5)) {
@@ -159,6 +160,7 @@
       await ensureRenderer(settings);
       SS.view.setSlice(settings.slice); SS.view.setGhost(settings.ghost | 0); if (SS.view.setGhostAuto) SS.view.setGhostAuto(settings.ghostAuto !== false);
       if (SS.cine) SS.cine.setEnabled(settings.cine !== false);
+      if (SS.anticCam) SS.anticCam.setEnabled(settings.anticCam !== false);
       let t0 = performance.now();
       const job = SS.sim.begin_reset(S, settings);
       let p = 0, ts = performance.now();
@@ -204,7 +206,7 @@
     for (const k of ['biome', 'weather', 'lava', 'wind', 'quality', 'slice', 'ghost', 'under', 'cpu', 'skill', 'placement', 'time', 'art', 'shape', 'first', 'volcanoes', 'mapSize', 'dim']) if (params.has(k)) s[k] = params.get(k);
     for (const k of SS.CFG.DENSITY.KEYS.concat(['mineFuse', 'toolCrates', 'jetpacks'])) if (params.has(k)) s[k] = params.get(k);
     if (params.has('jackets')) s.jackets = parseInt(params.get('jackets'), 10);
-    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto', 'cine', 'fort', 'jacketOn']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
+    for (const k of ['blood', 'select', 'keepRope', 'rooms', 'rotLock', 'teamBlood', 'ghostAuto', 'cine', 'anticCam', 'fort', 'jacketOn']) if (params.has(k)) s[k] = params.get(k) !== '0' && params.get(k) !== 'off';
     for (const k of SS.CFG.CRATES.SLIDERS) if (params.has(k)) s[k] = Math.max(0, Math.min(10, parseInt(params.get(k), 10) || 0));      // P84: crate levels 0..10
     for (const k of ['teams', 'worms', 'hp', 'turnTime']) if (params.has(k)) s[k] = parseInt(params.get(k), 10) || 0;
     if (params.has('ctl')) s.ctl = params.get('ctl').split(',');
@@ -224,6 +226,8 @@
       if (code === 'F9' && SS.dbgui) { SS.dbgui.toggle(); return; }
       if (code === 'Escape' && SS.dbgui && SS.dbgui.armed()) { SS.dbgui.cancel(); return; }       // P49: Esc cancels a pending drop (before it opens the menu)
       if (code === 'F1' || code === 'Slash') $('help').classList.toggle('hidden');
+      // aim details on / off (the i button on the HUD panel does the same, also by touch)
+      if (code === 'F3' && SS.ui.toggleDetail) SS.ui.toggleDetail();
       if ((code === 'KeyM' || code === 'Escape') && running && !menuOpen) openMenu();
       if (code === 'Home') SS.view.resetPan && SS.view.resetPan();
       if (code === 'F2' && SS.audio) { SS.audio.setMuted(!SS.audio.muted); $('mutebtn').textContent = SS.audio.muted ? '🔇' : '🔊'; }
@@ -299,7 +303,7 @@
         if (Array.isArray(st.names)) ok.names = st.names.slice(0, 4).map(v => String(v).slice(0, 18));
         // presentation stays the guest's own (a different quality reloads the renderer: it dropped the link mid-match)
         const mine = SS.menu.load() || {}, pres = {};
-        for (const k of ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine']) if (mine[k] != null) pres[k] = mine[k];     // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
+        for (const k of ['slice', 'art', 'ghost', 'idle', 'ghostAuto', 'cine', 'anticCam']) if (mine[k] != null) pres[k] = mine[k];     // (R10: 'idle' too: render only, a guest who switched the antics off got them back in every online match)
         pres.quality = Q ? Q.name : mine.quality;                          // (P38 R6 R6: the RUNNING quality: a saved one that differs would reload the page and drop the link)
         const base = urlSettings();                                        // P103: a sim-relevant setting the host did not send is the DEFAULT (what the host's sim.begin_reset fills in), never this page's own ?url parameter
         for (const k of Object.keys(C.SETTINGS)) if (PRES.indexOf(k) < 0) base[k] = C.SETTINGS[k];
@@ -373,7 +377,7 @@
             if (!menuOpen) { acc += dt; let n = 0; while (running && n < 60 && (acc >= C.STEP || (!SS.net.drives(S.active ? S.active.team : 0) && SS.net.pending() > 2))) { if (!stepNet()) { acc = Math.min(acc, C.STEP); break; } acc = Math.max(0, acc - C.STEP); n++; } SS.net.flush(); }
           } else if (!paused && !menuOpen) { tscale = RP.play ? (RP.play.slow || 0.5) : S.time < (S.slowUntil || 0) && S.slowUntil - S.time < 1.5 ? 0.35 : 1; if (!RP.play && SS.cine) tscale = Math.min(tscale, SS.cine.timeScale()); acc += dt * tscale; while (acc >= C.STEP && running) { step(); acc -= C.STEP; } }   // (PoC slow motion)
           else acc = 0;
-          if (!paused) { SS.view.timeScale = menuOpen ? 1 : tscale; frameRender(dt); adaptDpr(rawMs, now / 1000); }
+          if (!paused) { SS.view.timeScale = menuOpen ? 1 : tscale; SS.view.menuOpen = menuOpen; frameRender(dt); adaptDpr(rawMs, now / 1000); }
         }
       } catch (e) { acc = 0; if (frameErrs++ < 5) console.error('frame error:', e && e.stack || e); }
     }

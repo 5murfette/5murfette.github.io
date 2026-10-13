@@ -8,34 +8,39 @@
    * strength: peak blast overpressure (kPa) the material survives — sets crater size per material.
    * granular: loose material that slides when unsupported/steeper than its angle of repose.
    * liquid: flows under gravity (lava).  buoyant: floats on sea water (ice).
-   * layer: texture-array slot in the renderer (render may map it to a texture + tint). */
+   * layer: texture-array slot in the renderer (render may map it to a texture + tint).
+   * veg (THE organic-top table; sim/veg.js, sim/edge.js, sim/meshgen.js, sim/trees.js and every renderer read it, nothing keeps a list of its own):
+   *   what a TOP of this material can carry. 0 = nothing grows on it: built (steel, foam, concrete), glass (obsidian), frozen (ice, snow), molten (lava) and bare
+   *   bedrock tops show no grass, tufts, flowers, ferns or bushes, and cover that lay under one of them is gone for good; 1 = rooted growth only: the arid scrub,
+   *   cacti, dead snags and driftwood in the cracks of natural ground (rock, sandstone, basalt, crust, sand), never a turf; 2 = a grass cover (soil, sparse on
+   *   scree and ash). cover (only with veg 2) = the share of such columns the map generator covers (sim/veg.js init: noise x cover). */
   const MAT = { AIR: 0, BEDROCK: 1, ROCK: 2, SOIL: 3, SAND: 4, SANDSTONE: 5, SNOW: 6, ICE: 7, BASALT: 8, LAVA: 9, CRUST: 10, ASH: 11, SCREE: 12, STEEL: 13, FOAM: 14, CONCRETE: 15, OBSIDIAN: 16 };
   /* strength tuned so a 1 kg grenade digs ≈ rock 2.0 m, soil 2.8 m, sand 3.2 m, snow 3.7 m, basalt 1.75 m (radius) */
   const MATS = [
-    { name: 'air', strength: 0, rho: 1.2, rgb: 0x000000, mu: 0 },
-    { name: 'bedrock', strength: 1e9, rho: 2900, rgb: 0x4a4440, mu: 0.7 },
-    { name: 'rock', strength: 200, rho: 2600, rgb: 0x8a7d70, mu: 0.65 },
-    { name: 'soil', strength: 90, rho: 1600, rgb: 0x7a5636, mu: 0.8 },
-    { name: 'sand', strength: 70, rho: 1700, rgb: 0xd8c08a, granular: 1, repose: 1, mu: 0.75 },
-    { name: 'sandstone', strength: 140, rho: 2300, rgb: 0xc0704a, mu: 0.7 },
-    { name: 'snow', strength: 50, rho: 450, rgb: 0xf2f6fa, granular: 1, repose: 2, melts: 1, mu: 0.35 },
-    { name: 'ice', strength: 160, rho: 917, rgb: 0x9fd2f0, buoyant: 1, melts: 1, mu: 0.06 },
-    { name: 'basalt', strength: 280, rho: 2900, rgb: 0x34302e, mu: 0.7 },
-    { name: 'lava', strength: 40, rho: 2600, rgb: 0xff5a10, liquid: 1, hot: 1, mu: 0.9 },
-    { name: 'crust', strength: 180, rho: 2500, rgb: 0x2a2523, mu: 0.75 },
-    { name: 'ash', strength: 60, rho: 1000, rgb: 0x55504c, granular: 1, repose: 1, mu: 0.7 },
-    { name: 'scree', strength: 100, rho: 1900, rgb: 0x8d8780, granular: 1, repose: 1, mu: 0.6 },
+    { name: 'air', strength: 0, rho: 1.2, rgb: 0x000000, mu: 0, veg: 0 },
+    { name: 'bedrock', strength: 1e9, rho: 2900, rgb: 0x4a4440, mu: 0.7, veg: 0 },
+    { name: 'rock', strength: 200, rho: 2600, rgb: 0x8a7d70, mu: 0.65, veg: 1 },
+    { name: 'soil', strength: 90, rho: 1600, rgb: 0x7a5636, mu: 0.8, veg: 2, cover: 1 },
+    { name: 'sand', strength: 70, rho: 1700, rgb: 0xd8c08a, granular: 1, repose: 1, mu: 0.75, veg: 1 },
+    { name: 'sandstone', strength: 140, rho: 2300, rgb: 0xc0704a, mu: 0.7, veg: 1 },
+    { name: 'snow', strength: 50, rho: 450, rgb: 0xf2f6fa, granular: 1, repose: 2, melts: 1, mu: 0.35, veg: 0 },
+    { name: 'ice', strength: 160, rho: 917, rgb: 0x9fd2f0, buoyant: 1, melts: 1, mu: 0.06, veg: 0 },
+    { name: 'basalt', strength: 280, rho: 2900, rgb: 0x34302e, mu: 0.7, veg: 1 },
+    { name: 'lava', strength: 40, rho: 2600, rgb: 0xff5a10, liquid: 1, hot: 1, mu: 0.9, veg: 0 },
+    { name: 'crust', strength: 180, rho: 2500, rgb: 0x2a2523, mu: 0.75, veg: 1 },
+    { name: 'ash', strength: 60, rho: 1000, rgb: 0x55504c, granular: 1, repose: 1, mu: 0.7, veg: 2, cover: 0.06 },
+    { name: 'scree', strength: 100, rho: 1900, rgb: 0x8d8780, granular: 1, repose: 1, mu: 0.6, veg: 2, cover: 0.12 },
     // P2 (PoC): girder steel (indestructible like bedrock, anchors what it touches) and foam-mortar foam (the weakest
     // solid, floats where it touches the sea surface)
     // P37 W4: the girder PLATE is strong but destructible now (user): a 1 kg grenade pits it 0.44 m, three on one spot
     // go through its 0.6 m; it still anchors what it touches (collapse.js) and plain carves (torch, bullets) skip it
-    { name: 'steel', strength: 5000, rho: 7850, rgb: 0xa0663a, mu: 0.5, fixed: 1 },
-    { name: 'foam', strength: 25, rho: 60, rgb: 0xe4eef8, buoyant: 1, mu: 0.6 },
+    { name: 'steel', strength: 5000, rho: 7850, rgb: 0xa0663a, mu: 0.5, fixed: 1, veg: 0 },
+    { name: 'foam', strength: 25, rho: 60, rgb: 0xe4eef8, buoyant: 1, mu: 0.6, veg: 0 },
     // P29d bunkers: reinforced concrete (a 1 kg grenade digs ~0.66 m: a 0.9 m wall is scarred, not breached; it takes
     // several hits in one place; strength 800 gave 1.11 m and one grenade 0.3 m off the wall breached it)
-    { name: 'concrete', strength: 2600, rho: 2400, rgb: 0x8c8a84, mu: 0.7 },
+    { name: 'concrete', strength: 2600, rho: 2400, rgb: 0x8c8a84, mu: 0.7, veg: 0 },
     // P31: volcanic glass, lava quenched where it meets water (lava.js quench): hard, brittle, glossy black
-    { name: 'obsidian', strength: 240, rho: 2400, rgb: 0x141216, mu: 0.55 }
+    { name: 'obsidian', strength: 240, rho: 2400, rgb: 0x141216, mu: 0.55, veg: 0 }
   ];
 
   SS.CFG = {
@@ -250,7 +255,7 @@
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
     /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    BUILD: 'p118a-fix-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
+    BUILD: 'p119a-fix-m',                    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,   // first: the team that starts (0..3 or 'random' = PoC; the menu default)
                 collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off', cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
@@ -551,6 +556,13 @@
     },
     FIRE_DPS: 7             // HP/s while standing in flames
   };
+  /* the organic-top table (MATS[].veg / .cover above) as flat lookups, built once. The renderers upload VEG_LEVEL as shader uniforms, the sim reads it
+   * through veg_level(m) / veg_cover(m). C: const u8 VEG_LEVEL[17]; const f64 VEG_COVER[17]. */
+  SS.CFG.VEG_LEVEL = new Uint8Array(MATS.length);
+  SS.CFG.VEG_COVER = new Float64Array(MATS.length);
+  for (let m = 0; m < MATS.length; m++) { SS.CFG.VEG_LEVEL[m] = MATS[m].veg | 0; SS.CFG.VEG_COVER[m] = MATS[m].veg === 2 ? MATS[m].cover : 0; }
+  SS.CFG.veg_level = m => (m > 0 && m < MATS.length ? SS.CFG.VEG_LEVEL[m] : 0);
+  SS.CFG.veg_cover = m => (m > 0 && m < MATS.length ? SS.CFG.VEG_COVER[m] : 0);
   /* P37 W5: world content density (menu sub-menu). Settings keys dTrees, dRocks, dBarrels, dProps, dCrates, dMines,
    * dBunkers, dTown, dEggs hold 'none' | 'low' | 'medium' | 'high' (absent = 'medium' = the classic counts, so old
    * saves / tests / net peers without the keys generate the same map). C: int density_count(const Settings*, int key, int base). */

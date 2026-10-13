@@ -8,7 +8,7 @@
   const V = SS.view = {};
   let headSpot, renderer, scene, camera, tx, Q, sun, hemi, fill, sky, skyMat, water, heightTex, surfTex, scyTex, blankTex, outline, outlineMat, motes, lamp, stars = null;
   const view = {
-    camT: null, camZ: 0, dir: { cur: null, since: 0 }, zoom: 19, autoZ: 0, time: 0, heightVer: 0, heightFor: -1, heightT: -99, heightmap: null, secWV: -1, secT: -99, edgeA: 0,
+    camT: null, camZ: 0, dir: { cur: null, since: 0 }, zoom: 19, autoZ: 0, zoomBack: 0, userT: 99, time: 0, heightVer: 0, heightFor: -1, heightT: -99, heightmap: null, secWV: -1, secT: -99, edgeA: 0,
     pan: { s: 0, y: 0 }, orbit: { yaw: 0, tilt: 0 }, look: null, activeId: -1, surf: null, surfN: 0
   };
   V.state = view;
@@ -234,6 +234,13 @@
    * WORM_PX tall (about 4.6 % of the window height, 34..60 px), a little further out on big maps and on narrow / portrait windows (the width must still
    * show some battlefield). The player's wheel / pinch / tool value is kept: auto only follows while view.zoom still equals the last auto value. */
   const WORM_H = 0.46;
+  /* P119b (Q-23, "the zoom range is lopsided"): the camera distance (m) the player may choose runs from ZMIN to ZMAX. The old floor of 8 m was reached after 3 wheel notches from the default
+   * (11 m at 1280 x 800: 91 px per metre; 8.3 m: 120 px per metre, -3 to -8 notches all looked the same), so a worm and a blast could never be seen from close by. ZMIN = 5 m is about
+   * 200 px per metre at any window height (a metre is a quarter of the picture height there: the distance, not the window, decides). Close up the camera also drops to a low pitch and
+   * centres on the worm's head (closeK below), so the face is seen side-on and the worm does not sit in the lower third of the picture. */
+  const ZMIN = 5, ZMAX = 80, WHEEL_K = 1.1, FAR_NOTCHES = 6;
+  V.ZOOM_MIN = ZMIN; V.ZOOM_MAX = ZMAX;
+  const TILT0 = 0.2, TILT_CLOSE = 0.05, FOCUS0 = 1.2, FOCUS_CLOSE = 0.35, CLOSE_FROM = 8.5, CLOSE_TO = 5.2;      // camera pitch (rad above the horizon) and the focus height over the worm's centre (m): the default, and at the tightest
   V.autoZoom = function () {
     const h = vh || 800, w = vw || 1280, W = SS.world, tgt = M.clamp(h * 0.056, 34, 60);
     let z = (h * 0.5 / Math.tan(camera.fov * Math.PI / 360)) * WORM_H / tgt;
@@ -244,10 +251,21 @@
   function applyAutoZoom() {
     const z = V.autoZoom();
     if (!view.autoZ || Math.abs(view.zoom - view.autoZ) < 1e-6) view.zoom = z;
-    else if (Math.abs(z - view.autoZ) > 1e-6) view.zoom = M.clamp(view.zoom * z / view.autoZ, 8, 80);    // a window resize keeps the player's own factor
+    else if (Math.abs(z - view.autoZ) > 1e-6) view.zoom = M.clamp(view.zoom * z / view.autoZ, ZMIN, ZMAX);    // a window resize keeps the player's own factor
     view.autoZ = z;
   }
-  V.zoom = d => { view.zoom = M.clamp(view.zoom * Math.pow(1.1, M.clamp(d, -8, 8)), 8, 80); };   // d notches (the 🔍 button sends 6)
+  /* d wheel notches (+ = out): the wheel, a pinch (one notch per 15 %) and the 🔍 button all end here, so they agree on the range. Changing the zoom by hand puts the 🔍 toggle back to "near" */
+  V.zoom = d => { view.zoom = M.clamp(view.zoom * Math.pow(WHEEL_K, M.clamp(d, -8, 8)), ZMIN, ZMAX); view.zoomBack = 0; view.userT = 0; };
+  /* the 🔍 button (touch pad): far = FAR_NOTCHES notches out, near = back to EXACTLY the zoom it left (a relative +-6 drifted when the range clamp cut the first press short) */
+  V.zoomToggle = () => {
+    if (view.zoomBack) { view.zoom = view.zoomBack; view.zoomBack = 0; }
+    else { view.zoomBack = view.zoom; view.zoom = M.clamp(view.zoom * Math.pow(WHEEL_K, FAR_NOTCHES), ZMIN, ZMAX); }
+    view.userT = 0;
+  };
+  /* how tight the camera is: 0 at the loose end (the default distance and everything farther), 1 at ZMIN. The loose end is CLOSE_FROM m, or 0.8 of the window's default distance on a small
+   * window (the default look never changes). Drives the pitch and the focus height of the camera block below. */
+  function closeK(z) { return M.smoothstep(Math.min(CLOSE_FROM, (view.autoZ || CLOSE_FROM) * 0.8), CLOSE_TO, z); }
+  V.closeK = closeK;
   V.camKey = () => (view.dir.cur ? view.dir.cur.key : '');      // (tools: the director's current interest)
   V.snapCamera = () => { view.camT = null; view.dir.cur = null; };
   /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
@@ -277,13 +295,17 @@
     if (S.phase === 'place') return null;
     const ctl = S.phase === 'play';                                                        // P85: the player has control: nothing but its own worm and its own shot may take the camera (edge indicators, ui/offscreen.js, point at the rest)
     if (S.phase === 'over' && S.over >= 0) {                                                  // P63 / P118d (Q-25): the winners, for the whole end of the match: the surviving worms of the winning team in the picture (the old interest framed one worm and was dropped by the first click)
-      const pts = [], all = []; for (const w of S.worms) if (!w.dead && w.hp > 0 && w.team === S.over) { const q = P2.to_plane(S, w.pos); all.push([q.s, w.pos.y]); if (V.inSlab(S, w.pos)) pts.push([q.s, w.pos.y]); }     // (a winner outside the slab is hidden by the section rule: in 3D the camera frames those that can be seen; if none can, the winners all the same)
+      const pts = [], all = []; for (const w of S.worms) if (!w.dead && w.hp > 0 && w.team === S.over) { const q = P2.to_plane(S, w.pos), p = [q.s, w.pos.y, w === a ? 1 : 0]; all.push(p); if (V.inSlab(S, w.pos)) pts.push(p); }     // (a winner outside the slab is hidden by the section rule: in 3D the camera frames those that can be seen; if none can, the winners all the same. P119b: sim.victory_align turned the section to them, so most are on it. [2] = the active worm: the one who fired)
       if (!pts.length) for (const q of all) pts.push(q);
       const t2 = Math.tan((camera ? camera.fov : 42) * Math.PI / 360), asp = camera ? camera.aspect : 1.5;
       let s0, s1, y0, y1, need;
       const box = () => { s0 = 1e9; y0 = 1e9; s1 = -1e9; y1 = -1e9; for (const q of pts) { s0 = Math.min(s0, q[0]); s1 = Math.max(s1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); } need = Math.max((s1 - s0 + 6) * 1.2 / (2 * t2 * asp), (y1 - y0 + 9) * 1.1 / (2 * t2)); };
       box();
-      while (pts.length > 1 && need > 34) { let mx = 0, bi = 0; for (let i = 0; i < pts.length; i++) { const d = Math.abs(pts[i][0] - (s0 + s1) / 2) + 0.5 * Math.abs(pts[i][1] - (y0 + y1) / 2); if (d > mx) { mx = d; bi = i; } } pts.splice(bi, 1); box(); }     // winners too far apart to celebrate in one picture: the farthest are left out of the frame (they dance anyway)
+      while (pts.length > 1 && need > 34) {     // winners too far apart to celebrate in one picture: the farthest are left out of the frame (they dance anyway). P119b: farthest from the ANCHOR (the active worm when it is a winner, else the first), which always stays
+        let ai = 0; for (let i = 0; i < pts.length; i++) if (pts[i][2]) { ai = i; break; }
+        let mx = -1, bi = -1; for (let i = 0; i < pts.length; i++) { if (i === ai) continue; const d = Math.abs(pts[i][0] - pts[ai][0]) + 0.5 * Math.abs(pts[i][1] - pts[ai][1]); if (d > mx) { mx = d; bi = i; } }
+        pts.splice(bi, 1); box();
+      }
       if (pts.length) { const c = at((s0 + s1) / 2, (y0 + y1) / 2 - 0.8); return { key: 'victory', x: c.x, y: c.y, z: c.z, d: 520, dm: Math.min(80, Math.max(view.zoom * 1.6, need)), p: 9 }; }       // (the camera adds 1.5 m: the worm sits a little under the middle of the picture, the sky above it is for the fireworks and the confetti)
     }
     if (S.free3d && S.free3d.length) { const q = S.free3d[0]; return { key: 'free3d', x: q.pos.x, y: q.pos.y, z: q.pos.z, d: 900, p: 9 }; }   // P37 W4: a shell bounced off a force field flies in 3D
@@ -308,8 +330,8 @@
     // wins over falling shells / gel, explosions and the shooter ("most important")
     const rv = SS.reactq && !ctl ? SS.reactq.visit(S) : null, rw = rv ? S.worms[rv.id] : null;      // P85: the affected worms, one after the other, in the order they speak
     if (rw && rw.dead) { const g = rw.grave || rw.pos; return { key: 'death' + rw.id, x: g.x, y: g.y, z: g.z, d: 520, p: 7.6 }; }
-    if (rw && S.proj.length) { const hp = P2.to_plane(S, rw.pos), b = projBox(S, [hp.s, rw.pos.y + 0.6]); return { key: 'hurt' + rw.id, x: b.x, y: b.y, z: b.z, d: 520, dm: Math.max(b.dm, view.zoom * 1.0), p: 7.5 }; }       // P118d (Q-06): shells still in flight (the children of a bomb whose first blast hurt a worm): the hurt worm AND the payoff blasts stay in the picture
-    if (rw) return { key: 'hurt' + rw.id, x: rw.pos.x, y: rw.pos.y, z: rw.pos.z, d: 520, p: 7.5 };
+    if (rw && S.proj.length) { const hp = P2.to_plane(S, rw.pos), b = projBox(S, [hp.s, rw.pos.y + 0.6]); return { key: 'hurt' + rw.id, wid: rw.id, x: b.x, y: b.y, z: b.z, d: 520, dm: Math.max(b.dm, view.zoom * 1.0), p: 7.5 }; }       // P118d (Q-06): shells still in flight (the children of a bomb whose first blast hurt a worm): the hurt worm AND the payoff blasts stay in the picture
+    if (rw) return { key: 'hurt' + rw.id, wid: rw.id, x: rw.pos.x, y: rw.pos.y, z: rw.pos.z, d: 520, p: 7.5 };
     if (S.eow && SS.eowView) { const lf = SS.eowView.lostFocus(S); if (lf) return lf; }   // P68d: a shell lost to space: the camera holds
     if (S.proj.length) {
       if (S.proj.length > 1) { const b = projBox(S); return { key: 'projs', x: b.x, y: b.y, z: b.z, d: 640, dm: Math.max(b.dm, view.zoom * 1.1), p: 7 }; }      // P118d (Q-06): the children and where they land, in metres of camera distance (the old px formula clamped at 1300 and ignored the landing)
@@ -345,7 +367,7 @@
   V.drag = function (dx, dy, S) {
     if (S && S.inspect > 0.5) { view.orbit.yaw = M.clamp(view.orbit.yaw - dx * 0.006, -1.4, 1.4); view.orbit.tilt = M.clamp(view.orbit.tilt + dy * 0.004, -0.5, 0.7); return; }
     const k = view.zoom * 0.0016;
-    view.pan.s = M.clamp(view.pan.s - dx * k, -60, 60); view.pan.y = M.clamp(view.pan.y + dy * k, -15, 25);
+    view.pan.s = M.clamp(view.pan.s - dx * k, -60, 60); view.pan.y = M.clamp(view.pan.y + dy * k, -15, 25); view.userT = 0;
   };
   V.resetPan = () => { view.pan.s = view.pan.y = 0; view.orbit.yaw = view.orbit.tilt = 0; };
 
@@ -496,7 +518,7 @@
       let cover = 0;
       if (j > 0 && W.top[c] > W.SEA + 0.5) {
         const m = W.mat[(k * W.NY + j) * W.NX + i];
-        cover = m === C.MAT.SOIL ? 1 : m === C.MAT.SCREE ? 0.12 : m === C.MAT.ASH ? 0.06 : 0;
+        cover = C.veg_cover(m);                                                                  // the organic-top table (config MATS.veg / .cover), as sim/veg.js init
         cover *= M.smoothstep(0.28, 0.5, M.fbm2(x / 9, z / 9, seed, 3));
       }
       const dry = M.clamp(dryBase + (M.fbm2(x / 14, z / 14, seed + 3, 3) - 0.5) * 0.7, 0, 1);
@@ -730,7 +752,7 @@
   V.timeScale = 1;
   V.render = function (S, dtU) {
     const dt = dtU * (V.timeScale || 1);
-    view.time += dt;
+    view.time += dt; view.userT += dtU;                                      // (userT: seconds since the player last zoomed / panned: the antic camera leaves the camera alone while it is theirs)
     onEvents(S);
     autoGhost(S, dtU);
     if (S.weather && view.wxKind !== undefined && S.weather.kind !== view.wxKind) applyLook(S);   // 5f: the weather turned
@@ -790,19 +812,35 @@
     const cur = view.lock || dr.cur || { key: 'active', x: a ? a.pos.x : SS.world.MX, y: a ? a.pos.y : 10, z: a ? a.pos.z : SS.world.MZ, d: 0, p: 0 };
     const co = cin ? SS.cine.frame(S, dtU, cur.key, view) : null;                    // P63: the cinematic moves on top of the director
     const pk = cur.key === 'active' || cur.key === 'victory' ? 1 : 0, Wd = SS.world, oi = Wd && !Wd.flat ? insp : 0;   // P85: the overview (V) frames the WHOLE map: the focus slides to the world centre, the distance grows to fit it
-    const fx = cur.x + d.x * view.pan.s * pk + (Wd ? (Wd.MX - cur.x) * oi : 0), fy = cur.y + 1.2 + view.pan.y * pk + (co ? co.dy : 0) + (Wd ? (Wd.SY * 0.3 - cur.y) * oi : 0), fz = cur.z + d.z * view.pan.s * pk + (Wd ? (Wd.MZ - cur.z) * oi : 0);
     applyAutoZoom();
+    const ac = SS.anticCam ? SS.anticCam.frame(S, dtU, cur, co, view, insp) : null;      // P119b (Q-24): a worm's face acting (an idle antic, a hit) pulls the camera in on it
     // active: a charging shot / a target pick pulls the view back a little so the flight and the target stay in frame; an event (shell, blast, death) frames x1.4 of the default
     const pull = cur.key === 'active' && a && S.phase === 'play' ? (SS.CFG.ARSENAL[S.weapon] && SS.CFG.ARSENAL[S.weapon].kind === 'target' ? 1.6 : S.charging ? 1.35 : 1) : 1;
-    const wantZ = cur.key === 'active' ? view.zoom * pull : cur.dm ? Math.max(view.zoom * (cur.zk || 0.85), cur.dm) : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * 1.4 * cur.d / 640);   // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
-    if (!view.camT) { view.camT = new T.Vector3(fx, fy, fz); view.camZ = wantZ; }
-    else if (!cin && SS.cine && cur.key !== prevKey && prevKey && !view.lock) { view.camT.set(fx, fy, fz); view.camZ = wantZ; }     // cinematic camera off: an instant cut to a new interest
+    const wantZ0 = cur.key === 'active' ? view.zoom * pull : cur.dm ? Math.max(view.zoom * (cur.zk || 0.85), cur.dm) : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * 1.4 * cur.d / 640),   // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
+      wantZ = ac && ac.k ? Math.min(wantZ0, ac.dist) : wantZ0;
+    // the camera jumps to this interest this frame (the first frame, a snap, an instant cut with the cinematic camera off): the distance is set BEFORE the pitch and the
+    // focus height read it, so the jump frame is the picture the next frames hold (it used the old distance's closeK: a pitch pop, and two studio shots of one scene differed)
+    const cut = !view.camT || (!cin && SS.cine && cur.key !== prevKey && prevKey && !view.lock);
+    if (cut) view.camZ = wantZ;
+    const zc = view.camZ || view.zoom, ck = closeK(zc) * M.sat(1 - insp * 4);      // P119b: how tight the camera is (the pitch and the focus height below); the overview (V) fades it out over its first quarter
+    const fx = cur.x + d.x * view.pan.s * pk + (Wd ? (Wd.MX - cur.x) * oi : 0), fy = cur.y + FOCUS0 + (FOCUS_CLOSE - FOCUS0) * ck + view.pan.y * pk + (co ? co.dy : 0) + (ac ? ac.dy : 0) + (Wd ? (Wd.SY * 0.3 - cur.y) * oi : 0), fz = cur.z + d.z * view.pan.s * pk + (Wd ? (Wd.MZ - cur.z) * oi : 0);
+    if (!view.camT) view.camT = new T.Vector3(fx, fy, fz);
+    else if (cut) view.camT.set(fx, fy, fz);
     const rate = cur.key === 'active' ? 6 : cur.p >= 7 ? 4.5 : 3.2;
     const tp = co ? SS.cine.turnPos(fx, fy, fz, v5) : null;
     if (tp) view.camT.copy(tp); else view.camT.lerp(v4.set(fx, fy, fz), 1 - Math.exp(-dtU * rate));
-    view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dtU * (cur.dm && wantZ > view.camZ ? 4.5 : 2.4)));
+    /* P119b: the focus never lags off the section plane. The sim puts a new plane through the new worm at once (a new turn, a worm switch, the end of the match), but the focus
+     * the camera had moves on from where it was: the camera hangs off the plane's normal at that focus, so with the old focus 10-50 m BEHIND the new plane it sat inside the hill
+     * (a full-frame rock close-up for the first 0.4 s of the turn move: 218 of 71 572 frames inside rock and 798 behind the plane in 192 turns, tools/dev/qa/camsweep.cjs). What lies in front of the plane is never drawn:
+     * only the part of the focus beyond the slab (C.HALF) is taken out along the normal, so the picture always shows the cut face from the viewer's side. The overview (insp) and the
+     * 3D interest of a shell bounced off a force field (free3d) keep their own focus. */
+    if (insp < 0.02 && cur.key !== 'free3d') {
+      const tF = (view.camT.x - S.O.x) * n.x + (view.camT.z - S.O.z) * n.z, ex = tF > C.HALF ? tF - C.HALF : tF < -C.HALF ? tF + C.HALF : 0;
+      if (ex) { view.camT.x -= n.x * ex; view.camT.z -= n.z * ex; }
+    }
+    view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dtU * (ac && ac.rate ? ac.rate : cur.dm && wantZ > view.camZ ? 4.5 : 2.4)));
     if (insp < 0.05) { view.orbit.yaw *= Math.exp(-dtU * 4); view.orbit.tilt *= Math.exp(-dtU * 4); }
-    const tilt = 0.2 + insp * (0.5 + view.orbit.tilt), yaw = insp * (0.55 + view.orbit.yaw) + (co && insp < 0.05 ? co.yaw : 0), dist0 = M.max(co ? 7 : 0, (view.camZ || view.zoom) * (1 + insp * 0.9) * (co ? co.k : 1)), fitD = oi > 0 && Wd ? 0.52 * Math.hypot(Wd.SX, Wd.SZ) / Math.tan(camera.fov * Math.PI / 360) * (camera.aspect < 1.3 ? 1.3 / camera.aspect : 1) : 0, dist = dist0 + (M.max(dist0, fitD) - dist0) * oi;
+    const tilt = TILT0 + (TILT_CLOSE - TILT0) * ck + insp * (0.5 + view.orbit.tilt), yaw = insp * (0.55 + view.orbit.yaw) + (co && insp < 0.05 ? co.yaw : 0), dist0 = M.max(co ? M.min(7, zc) : 0, (view.camZ || view.zoom) * (1 + insp * 0.9) * (co ? co.k : 1)), fitD = oi > 0 && Wd ? 0.52 * Math.hypot(Wd.SX, Wd.SZ) / Math.tan(camera.fov * Math.PI / 360) * (camera.aspect < 1.3 ? 1.3 / camera.aspect : 1) : 0, dist = dist0 + (M.max(dist0, fitD) - dist0) * oi;
     // P85 (user: "when zooming out dont multiply the fog ... player wants to see more of the map not more of the fog"): the fog / haze / weather
     // density is keyed to the DEFAULT camera distance, not the real one: fogK = default / actual distance, so the play area looks the same at any
     // zoom (only what lies farther than the focus fades more); the overview (V) clears the haze fully
@@ -811,6 +849,14 @@
     SS.terrain.uniforms.uCtxHaze.value = (V.slice === 'full' ? 0 : 1) * (1 - insp);
     const cy = Math.cos(yaw), sy = Math.sin(yaw), bx = n.x * cy + d.x * sy, bz = n.z * cy + d.z * sy;
     camera.position.set(view.camT.x + bx * dist * Math.cos(tilt), view.camT.y + dist * Math.sin(tilt), view.camT.z + bz * dist * Math.cos(tilt));
+    /* P119b: wherever terrain is drawn at the camera (the whole world while the overview is on, or the section's far side) the camera is never inside it: a few frames at the start of the overview
+     * (the section rule switches off while the camera still hangs 5-11 m in front of the plane, inside a hill that has just appeared; 5 of 1620 frames at the closest zoom) are lifted out. Not in caves
+     * (a block of rock whose near half is a ghost by design: the camera is inside it on purpose). */
+    if (!Wd.under && (insp > 0.05 || (camera.position.x - S.O.x) * n.x + (camera.position.z - S.O.z) * n.z <= 0.5)) {
+      const px = camera.position.x, pz = camera.position.z; let py = camera.position.y, k = 0;
+      while (k < 80 && Wd.sample(px, py, pz) > 0) { py += 0.5; k++; }
+      if (k > 0) camera.position.y = py + 0.3;
+    }
     camera.lookAt(view.camT);
     if (V.camHook) V.camHook(camera, view);                                   // tools only: a free camera (P116 top-down comparison shots)
     if (co && co.roll && insp < 0.05) camera.rotateZ(co.roll);

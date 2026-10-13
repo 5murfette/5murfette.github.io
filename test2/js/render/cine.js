@@ -40,6 +40,7 @@
   };
   CN.turnDelay = () => (turn.on ? turn.dur * 0.3 : 0);
   CN.moving = () => turn.on;
+  CN.busy = () => CN.enabled && (turn.on || kill.t >= 0 || rise.t >= 0 || vicT >= 0);        // P119b: a cinematic move is under way (render/anticcam.js leaves the camera to it)
   CN.victory = () => CN.enabled && vicT >= 0 && !vicSkip;
   /* P118d (Q-25): the end-of-match clock. view.js calls tick() every frame whatever the cine option says (the camera's orbit is the option's, the celebration is not):
    * vicT counts view seconds from the moment the match is over; a click / key / wheel skips (CN.skip). The confetti and fireworks (render/fx.js celebrate) start once; the

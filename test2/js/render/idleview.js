@@ -210,6 +210,8 @@
     return st;
   }
   IV.state = w => { const st = sts[w.id]; return st ? { state: st.m.state, kind: st.m.kind, t: st.m.t, k: st.m.k, idleT: st.m.idleT, boredAt: ID.bored_at(st.m, st.I.active) } : null; };
+  IV.antic = w => { const st = sts[w.id]; return st && st.m.state === ID.ST.PLAY && st.m.k > 0.5 ? st.m.kind : 0; };      // P119b: the kind of the antic that is playing (blended in), 0 = none; allocation-free (render/anticcam.js asks every frame)
+  IV.anticLeft = w => { const st = sts[w.id]; return st && st.m.state === ID.ST.PLAY ? st.m.dur - st.m.t : -1; };      // P119b: seconds the playing antic has left (-1: none)
   IV.force = (w, name) => { const st = sts[w.id]; if (!st) return false; const k = typeof name === 'number' ? name : ID.NAME.indexOf(name); if (k < 1) return false; st.force = k; return true; };
   IV.poke = (w, cause) => { const st = sts[w.id]; if (st) st.pend = Math.max(st.pend, cause | 0); };
   IV.onEvent = function (S, e) {

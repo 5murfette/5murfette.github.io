@@ -14,11 +14,14 @@
  * from top0 (the ground before this step's edits) and skip freshly carved columns.
  * Inputs: fireballs (blast.js -> ignite), burning props and oil rings (scatter.js), hot lava (S.lava); outputs: worm damage (fire_at),
  * props ignited by the flames, events 'grassfire'. Edited columns (craters, re-baked rubble) lose their grass.
+ * only an organic top carries a cover (the one table: config MATS[].veg, level 2 = soil, scree, ash). init covers by the table; a column whose top is
+ * (or becomes) steel, foam, concrete, glass, ice, snow, lava or bedrock, or only a skin of soil over such ground, loses its cover for good (refresh at every edit,
+ * settle once the map's stamps are done, so a bunker roof, a fort deck or a foam block never shows grass, and blasting the foam away later does not bring it back).
  *
  * C layout: struct Veg { i32 n; u8 *surf; f32 *fuel, *burnT, *burnI, *heat, *thr, *top0; i32 *act, *nxt, nAct;
  *   f32 acc; u32 tick, surfVer; }.
  * API: init(S), step(S, dt), ignite(S, c, r), blast(S, c, W), fire_at(S, x, y, z), burning(S) (cell count),
- *   cell(S, x, z).
+ *   cell(S, x, z), grass_ok(m), settle(S).
  */
 (function (SS) {
   'use strict';
@@ -36,8 +39,24 @@
   }
   const fdry = d => M.smoothstep(K.DRY0, K.DRY1, d);
 
+  /* the organic-top table (config MATS[].veg). grass_ok(m): can the top of material m carry a grass cover (veg 2: soil, and sparse scree / ash)? */
+  VG.grass_ok = m => C.veg_level(m) >= 2;
+  const NOVEG_COL = 0.4;     // a column whose surface cells are this much steel, foam, concrete, glass, ice, snow, lava or bedrock (a thin skin of soil over a concrete roof, the foot of a wall) shows no turf
+  /* can column (i, k) carry a grass cover: soil / scree / ash on top AND the surface there is not built ground with a skin of soil over it (meshgen weights the mesh vertices the same way, so what the
+   * renderers draw as concrete never shows turf either): the mean built-material share of the four cells round the column's top point (the point itself sits on a lattice line) */
+  function carrier_col(i, k) {
+    const w = W(); if (!VG.grass_ok(w.top_mat(i, k))) return false;
+    const x = i * w.H, z = k * w.H, y = w.top[k * w.NX + i] - 0.05;
+    return (w.noveg_at(x - 0.25, y, z - 0.25) + w.noveg_at(x + 0.25, y, z - 0.25) + w.noveg_at(x - 0.25, y, z + 0.25) + w.noveg_at(x + 0.25, y, z + 0.25)) * 0.25 < NOVEG_COL;
+  }
+  /* the column's grass is gone: cover, char, burning, fuel, heat (the dryness stays: trees read it) */
+  function clear_col(st, c) {
+    st.surf[c * 4] = 0; st.surf[c * 4 + 2] = 0; st.surf[c * 4 + 3] = 0; st.fuel[c] = 0; st.burnT[c] = 0; st.heat[c] = 0;
+  }
+  function has_cover(st, c) { return st.surf[c * 4] !== 0 || st.surf[c * 4 + 2] !== 0 || st.surf[c * 4 + 3] !== 0 || st.fuel[c] > 0 || st.burnT[c] > 0; }
+
   VG.init = function (S) {
-    const w = W(), n = w.NX, N = n * w.NZ, MAT = C.MAT;
+    const w = W(), n = w.NX, N = n * w.NZ;
     if (w.listeners.indexOf(onMark) < 0) w.listeners.push(onMark);
     dirty = null;
     const st = S.veg = { n, surf: new Uint8Array(N * 4), fuel: new Float32Array(N), burnT: new Float32Array(N), burnI: new Float32Array(N),
@@ -49,7 +68,7 @@
       let cover = 0;
       if (j > 0 && w.top[c] > w.SEA + 0.5) {
         const m = w.mat[(k * w.NY + j) * w.NX + i];
-        cover = m === MAT.SOIL ? 1 : m === MAT.SCREE ? 0.12 : m === MAT.ASH ? 0.06 : 0;
+        cover = C.veg_cover(m);                                                                  // the organic-top table (config MATS.veg / .cover)
         cover *= beachy ? M.smoothstep(0.08, 0.26, M.fbm2(x / 9, z / 9, seed, 3)) : M.smoothstep(0.28, 0.5, M.fbm2(x / 9, z / 9, seed, 3));   // P116: the jungle floor is covered almost everywhere
       }
       const dry = M.clamp(dryBase + (M.fbm2(x / 14, z / 14, seed + 3, 3) - 0.5) * 0.7, 0, 1);
@@ -174,12 +193,29 @@
     let ch = false;
     for (let k = k0; k <= k1; k++) for (let i = i0; i <= i1; i++) {
       const c = k * n + i;
-      if (Math.abs(w.top[c] - st.top0[c]) <= C.VEG.CLEAR_D) continue;
-      st.top0[c] = w.top[c]; st.surf[c * 4] = 0; st.surf[c * 4 + 2] = 0; st.surf[c * 4 + 3] = 0; st.fuel[c] = 0; st.burnT[c] = 0; st.heat[c] = 0;
-      ch = true;
+      if (Math.abs(w.top[c] - st.top0[c]) > C.VEG.CLEAR_D) { st.top0[c] = w.top[c]; clear_col(st, c); ch = true; continue; }
+      // foam, steel or concrete that took the place of the top layer without raising the column (a flush plate, a thin skin) buries the grass as well
+      if (has_cover(st, c) && !carrier_col(i, k)) { clear_col(st, c); ch = true; }
     }
     if (ch) st.surfVer++;
   }
+
+  /* once the map's stamps are done (sim.reset: bridges, bunkers, forts, the derelict ship, ruins and eggs come after init) the cover of every column that init
+   * would not give that ground now is cleared: its top moved by more than CLEAR_D (what step 1's refresh does anyway), or it is made of something that carries no grass
+   * (concrete roofs and decks, steel, glass, or a thin skin of soil over them). The first frame, and the grass blades built from it, then show the final ground. top0 stays: step 1's refresh finds the
+   * same columns and clears nothing more. Returns the number of columns cleared. */
+  VG.settle = function (S) {
+    const st = S.veg; if (!st) return 0;
+    const w = W(), n = st.n; let cleared = 0;
+    for (let k = 0; k < w.NZ; k++) for (let i = 0; i < n; i++) {
+      const c = k * n + i;
+      if (!has_cover(st, c)) continue;
+      if (Math.abs(w.top[c] - st.top0[c]) <= C.VEG.CLEAR_D && carrier_col(i, k)) continue;
+      clear_col(st, c); cleared++;
+    }
+    if (cleared) st.surfVer++;
+    return cleared;
+  };
 
   function tick(S, st) {
     const w = W(), n = st.n, H = w.H, TK = C.FIRE_TICK, top = w.top, surf = st.surf;

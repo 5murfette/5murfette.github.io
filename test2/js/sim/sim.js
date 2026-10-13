@@ -366,6 +366,7 @@
     if (SS.scatter) SS.scatter.populate(S, taken);
     SS.game.furnish_rooms(S);
     if (SS.trees && !W().under && !S.eow) SS.trees.populate(S, taken);           // U: no trees (no light) underground
+    if (SS.veg && SS.veg.settle) SS.veg.settle(S);                               // the stamps are done: no cover on a concrete roof, steel, glass or ground they moved (the first frame shows the final ground)
     if (S.settings.placement === 'user') SS.game.begin_placement(S);  // P13: the players place their worms first
     else sim.next_turn(S, true);
     S.verBase = W().version;
@@ -494,7 +495,8 @@
     const alive = S.teams.map((t, i) => living(S, i).length), standing = alive.filter(n => n > 0).length;
     if (standing <= 1) {
       S.over = alive.findIndex(n => n > 0); S.phase = 'over';
-      log(S, S.over >= 0 ? `${sim.team_name(S, S.over)} win after ${S.round} rounds. Press R for a new map.` : 'Nobody survived. Press R for a new map.', 0xfff3b0);
+      sim.victory_align(S);                                              // P119b: the section turns to the winners (3D)
+      log(S, S.over >= 0 ? `${sim.team_name(S, S.over)} win after ${S.round} round${S.round === 1 ? '' : 's'}. Press R for a new map.` : 'Nobody survived. Press R for a new map.', 0xfff3b0);      // (P119b: "after 1 round", not "1 rounds")
       emit(S, 'gameover', { team: S.over, round: S.round });
       return;
     }
@@ -669,6 +671,54 @@
   sim.align_crate = function (S) {
     if (locked(S) || !S.active || !SS.rotlock) return;
     const c = SS.rotlock.next_crate(S); if (c) sim.align_to_point(S, c.pos.x, c.pos.z);
+  };
+  /* P119b (Q-25 in 3D, "the winners outside the section are not framed"): the match is over (next_turn: one team left): the section is turned so that the celebration shows as many of the
+   * winners as one picture can. A winner is SHOWN when it lies in the visible slab of the thinnest slice view: t in [-VIC_BACK, VIC_FRONT] (the section rule hides everything in front of the
+   * plane, the slab ends 1.5 m behind it, a worm stands 0.45 m in); the shown winners FIT when they lie within VIC_FIT metres along the plane (what render/view.js frames in one picture: it drops
+   * the farthest of winners that are further apart). Candidates: the plane through a winner with the heading kept (the only move for a lone survivor: the plane slides along its normal) and the
+   * plane through every pair of winners (their heading, of its two directions the one nearer the current heading: the view keeps its side). The plane with the most fitting winners wins, then
+   * the most shown, then the one that keeps the active worm (when it is a winner: the one who fired) nearest to it, then the smaller turn of the heading, then the closer pair, then the lower
+   * ids (the loops run in id order and only a strictly better plane replaces the best). Nothing moves when no candidate is better than the plane the match ended on (the usual case: the worm that
+   * fired the last shot stands on it). Sim state (S.O, S.theta), so every peer and every replay gets the same plane; once, at the end of the match, not per step. Not in 2D (the plane never turns).
+   * Returns true when the plane moved. */
+  const VIC_BACK = 1.4, VIC_FRONT = 0.4, VIC_FIT = 22, VIC_EPS = 1e-9;
+  sim.victory_align = function (S) {
+    if (W().flat || !(S.over >= 0) || !S.O) return false;
+    const win = living(S, S.over), n = win.length;
+    if (!n) return false;
+    const act = win.indexOf(S.active), sv = [0, 0, 0, 0, 0, 0, 0, 0];     // (sv: the along-plane positions of the shown winners, up to 8)
+    let nShown = 0;
+    // score of the plane through (ox, oz) with heading th: sets nShown; returns the number of shown winners that lie within VIC_FIT m of each other
+    const score = (ox, oz, th) => {
+      const nx = -M.sin(th), nz = M.cos(th), dx = M.cos(th), dz = M.sin(th); nShown = 0;
+      for (let i = 0; i < n && nShown < 8; i++) {
+        const p = win[i].pos, t = (p.x - ox) * nx + (p.z - oz) * nz;
+        if (t <= VIC_FRONT && t >= -VIC_BACK) { const s = (p.x - ox) * dx + (p.z - oz) * dz; let k = nShown++; while (k > 0 && sv[k - 1] > s) { sv[k] = sv[k - 1]; k--; } sv[k] = s; }
+      }
+      let best = 0;
+      for (let i = 0; i < nShown; i++) { let j = i; while (j + 1 < nShown && sv[j + 1] - sv[i] <= VIC_FIT) j++; if (j - i + 1 > best) best = j - i + 1; }
+      return best;
+    };
+    const actT = (ox, oz, th) => (act < 0 ? 0 : Math.abs((win[act].pos.x - ox) * -M.sin(th) + (win[act].pos.z - oz) * M.cos(th)));
+    const f0 = score(S.O.x, S.O.z, S.theta), s0 = nShown;
+    let have = false, bf = 0, bs = 0, bx = 0, bz = 0, bth = 0, bta = 0, brot = 0, bdist = 0;
+    const consider = (f, sh, ox, oz, th, rot, dist) => {
+      if (f < f0 || (f === f0 && sh <= s0)) return;                      // it has to beat the plane the match ended on
+      const ta = actT(ox, oz, th);
+      if (!have || f > bf || (f === bf && (sh > bs || (sh === bs && (ta < bta - VIC_EPS || (Math.abs(ta - bta) <= VIC_EPS && (rot < brot - VIC_EPS || (Math.abs(rot - brot) <= VIC_EPS && dist < bdist - VIC_EPS)))))))) {
+        have = true; bf = f; bs = sh; bx = ox; bz = oz; bth = th; bta = ta; brot = rot; bdist = dist;
+      }
+    };
+    for (let i = 0; i < n; i++) { const p = win[i].pos, f = score(p.x, p.z, S.theta); consider(f, nShown, p.x, p.z, S.theta, 0, 0); }   // the plane through winner i, heading kept
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {                                                                      // the plane through winners i and j
+      const p = win[i].pos, q = win[j].pos, dx = q.x - p.x, dz = q.z - p.z, dist = M.len2(dx, dz);
+      if (dist < 0.5) continue;
+      const g = M.atan2(dz, dx), g2 = M.wrap_angle(g + M.PI), da = Math.abs(M.wrap_angle(g - S.theta)), db = Math.abs(M.wrap_angle(g2 - S.theta)), th = da <= db ? g : g2, f = score(p.x, p.z, th);
+      consider(f, nShown, p.x, p.z, th, M.min(da, db), dist);
+    }
+    if (!have) return false;
+    S.O = { x: bx, z: bz }; S.theta = bth; S.thetaGoal = null; S.tgt = null; S.lastRotate = S.time; S.sectionDirty = true;
+    return true;
   };
 
   /* ---------- active worm: 2D in the section ---------- */

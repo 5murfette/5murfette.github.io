@@ -174,6 +174,25 @@
     return best;
   };
   W.in_bounds = (i, j, k) => i >= 0 && j >= 0 && k >= 0 && i < NX && j < NY && k < NZ;
+  /* what column (i, k) is topped with: the material of its highest solid lattice point (0 = no ground). The organic-top table (config MATS[].veg) is asked of this. */
+  W.top_mat = function (i, k) {
+    const j = W.topJ[k * NX + i];
+    return j < 0 ? 0 : W.mat[(k * NY + j) * NX + i];
+  };
+  /* how much of the surface AT a point carries nothing: the density-weighted share (0..1) of the solid corners of the lattice cell holding (x, y, z) whose material has veg level 0 in the
+   * organic-top table (config MATS[].veg: steel, foam, concrete, glass, ice, snow, lava, bedrock). Weights wv = min(d, 1) + 0.05 are the ones meshgen gives a cell's corners, so this is the
+   * mesh vertex's own built-material share (meshgen noveg) for the cell: a sliver of foam over soil weighs little, a concrete wall's cell a lot. Natural rock under a skin of soil is veg 1 and does not
+   * count. The section edge refuses grass labels from 0.4 up (meshgen veg_keep: the plants are gone by 0.55). */
+  W.noveg_at = function (x, y, z) {
+    const i = M.max(0, M.min(NX - 2, Math.floor(x / H))), j = M.max(0, M.min(NY - 2, Math.floor(y / H))), k = M.max(0, M.min(NZ - 2, Math.floor(z / H))), L = C.VEG_LEVEL;
+    let s = 0, t = 0;
+    for (let q = 0; q < 8; q++) {
+      const o = ((k + (q >> 2)) * NY + j + ((q >> 1) & 1)) * NX + i + (q & 1), d = W.d[o];
+      if (d <= 0) continue;
+      const wv = (d < 1 ? d : 1) + 0.05; t += wv; if (!L[W.mat[o]]) s += wv;
+    }
+    return t > 0 ? s / t : 0;
+  };
 
   /* Highest solid surface at (x,z) (fine walk downward from the coarse column top). */
   W.topHeight = function (x, z) {

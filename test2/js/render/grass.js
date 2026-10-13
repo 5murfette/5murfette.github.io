@@ -102,6 +102,8 @@
   };
   GR.rebuildAll = function (chunks) { for (let ci = 0; ci < chunks.length; ci++) if (chunks[ci]) GR.onChunk(ci, chunks[ci]); };
   GR.count = () => { let n = 0; for (const im of per.values()) n += im.count; return n; };
+  /* tools / tests: fn(x, y, z) for every blade of every chunk (read back from the instance matrices) */
+  GR.each = function (fn) { for (const im of per.values()) for (let i = 0; i < im.count; i++) { im.getMatrixAt(i, m4); v4.setFromMatrixPosition(m4); fn(v4.x, v4.y, v4.z); } };
 
   /* per frame: slab plane, wind, time; only chunks crossing the slab are drawn */
   GR.frame = function (S, time, wind, whirls, snow) {

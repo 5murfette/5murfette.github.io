@@ -69,7 +69,8 @@
     { k: 'quality', t: 'Visual quality', w: 'seg', dyn: 'quality' }, { k: 'slice', t: 'Slice view', o: OPTS.slice, w: 'seg' }, { k: 'ghost', t: 'Front ghost', o: OPTS.ghost, n: 1, w: 'seg', h: 'how visible the part of the world in front of the section is (Off = hidden)' }, { k: 'art', t: 'Artwork', o: OPTS.art, w: 'seg' },
     { k: 'idle', t: 'Idle antics', b: true, d: true, h: 'bored worms juggle, scroll a phone, doze off ...' },
     { k: 'ghostAuto', t: 'Auto ghost after attacks', b: true, d: true, h: 'the front half shows at 50 % after a shot and while an alien attacks' },
-    { k: 'cine', t: 'Cinematic camera', b: true, d: true, h: 'smooth turn moves, hit and kill cams, victory orbit (off = instant cuts); any key skips' }
+    { k: 'cine', t: 'Cinematic camera', b: true, d: true, h: 'smooth turn moves, hit and kill cams, victory orbit (off = instant cuts); any key skips' },
+    { k: 'anticCam', t: 'Antic camera', b: true, d: true, h: 'the camera moves in on a worm\'s face while it plays an idle antic or winces from a hit, then goes back (never while you aim or move)' }
   ];
   const FIELD = [
     { k: 'shape', t: 'Terrain shape', o: OPTS.shape, w: 'seg' },
@@ -253,7 +254,21 @@
   }
 
   /* ---------- the right column ---------- */
-  function sec(host, title) { const s = el('div', 'msec', title); host.appendChild(s); return s; }
+  /* A section is a header button and a body: pressing the header folds the body (a phone in landscape sees only a few rows at a time, so every tab but its first
+   * section starts folded there; a large window starts with everything open). The choice is kept while the menu lives. Returns the body: rows go into it. */
+  const secOpen = {};
+  const compactMenu = () => !!(window.matchMedia && matchMedia('(max-width:900px),(max-height:520px)').matches);
+  function sec(host, title, first, meta) {
+    const key = page + ':' + title, head = el('button', 'msec'), body = el('div', 'msb');
+    if (secOpen[key] == null) secOpen[key] = !compactMenu() || !!first;
+    head.type = 'button';
+    head.innerHTML = '<span class="msn">' + title + '</span>' + (meta ? '<em class="msm">' + meta + '</em>' : '');
+    const show = () => { head.setAttribute('aria-expanded', secOpen[key] ? 'true' : 'false'); body.hidden = !secOpen[key]; };
+    head.onclick = () => { secOpen[key] = !secOpen[key]; show(); };
+    show();
+    host.append(head, body);
+    return body;
+  }
   function teamsBlock(host) {
     const tbox = el('div', 'tbox');
     const draw = () => {
@@ -298,8 +313,8 @@
     if (page === 'opts') return buildOpts();
     let redraw = () => {};
     for (const r of MATCH) { rowOf(r, rowsEl, r.teams ? () => redraw() : null); if (r.teams) redraw = teamsBlock(rowsEl); }
-    sec(rowsEl, 'Rules');
-    for (const r of RULES) rowOf(r, rowsEl);
+    const rules = sec(rowsEl, 'Rules');
+    for (const r of RULES) rowOf(r, rules);
   }
   /* P84: the Crates page: one 0..10 slider per crate kind (0 = never, 5 = default = 20 % of the rounds, 10 = 40 %); the line under them shows the exact
    * chances per round (sim/skills.js crate_chances: the chance of ONE crate = 4 % x the highest level, shared by the kinds in proportion to their levels) */
@@ -325,10 +340,9 @@
     bar.append(sum, def, off); rowsEl.appendChild(bar); upd();
   }
   function buildOpts() {
-    sec(rowsEl, 'Display');
-    for (const r of DISPLAY) rowOf(r, rowsEl, r.k === 'ghostAuto' ? () => { if (SS.view && SS.view.setGhostAuto) SS.view.setGhostAuto(cur.ghostAuto !== false); } : r.k === 'cine' ? () => { if (SS.cine) SS.cine.setEnabled(cur.cine !== false); } : r.k === 'idle' ? () => { if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false; if (SS.idleView) SS.idleView.enabled = cur.idle !== false; } : null);
-    sec(rowsEl, 'Sound');
-    musicRow(rowsEl);
+    const display = sec(rowsEl, 'Display', true);
+    for (const r of DISPLAY) rowOf(r, display, r.k === 'ghostAuto' ? () => { if (SS.view && SS.view.setGhostAuto) SS.view.setGhostAuto(cur.ghostAuto !== false); } : r.k === 'cine' ? () => { if (SS.cine) SS.cine.setEnabled(cur.cine !== false); } : r.k === 'anticCam' ? () => { if (SS.anticCam) SS.anticCam.setEnabled(cur.anticCam !== false); } : r.k === 'idle' ? () => { if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false; if (SS.idleView) SS.idleView.enabled = cur.idle !== false; } : null);
+    musicRow(sec(rowsEl, 'Sound'));
   }
   /* P42b: the music volume (platform/music.js keeps and persists it, not part of the map settings) */
   function musicRow(host) {
@@ -343,15 +357,22 @@
     rowsEl.appendChild(el('div', 'labintro', 'New game mechanics to try out. Everything here is off by default, applies to the next match (also an online match you host) and shows as a badge in the game.'));
     const cnt = el('div', 'labcount');
     const upd = () => { syncTabs(); cnt.textContent = labBits() ? labBits() + ' of ' + LAB.length + ' active' : 'all off'; };
+    const batches = [];
     for (const r of LAB) {
-      if (r.sec) sec(rowsEl, r.sec);
-      const bit = C.LAB.FLAG[r.id], card = el('div', 'labcard');
-      const top = el('div', 'labtop'), nm = el('div', 'labname', r.t);
-      const st = el('span', 'labstatus', 'EXPERIMENTAL'); nm.appendChild(st);
-      const tg = toggle(((cur.labFlags | 0) & bit) !== 0, v => { cur.labFlags = v ? ((cur.labFlags | 0) | bit) : ((cur.labFlags | 0) & ~bit); MN.save(cur); upd(); });
-      tg.dataset.lab = r.id;
-      top.append(nm, tg); card.append(top, el('div', 'labdesc', r.d)); rowsEl.appendChild(card);
+      if (r.sec || !batches.length) batches.push({ name: r.sec || 'Batch 1: shots, comebacks, weather', items: [] });
+      batches[batches.length - 1].items.push(r);
     }
+    batches.forEach(bt => {
+      const body = sec(rowsEl, bt.name, false, bt.items.length + ' mechanics');
+      for (const r of bt.items) {
+        const bit = C.LAB.FLAG[r.id], card = el('div', 'labcard');
+        const top = el('div', 'labtop'), nm = el('div', 'labname', r.t);
+        const st = el('span', 'labstatus', 'EXPERIMENTAL'); nm.appendChild(st);
+        const tg = toggle(((cur.labFlags | 0) & bit) !== 0, v => { cur.labFlags = v ? ((cur.labFlags | 0) | bit) : ((cur.labFlags | 0) & ~bit); MN.save(cur); upd(); });
+        tg.dataset.lab = r.id;
+        top.append(nm, tg); card.append(top, el('div', 'labdesc', r.d)); body.appendChild(card);
+      }
+    });
     const bar = el('div', 'labbar'), all = el('button', 'back', 'Enable all'), none = el('button', 'back', 'Disable all');
     all.type = none.type = 'button';
     const set = v => { cur.labFlags = v; MN.save(cur); buildRows(); syncTabs(); };
@@ -359,7 +380,7 @@
     bar.append(cnt, all, none); rowsEl.appendChild(bar); upd();
   }
   function buildField() {
-    sec(rowsEl, 'Biome');
+    const biomeBody = sec(rowsEl, 'Biome', true);
     const cards = el('div', 'biomes');
     for (const b of [{ id: 'random', name: 'Surprise me' }].concat(C.BIOMES.filter(MN.biome_listed))) {
       const c = el('button', 'bcard' + (cur.biome === b.id ? ' on' : ''), `<span>${b.name}</span>`);
@@ -367,12 +388,10 @@
       c.onclick = () => { cur.biome = b.id; for (const x of cards.children) x.classList.remove('on'); c.classList.add('on'); refreshPreview(true); syncField(); };
       cards.appendChild(c);
     }
-    rowsEl.appendChild(cards);
-    sec(rowsEl, 'Terrain and sky');
-    const fhost = el('div', 'fieldrows'); rowsEl.appendChild(fhost);
+    biomeBody.appendChild(cards);
+    const fhost = sec(rowsEl, 'Terrain and sky');
     for (const r of FIELD) { const row = rowOf(r, fhost, () => refreshPreview()); row.dataset.only = r.only || ''; row.dataset.k = r.k; }
-    sec(rowsEl, 'How much of everything');
-    const dhost = el('div', 'fieldrows'); rowsEl.appendChild(dhost);
+    const dhost = sec(rowsEl, 'How much of everything');
     for (const r of DENSITY) {
       const row = rowOf({ k: r.k, t: r.t, o: LV, w: 'seg' }, dhost, () => refreshPreview()); row.dataset.only = r.only || '';
     }

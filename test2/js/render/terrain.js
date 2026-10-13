@@ -343,6 +343,7 @@
     float fakeEnvK = 0.0;
     uniform highp sampler2DArray tMats; uniform sampler2D tNoise; uniform sampler2D tSurf; uniform sampler2D tScY; uniform sampler2D tWater; uniform sampler2D tCover; uniform float uPlayR; uniform highp sampler2D tLavaS; uniform float uLavaOn;
     uniform vec3 uO, uN, uHaze, uGrassTint, uDryTint, uSunDir, uCaveAmb; uniform vec4 uCloudSh; uniform float uVolc;
+    uniform vec4 uNoVeg[4];   // the organic-top table (config MATS[].veg) per weight slot (mA, mB, mC, mD): 1 = nothing grows on this material (steel, foam, concrete, glass, ice, snow, lava, bedrock)
     vec3 gCaveEm = vec3(0.0);
     // P65c: drifting cloud shadows (xy = how far the wind aloft has carried them, z = cover, w = strength): patches of the land lie in shade, the sun-lit rest keeps its colour
     float cloudShade(vec2 p){
@@ -548,7 +549,11 @@
       sf.r *= 1.0 - 0.85 * s2w * (1.0 - smoothstep(0.3, 0.62, s2n.y + 0.28 * s2h));   // grass in patches that break up with the depth, not one stripe along z
       #endif
       float up = nW.y, sky = (1.0 - smoothstep(0.05, 0.35, vDepth));
-      float cover = sf.r * smoothstep(0.55, 0.8, up + (nb - 0.5) * 0.25) * sky;
+      // no turf on a built, frozen or molten top: the share of the surface's weight that is steel / foam / concrete / glass / ice / snow / lava / bedrock thins the cover out over the range
+      // those looks are painted in (0.2 - 0.55), the same function the grass blades and the clutter use (meshgen veg_keep), so a rim of grass never fringes a foam block or a roof
+      float noVeg = dot(vMA, uNoVeg[0]) + dot(vMB, uNoVeg[1]) + dot(vMC, uNoVeg[2]) + dot(vMD, uNoVeg[3]);
+      float vegOk = 1.0 - smoothstep(0.2, 0.55, noVeg);
+      float cover = sf.r * smoothstep(0.55, 0.8, up + (nb - 0.5) * 0.25) * sky * vegOk;
       vec3 gT = triA(12.0, vT, bw, 0.33), dT = triA(13.0, vT, bw, 0.3);
       vec3 grass = mix(gT * uGrassTint, dT * uDryTint, smoothstep(0.35, 0.8, sf.g + (nz - 0.5) * 0.3));
       col = mix(col, grass, smoothstep(0.15, 0.6, cover));
@@ -645,8 +650,9 @@
         emis += lh * lh * 1.1 * lpulse * vec3(1.0, 0.27, 0.04) * (1.0 - wl);
         col = mix(col, col * vec3(0.55, 0.45, 0.4), lh * 0.5);
       }
-      // burning grass: glowing embers in the cover band (S.veg.surf a)
-      if (sf.a > 0.01) emis += sf.a * sky * smoothstep(0.35, 0.7, nb + 0.25 * sin(uTime * 3.0 + vT.x * 2.0 + vT.z * 1.7)) * 1.4 * vec3(1.0, 0.3, 0.05);
+      // burning grass: glowing embers in the cover band (S.veg.surf a), none where the organic-top table says nothing grows
+      float emberK = sf.a * vegOk;
+      if (emberK > 0.01) emis += emberK * sky * smoothstep(0.35, 0.7, nb + 0.25 * sin(uTime * 3.0 + vT.x * 2.0 + vT.z * 1.7)) * 1.4 * vec3(1.0, 0.3, 0.05);
       col = hotSand(col, vW, up, emis);
       // P7 (PoC materials): girder steel = painted orange-brown plate with darker truss bars and rivet rows; foam-mortar
       // foam = pale, bubbly, matte (vMD: their weights, 0..1, outside the 12 texture slots)
@@ -1601,6 +1607,11 @@
     return m;
   }
 
+  /* the shader's copy of the organic-top table (config MATS[].veg): 1 where nothing grows on the material, one vec4 per weight slot group. Called at init; a tool that changes the table calls it again. */
+  TR.syncVeg = function () {
+    const L = SS.CFG.VEG_LEVEL, A = U.uNoVeg.value;
+    for (let r = 0; r < 4; r++) A[r].set(L[1 + r * 4] ? 0 : 1, L[2 + r * 4] ? 0 : 1, L[3 + r * 4] ? 0 : 1, L[4 + r * 4] ? 0 : 1);
+  };
   TR.init = function (sc, textures, quality) {
     scene = sc; tx = textures; Q = quality;
     const W = SS.world;
@@ -1621,8 +1632,10 @@
       uCon: { value: Array.from({ length: 24 }, () => new T.Vector4()) }, uNCon: { value: 0 },   // P65b: contact shadows (render/ground.js)
       uMatP: { value: MATP.map(p => new T.Vector4(p[0], p[1], p[2], p[3])) },
       uMatTint: { value: TINT.map(c => new T.Vector3(c[0], c[1], c[2])) },
-      uRelief: { value: RELIEF.map(c => new T.Vector4(c[0], c[1], c[2], c[3])) }, tRel: { value: tx.noise3 }, uGlint: { value: GLINT.slice() }
+      uRelief: { value: RELIEF.map(c => new T.Vector4(c[0], c[1], c[2], c[3])) }, tRel: { value: tx.noise3 }, uGlint: { value: GLINT.slice() },
+      uNoVeg: { value: [0, 1, 2, 3].map(() => new T.Vector4()) }   // the organic-top table, one flag per weight slot (mA: bedrock rock soil sand, mB: sandstone snow ice basalt, mC: lava crust ash scree, mD: steel foam concrete obsidian), filled by TR.syncVeg
     });
+    TR.syncVeg();
     // 3D world texture RG16F: R = density (raw, linear filtering = the sim's trilinear W.sample; 8-bit put the cap's
     // edge up to 15 cm off the collision line, O1), G = material | heat << 5 as an integer (texelFetch; P31: 5 material bits for obsidian, 16)
     VOLSIZE.set(W.NX, W.NY, W.NZ);

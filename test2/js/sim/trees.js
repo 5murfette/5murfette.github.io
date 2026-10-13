@@ -127,8 +127,7 @@
       const conifer = sp === 1 && (m === C.MAT.SOIL || m === C.MAT.SCREE || m === C.MAT.ROCK || m === C.MAT.SNOW) && top < w.SEA + 14;
       if (sp <= 1 ? !(st && st.fuel[c] > 0.35) && !conifer : w.topJ[c] <= 0) continue;
       if (sp === 4 && m !== C.MAT.SAND && m !== C.MAT.SOIL) continue;       // palms: sand and jungle floor, never bare granite
-      if (m === C.MAT.LAVA || m === C.MAT.ICE || m === C.MAT.BEDROCK) continue;
-      if (m === C.MAT.CONCRETE || m === C.MAT.STEEL || m === C.MAT.FOAM || m === C.MAT.OBSIDIAN) continue;   // P65f: no tree grows out of a slab / glass (volcanic ruins)
+      if (C.veg_level(m) === 0 && !(conifer && m === C.MAT.SNOW)) continue;   // P65f: nothing roots in lava, ice, bedrock, a slab, steel, foam or glass (volcanic ruins): the organic-top table (config MATS.veg); the spruce keeps its snow slopes
       let ok = true;
       for (const [dx, dz] of [[0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8]]) if (Math.abs(w.topHeight(x + dx, z + dz) - top) > (w.flat ? 1.2 : 0.5)) ok = false;
       if (!ok) continue;
