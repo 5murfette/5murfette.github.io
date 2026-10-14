@@ -39,8 +39,10 @@
     view.autoZ = z;
   }
   /* d wheel notches (+ = out): the wheel, a pinch (one notch per 15 %) and the 🔍 button all end here, so they agree on
-   * the range. Changing the zoom by hand puts the 🔍 toggle back to "near" */
+   * the range. Changing the zoom by hand puts the 🔍 toggle back to "near"; a missing d leaves the zoom alone (it
+   * would be NaN for every later frame) */
   V.zoom = d => {
+    if (!Number.isFinite(d)) return;
     view.zoom = M.clamp(view.zoom * Math.pow(WHEEL_K, M.clamp(d, -8, 8)), ZMIN, ZMAX);
     view.zoomBack = 0;
     view.userT = 0;

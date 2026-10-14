@@ -260,9 +260,32 @@
     HAND_GEO = new T.SphereGeometry(0.045, 10, 8),
     ARM_GEO = new T.CylinderGeometry(0.026, 0.03, 1, 8),
     HAND_MAT = new T.MeshStandardMaterial({ color: 0xf2a092, roughness: 0.55, emissive: 0x1c0c08 });
+  // the x-ray's depth is tested this much nearer the camera (m): more than a body's thickness
+  const XRAY_LIFT = 0.4;
+  // (the screen position stays, only the depth moves: the silhouette keeps the body's outline)
+  const xrayLift = sh => {
+    sh.vertexShader = sh.vertexShader.replace(
+      '#include <project_vertex>',
+      `#include <project_vertex>
+      vec4 lifted = projectionMatrix * vec4(mvPosition.xy, mvPosition.z + ${XRAY_LIFT.toFixed(2)}, 1.0);
+      gl_Position.z = lifted.z / lifted.w * gl_Position.w;`
+    );
+  };
+  /* the body's own pixels for the x-ray: drawn after everything opaque (the transparent pass, before the x-ray at
+   * renderOrder 8), no colour, the body's own depth: it marks 1 in the stencil where the body IS the nearest surface.
+   * (Marking from the body's opaque draw would not do: three sorts opaque draws by material first, so an occluder drawn
+   * after the body left the mark under it.) */
+  const XRAY_MASK = new T.MeshBasicMaterial({
+    colorWrite: false, transparent: true, depthWrite: false, depthFunc: T.LessEqualDepth, side: T.DoubleSide, stencilWrite: true,
+    stencilRef: 1, stencilFunc: T.AlwaysStencilFunc, stencilZPass: T.ReplaceStencilOp
+  });
+  XRAY_MASK.userData.shared = true;
+  // (both sides: the crawl's squash turns parts of the tube inside out, and one-sided they were holes showing what
+  // lay behind the worm)
   const SKIN = new T.MeshPhysicalMaterial({
     color: 0xffffff,
     vertexColors: true,
+    side: T.DoubleSide,
     roughness: 0.42,
     sheen: 0.7,
     sheenColor: new T.Color(0xffd0c4),
@@ -447,12 +470,23 @@
       root.add(hand, arm, fore, elbow);
       return { hand, arm, fore, elbow, elbOn: false, ex: 0, ey: 0, ez: 0 };
     });
-    // x-ray silhouette when hidden behind terrain (same live geometry)
-    const xray = new T.Mesh(
-      geo,
-      new T.MeshBasicMaterial({ color: team.rgb, transparent: true, opacity: 0.45, depthFunc: T.GreaterDepth, depthWrite: false })
-    );
-    xray.renderOrder = 8; xray.frustumCulled = false; body.add(xray);
+    // x-ray silhouette when hidden behind terrain (same live geometry): only the outer surface, once per pixel. The
+    // depth test alone passes wherever ANY nearer surface covers the body: the worm's own (a curled body showed its
+    // insides, every hidden layer adding 0.45 more) and the cut face it stands in (the far half of a crawling body
+    // dips behind it). The stencil keeps it off the pixels the mask marked and marks each pixel it draws; its depth
+    // is tested XRAY_LIFT m nearer the camera, so only an occluder clearly in front of the worm shows it
+    const xmat = new T.MeshBasicMaterial({
+      color: team.rgb, transparent: true, opacity: 0.45, depthFunc: T.GreaterDepth, depthWrite: false, side: T.DoubleSide,
+      stencilWrite: true, stencilRef: 1, stencilFunc: T.NotEqualStencilFunc, stencilZPass: T.ReplaceStencilOp
+    });
+    xmat.onBeforeCompile = xrayLift;
+    xmat.customProgramCacheKey = () => 'worm_xray';
+    const xray = new T.Mesh(geo, xmat), xmask = new T.Mesh(geo, XRAY_MASK);
+    xray.renderOrder = 8;
+    xray.frustumCulled = false;
+    xmask.renderOrder = 7.9;
+    xmask.frustumCulled = false;
+    body.add(xmask, xray);
     const ghost = new T.Group();
     const gBody = new T.Mesh(
       GHOST_GEO,

@@ -24,6 +24,7 @@
   function init(renderer) {
     rt = new T.WebGLRenderTarget(4, 4, {
       type: T.HalfFloatType,
+      stencilBuffer: true,                                       // (the worms' x-ray silhouette: render/actors.js)
       generateMipmaps: bloomOn,
       minFilter: bloomOn ? T.LinearMipmapLinearFilter : T.LinearFilter,
       samples: window.LNS != null ? window.LNS : SS.view && SS.view.msaa ? Math.min(2, SS.view.msaa()) : 2

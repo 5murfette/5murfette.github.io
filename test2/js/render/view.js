@@ -38,6 +38,7 @@
     tx = textures; Q = quality; opts = opts || {};
     renderer = new T.WebGLRenderer({
       canvas,
+      stencil: true,                                             // (the worms' x-ray silhouette: render/actors.js)
       antialias: Q.msaa > 0 && !Q.grade,
       preserveDrawingBuffer: !!opts.preserve,
       powerPreference: 'high-performance'
