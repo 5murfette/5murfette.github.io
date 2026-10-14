@@ -485,7 +485,7 @@
     }
     if (mode !== 'grip') o.gripT = 0;
     // ---- weights of the poses
-    let wRun = 0, wLeap = 0, wGrip = 0, wDead = 0, run = 0, lift = 0, spread = 0, curlTail = false, stretch = 1;
+    let wRun = 0, wLeap = 0, wGrip = 0, wDead = 0, run = 0, spread = 0, curlTail = false, stretch = 1;
     const age = S.time - h.t0;
     if (mode === 'emerge') {
       const u = Math.min(1, age / KK.EMERGE_T);
@@ -537,7 +537,6 @@
       wLeap = 1;
       spread = 0.5 + 0.5 * Math.sin(u * Math.PI);
       rig.rotation.set(0, 0, 0);
-      lift = 0.5;
       run = 0.4;
       stretch = 1 + 0.35 * Math.sin(Math.min(1, u * 1.2) * Math.PI);
     } else if (mode === 'grip') {

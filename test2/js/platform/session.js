@@ -155,7 +155,7 @@
       for (const k of Object.keys(C.SETTINGS))
         if (LOOK.indexOf(k) < 0) base[k] = C.SETTINGS[k];
       on = true;
-      H.new_game(SS.menu.sanitize(Object.assign(base, pres, ok, { cpu: 'off' }), C.SETTINGS));
+      H.new_game(C.settings_sanitize(Object.assign(base, pres, ok, { cpu: 'off' })));
     });
     NT.on('leave', d => {
       if (!on) return;

@@ -105,16 +105,12 @@
   const JET_VS = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
   const JET_FS = `varying vec2 vUv;
     uniform float uT, uK;
-    float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-    float n2(vec2 p){
-      vec2 i = floor(p), f = fract(p);
-      f = f*f*(3.0-2.0*f);
-      return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y);
-    }
+    ${SS.glsl.VNOISE2S}
     void main(){
       // v: 0 at the nozzle -> 1 at the tip; r: 0 axis -> 1 edge
       float v = vUv.x, r = abs(vUv.y - 0.5) * 2.0;
-      float n = n2(vec2(vUv.y * 5.0 + uT * 3.0, v * 7.0 - uT * 26.0)) * 0.6 + n2(vec2(vUv.y * 11.0 - uT * 2.0, v * 15.0 - uT * 40.0)) * 0.4;
+      float n = sl_vnoise2s(vec2(vUv.y * 5.0 + uT * 3.0, v * 7.0 - uT * 26.0)) * 0.6
+        + sl_vnoise2s(vec2(vUv.y * 11.0 - uT * 2.0, v * 15.0 - uT * 40.0)) * 0.4;
       float width = (0.55 + 0.45 * sin(v * 3.14159)) * (1.0 - v * 0.55);
       float body = (1.0 - smoothstep(width * 0.35, width + 0.1 * n, r)) * (1.0 - smoothstep(0.62, 1.0, v + n * 0.28));
       float core = (1.0 - smoothstep(0.0, width * 0.5, r)) * (1.0 - smoothstep(0.1, 0.72, v));
@@ -223,15 +219,13 @@
   };
   WV.laserHit = () => hit;
   WV.debug = () => ({ torch, light, laser });
-  let wasDig = false, digEndT = -9, sparkT = 0;
+  let sparkT = 0;
 
   WV.frame = function (S, view, camera, dt) {
     if (!scene) return;
     const t = view.time || 0, a = S.active;
     // ----- hats + masks: attached to the live head of each worm (actors.js keeps eyes / heading per worm) -----
     const digging = !!(S.dig && a);
-    if (wasDig && !digging) digEndT = t;
-    wasDig = digging;
     for (const w of S.worms) {
       const vis = SS.actors.vis(w), v = vis && vis.v;
       if (!v) continue;

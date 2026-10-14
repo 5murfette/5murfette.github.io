@@ -776,7 +776,7 @@
   }
   A.teleporting = w => teles.some(f => f.w === w);
   A.teleDebug = () => teles.map(f => {
-    const g = f.dst, m = g.userData.body.children[0], bb = new T.Box3().setFromObject(g);
+    const g = f.dst, bb = new T.Box3().setFromObject(g);
     return {
       k: +(f.t / TELE_DUR).toFixed(2),
       dst: g.position.toArray().map(v => +v.toFixed(2)),

@@ -1,4 +1,4 @@
-/* ui/debug.js — P49: the in-game DEBUG TOOLBOX. A floating panel (F9 or the 🛠 button; ?debug=1 opens it at the start):
+/* ui/debug.js — the in-game DEBUG TOOLBOX. A floating panel (F9 or the 🛠 button; ?debug=1 opens it at the start):
  * pick a thing, click the
  * world, and it is dropped there. The panel never touches the sim: a click becomes ONE step's Input command (dbk, dbp0,
  * dbp1, dbs, dby, dbsky; sim/debug.js applies it inside sim.step), so replays stay bit-identical. Local / CPU matches
@@ -10,7 +10,7 @@
   let root = null, curEl = null, allowed = false, open = false, mini = false, tab = 'Props', item = null, sky = false, pend = null;
   const P = { weapon: 0, tool: 0, hp: 200, size: 1, boom: 3, fire: 1.6, acid: 0.32, whp: 50 };
 
-  const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const esc = SS.dom.esc;
   /* the catalogue: [label, kind name, parameter selector (reads P at pick time), can fall from the sky] */
   function catalogue() {
     const k = K();
@@ -133,11 +133,10 @@
     pend = null;
   };
   U.init = function (show) {
-    root = document.createElement('div');
+    root = SS.dom.el('div', 'panel hidden', null, document.body);
     root.id = 'dbg';
-    root.className = 'panel hidden';
-    document.body.appendChild(root);
-    curEl = document.createElement('div'); curEl.id = 'dbgcur'; document.body.appendChild(curEl);
+    curEl = SS.dom.el('div', '', null, document.body);
+    curEl.id = 'dbgcur';
     const btn = document.getElementById('dbgbtn');
     if (btn) btn.addEventListener('click', e => {
       U.toggle();

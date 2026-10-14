@@ -101,6 +101,16 @@
   function resize() {
     if (R) SS.view.resize(innerWidth, innerHeight);
   }
+  /* the display settings that take effect at once, without a new world (a new game, the menu's Display rows): the
+   * automatic front ghost, the cinematic and the anticipation cameras, the frame-rate cap, the idle antics of the
+   * running match */
+  function applyDisplay(st) {
+    if (SS.view.setGhostAuto) SS.view.setGhostAuto(st.ghostAuto !== false);
+    if (SS.cine) SS.cine.setEnabled(st.cine !== false);
+    if (SS.anticCam) SS.anticCam.setEnabled(st.anticCam !== false);
+    SS.quality.set_frame_rate(st.fps);
+    if (S.settings) S.settings.idle = st.idle !== false;
+  }
   // the presentation after a snapshot is loaded into S (a replay, a resync): no stale actors or HUD state, the camera
   // on the new state
   function refresh() {
@@ -124,7 +134,7 @@
     tx = await SS.tex.loadAll(want.tex, (f, l) => SS.menu.progress(0.01 + 0.2 * f, l));
     stats.texMs = performance.now() - t0;
     R = SS.view.init($('view'), tx, want, { preserve: params.has('auto') });
-    SS.ui.init(R.camera, $('view'));
+    SS.ui.init(R.camera, $('view'), SS.view.hud);
     resize();
   }
 
@@ -148,10 +158,7 @@
       await ensureRenderer(settings);
       SS.view.setSlice(settings.slice);
       SS.view.setGhost(settings.ghost | 0);
-      if (SS.view.setGhostAuto) SS.view.setGhostAuto(settings.ghostAuto !== false);
-      if (SS.cine) SS.cine.setEnabled(settings.cine !== false);
-      if (SS.anticCam) SS.anticCam.setEnabled(settings.anticCam !== false);
-      SS.quality.set_frame_rate(settings.fps);
+      applyDisplay(settings);
       let t0 = performance.now();
       const job = SS.sim.begin_reset(S, settings);
       let p = 0, ts = performance.now();
@@ -227,7 +234,7 @@
       const k = r[0] === 'labFlags' && params.has('lab') ? 'lab' : r[0];
       if (params.has(k)) s[r[0]] = C.setting_value(r, params.get(k));
     }
-    return SS.menu.sanitize(s, C.SETTINGS);
+    return C.settings_sanitize(s);
   }
   const setMuteIcon = () => { $('mutebtn').textContent = SS.audio.muted ? '🔇' : '🔊'; };
 
@@ -269,7 +276,7 @@
     });
     // top map click: in a net game it goes through the lockstep input (align_id), only on the own turn
     $('topmap').addEventListener('click', e => {
-      const w = SS.ui.pickTop(S, e);
+      const w = SS.minimap.pick(S, e);
       if (!w) return;
       if (SS.session.game()) SS.session.align(w);
       else SS.sim.align_to(S, w);
@@ -310,6 +317,7 @@
     };
     SS.menu.onOnline = () => SS.ui.onOnline();
     SS.menu.defaultStart = s => newGame(s);
+    SS.menu.onDisplay = applyDisplay;
     // (a failed start: back to a local menu)
     SS.menu.onBack = () => SS.session.cancel();
     addEventListener('resize', resize);

@@ -7,7 +7,6 @@
   'use strict';
   const T = window.THREE, C = SS.CFG, M = SS.math, P = SS.plane;
   const V = SS.view = {};
-  const VPD = { x: 0, z: 0, r: 0 };                                // (scratch: the round play area, world.js play_disc)
   let headSpot,
     renderer,
     scene,
@@ -19,11 +18,9 @@
     fill,
     sky,
     skyMat,
-    water,
     heightTex,
     surfTex,
     scyTex,
-    blankTex,
     outline,
     outlineMat,
     motes,
@@ -32,131 +29,10 @@
   const view = {
     camT: null, camZ: 0, dir: { cur: null, since: 0 }, zoom: 19, autoZ: 0, zoomBack: 0, userT: 99, time: 0, heightVer: 0, heightFor: -1,
     heightT: -99, heightmap: null, secWV: -1, secT: -99, edgeA: 0,
-    pan: { s: 0, y: 0 }, orbit: { yaw: 0, tilt: 0 }, look: null, activeId: -1, surf: null, surfN: 0
+    pan: { s: 0, y: 0 }, orbit: { yaw: 0, tilt: 0 }, look: null, activeId: -1, surf: null, surfN: 0, vw: 0, vh: 0
   };
   V.state = view;
-  let NS = 193;                           // surface / water height maps: one texel per lattice column (P38: SS.world.NX, per map)
 
-  /* Per-biome lighting and grading (sky panorama, sun, ambient, haze, vegetation and water tints). */
-  const LOOKS = {
-    temperate: {
-      sky: 'sky',
-      sun: 0xffe2b8,
-      sunI: 3.0,
-      hemiS: 0xcfe2ff,
-      hemiG: 0x7a5a3a,
-      hemiI: 1.15,
-      fog: 0.0062,
-      haze: 0xf1d9c0,
-      exp: 1.05,
-      grass: [1, 1, 1],
-      dry: [1, 1, 1],
-      gBase: 0x173a0c,
-      gTip: 0x8cc840,
-      gDry: 0xc8a85c,
-      deep: 0x0d3a5c,
-      shallow: 0x2fa7a8,
-      sunDir: [-0.42, 0.62, 0.66]
-    },
-    alpine: {
-      sky: 'sky_cold',
-      sun: 0xfff3e6,
-      sunI: 2.9,
-      hemiS: 0xd8e8ff,
-      hemiG: 0x6a7080,
-      hemiI: 1.3,
-      fog: 0.0070,
-      haze: 0xdde8f5,
-      exp: 1.0,
-      grass: [0.86, 0.96, 0.92],
-      dry: [0.95, 0.95, 0.9],
-      gBase: 0x1a3418,
-      gTip: 0x7aa860,
-      gDry: 0xb8a878,
-      deep: 0x123a58,
-      shallow: 0x5fb0c8,
-      sunDir: [-0.5, 0.5, 0.7]
-    },
-    canyon: {
-      sky: 'sky',
-      sun: 0xffd4a0,
-      sunI: 3.2,
-      hemiS: 0xffe2c4,
-      hemiG: 0x8a4a2a,
-      hemiI: 1.1,
-      fog: 0.0058,
-      haze: 0xf0c8a0,
-      exp: 1.05,
-      grass: [1.05, 0.95, 0.75],
-      dry: [1.1, 0.98, 0.8],
-      gBase: 0x2a3a12,
-      gTip: 0xa8b050,
-      gDry: 0xd8b070,
-      deep: 0x1a3a48,
-      shallow: 0x4a9a8a,
-      sunDir: [-0.55, 0.55, 0.62]
-    },
-    desert: {
-      sky: 'sky',
-      sun: 0xfff0d2,
-      sunI: 3.4,
-      hemiS: 0xfff0d8,
-      hemiG: 0xa07850,
-      hemiI: 1.15,
-      fog: 0.0055,
-      haze: 0xf5dcb0,
-      exp: 0.94,
-      grass: [1.1, 1.0, 0.75],
-      dry: [1.15, 1.0, 0.8],
-      gBase: 0x3a3a14,
-      gTip: 0xb8b060,
-      gDry: 0xe0c080,
-      deep: 0x0d4a66,
-      shallow: 0x38c0c0,
-      sunDir: [-0.35, 0.72, 0.6]
-    },
-    beach: {
-      sky: 'sky',
-      sun: 0xffe2bc,
-      sunI: 3.3,
-      hemiS: 0xdcd2c2,
-      hemiG: 0xb89460,
-      hemiI: 1.15,
-      fog: 0.0046,
-      haze: 0xf4dcb4,
-      exp: 1.0,
-      grass: [0.82, 1.06, 0.66],
-      dry: [1.0, 1.0, 0.8],
-      gBase: 0x0e3a0c,
-      gTip: 0x4ca82c,
-      gDry: 0xb4a45c,
-      deep: 0x0c3a30,
-      shallow: 0x4f8f5c,
-      sunDir: [-0.5, 0.46, 0.72],
-      water: { near: 0x7a6a40, mid: 0x344034, deep: 0x283e3a }
-    },
-    volcanic: {
-      sky: 'sky_storm',
-      skyTint: [1.7, 1.55, 1.6],
-      sun: 0xffc896,
-      sunI: 3.1,
-      hemiS: 0xb8b4c4,
-      hemiG: 0x5e463a,
-      hemiI: 1.7,
-      fog: 0.0072,
-      haze: 0x8e7672,
-      exp: 1.45,
-      grass: [0.8, 0.85, 0.7],
-      dry: [0.9, 0.85, 0.7],
-      gBase: 0x1a2410,
-      gTip: 0x6a7a40,
-      gDry: 0x8a7a50,
-      deep: 0x0a1a22,
-      shallow: 0x2a5a5a,
-      sunDir: [-0.5, 0.45, 0.72]
-    }
-  };
-  V.LOOKS = LOOKS;
 
   V.init = function (canvas, textures, quality, opts) {
     tx = textures; Q = quality; opts = opts || {};
@@ -191,49 +67,25 @@
     sc.far = 170;
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04; sun.shadow.radius = 3;
     scene.add(sun, sun.target);
-    fill = new T.DirectionalLight(FILL.color, FILL.intensity); fill.position.set(FILL.x, FILL.y, FILL.z); scene.add(fill);
+    const FL = SS.look.FILL;
+    fill = new T.DirectionalLight(FL.color, FL.intensity); fill.position.set(FL.x, FL.y, FL.z); scene.add(fill);
 
-    // K2: procedural
-    if (SS.skyView) {
-      const sv = SS.skyView.init(scene, tx, Q, renderer);
-      sky = sv.mesh;
-      skyMat = sv.mat;
-    }
-    if (SS.farView) SS.farView.init(scene, tx, Q, renderer);                                                // LS: far world pass
-    if (SS.cloudView) SS.cloudView.init(SS.farView ? SS.farView.scene() : scene, tx);                       // K2: 3D clouds
-    else {
-      skyMat = SS.mat.sky(tx.skies.sky);
-      sky = new T.Mesh(new T.SphereGeometry(500, 48, 24), skyMat);
-      sky.renderOrder = -10;
-      sky.frustumCulled = false;
-      scene.add(sky);
-    }
+    // the procedural sky, the far world pass and its 3D clouds
+    const sv = SS.skyView.init(scene, tx, Q, renderer);
+    sky = sv.mesh;
+    skyMat = sv.mat;
+    SS.farView.init(scene, tx, Q, renderer);
+    SS.cloudView.init(SS.farView.scene(), tx);
 
-    blankTex = new T.DataTexture(new Uint8Array(4), 1, 1, T.RGBAFormat); blankTex.needsUpdate = true;
-    heightTex = new T.DataTexture(new Uint8Array(NS * NS * 4), NS, NS, T.RGBAFormat);
-    heightTex.magFilter = heightTex.minFilter = T.LinearFilter; heightTex.needsUpdate = true;
-    surfTex = new T.DataTexture(new Uint8Array(NS * NS * 4), NS, NS, T.RGBAFormat);
-    surfTex.magFilter = surfTex.minFilter = T.LinearFilter; surfTex.needsUpdate = true;
-    // P65b: where (height, half depth) the blast soot lies, so a wall does not wear a stripe down its whole column
-    scyTex = new T.DataTexture(new Uint8Array(NS * NS * 4), NS, NS, T.RGBAFormat);
-    scyTex.magFilter = scyTex.minFilter = T.NearestFilter; scyTex.needsUpdate = true;
+    ({ heightTex, surfTex, scyTex } = V.surfaceTextures());
 
 
     SS.terrain.init(scene, tx, Q);
-    // the sea: render/water.js (simulated surface) after the terrain (shares its uniforms), else the legacy still plane
-    if (SS.waterView) SS.waterView.init(scene, tx, Q, renderer);
-    else {
-      const wm = SS.mat.water(tx, tx.skies.sky, heightTex);
-      water = new T.Mesh(new T.PlaneGeometry(1400, 1400), wm);
-      water.rotation.x = -Math.PI / 2;
-      water.position.set(SS.world.MX, SS.world.SEA, SS.world.MZ);
-      water.renderOrder = 6;
-      scene.add(water);
-    }
+    // the sea: render/water.js (the simulated surface) after the terrain (it shares its uniforms)
+    SS.waterView.init(scene, tx, Q, renderer);
     if (SS.dunesView) SS.dunesView.init(scene);       // dry worlds: far dunes instead of the sea (Step D2)
     SS.terrain.uniforms.tSurf.value = surfTex; SS.terrain.uniforms.tScY.value = scyTex;
-    SS.terrain.uniforms.tWater.value = SS.waterView ? SS.waterView.texture : blankTex;
-    SS.terrain.uniforms.uWaterTex.value = SS.waterView ? 1 : 0;
+    SS.terrain.uniforms.tWater.value = SS.waterView.texture;
     if (SS.lavaView) SS.lavaView.init(scene, tx, Q);
     if (SS.bodyView) SS.bodyView.init(scene, tx);
     if (SS.treeView) SS.treeView.init(scene, tx, Q);   // after terrain (shared uniforms) and bodyView (flame shader)
@@ -356,6 +208,7 @@
       );
       stars.renderOrder = -5; stars.frustumCulled = false; scene.add(stars);
     }
+    SS.look.init({ view, scene, renderer, Q, sun, hemi, fill, stars });
     SS.fx.init(scene, tx, Q, heightTex);
     if (SS.flameView) SS.flameView.init(scene, Q);
     if (SS.actors.init) SS.actors.init(scene, tx, Q);
@@ -377,9 +230,9 @@
     return { renderer, scene, camera };
   };
 
-  let vw = 0, vh = 0;
   V.resize = function (w, h) {
-    vw = w; vh = h;
+    view.vw = w;
+    view.vh = h;
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
   };
   /* P38-R4: the pixel ratio (adaptive resolution, platform/quality.js adapt_*): the canvas, the far pass and the lens
@@ -388,7 +241,7 @@
     r = Math.min(r, window.devicePixelRatio || 1);
     if (Math.abs(renderer.getPixelRatio() - r) < 0.01) return;
     renderer.setPixelRatio(r);
-    if (vw) V.resize(vw, vh);
+    if (view.vw) V.resize(view.vw, view.vh);
   };
   V.dpr = () => renderer.getPixelRatio();
   V.msaa = () => (Q ? Q.msaa : 0);
@@ -496,7 +349,6 @@
   V.seaChanged = function (sea) {
     seaShown = sea;
     if (SS.farView && SS.farView.setSea) SS.farView.setSea(sea);
-    if (water) water.position.y = sea;
     SS.terrain.uniforms.uSea.value = sea;
     if (SS.waterView && SS.waterView.seaChanged) SS.waterView.seaChanged(sea);
   };
@@ -525,333 +377,11 @@
    * WORM_PX tall (about 4.6 % of the window height, 34..60 px), a little further out on big maps and on narrow /
    * portrait windows (the width must still show some battlefield). The player's wheel / pinch / tool value is kept:
    * auto only follows while view.zoom still equals the last auto value. */
-  const WORM_H = 0.46;
-  /* P119b (Q-23, "the zoom range is lopsided"): the camera distance (m) the player may choose runs from ZMIN to ZMAX.
-   * The old floor of 8 m was reached after 3 wheel notches from the default
-   * (11 m at 1280 x 800: 91 px per metre; 8.3 m: 120 px per metre, -3 to -8 notches all looked the same), so a worm and
-   * a blast could never be seen from close by. ZMIN = 5 m is about 200 px per metre at any window height (a metre is a
-   * quarter of the picture height there: the distance, not the window, decides). Close up the camera also drops to a
-   * low pitch and centres on the worm's head (closeK below), so the face is seen side-on and the worm does not sit in
-   * the lower third of the picture. */
-  const ZMIN = 5, ZMAX = 80, WHEEL_K = 1.1, FAR_NOTCHES = 6;
-  V.ZOOM_MIN = ZMIN; V.ZOOM_MAX = ZMAX;
-  // camera pitch (rad above the horizon) and the focus height over the worm's centre (m): the default, and at the
-  // tightest
-  const TILT0 = 0.2, TILT_CLOSE = 0.05, FOCUS0 = 1.2, FOCUS_CLOSE = 0.35, CLOSE_FROM = 8.5, CLOSE_TO = 5.2;
-  V.autoZoom = function () {
-    const h = vh || 800, w = vw || 1280, W = SS.world, tgt = M.clamp(h * 0.056, 34, 60);
-    let z = (h * 0.5 / Math.tan(camera.fov * Math.PI / 360)) * WORM_H / tgt;
-    z *= Math.pow(M.clamp(W && W.SC ? W.SC : 1, 0.7, 2.2), 0.3);
-    const asp = w / h;
-    if (asp < 1.25) z *= Math.min(1.7, Math.pow(1.25 / asp, 0.5));
-    return M.clamp(z, 8, 40);
-  };
-  function applyAutoZoom() {
-    const z = V.autoZoom();
-    if (!view.autoZ || Math.abs(view.zoom - view.autoZ) < 1e-6) view.zoom = z;
-    // a window resize keeps the player's own factor
-    else if (Math.abs(z - view.autoZ) > 1e-6) view.zoom = M.clamp(view.zoom * z / view.autoZ, ZMIN, ZMAX);
-    view.autoZ = z;
-  }
-  /* d wheel notches (+ = out): the wheel, a pinch (one notch per 15 %) and the 🔍 button all end here, so they agree on
-   * the range. Changing the zoom by hand puts the 🔍 toggle back to "near" */
-  V.zoom = d => {
-    view.zoom = M.clamp(view.zoom * Math.pow(WHEEL_K, M.clamp(d, -8, 8)), ZMIN, ZMAX);
-    view.zoomBack = 0;
-    view.userT = 0;
-  };
-  /* the 🔍 button (touch pad): far = FAR_NOTCHES notches out, near = back to EXACTLY the zoom it left (a relative +-6
-   * drifted when the range clamp cut the first press short) */
-  V.zoomToggle = () => {
-    if (view.zoomBack) {
-      view.zoom = view.zoomBack;
-      view.zoomBack = 0;
-    }
-    else {
-      view.zoomBack = view.zoom;
-      view.zoom = M.clamp(view.zoom * Math.pow(WHEEL_K, FAR_NOTCHES), ZMIN, ZMAX);
-    }
-    view.userT = 0;
-  };
-  /* how tight the camera is: 0 at the loose end (the default distance and everything farther), 1 at ZMIN. The loose end
-   * is CLOSE_FROM m, or 0.8 of the window's default distance on a small
-   * window (the default look never changes). Drives the pitch and the focus height of the camera block below. */
-  function closeK(z) { return M.smoothstep(Math.min(CLOSE_FROM, (view.autoZ || CLOSE_FROM) * 0.8), CLOSE_TO, z); }
-  V.closeK = closeK;
-  V.camKey = () => (view.dir.cur ? view.dir.cur.key : '');      // (tools: the director's current interest)
-  V.snapCamera = () => {
-    view.camT = null;
-    view.dir.cur = null;
-  };
-  /* the director's interests (PoC interest(), px -> m: x 0.0643; d = the PoC camera distance in px) */
-  const PX = 0.0643;
   // P37 W4: weapons B, the force field, worn items + torch + laser sight (each: init / clear / onEvent / frame)
   const W4V = [
     'gadgetView', 'labView', 'ffView', 'acidView', 'wornView', 'polishView', 'reactView', 'softView', 'idleView', 'jacketView', 'heroView',
     'boulderView', 'rayView'
   ];
-  /* P118d (Q-06): the children of a cluster / banana bomb and the missiles of an air strike go off on first contact:
-   * where a shell in flight will land is a ballistic
-   * line on the plane (cached per shell for 0.3 s, 40 steps of 0.08 s at most). The director frames the shells AND
-   * their landing points, in metres of camera distance (dm), so the payoff blasts are inside the picture; afterwards
-   * the normal 'boom' / 'active' interests bring the camera back. */
-  const landC = new WeakMap();
-  function landing(S, p) {
-    let c = landC.get(p);
-    if (c && view.time - c.t < 0.3) return c;
-    if (!c) {
-      c = { t: 0, s: p.s, y: p.y };
-      landC.set(p, c);
-    }
-    c.t = view.time;
-    let s = p.s, y = p.y, vy = p.vy;
-    const vs = p.vs, g = S.eow ? 0 : C.G, sea = SS.world.under ? -99 : SS.world.SEA;
-    for (let i = 0; i < 40; i++) {
-      s += vs * 0.08;
-      y += vy * 0.08;
-      vy -= g * 0.08;
-      if (y < sea || P.solid2(S, s, y)) break;
-    }
-    c.s = s; c.y = y; return c;
-  }
-  function projBox(S, ex) {
-    let s0 = 1e9, y0 = 1e9, s1 = -1e9, y1 = -1e9;
-    const add = (s, y) => {
-      s0 = Math.min(s0, s);
-      s1 = Math.max(s1, s);
-      y0 = Math.min(y0, y);
-      y1 = Math.max(y1, y);
-    };
-    // (in space there is no -y fall: no landing line, and the camera never chases bomblets that leave the wells)
-    for (const p of S.proj) {
-      add(p.s, p.y);
-      if (!S.eow) {
-        const l = landing(S, p);
-        add(l.s, l.y);
-      }
-    }
-    if (ex) add(ex[0], ex[1]);
-    const t2 = Math.tan((camera ? camera.fov : 42) * Math.PI / 360),
-      asp = camera ? camera.aspect : 1.5,
-      c = P.to_world(S, (s0 + s1) / 2, (y0 + y1) / 2);
-    return {
-      x: c.x,
-      y: c.y,
-      z: c.z,
-      dm: Math.min(S.eow ? 48 : 110, Math.max((s1 - s0) * 1.3 / (2 * t2 * asp), (y1 - y0) * 1.5 / (2 * t2)))
-    };
-  }
-  function interest(S, a) {
-    const P2 = SS.plane, at = (s, y) => P2.to_world(S, s, y);
-    if (S.phase === 'place') return null;
-    // P85: the player has control: nothing but its own worm and its own shot may take the camera (edge indicators,
-    // ui/offscreen.js, point at the rest)
-    const ctl = S.phase === 'play';
-    // P63 / P118d (Q-25): the winners, for the whole end of the match: the surviving worms of the winning team in the
-    // picture (the old interest framed one worm and was dropped by the first click)
-    if (S.phase === 'over' && S.over >= 0) {
-      // (a winner outside the slab is hidden by the section rule: in 3D the camera frames those that can be seen; if
-      // none can, the winners all the same. P119b: sim.victory_align turned the section to them, so most are on it. [2]
-      // = the active worm: the one who fired)
-      const pts = [], all = [];
-      for (const w of S.worms)
-        if (!w.dead && w.hp > 0 && w.team === S.over) {
-          const q = P2.to_plane(S, w.pos), p = [q.s, w.pos.y, w === a ? 1 : 0];
-          all.push(p);
-          if (V.inSlab(S, w.pos)) pts.push(p);
-        }
-      if (!pts.length)
-        for (const q of all) pts.push(q);
-      const t2 = Math.tan((camera ? camera.fov : 42) * Math.PI / 360), asp = camera ? camera.aspect : 1.5;
-      let s0, s1, y0, y1, need;
-      const box = () => {
-        s0 = 1e9;
-        y0 = 1e9;
-        s1 = -1e9;
-        y1 = -1e9;
-        for (const q of pts) {
-          s0 = Math.min(s0, q[0]);
-          s1 = Math.max(s1, q[0]);
-          y0 = Math.min(y0, q[1]);
-          y1 = Math.max(y1, q[1]);
-        }
-        need = Math.max((s1 - s0 + 6) * 1.2 / (2 * t2 * asp), (y1 - y0 + 9) * 1.1 / (2 * t2));
-      };
-      box();
-      // winners too far apart to celebrate in one picture: the farthest are left out of the frame (they dance anyway).
-      // P119b: farthest from the ANCHOR (the active worm when it is a winner, else the first), which always stays
-      while (pts.length > 1 && need > 34) {
-        let ai = 0;
-        for (let i = 0; i < pts.length; i++)
-          if (pts[i][2]) {
-            ai = i;
-            break;
-          }
-        let mx = -1, bi = -1;
-        for (let i = 0; i < pts.length; i++) {
-          if (i === ai) continue;
-          const d = Math.abs(pts[i][0] - pts[ai][0]) + 0.5 * Math.abs(pts[i][1] - pts[ai][1]);
-          if (d > mx) {
-            mx = d;
-            bi = i;
-          }
-        }
-        pts.splice(bi, 1); box();
-      }
-      // (the camera adds 1.5 m: the worm sits a little under the middle of the picture, the sky above it is for the
-      // fireworks and the confetti)
-      if (pts.length) {
-        const c = at((s0 + s1) / 2, (y0 + y1) / 2 - 0.8);
-        return { key: 'victory', x: c.x, y: c.y, z: c.z, d: 520, dm: Math.min(80, Math.max(view.zoom * 1.6, need)), p: 9 };
-      }
-    }
-    // P37 W4: a shell bounced off a force field flies in 3D
-    if (S.free3d && S.free3d.length) {
-      const q = S.free3d[0];
-      return { key: 'free3d', x: q.pos.x, y: q.pos.y, z: q.pos.z, d: 900, p: 9 };
-    }
-    if (S.phase === 'dying' && S.dyingW) {
-      const w = S.dyingW, g = S.dyingGrave && w.grave ? w.grave : w.pos;
-      return { key: 'dying', x: g.x, y: g.y, z: g.z, d: 480, p: 9 };
-    }
-    if (!ctl && S.strikes && S.strikes.length) {
-      const st = S.strikes[0], pl = at(st.s, st.y);
-      if (st.k === 0 && Math.abs(st.s - st.tS) > 14) return { key: 'plane', x: pl.x, y: pl.y - 2, z: pl.z, d: 820, p: 8 };
-      const gy = SS.weapons && SS.weapons.ground_below ? SS.weapons.ground_below(S, st.tS, st.y) : st.y - 8, tp = at(st.tS, gy + 3.9);
-      // P118d (Q-06): the falling missiles and their landing points stay in the picture
-      if (S.proj.length) {
-        const b = projBox(S, [st.tS, gy + 3.9]);
-        return { key: 'strike', x: b.x, y: b.y, z: b.z, d: 760, dm: Math.max(b.dm, view.zoom * 1.66), p: 8 };
-      }
-      return { key: 'strike', x: tp.x, y: tp.y, z: tp.z, d: 760, p: 8 };
-    }
-    // Thunder Strike: during its delay the camera looks at the TARGET on the ground (not the sky / cloud), then the
-    // electrocuted worms take over (hurt, above)
-    if (!ctl && S.zaps && S.zaps.length) {
-      const z = S.zaps[0],
-        gy = SS.weapons && SS.weapons.ground_below ? SS.weapons.ground_below(S, z.s, SS.world.SY - 0.5) : 0,
-        tp = at(z.s, Math.max(gy, SS.world.SEA) + 1.5);
-      return { key: 'zap', x: tp.x, y: tp.y, z: tp.z, d: 600, p: 8 };
-    }
-    // P37: the alien strikes / a face hugger leaps
-    if (!ctl && SS.alien && SS.alien.camera) {
-      const ac = SS.alien.camera(S);
-      if (ac) return ac;
-    }
-    // P37 W4: the camera runs with the robo dog
-    if (S.dogs && S.dogs.length) {
-      const d = S.dogs[0], c = at(d.s, d.y);
-      return { key: 'dog' + d.id, x: c.x, y: c.y, z: c.z, d: 560, p: 7 };
-    }
-    if (!ctl && S.holes && S.holes.length) {
-      const h = S.holes[0];
-      return { key: 'hole', x: h.x, y: h.y, z: h.z, d: 720, p: 8 };
-    }
-    // P29 (user 2026-10-08): after the shot the camera follows the DAMAGE: the worm being hurt (fire, a late blast)
-    // wins over falling shells / gel, explosions and the shooter ("most important")
-    // P85: the affected worms, one after the other, in the order they speak
-    const rv = SS.reactq && !ctl ? SS.reactq.visit(S) : null, rw = rv ? S.worms[rv.id] : null;
-    if (rw && rw.dead) {
-      const g = rw.grave || rw.pos;
-      return { key: 'death' + rw.id, x: g.x, y: g.y, z: g.z, d: 520, p: 7.6 };
-    }
-    // P118d (Q-06): shells still in flight (the children of a bomb whose first blast hurt a worm): the hurt worm AND
-    // the payoff blasts stay in the picture
-    if (rw && S.proj.length) {
-      const hp = P2.to_plane(S, rw.pos), b = projBox(S, [hp.s, rw.pos.y + 0.6]);
-      return { key: 'hurt' + rw.id, wid: rw.id, x: b.x, y: b.y, z: b.z, d: 520, dm: Math.max(b.dm, view.zoom * 1.0), p: 7.5 };
-    }
-    if (rw) return { key: 'hurt' + rw.id, wid: rw.id, x: rw.pos.x, y: rw.pos.y, z: rw.pos.z, d: 520, p: 7.5 };
-    // P68d: a shell lost to space: the camera holds
-    if (S.eow && SS.eowView) {
-      const lf = SS.eowView.lostFocus(S);
-      if (lf) return lf;
-    }
-    if (S.proj.length) {
-      // P118d (Q-06): the children and where they land, in metres of camera distance (the old px formula clamped at
-      // 1300 and ignored the landing)
-      if (S.proj.length > 1) {
-        const b = projBox(S);
-        return { key: 'projs', x: b.x, y: b.y, z: b.z, d: 640, dm: Math.max(b.dm, view.zoom * 1.1), p: 7 };
-      }
-      const p = S.proj[0],
-        sp = Math.hypot(p.vs, p.vy),
-        cin = SS.cine && SS.cine.enabled,
-        ld = cin ? 0.2 : 0.12,
-        c = at(p.s + p.vs * ld, p.y + p.vy * ld);
-      // P63: a long shot zooms out a little more
-      return { key: 'proj' + (p.id || 0), x: c.x, y: c.y, z: c.z, d: M.clamp(560 + sp / PX * 0.3, 560, cin ? 980 : 860), p: 7 };
-    }
-    // P85: no camera interest for falling crates (user: "you randomly move camera away to show some crate, thats
-    // stupid"): ui/offscreen.js shows an edge arrow instead
-    if (!ctl && S.moais)
-      for (const m of S.moais) {
-        const b = SS.bodies.by_id(S, m.body);
-        if (b && Math.hypot(b.vel.x, b.vel.y, b.vel.z) > 25 * PX) return { key: 'moai', x: b.pos.x, y: b.pos.y, z: b.pos.z, d: 640, p: 6 };
-      }
-    const ex = S.lastExplosion;
-    if (!ctl && ex && S.time - (S.lastBlastT == null ? -99 : S.lastBlastT) < 1.4 && ex.R >= 14 * PX)
-      return { key: 'boom' + S.lastBlastT.toFixed(2), x: ex.x, y: ex.y, z: ex.z, d: M.clamp(470 + ex.R / PX * 4.5, 540, 1050), p: 6 };
-    if (S.phase === 'play' && a && !a.dead) return { key: 'active', x: a.pos.x, y: a.pos.y, z: a.pos.z, d: 0, p: 5 };
-    let fw = null, fs = 150 * PX;                 // a thrown worm (PoC 150 px/s; worms fly at the PoC gravity here)
-    for (const w of S.worms)
-      if (!w.dead && !w.rest && w !== a && w.vel) {
-        const sp = Math.hypot(w.vel.x, w.vel.y, w.vel.z);
-        if (sp > fs) {
-          fs = sp;
-          fw = w;
-        }
-      }
-    if (fw) return { key: 'fly' + fw.id, x: fw.pos.x, y: fw.pos.y, z: fw.pos.z, d: 640, p: 5 };
-    for (const b of S.bodies) {
-      if (b.asleep || !b.vel) continue;
-      const sp = Math.hypot(b.vel.x, b.vel.y, b.vel.z);
-      if (sp < 6) continue;
-      for (const w of S.worms) {
-        if (w.dead) continue;
-        const dx = w.pos.x - b.pos.x, dy = w.pos.y - b.pos.y, dz = w.pos.z - b.pos.z, dd = Math.hypot(dx, dy, dz);
-        if (dd < 10 && dx * b.vel.x + dy * b.vel.y + dz * b.vel.z > 0.5 * dd * sp)
-          return {
-            key: 'threat' + (b.id || 0),
-            x: (w.pos.x + b.pos.x) / 2,
-            y: (w.pos.y + b.pos.y) / 2,
-            z: (w.pos.z + b.pos.z) / 2,
-            d: M.clamp(440 + dd / PX * 1.6, 540, 820),
-            p: 5
-          };
-      }
-    }
-    // ... and else the burning area (napalm / oil flames: their centre and spread) until the fire is out
-    if (S.phase !== 'play' && S.flames.length) {
-      let x0 = 1e9, z0 = 1e9, y0 = 1e9, x1 = -1e9, z1 = -1e9, y1 = -1e9;
-      for (const f of S.flames) {
-        x0 = Math.min(x0, f.x);
-        x1 = Math.max(x1, f.x);
-        y0 = Math.min(y0, f.y);
-        y1 = Math.max(y1, f.y);
-        z0 = Math.min(z0, f.z);
-        z1 = Math.max(z1, f.z);
-      }
-      const span = Math.max(x1 - x0, z1 - z0, y1 - y0);
-      return { key: 'fire', x: (x0 + x1) / 2, y: (y0 + y1) / 2 + 0.6, z: (z0 + z1) / 2, d: M.clamp(500 + span / PX * 0.9, 520, 900), p: 4 };
-    }
-    if (a && !a.dead) return { key: 'active', x: a.pos.x, y: a.pos.y, z: a.pos.z, d: 0, p: 3 };
-    return null;
-  }
-  /* left-drag: pan along the section; while inspecting: orbit */
-  V.drag = function (dx, dy, S) {
-    if (S && S.inspect > 0.5) {
-      view.orbit.yaw = M.clamp(view.orbit.yaw - dx * 0.006, -1.4, 1.4);
-      view.orbit.tilt = M.clamp(view.orbit.tilt + dy * 0.004, -0.5, 0.7);
-      return;
-    }
-    const k = view.zoom * 0.0016;
-    view.pan.s = M.clamp(view.pan.s - dx * k, -60, 60); view.pan.y = M.clamp(view.pan.y + dy * k, -15, 25); view.userT = 0;
-  };
-  V.resetPan = () => {
-    view.pan.s = view.pan.y = 0;
-    view.orbit.yaw = view.orbit.tilt = 0;
-  };
 
   V.clearActors = () => clearActors();          // (instant replay: the restored state has new object identities)
   function clearActors() {
@@ -872,385 +402,29 @@
       if (SS[n]) SS[n].clear();
   }
 
-  /* ---------- new map: look, surface map, height maps (terrain meshes are built by main via buildTerrain)
-   * ---------- */
-  /* PoC "Time of day": day = the biome's sun; dusk = the sun 4° above the horizon (the physical sky turns to a sunset
-   * by
-   * itself, warm low light, long shadows); night = the sun under the horizon (the sky goes dark), a cool moon light
-   * (shadows still), stars, and the active worm carries its lamp. 'random' picks by seed. */
-  V.timeOfDay = S => SS.sim.time_of_day(S);                // (the sim owns it: the ice temperature reads it)
-  /* P56 colour grade per biome and time of day (render/lens.js: after the tone map): sat, con (S-curve 0..1), vig, cool
-   * shadows sh, warm highlights hi */
-  // (the lens pass now runs every frame on a graded quality: no temporary array without a black hole)
+  /* ---------- new map: surface map, height maps (terrain meshes are built by main via buildTerrain) ---------- */
+  // (the lens pass runs every frame on a graded quality: no temporary array without a black hole)
   const NO_HOLES = [];
-  const GRADES = {
-    temperate: { sat: 1.12, con: 0.16, vig: 0.22, sh: [-0.004, 0.0, 0.012], hi: [1.03, 1.0, 0.95] },
-    alpine: { sat: 1.1, con: 0.2, vig: 0.22, sh: [-0.006, 0.0, 0.016], hi: [1.02, 1.0, 0.96] },
-    canyon: { sat: 1.06, con: 0.18, vig: 0.24, sh: [0.0, -0.004, 0.012], hi: [1.04, 1.0, 0.94] },
-    desert: { sat: 1.14, con: 0.27, vig: 0.22, sh: [0.004, -0.002, 0.012], hi: [1.03, 0.99, 0.93] },
-    volcanic: { sat: 1.14, con: 0.2, vig: 0.3, sh: [0.004, -0.004, 0.008], hi: [1.05, 0.98, 0.92] },
-    beach: { sat: 1.2, con: 0.2, vig: 0.2, sh: [-0.004, 0.002, 0.012], hi: [1.04, 1.0, 0.93] }
-  };
-  function gradeFor(L, tod) {
-    const g = GRADES[view.biome] || GRADES.temperate;
-    if (tod === 'night')
-      return { sat: g.sat * 0.92, con: g.con * 0.6, vig: g.vig * 1.2, sh: [-0.002, 0.002, 0.014], hi: [0.96, 1.0, 1.08] };
-    if (tod === 'dusk') return { sat: g.sat * 1.08, con: g.con, vig: g.vig * 1.1, sh: [-0.002, -0.004, 0.016], hi: [1.06, 0.98, 0.9] };
-    return g;
-  }
-  /* the cool fill from the far side of the sky (no shadow). applyLook sets it with the other lights; render/weather.js
-   * takes the final values of
-   * the sun, the hemisphere and the fill as its bases (WX.look) and only modulates them (cloud deck, lightning
-   * flash) */
-  const FILL = { color: 0x9cc0ff, intensity: 0.45, x: -30, y: 20, z: -40 };
-  function applyLook(S) {
-    view.biome = S.biome;
-    let L = LOOKS[S.biome] || LOOKS.temperate, skyDir = null;
-    const tod = SS.world.under ? 'day' : V.timeOfDay(S);
-    view.tod = tod;
-    if (S.biome === 'beach' && SS.world.features && SS.world.features.beach && !SS.world.under) {
-      // P116: the sun's bearing is tied to the cove (the photo's light: sea on one side, the low sun over the land and
-      // along the shore, long shadows towards the water); the sunset swings it over the open sea (a glitter path on the
-      // water, the palms backlit)
-      const a0 = SS.world.features.beach.a0, ca = Math.cos(a0), sa = Math.sin(a0), el = tod === 'dusk' ? 0.07 : 0.4;
-      const az = tod === 'dusk' ? a0 + 0.5 : Math.atan2(-0.85 * sa + 0.5 * ca, -0.85 * ca - 0.5 * sa);
-      L = Object.assign({}, L, { sunDir: [Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)] });
-    }
-    if (tod !== 'day') {
-      const sd = L.sunDir, az = Math.atan2(sd[2], sd[0]);
-      if (tod === 'dusk') {
-        const el = 0.07;
-        L = Object.assign({}, L, {
-          sunDir: [Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el)],
-          sunI: L.sunI * 0.9,
-          hemiI: L.hemiI * 0.7,
-          exp: L.exp * 1.15
-        });
-      }
-      else {
-        skyDir = [Math.cos(az) * 0.99, -0.14, Math.sin(az) * 0.99];
-        const m = [-Math.cos(az) * 0.6, 0.62, -Math.sin(az) * 0.6];
-        view.moonDir = m;
-        L = Object.assign({}, L, {
-          sunDir: m,
-          sun: 0x9fb4e8,
-          sunI: 0.85,
-          hemiS: 0x4a6090,
-          hemiG: 0x1c1c22,
-          hemiI: 0.8,
-          exp: L.exp * 1.35,
-          fog: L.fog * 0.8
-        });
-      }
-    }
-    let sk;
-    view.wxKind = S.weather ? S.weather.kind : null;
-    view.look = L;
-    if (SS.skyView) {
-      // K2: the procedural sky for this biome + weather; the fog / haze is the sky's own horizon colour (aerial
-      // perspective: the far terrain fades into exactly the sky behind it), a little of the biome's haze tint
-      sk = SS.skyView.look(
-        S.biome,
-        S.weather ? S.weather.kind : 'clear',
-        skyDir || L.sunDir,
-        tod === 'night' && view.moonDir ? { k: 1, moon: view.moonDir } : null
-      );
-      if (SS.cloudView) SS.cloudView.look(S, sk);
-      if (SS.farView) SS.farView.look(S, sk, L);
-    } else {
-      const skyName = (S.weather && S.weather.sky) || L.sky;
-      sk = tx.skies[skyName] || tx.skies.sky;
-      skyMat.uniforms.tSky.value = sk.tex;
-      skyMat.uniforms.uHorizon.value.setRGB(sk.avg[0], sk.avg[1], sk.avg[2], T.SRGBColorSpace);
-      skyMat.uniforms.uZenith.value.setRGB(sk.top[0], sk.top[1], sk.top[2], T.SRGBColorSpace);
-      const st = L.skyTint || [1, 1, 1];
-      skyMat.uniforms.uTint.value.setRGB(st[0], st[1], st[2]);
-    }
-    const haze = new T.Color().setRGB(sk.horizon[0], sk.horizon[1], sk.horizon[2], T.SRGBColorSpace)
-      .lerp(new T.Color(L.haze), sk.phys ? 0.15 : 0.45);
-    scene.fog.color.copy(haze); scene.fog.density = L.fog;
-    view.haze = haze.clone(); view.fogBase = L.fog;
-    sun.color.set(L.sun);
-    sun.intensity = L.sunI;
-    hemi.color.set(L.hemiS);
-    hemi.groundColor.set(L.hemiG);
-    hemi.intensity = L.hemiI;
-    if (sk.sunT) {                      // K2: ash / dust along the sun's path dim and redden it (relative to clean air)
-      const t = sk.sunT, mx = Math.max(t[0], t[1], t[2]);
-      sun.color.r *= t[0] / mx;
-      sun.color.g *= t[1] / mx;
-      sun.color.b *= t[2] / mx;
-      sun.intensity *= Math.max(0.35, mx);
-    }
-    // moonlight (not the reddened sun beam)
-    if (tod === 'night') {
-      sun.color.set(L.sun);
-      sun.intensity = L.sunI;
-    }
-    fill.color.set(FILL.color); fill.intensity = FILL.intensity; fill.position.set(FILL.x, FILL.y, FILL.z);
-    if (SS.world.under) {
-      // deep underground the time of day barely matters: only the faint skylight that works its way down (dusk warmer,
-      // night bluer and a little dimmer); no sun, no sky fill
-      const ct = V.timeOfDay(S),
-        cHemi = ct === 'night' ? 0x7d8aa6 : ct === 'dusk' ? 0x948a84 : 0x8a8f99,
-        cI = ct === 'night' ? 0.28 : ct === 'dusk' ? 0.31 : 0.32;
-      sun.intensity = 0;
-      sun.castShadow = false;
-      fill.intensity = 0;
-      hemi.color.set(cHemi);
-      hemi.groundColor.set(0x3a3028);
-      hemi.intensity = cI;
-    }
-    if (stars) stars.material.opacity = tod === 'night' ? 0.95 : tod === 'dusk' ? 0.18 : 0;
-    /* P76: under a storm deck the night is dark (the P74 light floor + the night exposure boost made it read like the
-     * day), and the lava is the dominant light there:
-     * exposure x 0.7, lava light x 2.4 (dusk 1.4); view.stormK = 1 under a cloud deck (K2 ov >= 0.7) */
-    view.stormK = sk && sk.ov !== undefined && sk.ov >= 0.7 ? 1 : 0;
-    view.lavaK = tod === 'night' ? 1 + 1.4 * (0.5 + 0.5 * view.stormK) : tod === 'dusk' ? 1.4 : 1;
-    renderer.toneMappingExposure = L.exp * (tod === 'night' ? 1 - 0.3 * view.stormK : 1);
-    if (SS.lens && SS.lens.grade) {
-      /* (R11: only where the quality grades the frame; on low the lens pass runs only for a black hole / heat haze and
-       * used to apply the grade and the sun glare then: the picture jumped) */
-      SS.lens.grade(Q.grade ? gradeFor(L, tod) : null);
-      const sc = sun.color;
-      SS.lens.sun(
-        !Q.grade || tod === 'night' || SS.world.under ? null : L.sunDir,
-        [sc.r * 0.5, sc.g * 0.4, sc.b * 0.3],
-        tod === 'dusk' ? 0.55 : 0.3
-      );
-    }
-    const U = SS.terrain.uniforms;
-    U.uBeach.value = S.biome === 'beach' ? 1 : 0;       // P116: granite / pale sand material look in the terrain shader
-    U.uHaze.value.copy(haze);
-    U.uGrassTint.value.setRGB(L.grass[0], L.grass[1], L.grass[2]); U.uDryTint.value.setRGB(L.dry[0], L.dry[1], L.dry[2]);
-    const G = SS.grass.material().userData.uniforms;
-    G.uBase.value.set(L.gBase); G.uTip.value.set(L.gTip); G.uDryTip.value.set(L.gDry);
-    if (water) {
-      const wu = water.material.uniforms;
-      wu.tSky.value = sk.tex;
-      wu.uDeep.value.set(L.deep);
-      wu.uShallow.value.set(L.shallow);
-      wu.uFog.value.copy(haze);
-      wu.uHorizon.value.setRGB(sk.horizon[0], sk.horizon[1], sk.horizon[2], T.SRGBColorSpace);
-    }
-    if (SS.waterView) SS.waterView.look(L, sk, haze);
-    // P65c: the cut faces (rock cap, sea face) take the time of day's light: dusk warm and dimmer, moonlight cool, dark
-    // and desaturated
-    {
-      const hz = S.biome === 'volcanic' ? 0.3 : 0, ft = S.biome === 'volcanic' ? 0.45 : 0, wv = SS.waterView || {};
-      if (tod === 'night') {
-        if (SS.terrain.capTod) SS.terrain.capTod('night', view.stormK, S.biome);
-        if (wv.faceLook) wv.faceLook(0.2, 0.3, 0.44, 0.8, hz + 0.1, ft);
-      }
-      else if (tod === 'dusk') {
-        if (SS.terrain.capTod) SS.terrain.capTod('dusk', view.stormK, S.biome);
-        if (wv.faceLook) wv.faceLook(0.78, 0.64, 0.52, 0.9, hz, ft);
-      }
-      else {
-        if (SS.terrain.capTod) SS.terrain.capTod('day', view.stormK, S.biome);
-        if (wv.faceLook) wv.faceLook(1, 1, 1, 1, hz, ft);
-      }
-    }
-    if (SS.weatherView) SS.weatherView.look(L, sk, haze);
-    if (SS.fx.look) SS.fx.look(L, sk);
-    if (SS.flameView) SS.flameView.look(L, sk);
-    // U: underground: no sun, a dim cave ambient (rock-tinted bounce), dark fog; the sky world is hidden in V.render
-    if (SS.world.under) {
-      scene.fog.color.set(0x0b0a09);
-      scene.fog.density = 0.032;
-      view.haze = scene.fog.color.clone();
-      U.uHaze.value.copy(scene.fog.color);
-      renderer.setClearColor(0x050505, 1); renderer.toneMappingExposure = 1.15;
-      // the dark fog; the lights are already the cave's
-      if (SS.weatherView) SS.weatherView.look(Object.assign({}, L, { fog: 0.032 }), sk, scene.fog.color);
-    } else {
-      // (no shadow pass for a dark sun underground)
-      renderer.setClearColor(0x000000, 1);
-      sun.castShadow = true;
-    }
-    // P100: what the shared environment map shows: the sky cube + lit soil below the horizon; caves a faint grey; space
-    // is captured from the EOW dome
-    if (SS.envView) {
-      if (SS.world.eow || S.eow) SS.envView.look({ mode: 'space', k: 1, ground: [0, 0, 0], floor: [0.012, 0.013, 0.018] });
-      else if (SS.world.under) SS.envView.look({ mode: 'cave', k: 0, ground: [0.02, 0.018, 0.016], floor: [0.03, 0.03, 0.033] });
-      else {
-        const g = new T.Color(L.hemiG), sy = Math.max(0, L.sunDir[1]), lit = L.hemiI * 0.8 + L.sunI * sy * 0.35;
-        SS.envView.look({
-          mode: 'sky',
-          k: ENV_K[tod] || 1,
-          ground: [g.r * lit, g.g * lit, g.b * lit],
-          floor: tod === 'night' ? [0.010, 0.014, 0.024] : [0, 0, 0]
-        });
-      }
-    }
-  }
-  const ENV_K = { day: 1, dusk: 1, night: 1 };
-  /* Surface state map (cover, dryness, char, burning). Owned by the sim (SS.veg) when present. */
-  function surfaceBuffer(S) {
-    if (S.veg && S.veg.surf) return { buf: S.veg.surf, n: S.veg.n };
-    const W = SS.world, n = NS, buf = new Uint8Array(n * n * 4), seed = (S.settings.seed | 0) * 17 + 5;
-    const dryBase = { temperate: 0.12, alpine: 0.3, canyon: 0.72, desert: 0.9, volcanic: 0.62, beach: 0.08 }[S.biome] || 0.2;
-    for (let k = 0; k < n; k++)
-      for (let i = 0; i < n; i++) {
-        const c = k * W.NX + i, j = W.topJ[c], x = i * W.H, z = k * W.H;
-        let cover = 0;
-        if (j > 0 && W.top[c] > W.SEA + 0.5) {
-          const m = W.mat[(k * W.NY + j) * W.NX + i];
-          // the organic-top table (config MATS.veg / .cover), as sim/veg.js init
-          cover = C.veg_cover(m);
-          cover *= M.smoothstep(0.28, 0.5, M.fbm2(x / 9, z / 9, seed, 3));
-        }
-        const dry = M.clamp(dryBase + (M.fbm2(x / 14, z / 14, seed + 3, 3) - 0.5) * 0.7, 0, 1);
-        buf[(k * n + i) * 4] = cover * 255; buf[(k * n + i) * 4 + 1] = dry * 255;
-      }
-    return { buf, n };
-  }
-  /* P38-R8: blast scorch on any ground (the sim's char channel only knows grass cells): a render-only soot map, OR-ed
-   * into the char (b) channel of the uploaded surface texture */
-  // freshMap (P65k): freshly dug ground, darker and damper than the weathered surface (scyTex.b)
-  let scorchMap = null, scorchDirty = false, scorchY = null, freshMap = null;
-  V.scorch = function (x, z, r, a, y, fresh) {
-    const n = NS, H = SS.world.H;
-    if (!scorchMap || scorchMap.length !== n * n) {
-      scorchMap = new Uint8Array(n * n);
-      scorchY = new Uint8Array(n * n * 2);
-      freshMap = new Uint8Array(n * n);
-    }
-    const yq = y == null ? 0 : Math.max(1, Math.min(255, Math.round(y * 4))),
-      hq = Math.max(1, Math.min(255, Math.round((0.9 + 0.75 * r) * 8)));
-    const ci = x / H,
-      ck = z / H,
-      rc = r / H,
-      i0 = Math.max(0, Math.floor(ci - rc)),
-      i1 = Math.min(n - 1, Math.ceil(ci + rc)),
-      k0 = Math.max(0, Math.floor(ck - rc)),
-      k1 = Math.min(n - 1, Math.ceil(ck + rc));
-    for (let k = k0; k <= k1; k++)
-      for (let i = i0; i <= i1; i++) {
-        const d = Math.hypot(i - ci, k - ck) / rc;
-        if (d >= 1) continue;
-        const rag = 0.82 + 0.18 * Math.sin(i * 12.9898 + k * 78.233) * Math.sin(k * 4.1 + i * 2.3), an = Math.atan2(k - ck, i - ci);
-        // blast rays and a burnt rim around the crater edge
-        const ray = 0.62 + 0.38 * Math.sin(an * 7.0 + x * 3.7) * Math.sin(an * 3.0 - z * 2.9 + 1.0) + 0.12 * Math.sin(an * 17.0 + x),
-          rim = 1 + 0.5 * Math.exp(-Math.pow((d - 0.62) / 0.16, 2));
-        const f = Math.min(1, Math.min(1, (1 - d) * 1.8 * Math.max(0.35, ray)) * rim) * a * rag;
-        if (fresh > 0) {
-          freshLive = true;
-          const fv = Math.round(255 * Math.min(1, fresh * Math.pow(1 - d, 0.55) * (0.85 + 0.15 * rag)));
-          if (fv > freshMap[k * n + i]) {
-            freshMap[k * n + i] = fv;
-            scorchY[(k * n + i) * 2] = y == null ? 0 : yq;
-            scorchY[(k * n + i) * 2 + 1] = y == null ? 0 : hq;
-          }
-        }
-        const v = Math.round(255 * f);
-        if (v > scorchMap[k * n + i]) {
-          scorchMap[k * n + i] = v;
-          scorchY[(k * n + i) * 2] = y == null ? 0 : yq;
-          scorchY[(k * n + i) * 2 + 1] = y == null ? 0 : hq;
-        }
-      }
-    scorchDirty = true;
-  };
-  /* P71: freshly dug ground dries back to the normal soil colour over ~40 s (the fresh channel loses 3 / 255 every 0.5
-   * s; the soot stays) */
-  let freshAcc = 0, freshLive = false;
-  V.dryFresh = function (dt) {
-    if (!freshMap || !freshLive) return;
-    freshAcc += dt;
-    if (freshAcc < 0.5) return;
-    freshAcc = 0;
-    let any = false;
-    for (let q = 0; q < freshMap.length; q++) {
-      const v = freshMap[q];
-      if (v) {
-        freshMap[q] = v > 3 ? v - 3 : 0;
-        any = true;
-      }
-    }
-    freshLive = any; scorchDirty = true;
-  };
-  function applyScorch() {
-    // (also with no scorch map: a new world must clear the previous one's soot / fresh-ground texels on the GPU)
-    const e = scyTex.image.data;
-    e.fill(0);
-    scyTex.needsUpdate = true;
-    if (!scorchMap) return;
-    const d = surfTex.image.data;
-    for (let q = 0; q < scorchMap.length; q++) {
-      const v = scorchMap[q], fv = freshMap[q];
-      if (fv) {
-        e[q * 4 + 2] = fv;
-        e[q * 4] = scorchY[q * 2];
-        e[q * 4 + 1] = scorchY[q * 2 + 1];
-      }
-      if (v && v > d[q * 4 + 2]) {
-        d[q * 4 + 2] = v;
-        e[q * 4] = scorchY[q * 2];
-        e[q * 4 + 1] = scorchY[q * 2 + 1];
-      }
-    }
-    scyTex.needsUpdate = true;
-  }
-  function uploadSurface(S) {
-    const s = surfaceBuffer(S);
-    // P113: 2D slab: a render-only copy with the cover varied behind the plane
-    s.buf = SS.slab2d.shapeSurf(s.buf, s.n, S);
-    view.surf = s.buf;
-    view.surfN = s.n;
-    view.surfVer = S.veg ? S.veg.surfVer : 0;
-    view.surfUploads = (view.surfUploads | 0) + 1;
-    surfTex.image.data.set(s.buf.subarray(0, NS * NS * 4));
-    applyScorch();
-    surfTex.needsUpdate = true;
-    scorchDirty = false;
-    SS.grass.setSurface(s.buf, s.n);
-  }
-  function buildHeights() {
-    // (1 px = 1 m: the HUD minimap; the version drives the minimap / cave x-ray / dunes rebuilds)
-    view.heightmap = SS.meshgen.heightmap(SS.world.SX + 1); view.heightVer++;
-    const h = SS.meshgen.heightmap(NS), d = heightTex.image.data;
-    for (let i = 0; i < h.length; i++) {
-      const v = Math.round(M.clamp(h[i] / 40, 0, 1) * 255);
-      d[i * 4] = v;
-      d[i * 4 + 1] = v;
-      d[i * 4 + 2] = v;
-      d[i * 4 + 3] = 255;
-    }
-    heightTex.needsUpdate = true;
-    view.heightFor = SS.world.version;
-  }
   /* P38: the map size changed: every lattice-sized render resource follows (the texture OBJECTS stay, other modules
    * hold them in uniforms). Called first thing by newWorld. */
   V.resizeWorld = function () {
     const W = SS.world;
     if (view.sizeVer === W.sizeVer) return;
     view.sizeVer = W.sizeVer;
-    if (NS !== W.NX) {
-      NS = W.NX;
-      for (const t of [heightTex, surfTex, scyTex]) {
-        t.dispose();
-        t.image = { data: new Uint8Array(NS * NS * 4), width: NS, height: NS };
-        t.needsUpdate = true;
-      }
-    }
+    V.surfaceResize(W.NX);
     if (SS.waterView && SS.waterView.resize) SS.waterView.resize();
     if (SS.weatherView && SS.weatherView.resize) SS.weatherView.resize();
-    if (water) water.position.set(W.MX, W.SEA, W.MZ);
   };
   V.newWorld = function (S) {
     V.resizeWorld();
     clearActors();
-    applyLook(S);
-    scorchMap = null;
-    scorchY = null;
-    freshMap = null;
-    scorchDirty = false;
+    SS.look.apply(S);
+    V.surfaceClear();
     if (SS.grass) SS.grass.S = S;
     if (SS.clutterView) SS.clutterView.S = S;
     SS.slab2d.reset();
-    uploadSurface(S);
-    buildHeights();
+    V.uploadSurface(S);
+    V.buildHeights();
     V.seaChanged(SS.world.SEA);                           // per world (dry worlds: below the floor): terrain, outer ocean, face
     SS.terrain.uniforms.uCtxSolid.value = 1;   // D3 (dry) + CX1 (all worlds): the far context is drawn solid
     if (SS.dunesView) SS.dunesView.reset(S, view);
@@ -1265,8 +439,7 @@
     S.sectionDirty = true;
   };
   V.buildTerrain = onProgress => SS.terrain.buildAll(renderer, onProgress);
-  V.applyLook = applyLook;
-  // (tests and tools read the lights: applyLook sets them, weather.js modulates them)
+  // (tests and tools read the lights: render/look.js sets them, weather.js modulates them)
   V.lights = () => ({ sun, hemi, fill });
   /* slice view: how much of the world behind slice zero stays solid (view-only setting) */
   V.SLICE = { thin: 1.5, thick: 6, full: 250 };
@@ -1316,6 +489,32 @@
   V.inSlab = (S, p) => {
     const t = P.to_plane(S, p).t;
     return t <= C.WORM_R && t >= -SS.terrain.back() - C.WORM_R;
+  };
+  /* what the HUD reads from the view (SS.ui.init takes it): the slab tests, the plan of the map for the top map
+   * (plan():
+   * the 1 m heightmap and its version, the vegetation surface and its upload count; back(): the slab depth drawn now,
+   * the uniform as it eases toward a new slice setting), the cinematic camera's timings and the reaction queue */
+  const planRec = { heightmap: null, heightVer: 0, surf: null, surfN: 0, surfUploads: 0 };
+  V.hud = {
+    inSlab: V.inSlab,
+    shownAt: V.shownAt,
+    plan() {
+      planRec.heightmap = view.heightmap;
+      planRec.heightVer = view.heightVer;
+      planRec.surf = view.surf;
+      planRec.surfN = view.surfN;
+      planRec.surfUploads = view.surfUploads | 0;
+      return planRec;
+    },
+    back: () => SS.terrain.uniforms.uBack.value,
+    // the cinematic camera: the delay of the turn banner (it appears as the camera move settles), the results card's
+    // moment (the celebration is over)
+    turnDelay: () => (SS.cine ? SS.cine.turnDelay() : 0),
+    panelReady: S => !SS.cine || SS.cine.panelReady(S),
+    // the reaction queue (render/reactq.js): fn(S, item) when a worm may react (speak) now
+    react: fn => {
+      if (SS.reactq) SS.reactq.listen(fn);
+    }
   };
   // P29j (user 2026-10-08: "the slice view setting doesn't work, the full map behind is always shown"): the slab depth
   // (uBack) AND the haze of everything behind it: thin / thick = crisp to 1.5 / 6 m, the rest recedes; full = all crisp
@@ -1390,8 +589,13 @@
    * zoom) */
   function focusDist(e) { return view.camT ? Math.hypot(e.x - view.camT.x, e.y - view.camT.y, e.z - view.camT.z) : view.zoom; }
   const camApi = { focusDist: e => focusDist(e), camT: () => view.camT };
+  /* the modules that hear every event after the view's own effects and the cinematic camera, in this order: the
+   * actors, the weapon views, the gadget / worn / idle views (W4V), the blood, the sound, the weather, the wildlife,
+   * the shrapnel, the alien, the HUD */
+  const LISTENERS = ['actors', 'armsView', 'weaponsView'].concat(W4V, [
+    'bloodView', 'audio', 'weatherView', 'lifeView', 'shrapView', 'alienView', 'ui'
+  ]);
   function onEvents(S) {
-    const camDist = view.zoom;
     for (const e of S.events) {
       SS.sim.event_bind(S, e);                                  // R7 P2: the sim's events carry worm ids; the view code reads e.worm
       if (SS.reactq) SS.reactq.onEvent(S, e);                   // P85: who may speak after an attack, and the camera visits
@@ -1484,27 +688,17 @@
           if (e.worm) SS.fx.dust(e.worm.pos.x, e.worm.pos.y + 0.6, e.worm.pos.z, 6, 0.5, 0xe8e8e8);
           break;
       }
-      if (SS.cine) SS.cine.onEvent(S, e, camApi);
-      if (SS.fx.onEvent) SS.fx.onEvent(S, e, camDist);
-      if (SS.actors.onEvent) SS.actors.onEvent(S, e);
-      if (SS.armsView) SS.armsView.onEvent(S, e);
-      if (SS.weaponsView) SS.weaponsView.onEvent(S, e);
-      for (const n of W4V)
-        if (SS[n] && SS[n].onEvent) SS[n].onEvent(S, e);
-      if (SS.bloodView) SS.bloodView.onEvent(S, e);
-      if (SS.audio) SS.audio.onEvent(S, e);                   // P10: procedural sound
-      if (SS.weatherView && SS.weatherView.onEvent) SS.weatherView.onEvent(S, e);
-      if (SS.lifeView) SS.lifeView.onEvent(S, e);
-      if (SS.shrapView) SS.shrapView.onEvent(S, e);
-      if (SS.alienView && SS.alienView.onEvent) SS.alienView.onEvent(S, e);          // P47: the infected worm, the alien's bite / burst
-      if (SS.ui && SS.ui.onEvent) SS.ui.onEvent(S, e);
+      SS.cine.onEvent(S, e, camApi);
+      for (const n of LISTENERS) {
+        const m = SS[n];
+        if (m && m.onEvent) m.onEvent(S, e);
+      }
     }
     S.events.length = 0;
   }
 
   /* ---------- per-frame sync + render ---------- */
   const ease = x => x * x * (3 - 2 * x);
-  const v4 = new T.Vector3(), v5 = new T.Vector3(), yAxis = new T.Vector3(0, 1, 0);
   /* P38-R2: slow motion / instant replay run at V.timeScale (set by main.js): every effect and animation clock
    * (view.time, particles,
    * blood, react / worn / gadget timers) gets the scaled dt, the camera and the terrain remesh the real one (dtU). */
@@ -1516,17 +710,26 @@
     view.time += dt; view.userT += dtU;
     onEvents(S);
     autoGhost(S, dtU);
-    if (S.weather && view.wxKind !== undefined && S.weather.kind !== view.wxKind) applyLook(S);   // 5f: the weather turned
+    if (S.weather && view.wxKind !== undefined && S.weather.kind !== view.wxKind) SS.look.apply(S);   // (the weather turned)
+    syncWorld(S, dtU);
+    const insp = ease(M.clamp(S.inspect, 0, 1)), ctxA = Math.max(ease(M.clamp(S.ctx, 0, 1)), insp * 0.9);
+    sliceFrame(S, insp);
+    V.directCamera(S, dtU, insp);
+    skyFrame(dt);
+    viewsFrame(S, dt, ctxA, insp);
+    cloudShadows(S, dt);
+    lamps(S);
+    ambientFrame(S);
+    draw(S, dt);
+  };
+  /* the world the view draws follows the sim: the remeshed terrain chunks, the surface maps, the section (rebuilt when
+   * it was marked dirty, the plane moved, or the world was edited: at most ~3 times a second) */
+  function syncWorld(S, dtU) {
     const W = SS.world;
     if (SS.clutterView) SS.clutterView.S = S;
     if (SS.grass) SS.grass.S = S;
     SS.terrain.update(renderer, S, dtU, Q.remeshMs);
-    if (W.version !== view.heightFor && view.time - view.heightT > 0.4) {
-      buildHeights();
-      view.heightT = view.time;
-    }
-    V.dryFresh(dtU);
-    if (S.veg && (S.veg.surfVer !== view.surfVer || scorchDirty)) uploadSurface(S);
+    V.surfaceFrame(S, dtU);
     // the section also follows world edits that do not mark it dirty (collapse, rebake), at most ~3 times a second
     // (also whenever the plane moved without a dirty flag: the drawn section must always be the one the terrain is cut
     // at)
@@ -1538,12 +741,14 @@
       S.stats.slabBuilds++;
       view.secWV = W.version;
       view.secT = view.time;
-      if (SS.ui && SS.ui.sectionChanged) SS.ui.sectionChanged(S);
     }
+  }
+  /* the slice: the material edge, the section rule, the terrain's and the grass' per-frame uniforms, the cut line's
+   * colour and fade */
+  function sliceFrame(S, insp) {
     const edgeA = SS.edgeView ? SS.edgeView.frame(S, view) : 0;
     view.edgeA = edgeA;
-    const d = P.dir(S), n = P.nrm(S), a = S.active;
-    const insp = ease(M.clamp(S.inspect, 0, 1)), ctxA = Math.max(ease(M.clamp(S.ctx, 0, 1)), insp * 0.9);
+    const n = P.nrm(S);
     // The terrain beyond the slab stays drawn, solid and without the ghost haze (uCtxSolid): it is the landscape
     // behind the cut. D3 did this for dry worlds (a 1 m stand-in grid used to replace it after the fade: it poked
     // through cliffs, filled arches and popped in at the end of the fade); CX1 (user, 2026-10-07: "i like how it is on
@@ -1577,162 +782,16 @@
       * (1 - insp)
       * (view.tod === 'night' ? 0.6 : view.tod === 'dusk' ? 0.85 : 1);
     outline.visible = edgeA < 0.999;
-    if (water) water.material.uniforms.uTime.value = view.time;
-
-    // camera: side-on from the +normal side with a slight downward tilt; inspection swings into a 3D overview.
-    if (a && a.id !== view.activeId) {
-      view.activeId = a.id;
-      V.resetPan();
-    }
-    // PoC: walking, jumping, charging or firing hands the camera back to the worm (a manual pan eases out)
-    if (a && !a.dead && (a.walking || a.air || S.charging || S.proj.length) && (view.pan.s || view.pan.y)) {
-      const k = Math.exp(-dtU * 5);
-      view.pan.s *= k;
-      view.pan.y *= k;
-      if (Math.abs(view.pan.s) + Math.abs(view.pan.y) < 0.05) view.pan.s = view.pan.y = 0;
-    }
-    // PoC camera director (interest() / updateCamera): the most interesting thing wins by priority, a new interest of
-    // the same or lower priority takes over only after 1.2 s; zoom = the PoC distance / its default 640 px x the user's
-    if (SS.reactq) SS.reactq.frame(S, dtU);
-    // P118d (Q-25): the end-of-match clock (celebration, results card), whatever the cine option says
-    if (SS.cine) SS.cine.tick(S, dtU);
-    const it = interest(S, a), dr = view.dir, cin = SS.cine && SS.cine.enabled, prevKey = dr.cur ? dr.cur.key : '';
-    dr.since += dtU;
-    if (
-      it
-      && (
-        !dr.cur
-        || it.key === dr.cur.key
-        || it.p > dr.cur.p
-        || dr.since > 1.2
-        || (dr.cur.key.startsWith('proj') && (it.key.startsWith('boom') || it.key.startsWith('proj')))
-        || (S.phase === 'play' && it.key === 'active')
-      )
-    ) {
-      if (!dr.cur || it.key !== dr.cur.key) dr.since = 0;
-      dr.cur = it;
-    }
-    else if (!it && dr.cur && dr.since > 1.2) dr.cur = null;
-    const cur = view.lock
-      || dr.cur
-      || { key: 'active', x: a ? a.pos.x : SS.world.MX, y: a ? a.pos.y : 10, z: a ? a.pos.z : SS.world.MZ, d: 0, p: 0 };
-    const co = cin ? SS.cine.frame(S, dtU, cur.key, view) : null;                    // P63: the cinematic moves on top of the director
-    // P85: the overview (V) frames the WHOLE map: the focus slides to the world centre, the distance grows to fit it
-    const pk = cur.key === 'active' || cur.key === 'victory' ? 1 : 0, Wd = SS.world, oi = Wd && !Wd.flat ? insp : 0;
-    applyAutoZoom();
-    // P119b (Q-24): a worm's face acting (an idle antic, a hit) pulls the camera in on it
-    const ac = SS.anticCam ? SS.anticCam.frame(S, dtU, cur, co, view, insp) : null;
-    // active: a charging shot / a target pick pulls the view back a little so the flight and the target stay in frame;
-    // an event (shell, blast, death) frames x1.4 of the default
-    const pull = cur.key === 'active' && a && S.phase === 'play'
-      ? (SS.CFG.ARSENAL[S.weapon] && SS.CFG.ARSENAL[S.weapon].kind === 'target' ? 1.6 : S.charging ? 1.35 : 1)
-      : 1;
-    // (P47: cur.zk = how close an interest may zoom: the face hugger latching, the burst)
-    const wantZ0 = cur.key === 'active'
-      ? view.zoom * pull
-      : cur.dm
-      ? Math.max(view.zoom * (cur.zk || 0.85), cur.dm)
-      : Math.max(view.zoom * (cur.zk || 0.85), view.zoom * 1.4 * cur.d / 640),
-      wantZ = ac && ac.k ? Math.min(wantZ0, ac.dist) : wantZ0;
-    // the camera jumps to this interest this frame (the first frame, a snap, an instant cut with the cinematic camera
-    // off): the distance is set BEFORE the pitch and the focus height read it, so the jump frame is the picture the
-    // next frames hold (it used the old distance's closeK: a pitch pop, and two studio shots of one scene differed)
-    const cut = !view.camT || (!cin && SS.cine && cur.key !== prevKey && prevKey && !view.lock);
-    if (cut) view.camZ = wantZ;
-    // P119b: how tight the camera is (the pitch and the focus height below); the overview (V) fades it out over its
-    // first quarter
-    const zc = view.camZ || view.zoom, ck = closeK(zc) * M.sat(1 - insp * 4);
-    const fx = cur.x + d.x * view.pan.s * pk + (Wd ? (Wd.MX - cur.x) * oi : 0),
-      fy = cur.y
-        + FOCUS0
-        + (FOCUS_CLOSE - FOCUS0) * ck
-        + view.pan.y * pk
-        + (co ? co.dy : 0)
-        + (ac ? ac.dy : 0)
-        + (Wd ? (Wd.SY * 0.3 - cur.y) * oi : 0),
-      fz = cur.z + d.z * view.pan.s * pk + (Wd ? (Wd.MZ - cur.z) * oi : 0);
-    if (!view.camT) view.camT = new T.Vector3(fx, fy, fz);
-    else if (cut) view.camT.set(fx, fy, fz);
-    const rate = cur.key === 'active' ? 6 : cur.p >= 7 ? 4.5 : 3.2;
-    const tp = co ? SS.cine.turnPos(fx, fy, fz, v5) : null;
-    if (tp) view.camT.copy(tp);
-    else view.camT.lerp(v4.set(fx, fy, fz), 1 - Math.exp(-dtU * rate));
-    /* P119b: the focus never lags off the section plane. The sim puts a new plane through the new worm at once (a new
-     * turn, a worm switch, the end of the match), but the focus
-     * the camera had moves on from where it was: the camera hangs off the plane's normal at that focus, so with the old
-     * focus 10-50 m BEHIND the new plane it sat inside the hill (a full-frame rock close-up for the first 0.4 s of the
-     * turn move: 218 of 71 572 frames inside rock and 798 behind the plane in 192 turns, tools/dev/qa/camsweep.cjs).
-     * What lies in front of the plane is never drawn: only the part of the focus beyond the slab (C.HALF) is taken out
-     * along the normal, so the picture always shows the cut face from the viewer's side. The overview (insp) and the 3D
-     * interest of a shell bounced off a force field (free3d) keep their own focus. */
-    if (insp < 0.02 && cur.key !== 'free3d') {
-      const tF = (view.camT.x - S.O.x) * n.x + (view.camT.z - S.O.z) * n.z, ex = tF > C.HALF ? tF - C.HALF : tF < -C.HALF ? tF + C.HALF : 0;
-      if (ex) {
-        view.camT.x -= n.x * ex;
-        view.camT.z -= n.z * ex;
-      }
-    }
-    view.camZ += (wantZ - view.camZ) * (1 - Math.exp(-dtU * (ac && ac.rate ? ac.rate : cur.dm && wantZ > view.camZ ? 4.5 : 2.4)));
-    if (insp < 0.05) {
-      view.orbit.yaw *= Math.exp(-dtU * 4);
-      view.orbit.tilt *= Math.exp(-dtU * 4);
-    }
-    const tilt = TILT0 + (TILT_CLOSE - TILT0) * ck + insp * (0.5 + view.orbit.tilt),
-      yaw = insp * (0.55 + view.orbit.yaw) + (co && insp < 0.05 ? co.yaw : 0),
-      dist0 = M.max(co ? M.min(7, zc) : 0, (view.camZ || view.zoom) * (1 + insp * 0.9) * (co ? co.k : 1)),
-      // (the overview frames the round play area: its diameter; a 2D slab / the End of the World: the box's diagonal)
-      fitD = oi > 0 && Wd
-        ? 0.52 * (Wd.play_disc(VPD) ? 2 * VPD.r : Math.hypot(Wd.SX, Wd.SZ)) / Math.tan(camera.fov * Math.PI / 360)
-          * (camera.aspect < 1.3 ? 1.3 / camera.aspect : 1)
-        : 0,
-      dist = dist0 + (M.max(dist0, fitD) - dist0) * oi;
-    // P85 (user: "when zooming out dont multiply the fog ... player wants to see more of the map not more of the fog"):
-    // the fog / haze / weather density is keyed to the DEFAULT camera distance, not the real one: fogK = default /
-    // actual distance, so the play area looks the same at any zoom (only what lies farther than the focus fades more);
-    // the overview (V) clears the haze fully
-    if (SS.secCut) SS.secCut.frame(S, view, camera, insp, dist);
-    view.fogK = M.clamp((view.autoZ || view.zoom) / Math.max(dist, 1), 0.04, 1) * (1 - 0.9 * insp);
-    SS.terrain.uniforms.uCtxHaze.value = (V.slice === 'full' ? 0 : 1) * (1 - insp);
-    const cy = Math.cos(yaw), sy = Math.sin(yaw), bx = n.x * cy + d.x * sy, bz = n.z * cy + d.z * sy;
-    camera.position.set(
-      view.camT.x + bx * dist * Math.cos(tilt),
-      view.camT.y + dist * Math.sin(tilt),
-      view.camT.z + bz * dist * Math.cos(tilt)
-    );
-    /* P119b: wherever terrain is drawn at the camera (the whole world while the overview is on, or the section's far
-     * side) the camera is never inside it: a few frames at the start of the overview
-     * (the section rule switches off while the camera still hangs 5-11 m in front of the plane, inside a hill that has
-     * just appeared; 5 of 1620 frames at the closest zoom) are lifted out. Not in caves (a block of rock whose near
-     * half is a ghost by design: the camera is inside it on purpose). */
-    if (!Wd.under && (insp > 0.05 || (camera.position.x - S.O.x) * n.x + (camera.position.z - S.O.z) * n.z <= 0.5)) {
-      const px = camera.position.x, pz = camera.position.z;
-      let py = camera.position.y, k = 0;
-      while (k < 80 && Wd.sample(px, py, pz) > 0) {
-        py += 0.5;
-        k++;
-      }
-      if (k > 0) camera.position.y = py + 0.3;
-    }
-    camera.lookAt(view.camT);
-    if (V.camHook) V.camHook(camera, view);                                   // tools only: a free camera (P116 top-down comparison shots)
-    if (co && co.roll && insp < 0.05) camera.rotateZ(co.roll);
-    const sh = SS.fx.shake();
-    // P58: a smooth, damped rattle (a few mixed frequencies, mostly vertical and along the slab), not white noise
-    if (sh > 0) {
-      const q = view.time,
-        k = sh * sh * 0.3 + sh * 0.12,
-        ox = Math.sin(q * 43.0) * 0.6 + Math.sin(q * 71.0 + 1.3) * 0.4,
-        oy = Math.sin(q * 51.0 + 0.7) * 0.7 + Math.sin(q * 29.0) * 0.3,
-        oz = Math.sin(q * 37.0 + 2.1) * 0.5 + Math.sin(q * 83.0) * 0.5;
-      camera.position.x += ox * k * 0.5; camera.position.y += oy * k * 0.6; camera.position.z += oz * k * 0.5;
-    }
+  }
+  /* the sky dome and the stars follow the camera, the sun follows the action (the shadow map stays dense around it),
+   * the motes drift */
+  function skyFrame(dt) {
     sky.position.copy(camera.position);
     view.sky = sky;
     // sun follows the action so the shadow map stays dense around it
-    const L = (view.look || LOOKS.temperate).sunDir;
+    const L = (view.look || SS.look.LOOKS.temperate).sunDir;
     sun.target.position.copy(view.camT); sun.position.set(view.camT.x + L[0] * 80, view.camT.y + L[1] * 80, view.camT.z + L[2] * 80);
     SS.terrain.uniforms.uSunDir.value.set(L[0], L[1], L[2]).normalize();
-    if (water) water.material.uniforms.uSun.value.set(L[0], L[1], L[2]).normalize();
     motes.position.set(view.camT.x, 0, view.camT.z);
     const mp = motes.geometry.attributes.position;
     for (let i = 0; i < mp.count; i++) {
@@ -1746,7 +805,10 @@
       );
     }
     mp.needsUpdate = true;
-
+  }
+  /* the view modules' frames, in this order (several read what an earlier one wrote: the ground decals, the sea level,
+   * the weather's flash) */
+  function viewsFrame(S, dt, ctxA, insp) {
     if (SS.groundView) SS.groundView.begin();
     if (SS.actors.sync) SS.actors.sync(S, view, ctxA, insp, dt);
     if (SS.lavaView) SS.lavaView.frame(S, view);
@@ -1781,6 +843,10 @@
     if (SS.groundView) SS.groundView.upload(S);
     SS.fx.update(dt, camera);
     if (SS.flameView) SS.flameView.update(S, dt, camera);
+  }
+  /* cloud shadows ride the wind aloft (2x the surface wind, like the cloud layer), only in daylight and where the sky
+   * is not overcast */
+  function cloudShadows(S, dt) {
     // P65c: cloud shadows ride the wind aloft (2x the surface wind, like the cloud layer), only in daylight and where
     // the sky is not overcast
     {
@@ -1792,6 +858,10 @@
         k = 0.34 * lit * M.clamp((0.9 - cv) / 0.5, 0, 1);
       SS.terrain.cloudShadow(cd.x, cd.z, cv, k);
     }
+  }
+  /* the active worm's lamps: the cave head lamp (a bulb on its head, a spot from it) and the night lamp on the surface;
+   * underground the sky world is hidden */
+  function lamps(S) {
     // P118c (Q-16): the cave head lamp: the bulb rides on top of the active worm's head (it follows jumps and flips
     // like the tin-foil hat), headSpot hangs at the bulb; only underground (on the surface headSpot is the night lamp,
     // driven below)
@@ -1868,6 +938,9 @@
         headSpot.target.updateMatrixWorld();
       }
     }
+  }
+  /* the End of the World's space look, the shared environment map, the cave's ambient bounce */
+  function ambientFrame(S) {
     // P68c: the space look (lights, sky, core, debris)
     if (S.eow && SS.eowView) SS.eowView.frame(S, view, camera, { scene, renderer, sun, hemi, fill, lamp, sky, motes, stars, Q, tx });
     // P100: rebuilds the environment map only when the look changed (or every 30 s)
@@ -1883,6 +956,10 @@
         k = SS.world.under ? 0 : 1.3 * (0.5 + 0.5 * M.clamp(lum / 2.5, 0, 1)) / Math.PI / lum;
       SS.terrain.uniforms.uCaveAmb.value.setRGB(lr * k, lg * k, lb * k);
     }
+  }
+  /* the frame itself: the shader prewarm, the lens pass (black holes, heat haze, the colour grade) or a plain render,
+   * the section's tick, the front ghost */
+  function draw(S, dt) {
     if (SS.prewarm) SS.prewarm.tick();
     if (stars) {
       stars.position.copy(camera.position);
@@ -1920,6 +997,6 @@
     SS.section.tick(scene, renderer);
     // P46: the optional front ghost (0 = off, costs nothing)
     if (SS.section.ghost > 0) SS.section.renderGhost(renderer, scene, camera, V);
-  };
+  }
 
 })(window.SS = window.SS || {});

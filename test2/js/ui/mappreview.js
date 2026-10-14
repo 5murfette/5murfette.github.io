@@ -106,7 +106,7 @@
     return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   }
   PV.markers = function (d, settings) {
-    const out = [], B = bases(d.biome), n = d.n, sx = d.sx || 96, sc = sx / 96, mc = sx / 2;   // (P38: the preview has the map's size)
+    const out = [], B = bases(d.biome), n = d.n, sx = d.sx || 96, sc = sx / 96, mc = sx / 2;   // (the preview has the map's size)
     if (d.under) return out;
     for (let m = 0; m < MARKS.length; m++) {
       const key = MARKS[m][0], cnt = C.density_count(settings, key, B[key]);
@@ -251,7 +251,7 @@
         px[o + 3] = 255;
       }
     ctx.putImageData(im, 0, 0);
-    const lvl = y => (y < 12 ? 0 : y < 22 ? 1 : 2), sy = cv.SY;
+    const lvl = y => (y < 12 ? 0 : y < 22 ? 1 : 2);
     const items = [];
     for (const c of cv.ch) items.push({ y: c.y, k: 'c', c });
     for (const t of cv.tu) items.push({ y: (t[1] + t[4]) / 2, k: 't', t });
@@ -298,8 +298,8 @@
 
   /* ---- top view ---- */
   PV.drawTop = function (cv, d, settings) {
-    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.top(cv, d);                  // P68d
-    // P38-A4: the cave plan
+    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.top(cv, d);
+    // the cave plan
     if (d.under && d.caves) {
       drawCavePlan(cv, d.caves, d);
       return;
@@ -359,11 +359,11 @@
 
   /* ---- side view: cross-section through z = 48 + the far silhouette ---- */
   PV.drawSide = function (cv, d) {
-    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.side(cv, d);                 // P68d
+    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.side(cv, d);
     const ctx = cv.getContext('2d'), w = cv.width, h = cv.height, n = d.n;
     skyFill(ctx, w, h, timeOf(d), d.biome);
     const y0 = -3, y1 = 38, Y = v => h - 3 - (M.clamp(v, y0, y1) - y0) / (y1 - y0) * (h - 6);
-    // P38-A4: a real cross-section
+    // a real cross-section
     if (d.under && d.caves) {
       drawCaveSide(ctx, d.caves, d, 0, 0, w, h, d.seed);
       return;
@@ -407,10 +407,10 @@
 
   /* ---- hero: oblique painter view ---- */
   PV.drawHero = function (cv, d) {
-    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.hero(cv, d);                 // P68d
+    if (d.biome === 'eow' && SS.eowPreview) return SS.eowPreview.hero(cv, d);
     const ctx = cv.getContext('2d'), w = cv.width, h = cv.height, n = d.n;
     skyFill(ctx, w, h, timeOf(d), d.biome);
-    // P38-A4: a cutaway block: the section, a thin rock roof, a lit frame
+    // a cutaway block: the section, a thin rock roof, a lit frame
     if (d.under && d.caves) {
       const cvv = d.caves, bx = w * 0.04, bw = w * 0.92, by = h * 0.16, bh = h * 0.74;
       ctx.clearRect(0, 0, w, h); ctx.fillStyle = '#0b0a0c'; ctx.fillRect(0, 0, w, h);

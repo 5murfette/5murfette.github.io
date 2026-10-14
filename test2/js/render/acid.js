@@ -51,26 +51,12 @@
     varying vec3 vW;
     uniform float uTime, uDay;
     uniform vec3 uSun, uCam, uO, uN;
-    float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-    vec2 h22(vec2 p) { return vec2(h21(p), h21(p + 19.19)); }
-    float n2(vec2 p) {
-      vec2 i = floor(p), f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
-    }
-    float fbm(vec2 p) {
-      float a = 0.5, s = 0.0;
-      for (int i = 0; i < 4; i++) {
-        s += a * n2(p);
-        p = p * 2.03 + vec2(1.7, -0.6);
-        a *= 0.5;
-      }
-      return s;
-    }
+    ${SS.glsl.FBM2S}
+    vec2 h22(vec2 p) { return vec2(sl_hash12s(p), sl_hash12s(p + 19.19)); }
     // bubbles: a grid of cells, each grows, then pops (a bright ring that fades), at its own phase
     float bubbles(vec2 p, float t, out float fill) {
       vec2 g = floor(p), f = fract(p) - 0.5;
-      float h = h21(g), ph = fract(t * (0.25 + 0.3 * h) + h * 9.0);
+      float h = sl_hash12s(g), ph = fract(t * (0.25 + 0.3 * h) + h * 9.0);
       vec2 off = (h22(g + 3.0) - 0.5) * 0.5;
       float r = 0.05 + ph * 0.3, d = length(f - off);
       fill = smoothstep(r, r * 0.4, d) * (1.0 - ph) * 0.35;
@@ -93,14 +79,15 @@
         float f = vP.x, a = vP.y, R = vS.x;
         // domain warp: an organic outline
         vec2 p0 = f * vec2(cos(a), sin(a)) * 7.0,
-          p = p0 + 2.6 * (vec2(fbm(p0 * 0.26 + seed), fbm(p0 * 0.26 + seed + 9.0)) - 0.5) + 0.4 * (vec2(n2(p0 * 1.1 + seed), n2(p0 * 1.1 + 5.0)) - 0.5);
+          p = p0 + 2.6 * (vec2(sl_fbm2s(p0 * 0.26 + seed), sl_fbm2s(p0 * 0.26 + seed + 9.0)) - 0.5)
+            + 0.4 * (vec2(sl_vnoise2s(p0 * 1.1 + seed), sl_vnoise2s(p0 * 1.1 + 5.0)) - 0.5);
         vec2 pf = p - vec2(uTime * (0.25 + 0.9 * sl), 0.0);                            // the pattern runs downhill (+x)
         float shape = 0.88 + 0.07 * sin(a * 2.0 + seed);
         float d = length(p) / 7.0 / max(1e-3, R * shape);
         acidA = (1.0 - smoothstep(0.955, 1.0, d)) * fade;
-        float sc = min(1.0, 0.2 + age * 0.1), sd = (d - 1.0) / (0.55 + 0.4 * n2(p * 0.5 + seed));
+        float sc = min(1.0, 0.2 + age * 0.1), sd = (d - 1.0) / (0.55 + 0.4 * sl_vnoise2s(p * 0.5 + seed));
         scorchA = (1.0 - smoothstep(0.0, 1.0, sd)) * 0.38 * sc * min(1.0, fade * 1.6) * step(0.0, sd + 0.02);
-        float n = fbm(pf * 0.9 + seed), cau = abs(fbm(pf * 1.7 + vec2(0.0, uTime * 0.18)) - 0.5);
+        float n = sl_fbm2s(pf * 0.9 + seed), cau = abs(sl_fbm2s(pf * 1.7 + vec2(0.0, uTime * 0.18)) - 0.5);
         float fillB, bb = bubbles(pf * 1.1, uTime, fillB);
         tone = 0.12 + 0.42 * n + 0.38 * smoothstep(0.07, 0.0, cau) + 0.2 * smoothstep(0.55, 0.9, d) - 0.18 * smoothstep(0.80, 0.92, d) * (1.0 - smoothstep(0.92, 0.97, d));
         bub = bb + fillB;
@@ -108,7 +95,7 @@
         glow = 0.25 + 0.5 * tone;
       } else {
         // the trickle: u 0 (the pool) .. 1 (the tip), v across -1 .. 1
-        float u = vP.x, v = vP.y, e = abs(v) + 0.14 * (n2(vec2(u * 10.0, seed)) - 0.5);
+        float u = vP.x, v = vP.y, e = abs(v) + 0.14 * (sl_vnoise2s(vec2(u * 10.0, seed)) - 0.5);
         float ends = smoothstep(0.0, 0.07, u) * (1.0 - smoothstep(0.45, 1.0, u));            // joins the pool, fades toward the tip
         float pulse = 0.5 + 0.5 * sin(u * 11.0 - uTime * (3.0 + 4.0 * sl) + seed), core = 1.0 - smoothstep(0.0, 0.8, e);
         acidA = (1.0 - smoothstep(0.50, 0.92, e)) * ends * fade * (0.82 + 0.18 * pulse);
@@ -384,7 +371,7 @@
   };
   AV.frame = function (S, view, camera, dt) {
     if (!scene || !mesh) return;
-    W = window.POC && POC.W;
+    W = SS.world;
     const wa = S.wa;
     if (!W || !wa || !wa.spots.length) {
       if (recs.size) AV.clear();
@@ -396,7 +383,7 @@
     u.uCam.value.copy(camera.position);
     u.uDay.value = Math.min(1, Math.max(0, sun[1] * 2.2));
     const seen = new Set(), dirty = [];
-    let any = false, ng = 0;
+    let ng = 0;
     const gu = SS.grass && SS.grass.material() ? SS.grass.material().userData.uniforms.uAcid.value : null;
     for (const s of wa.spots) {
       if (!s.id) continue;
@@ -432,7 +419,6 @@
         a[q + 2] = sl;
         a[q + 3] = age;
       }
-      any = true;
       if (gu && ng < 8 && shown) gu[ng++].set(s.x, s.z, s.r * 1.1 * grow * (1 + 0.5 * r.sl), vis);
       if (r.dirty) dirty.push([r, s]);
       else if (shown && t > r.pt) {

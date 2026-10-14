@@ -72,7 +72,9 @@
       if (e.amount >= 26) s.dazeT = M.max(s.dazeT, 1.2 + 2.2 * k);
       if (F && F.addShake && e.amount >= 12) F.addShake(0.06 + 0.16 * k);
     } else if (e.type === 'land' && e.worm && !e.worm.dead) {
-      const s = get(e.worm), sp = e.speed || 0;
+      // (the worm's reaction record starts here when it had none)
+      get(e.worm);
+      const sp = e.speed || 0;
       if (sp > 9 && F) F.dustAt(e.x, e.y + 0.05, e.z, 6 + M.round(sp), 0.35 + 0.02 * sp);
     } else if (e.type === 'zap' && e.worm) {
       const s = get(e.worm);

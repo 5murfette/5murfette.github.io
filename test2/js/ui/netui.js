@@ -1,4 +1,4 @@
-/* ui/netui.js — the multiplayer lobby (P12, the PoC's "Play online"; DOM). Opened from the menu ("Play online").
+/* ui/netui.js — the multiplayer lobby (DOM), opened from the menu ("Play online").
  *   Host a match: "Create room" -> a 4-character room code to send to friends; the players who joined are listed;
  *   "Start match" (the host's menu setup; friends take teams 2-4 in join order, free teams are CPU).
  *   Join a friend: your name + the room code -> wait for the host to start.
@@ -6,7 +6,7 @@
  * The match itself starts in platform/session.js (SS.ui.netStart / SS.net 'start'). */
 (function (SS) {
   'use strict';
-  const NU = SS.netui = {};
+  const NU = SS.netui = {}, D = SS.dom, esc = D.esc;
   let box = null, hooked = false, curSettings = null;
   const css = `#netui{position:fixed;left:50%;top:max(8px,3vh);transform:translateX(-50%);box-sizing:border-box;width:min(calc(var(--mu) * 762),94vw);max-height:calc(100vh - max(8px,3vh) - 8px);overflow:auto;z-index:40;
     background:linear-gradient(180deg,rgba(40,30,22,.97),rgba(18,14,12,.98));border:1px solid rgba(236,226,200,.16);border-radius:20px;padding:calc(var(--mu) * 18) calc(var(--mu) * 20);font:500 calc(var(--mu) * 15) var(--f-ui);color:#efe9da;
@@ -22,13 +22,7 @@
     #netui button.ghost{background:rgba(255,255,255,.1);color:#efe9da;box-shadow:0 3px 0 rgba(0,0,0,.4)}#netui button:disabled{opacity:.4;cursor:default}
     #netui .pl{margin:4px 0;color:#79d98b}#netui .st{margin-top:8px;color:#9ba7a9;min-height:18px}#netui details{margin-top:12px}#netui summary{cursor:pointer;color:#9ba7a9}
     @media (max-width:640px){#netui .cols{grid-template-columns:1fr}}`;
-  function el(tag, html) {
-    const e = document.createElement(tag);
-    if (html) e.innerHTML = html;
-    return e;
-  }
   const q = s => box.querySelector(s);
-  const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   function status(t) {
     const s = box && q('#nuSt');
     if (s) s.textContent = t;
@@ -40,16 +34,15 @@
     const go = q('#nuStart');
     if (go) go.disabled = !(SS.net.isHost && list.length > 1);
   }
-  /* P38 R6 (R7): the build / desync banners (a fixed strip; plain DOM). desync(k, onStop): "Stop multiplayer" ends the
-   * lockstep and goes on
-   * locally; "Keep playing" dismisses. refused(msg): the host / guest runs another build. */
+  /* the build / desync banners (a fixed strip; plain DOM). desync(k, onStop): "Stop multiplayer" ends the lockstep and
+   * goes on locally; "Keep playing" dismisses. refused(msg): the host / guest runs another build. */
   function banner(id, html, buttons) {
     let b = document.getElementById(id);
     if (b) b.remove();
-    b = el('div', html); b.id = id;
+    b = D.el('div', '', html); b.id = id;
     b.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:60;max-width:min(560px,92vw);background:rgba(60,20,20,.96);color:#ffe0d8;border:1px solid #ff8a70;border-radius:12px;padding:12px 16px;font:600 14px var(--f-ui);box-shadow:0 10px 30px rgba(0,0,0,.5)';
     for (const [t, fn] of buttons) {
-      const x = el('button', t);
+      const x = D.el('button', '', t);
       x.type = 'button';
       x.style.cssText = 'margin:8px 8px 0 0;padding:6px 12px;border:0;border-radius:8px;background:#ffb02e;color:#2a1606;font:400 13px var(--f-display);cursor:pointer';
       x.onclick = () => {
@@ -60,16 +53,15 @@
     }
     document.body.appendChild(b); return b;
   }
-  /* P103: no blocking popup for a desync. net.js resyncs a guest from the host's snapshot by itself; the player sees
-   * ONE small toast per incident
-   * ("Resynced with host"). Only when the automatic tries fail there is ONE banner with a Resync button (a new banner
-   * replaces the old one, it never stacks, and net.js raises 'resync_failed' once per failure until the button is
-   * pressed again). */
+  /* no blocking popup for a desync. net.js resyncs a guest from the host's snapshot by itself; the player sees ONE
+   * small toast per incident ("Resynced with host"). Only when the automatic tries fail there is ONE banner with a
+   * Resync button (a new banner replaces the old one, it never stacks, and net.js raises 'resync_failed' once per
+   * failure until the button is pressed again). */
   let toastT = 0;
   NU.toast = text => {
     let t = document.getElementById('nutoast');
     if (!t) {
-      t = el('div');
+      t = D.el('div');
       t.id = 'nutoast';
       t.style.cssText = 'position:fixed;left:50%;top:104px;transform:translateX(-50%);z-index:58;padding:6px 14px;border-radius:10px;background:rgba(14,24,32,.88);color:#dff3ff;border:1px solid rgba(150,210,240,.4);font:600 13px var(--f-ui);pointer-events:none;transition:opacity .4s;max-width:min(520px,90vw);text-align:center';
       document.body.appendChild(t);
@@ -95,7 +87,7 @@
     status(msg);
   };
 
-  /* ---------- P103: chat (DOM only; never touches S, the sim log, the lockstep or a replay) ----------
+  /* ---------- chat (DOM only; never touches S, the sim log, the lockstep or a replay) ----------
    * Enter / T open it when the player cannot act right now (not their turn, a CPU turn, the lobby); Shift+Enter /
    * Shift+T open it any time (Enter is jump and T is the teleport weapon on your own turn); the chat button opens it
    * too (touch). Enter sends and closes, Esc closes. While the input is focused input.js ignores every key (it skips
@@ -107,8 +99,9 @@
   function chatInit() {
     if (chatEl) return;
     if (!document.getElementById('nuchat-css')) {
-      const st = el(
+      const st = D.el(
         'style',
+        '',
         `#nuchat{position:fixed;left:14px;bottom:calc(var(--gh,140px) + 56px);width:min(380px,calc(100vw - 28px));z-index:45;pointer-events:none;font:600 13px/1.3 var(--f-ui)}
       #nuchat .lg{display:flex;flex-direction:column;gap:2px}#nuchat .ln{align-self:flex-start;max-width:100%;padding:2px 8px;border-radius:7px;background:rgba(8,12,16,.5);color:#eef4f8;text-shadow:0 1px 2px #000;opacity:1;transition:opacity .6s;word-break:break-word}
       #nuchat .ln.old{opacity:0}#nuchat.open .ln.old{opacity:1}#nuchat .ln.sys{color:#bcd;font-style:italic}#nuchat .ln b{font-weight:800}
@@ -120,17 +113,17 @@
       st.id = 'nuchat-css';
       document.head.appendChild(st);
     }
-    chatEl = el('div');
+    chatEl = D.el('div');
     chatEl.id = 'nuchat';
-    logEl = el('div');
+    logEl = D.el('div');
     logEl.className = 'lg';
-    inEl = el('input');
+    inEl = D.el('input');
     inEl.maxLength = 200;
     inEl.placeholder = 'Say something (Enter sends, Esc closes)';
     inEl.autocomplete = 'off';
     inEl.setAttribute('aria-label', 'Chat message');
     chatEl.appendChild(logEl); chatEl.appendChild(inEl); document.body.appendChild(chatEl);
-    btnEl = el('button', '&#128172;');
+    btnEl = D.el('button', '', '&#128172;');
     btnEl.id = 'nuchatbtn';
     btnEl.type = 'button';
     btnEl.title = 'Chat (Enter / T when it is not your turn, Shift+Enter any time)';
@@ -144,10 +137,10 @@
   }
   function addLine(name, rgb, text, sys) {
     chatInit();
-    const d = el('div');
+    const d = D.el('div');
     d.className = 'ln' + (sys ? ' sys' : '');
     if (name) {
-      const b = el('b');
+      const b = D.el('b');
       b.textContent = name;
       b.style.color = rgb != null ? hex(rgb) : '#ddd';
       d.appendChild(b);
@@ -238,7 +231,7 @@
   }
   window.addEventListener('DOMContentLoaded', () => chatInit());
   NU.toggle = function (settings) {
-    // (R11: closing the panel before the match starts leaves the lobby: the room is released)
+    // (closing the panel before the match starts leaves the lobby: the room is released)
     if (box) {
       box.remove();
       box = null;
@@ -247,11 +240,11 @@
     }
     curSettings = settings;
     if (!document.getElementById('netui-css')) {
-      const s = el('style', css);
+      const s = D.el('style', '', css);
       s.id = 'netui-css';
       document.head.appendChild(s);
     }
-    box = el('div'); box.id = 'netui';
+    box = D.el('div'); box.id = 'netui';
     const myName = (settings && settings.names && settings.names[0]) || 'Player';
     box.innerHTML = `<h2>Play online</h2><div style="color:#9ba7a9">Friends get teams 2-4 in join order; free teams are played by the CPU. The host's setup (map, teams, rules) is used.</div>
       <div class="cols">
@@ -308,8 +301,9 @@
         status('Could not make a code: ' + (e.message || e));
         return;
       }
-      const row = el(
+      const row = D.el(
         'div',
+        '',
         `<div>1. Send this code to one friend:</div><textarea readonly></textarea><div>2. Paste their answer:</div><textarea class="ans"></textarea><button class="ghost">Connect</button>`
       );
       lan.appendChild(row); row.querySelector('textarea').value = code; row.querySelector('textarea').select();

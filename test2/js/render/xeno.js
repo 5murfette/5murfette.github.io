@@ -44,7 +44,7 @@
     q1 = new T.Quaternion(),
     m4 = new T.Matrix4(),
     sc3 = new T.Vector3();
-  const UP = new T.Vector3(0, 1, 0), FWD = new T.Vector3(0, 0, 1), MARGINS = [0.5, 0.8, 1.2, 1.8, 2.6, 4, 6];
+  const UP = new T.Vector3(0, 1, 0), MARGINS = [0.5, 0.8, 1.2, 1.8, 2.6, 4, 6];
 
   /* ---------- textures / geometry ---------- */
   function scaleBump() {                                                  // soft rib bands and fine pores: the wet bump of the skin
@@ -761,7 +761,7 @@
         carcass.splice(i, 1);
         continue;
       }
-      const k = sm(0.1, 1, u), h = X.n[0];
+      const k = sm(0.1, 1, u);
       v3.copy(c.p);
       if (c.slime) c.slime.material.opacity = 0.8 * (1 - k);
       c.mesh.matrix.compose(v3, c.q, sc3.copy(c.s).multiplyScalar(Math.max(0.01, 1 - k)));

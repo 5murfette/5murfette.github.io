@@ -419,10 +419,6 @@
     sL = [0, 1, 2, 3].map(() => [0, 0, 1, 0]),
     fresh = [1, 1, 1, 1];
   let lastT = -1;                    // P70: the whirl object in each uniform slot (MAXW)
-  const sm = (a, b, x) => {
-    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-    return t * t * (3 - 2 * t);
-  };
   /* per frame: pack the sim whirls into the uniform slots */
   WV.frame = function (S, wind, we, biome, ctx) {
     const t0 = performance.now(), wl = (wind && wind.whirls) || [], K = SS.CFG.WIND.WHIRL, N1 = SS.world.NX;

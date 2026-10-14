@@ -1,4 +1,4 @@
-/* ui/menu.js — the main menu (P37 W5 redesign) and the loading progress bar.
+/* ui/menu.js — the main menu and the loading progress bar.
  * DOM only; returns plain settings objects to main.js, which hands them to the sim. All options are DATA (tables
  * below): the form is built from MATCH / RULES / DISPLAY / FIELD (+ the DENSITY rows) by one generic row builder
  * (segmented buttons, toggles, selects). Layout: left = live map preview (hero: click = new seed; Top / Side minis:
@@ -7,8 +7,14 @@
  * ui/mappreview.js. */
 (function (SS) {
   'use strict';
-  const C = SS.CFG, D = C.DENSITY;
+  const C = SS.CFG, D = SS.dom, DEN = C.DENSITY;
   const MN = SS.menu = {};
+  /* the hooks main.js sets: onOnline() opens the multiplayer lobby, onBack() leaves a failed net start, defaultStart(s)
+   * starts a map, onDisplay(settings) applies the display rows that take effect at once */
+  MN.onOnline = null;
+  MN.onBack = null;
+  MN.defaultStart = null;
+  MN.onDisplay = null;
   const KEY = 'burrowBrawl3d.settings';
   let lastShow = null,
     root,
@@ -38,7 +44,7 @@
     desert: 'linear-gradient(160deg,#fff1cf 0%,#f0d08a 45%,#d8a860 75%,#a07040)',
     volcanic: 'linear-gradient(160deg,#4a4048 0%,#2a2426 45%,#ff5a10 75%,#3a2a24)',
     beach: 'linear-gradient(160deg,#bfe9f2 0%,#35c2b8 28%,#e9d29a 52%,#d9b878 66%,#3f7a3a 88%,#24501f)',
-    // P68c
+    // the End of the World: the sun, the lava core and the dark of space
     eow: 'radial-gradient(circle at 70% 30%,#ffb24a 0 6%,transparent 7%),radial-gradient(circle at 40% 62%,#ff6a1a 0 9%,#3a1a10 10% 14%,transparent 15%),linear-gradient(160deg,#05060f 0%,#1a1230 55%,#3a1840 100%)'
   };
   const LV = [['none', 'None'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
@@ -54,7 +60,7 @@
     hp: [['80', '80'], ['100', '100'], ['150', '150']],
     time: [['random', 'Random'], ['day', 'Day'], ['dusk', 'Dusk'], ['night', 'Night']],
     shape: [['random', 'Random'], ['islands', 'Islands'], ['hills', 'Hills'], ['caverns', 'Caverns'], ['canyon', 'Canyon']],
-    // P38: 96 m / 128 m (Auto: the biome's default, the volcano island is large)
+    // 96 m / 128 m (Auto: the biome's default, the volcano island is large)
     mapSize: [['auto', 'Auto'], ['normal', 'Normal'], ['large', 'Large']],
     art: [['painted', 'Painted'], ['procedural', 'Vector']],
     placement: [['random', 'Random'], ['user', 'You place']],
@@ -66,7 +72,7 @@
     jackets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => [String(n), String(n)]),
     slice: [['thin', 'Thin'], ['thick', 'Thick'], ['full', 'Full']],
     fps: [['auto', 'Auto'], ['30', '30'], ['60', '60'], ['max', 'Max']],
-    // P46: the front of the section as a ghost image (render/section.js)
+    // the front of the section as a ghost image (render/section.js)
     ghost: [['0', 'Off'], ['15', '15 %'], ['30', '30 %'], ['50', '50 %'], ['75', '75 %'], ['100', '100 %']]
   };
   /* row: k key, t label, o options (or null = toggle), n = numeric value, w = widget ('seg' | 'sel'), h = hint */
@@ -175,7 +181,7 @@
     { k: 'dCrates', t: 'Crates' }, { k: 'dMines', t: 'Mines' }, { k: 'dBunkers', t: 'Bunkers' },
     { k: 'dTown', t: 'Ruined town', only: 'volcanic' }, { k: 'dEggs', t: 'Alien eggs', only: 'volcanic' }
   ];
-  /* P42 Lab: the experimental mechanics (bits = C.LAB.FLAG, rules in sim/lab.js); every one is OFF by default and
+  /* the Lab: the experimental mechanics (bits = C.LAB.FLAG, rules in sim/lab.js); every one is OFF by default and
    * applies to the next match */
   const LAB = [
     {
@@ -259,72 +265,12 @@
   ];
   MN.LAB = LAB;
   const labBits = () => LAB.reduce((n, r) => n + (((cur.labFlags | 0) & C.LAB.FLAG[r.id]) ? 1 : 0), 0);
-  /* settings keys the host sends to net guests (js/main.js adds them to its whitelist) */
-
-  /* P38 R6 (R2/R3): saved settings, URL parameters and net starts are untrusted data (an old build, a foreign key, a
-   * hand edit):
-   * coerce every field into its legal range / type so the form and the generator never see a hole. Pure
-   * (tools/dev/gen/robusttest.cjs). def = the defaults for a field that cannot be repaired. Returns a new object. */
-  const ENUM_KEYS = [
-    'weather', 'lava', 'wind', 'skill', 'time', 'shape', 'mapSize', 'art', 'placement', 'slice', 'toolCrates', 'mineFuse', 'first',
-    'volcanoes', 'quality'
-  ];
-  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-  const intIn = (v, lo, hi, d) => {
-    const n = parseInt(v, 10);
-    return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d;
-  };
-  MN.biome_ok = id => typeof id === 'string' && (id === 'random' || C.BIOMES.some(b => b.id === id));
-  MN.sanitize = function (s, def) {
-    def = def || C.SETTINGS;
-    const o = Object.assign({}, s && typeof s === 'object' ? s : {});
-    if (!MN.biome_ok(o.biome)) o.biome = MN.biome_ok(def.biome) ? def.biome : 'random';
-    o.teams = intIn(o.teams, 2, 4, intIn(def.teams, 2, 4, 2));
-    o.worms = intIn(o.worms, 1, 4, intIn(def.worms, 1, 4, 3));
-    o.hp = intIn(o.hp, 1, 999, intIn(def.hp, 1, 999, 100));
-    o.turnTime = intIn(o.turnTime, 0, 600, intIn(def.turnTime, 0, 600, 0));
-    o.ghost = intIn(o.ghost, 0, 100, intIn(def.ghost, 0, 100, 0));       // P46: front ghost opacity, percent (0 = off)
-    o.jackets = intIn(o.jackets, 0, 9, intIn(def.jackets, 0, 9, 3));       // P89: life jackets per team (sim/gear.js)
-    o.jetpacks = intIn(o.jetpacks, 0, 9, intIn(def.jetpacks, 0, 9, 3));    // P86: EOW jetpack charges per team (sim/eow.js)
-    // the Lab's mechanics (bit mask, 0 = off); a stored mask keeps its valid bits when a mechanic was retired
-    o.labFlags = intIn(o.labFlags, 0, 65535, 0) & C.LAB.ALL;
-    o.seed = intIn(o.seed, 0, 99999999, intIn(def.seed, 0, 99999999, 7));
-    const dctl = Array.isArray(def.ctl) ? def.ctl : ['human', 'cpu', 'cpu', 'cpu'];
-    const ctl = Array.isArray(o.ctl) ? o.ctl.slice(0, 4) : (o.ctl == null ? null : dctl.slice());
-    if (ctl) {
-      for (let i = 0; i < 4; i++) ctl[i] = ctl[i] === 'human' || ctl[i] === 'cpu' ? ctl[i] : dctl[i] || (i ? 'cpu' : 'human');
-    }
-    o.ctl = ctl;
-    const dn = Array.isArray(def.names) ? def.names : [];
-    if (Array.isArray(o.names)) {
-      const n = o.names.slice(0, 4);
-      for (let i = 0; i < 4; i++) n[i] = typeof n[i] === 'string' ? n[i].slice(0, 18) : (dn[i] || C.TEAMS[i].name);
-      o.names = n;
-    }
-    else o.names = o.names == null ? null : dn.length ? dn.slice(0, 4) : C.TEAMS.map(t => t.name);
-    for (const k of ENUM_KEYS) {
-      const v = o[k];
-      if (v == null) continue;
-      if (typeof v !== 'string' && typeof v !== 'number') {
-        if (def[k] != null) o[k] = def[k];
-        else delete o[k];
-      }
-    }
-    for (const k of D.KEYS)
-      if (o[k] != null && D.LEVELS.indexOf(o[k]) < 0) o[k] = def[k] != null && D.LEVELS.indexOf(def[k]) >= 0 ? def[k] : 'medium';
-    // P84: supply-crate levels 0..10 (toolCrates, the old 4-step setting, maps onto crateT while crateT is not set)
-    const CR = C.CRATES;
-    if (o.crateT == null && o.toolCrates != null && CR.LEGACY_TOOL[o.toolCrates] != null) o.crateT = CR.LEGACY_TOOL[o.toolCrates];
-    CR.SLIDERS.forEach(k => { o[k] = intIn(o[k], 0, CR.MAX, intIn(def[k], 0, CR.MAX, CR.DEF)); });
-    o.dim = o.dim === '2d' ? '2d' : '3d';                              // P68a: the dimension (sim/dim2d.js)
-    for (const k of ['sd', 'collapse', 'blood', 'teamBlood', 'select', 'rooms', 'keepRope', 'rotLock', 'fort', 'jacketOn'])
-      if (o[k] != null && typeof o[k] !== 'boolean') o[k] = !!o[k] && o[k] !== '0' && o[k] !== 'off';
-    return o;
-  };
-
+  /* the saved settings (untrusted: an old build, a hand edit) over the menu's match defaults, made valid by the
+   * settings
+   * schema (C.settings_sanitize) */
   MN.load = function () {
     const s = SS.store.get_json(KEY, {});
-    // P9: the PoC match defaults (2 teams of 3, 100 HP, 45 s turns, sudden death, team 1 human, others CPU)
+    // the match defaults: 2 teams of 3, 100 HP, 45 s turns, sudden death, team 1 human, the others CPU
     const d = Object.assign(
       {},
       C.SETTINGS,
@@ -337,7 +283,7 @@
     if (d.under === 'on' && !s.shape) d.shape = 'caverns';            // (older saved settings: World underground)
     d.under = 'off';                                                  // the terrain shape 'caverns' is the underground map now
     d.cpu = 'off';                                       // (the legacy per-map CPU switch is replaced by ctl[])
-    return MN.sanitize(d, {
+    return C.settings_sanitize(d, {
       biome: 'random',
       teams: 2,
       worms: 3,
@@ -350,12 +296,6 @@
   };
   MN.save = s => SS.store.set_json(KEY, s);
 
-  function el(tag, cls, html) {
-    const e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (html != null) e.innerHTML = html;
-    return e;
-  }
   /* the biome a 'random' choice resolves to: by the seed, so the preview shows exactly what Start will build */
   /* a beta biome (C.BIOMES[i].beta) is listed and drawn only with ?beta=1 in the URL: it ships with the build but stays
    * out of
@@ -364,7 +304,7 @@
   MN.biome_listed = b => !b.beta || MN.beta;
   MN.resolve_biome = s => {
     if (s.biome !== 'random') return s.biome;
-    // an experimental biome is never a surprise (P68c), a beta one only with ?beta=1
+    // an experimental biome is never a surprise, a beta one only with ?beta=1
     const pool = C.BIOMES.filter(b => !b.experimental && MN.biome_listed(b));
     return pool[(Math.imul((s.seed | 0) + 12345, 2654435761) >>> 11) % pool.length].id;
   };
@@ -372,10 +312,10 @@
 
   /* ---------- generic rows ---------- */
   function seg(opts, val, onpick) {
-    const w = el('div', 'seg');
+    const w = D.el('div', 'seg');
     w.setAttribute('role', 'radiogroup');
     for (const [v, t] of opts) {
-      const on = String(v) === String(val), b = el('button', 'sg' + (on ? ' on' : ''), t);
+      const on = String(v) === String(val), b = D.el('button', 'sg' + (on ? ' on' : ''), t);
       b.type = 'button';
       b.dataset.v = v;
       b.setAttribute('role', 'radio');
@@ -405,9 +345,9 @@
     return w;
   }
   function selectW(opts, val, onpick) {
-    const s = el('select', 'sel');
+    const s = D.el('select', 'sel');
     for (const [v, t] of opts) {
-      const o = el('option');
+      const o = D.el('option');
       o.value = v;
       o.textContent = t;
       if (String(v) === String(val)) o.selected = true;
@@ -417,7 +357,7 @@
     return s;
   }
   function toggle(val, onpick) {
-    const b = el('button', 'tg' + (val ? ' on' : ''), '<i></i>');
+    const b = D.el('button', 'tg' + (val ? ' on' : ''), '<i></i>');
     b.type = 'button';
     b.setAttribute('role', 'switch');
     b.setAttribute('aria-checked', val ? 'true' : 'false');
@@ -431,7 +371,7 @@
   }
   function rowOf(r, host, after) {
     const qOpts = [['auto', 'Auto (' + SS.quality.detect() + ')'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
-    const row = el('div', 'row'), lab = el('div', 'lab', r.t + (r.h ? `<em>${r.h}</em>` : ''));
+    const row = D.el('div', 'row'), lab = D.el('div', 'lab', r.t + (r.h ? `<em>${r.h}</em>` : ''));
     let w;
     if (r.b) w = toggle(cur[r.k] == null ? r.d : !!cur[r.k], v => {
       cur[r.k] = v;
@@ -484,33 +424,33 @@
   }
 
   function buildPreview(host) {
-    const box = el('div', 'pvbox');
-    cv.hero = el('canvas', 'hero');
+    const box = D.el('div', 'pvbox');
+    cv.hero = D.el('canvas', 'hero');
     cv.hero.width = 480;
     cv.hero.height = 270;
     cv.hero.title = 'Click: new map (new seed)';
     cv.hero.onclick = newSeed;
-    const heroWrap = el('div', 'herowrap');
+    const heroWrap = D.el('div', 'herowrap');
     heroWrap.appendChild(cv.hero);
-    heroWrap.appendChild(el('div', 'herohint', '<span>⚄</span> CLICK FOR A NEW MAP'));
-    cv.cap = el('div', 'pvcap');
+    heroWrap.appendChild(D.el('div', 'herohint', '<span>⚄</span> CLICK FOR A NEW MAP'));
+    cv.cap = D.el('div', 'pvcap');
     heroWrap.appendChild(cv.cap);
-    const minis = el('div', 'minis');
-    cv.top = el('canvas');
+    const minis = D.el('div', 'minis');
+    cv.top = D.el('canvas');
     cv.top.width = 192;
     cv.top.height = 192;
-    cv.side = el('canvas');
+    cv.side = D.el('canvas');
     cv.side.width = 288;
     cv.side.height = 192;
     for (const [c, name] of [[cv.top, 'Top'], [cv.side, 'Side']]) {
-      const f = el('button', 'mini');
+      const f = D.el('button', 'mini');
       f.type = 'button';
       f.title = 'Battlefield settings';
-      f.append(c, el('span', 'mtag', name), el('span', 'mgo', 'EDIT ▸'));
+      f.append(c, D.el('span', 'mtag', name), D.el('span', 'mgo', 'EDIT ▸'));
       f.onclick = () => go('field'); minis.appendChild(f);
     }
-    const sr = el('div', 'seedrow2', '<span>SEED</span>');
-    cv.seed = el('input');
+    const sr = D.el('div', 'seedrow2', '<span>SEED</span>');
+    cv.seed = D.el('input');
     cv.seed.type = 'number';
     cv.seed.min = 0;
     cv.seed.max = 99999;
@@ -521,12 +461,12 @@
       refreshPreview();
       if (page === 'field') syncField();
     };
-    const dice = el('button', 'dice', '⚄');
+    const dice = D.el('button', 'dice', '⚄');
     dice.type = 'button';
     dice.title = 'New map';
     dice.onclick = newSeed;
     sr.append(cv.seed, dice);
-    // (P38 R3: the seed row right under the hero: never pushed out of a short window)
+    // (the seed row right under the hero: never pushed out of a short window)
     box.append(heroWrap, sr, minis); host.appendChild(box);
   }
 
@@ -538,7 +478,7 @@
   const secOpen = {};
   const compactMenu = () => !!(window.matchMedia && matchMedia('(max-width:900px),(max-height:520px)').matches);
   function sec(host, title, first, meta) {
-    const key = page + ':' + title, head = el('button', 'msec'), body = el('div', 'msb');
+    const key = page + ':' + title, head = D.el('button', 'msec'), body = D.el('div', 'msb');
     if (secOpen[key] == null) secOpen[key] = !compactMenu() || !!first;
     head.type = 'button';
     head.innerHTML = '<span class="msn">' + title + '</span>' + (meta ? '<em class="msm">' + meta + '</em>' : '');
@@ -555,20 +495,20 @@
     return body;
   }
   function teamsBlock(host) {
-    const tbox = el('div', 'tbox');
+    const tbox = D.el('div', 'tbox');
     const draw = () => {
       tbox.innerHTML = '';
       cur.ctl = (cur.ctl || []).slice(); cur.names = (cur.names || []).slice();
       for (let i = 0; i < (cur.teams | 0 || 2); i++) {
-        const row = el('div', 'tcfg');
+        const row = D.el('div', 'tcfg');
         row.style.setProperty('--team', C.css(C.TEAMS[i].rgb));
-        const nm = el('input');
+        const nm = D.el('input');
         nm.maxLength = 18;
         nm.value = cur.names[i] || C.TEAMS[i].name;
         nm.oninput = () => { cur.names[i] = nm.value; };
         cur.ctl[i] = cur.ctl[i] || (i ? 'cpu' : 'human');
         const ct = seg([['human', 'Human'], ['cpu', 'CPU']], cur.ctl[i], v => { cur.ctl[i] = v; });
-        row.append(el('i'), nm, ct); tbox.appendChild(row);
+        row.append(D.el('i'), nm, ct); tbox.appendChild(row);
       }
     };
     draw(); host.appendChild(tbox); return draw;
@@ -596,9 +536,9 @@
     }
   }
   function buildTabs() {
-    tabsEl = el('div', 'mtabs'); tabsEl.setAttribute('role', 'tablist');
+    tabsEl = D.el('div', 'mtabs'); tabsEl.setAttribute('role', 'tablist');
     for (const [id, t] of TABS) {
-      const b = el('button', 'mtab', t);
+      const b = D.el('button', 'mtab', t);
       b.type = 'button';
       b.dataset.page = id;
       b.setAttribute('role', 'tab');
@@ -629,13 +569,13 @@
     const rules = sec(rowsEl, 'Rules');
     for (const r of RULES) rowOf(r, rules);
   }
-  /* P84: the Crates page: one 0..10 slider per crate kind (0 = never, 5 = default = 20 % of the rounds, 10 = 40 %); the
+  /* the Crates page: one 0..10 slider per crate kind (0 = never, 5 = default = 20 % of the rounds, 10 = 40 %); the
    * line under them shows the exact
    * chances per round (sim/skills.js crate_chances: the chance of ONE crate = 4 % x the highest level, shared by the
    * kinds in proportion to their levels) */
   function buildCrates() {
     rowsEl.appendChild(
-      el(
+      D.el(
         'div',
         'labintro',
         'How often supply crates fall. At most one crate per round. Each slider goes from 0 (never) over 5 (default) to 10; the chance of a crate in a round is 4 % per level of the highest slider (5 = 20 %, 10 = 40 %), shared between the kinds in proportion to their sliders.'
@@ -646,7 +586,7 @@
       ['crateH', 'Health crates', '+30 HP'],
       ['crateT', 'Tool crates', 'free rotation, laser sight, fast walk, low gravity, tinfoil hat, crate overload']
     ];
-    const sum = el('div', 'labcount'), outs = {};
+    const sum = D.el('div', 'labcount'), outs = {};
     const upd = () => {
       const ch = SS.skills && SS.skills.crate_chances ? SS.skills.crate_chances({ settings: cur }) : null,
         pc = v => (v * 100).toFixed(1).replace(/\.0$/, '') + ' %';
@@ -657,11 +597,11 @@
       if (ch) sum.textContent = ch.any > 0 ? 'A crate falls in ' + pc(ch.any) + ' of the rounds' : 'No crates at all';
     };
     for (const [k, t, h] of KIND) {
-      const row = el('div', 'row'),
-        lab = el('div', 'lab', t + `<em>${h}</em>`),
-        box = el('div', 'cratebox'),
-        w = el('input', 'vslider'),
-        out = el('span', 'cratev');
+      const row = D.el('div', 'row'),
+        lab = D.el('div', 'lab', t + `<em>${h}</em>`),
+        box = D.el('div', 'cratebox'),
+        w = D.el('input', 'vslider'),
+        out = D.el('span', 'cratev');
       w.type = 'range';
       w.min = 0;
       w.max = C.CRATES.MAX;
@@ -679,7 +619,7 @@
       row.append(lab, box);
       rowsEl.appendChild(row);
     }
-    const bar = el('div', 'labbar'), def = el('button', 'back', 'Default (5)'), off = el('button', 'back', 'No crates');
+    const bar = D.el('div', 'labbar'), def = D.el('button', 'back', 'Default (5)'), off = D.el('button', 'back', 'No crates');
     def.type = off.type = 'button';
     const setAll = v => {
       for (const [k] of KIND) cur[k] = v;
@@ -689,27 +629,18 @@
     def.onclick = () => setAll(C.CRATES.DEF); off.onclick = () => setAll(0);
     bar.append(sum, def, off); rowsEl.appendChild(bar); upd();
   }
+  const LIVE = { ghostAuto: 1, cine: 1, anticCam: 1, fps: 1, idle: 1 };
   function buildOpts() {
     const display = sec(rowsEl, 'Display', true);
-    for (const r of DISPLAY) rowOf(r, display, r.k === 'ghostAuto' ? () => {
-      if (SS.view && SS.view.setGhostAuto) SS.view.setGhostAuto(cur.ghostAuto !== false);
-    } : r.k === 'cine' ? () => {
-      if (SS.cine) SS.cine.setEnabled(cur.cine !== false);
-    } : r.k === 'anticCam' ? () => {
-      if (SS.anticCam) SS.anticCam.setEnabled(cur.anticCam !== false);
-    } : r.k === 'fps' ? () => {
-      if (SS.quality) SS.quality.set_frame_rate(cur.fps);
-    } : r.k === 'idle' ? () => {
-      if (window.POC && window.POC.S && window.POC.S.settings) window.POC.S.settings.idle = cur.idle !== false;
-      if (SS.idleView) SS.idleView.enabled = cur.idle !== false;
-    } : null);
+    // the rows that take effect at once in the running match go through MN.onDisplay (main.js applies them)
+    for (const r of DISPLAY) rowOf(r, display, LIVE[r.k] ? () => MN.onDisplay && MN.onDisplay(cur) : null);
     musicRow(sec(rowsEl, 'Sound'));
   }
-  /* P42b: the music volume (platform/music.js keeps and persists it, not part of the map settings) */
+  /* the music volume (platform/music.js keeps and persists it, not part of the map settings) */
   function musicRow(host) {
     const M = SS.music;
     if (!M) return;
-    const row = el('div', 'row'), lab = el('div', 'lab', 'Music volume'), w = el('input', 'vslider');
+    const row = D.el('div', 'row'), lab = D.el('div', 'lab', 'Music volume'), w = D.el('input', 'vslider');
     w.type = 'range';
     w.min = 0;
     w.max = 100;
@@ -720,17 +651,17 @@
     w.oninput = () => M.set_volume(w.value / 100);
     row.append(lab, w); host.appendChild(row);
   }
-  /* P42: the Lab screen: one card per experimental mechanic (toggle, description, status). Saved at once (applies to
+  /* the Lab screen: one card per experimental mechanic (toggle, description, status). Saved at once (applies to
    * the next match, local or hosted) */
   function buildLab() {
     rowsEl.appendChild(
-      el(
+      D.el(
         'div',
         'labintro',
         'New game mechanics to try out. Everything here is off by default, applies to the next match (also an online match you host) and shows as a badge in the game.'
       )
     );
-    const cnt = el('div', 'labcount');
+    const cnt = D.el('div', 'labcount');
     const upd = () => {
       syncTabs();
       cnt.textContent = labBits() ? labBits() + ' of ' + LAB.length + ' active' : 'all off';
@@ -743,9 +674,9 @@
     batches.forEach(bt => {
       const body = sec(rowsEl, bt.name, false, bt.items.length + ' mechanics');
       for (const r of bt.items) {
-        const bit = C.LAB.FLAG[r.id], card = el('div', 'labcard');
-        const top = el('div', 'labtop'), nm = el('div', 'labname', r.t);
-        const st = el('span', 'labstatus', 'EXPERIMENTAL');
+        const bit = C.LAB.FLAG[r.id], card = D.el('div', 'labcard');
+        const top = D.el('div', 'labtop'), nm = D.el('div', 'labname', r.t);
+        const st = D.el('span', 'labstatus', 'EXPERIMENTAL');
         nm.appendChild(st);
         const tg = toggle(((cur.labFlags | 0) & bit) !== 0, v => {
           cur.labFlags = v ? ((cur.labFlags | 0) | bit) : ((cur.labFlags | 0) & ~bit);
@@ -753,10 +684,10 @@
           upd();
         });
         tg.dataset.lab = r.id;
-        top.append(nm, tg); card.append(top, el('div', 'labdesc', r.d)); body.appendChild(card);
+        top.append(nm, tg); card.append(top, D.el('div', 'labdesc', r.d)); body.appendChild(card);
       }
     });
-    const bar = el('div', 'labbar'), all = el('button', 'back', 'Enable all'), none = el('button', 'back', 'Disable all');
+    const bar = D.el('div', 'labbar'), all = D.el('button', 'back', 'Enable all'), none = D.el('button', 'back', 'Disable all');
     all.type = none.type = 'button';
     const set = v => {
       cur.labFlags = v;
@@ -769,9 +700,9 @@
   }
   function buildField() {
     const biomeBody = sec(rowsEl, 'Biome', true);
-    const cards = el('div', 'biomes');
+    const cards = D.el('div', 'biomes');
     for (const b of [{ id: 'random', name: 'Surprise me' }].concat(C.BIOMES.filter(MN.biome_listed))) {
-      const c = el('button', 'bcard' + (cur.biome === b.id ? ' on' : ''), `<span>${b.name}</span>`);
+      const c = D.el('button', 'bcard' + (cur.biome === b.id ? ' on' : ''), `<span>${b.name}</span>`);
       c.style.background = BIOME_LOOK[b.id]; c.type = 'button'; c.dataset.biome = b.id;
       c.onclick = () => {
         cur.biome = b.id;
@@ -800,7 +731,7 @@
   function syncField() {
     const b = MN.resolve_biome(cur);
     for (const r of rowsEl.querySelectorAll('.row[data-only]')) r.style.display = (!r.dataset.only || r.dataset.only === b) ? '' : 'none';
-    // P116: the biome's own weather pool (no snow on the beach)
+    // the biome's own weather pool (no snow on the beach)
     const ws = rowsEl.querySelector('.row[data-k="weather"] select');
     if (ws) {
       for (const o of ws.options) {
@@ -819,15 +750,15 @@
   MN.init = function () {
     root = document.getElementById('menu');
     root.innerHTML = '';
-    panel = el('div', 'mpanel');
+    panel = D.el('div', 'mpanel');
     root.appendChild(panel);
-    prog = el('div', 'mprog', '<h2>BURROW BRAWL</h2><div class="pbar"><i></i></div><div class="plabel"><span></span><b></b></div>');
+    prog = D.el('div', 'mprog', '<h2>BURROW BRAWL</h2><div class="pbar"><i></i></div><div class="plabel"><span></span><b></b></div>');
     root.appendChild(prog);
-    // P38 R3: Esc closes the in-game menu (Resume); on the battlefield page it goes back first. (input.js skips keys
+    // Esc closes the in-game menu (Resume); on the battlefield page it goes back first. (input.js skips keys
     // while a button has the focus)
     addEventListener('keydown', e => {
       if (e.code !== 'Escape' || e.repeat || !onResume || !MN.visible() || panel.style.display === 'none') return;
-      // (R4: the game's own Escape handler must not reopen the menu in the same event)
+      // (the game's own Escape handler must not reopen the menu in the same event)
       e.preventDefault(); e.stopImmediatePropagation();
       if (page !== 'main') {
         go('main');
@@ -838,12 +769,14 @@
     bar = prog.querySelector('i'); lbl = prog.querySelector('span'); pct = prog.querySelector('b');
   };
 
+  // the build time the deploy writes into index.html (YYYYMMDD/HH:MM, its local time; 'dev' in a checkout)
+  const BUILD_TIME = (document.querySelector('meta[name="build-time"]') || {}).content || '';
   /* Show the settings form. opts.inGame adds a Resume button. */
   MN.show = function (settings, start, opts) {
     opts = opts || {};
-    cur = MN.sanitize(settings, MN.load()); page = 'main'; lastShow = [settings, start, opts];
-    for (const k of D.KEYS)
-      if (D.LEVELS.indexOf(cur[k]) < 0) cur[k] = 'medium';
+    cur = C.settings_sanitize(settings, MN.load()); page = 'main'; lastShow = [settings, start, opts];
+    for (const k of DEN.KEYS)
+      if (DEN.LEVELS.indexOf(cur[k]) < 0) cur[k] = 'medium';
     onStart = start; onResume = opts.onResume;
     root.classList.remove('gone');
     root.classList.add('menu');
@@ -851,26 +784,27 @@
     prog.style.display = 'none';
     panel.style.display = '';
     panel.innerHTML = '';
-    const head = el(
+    const head = D.el(
       'div',
       'mhead',
       '<img class="mlogo" src="assets/logo.webp" alt="Burrow Brawl"><div class="sub">Turn-based worm warfare on a rotatable cross-section of a fully destructible 3D world</div>'
         + (opts.inGame ? '<div class="mpause">Paused</div>' : '')
+        + (BUILD_TIME ? '<div class="mbuild">Build ' + D.esc(BUILD_TIME) + '</div>' : '')
     );
-    const body = el('div', 'mbody'), left = el('div', 'mleft'), right = el('div', 'mright');
+    const body = D.el('div', 'mbody'), left = D.el('div', 'mleft'), right = D.el('div', 'mright');
     buildPreview(left);
-    rowsEl = el('div', 'rows');
+    rowsEl = D.el('div', 'rows');
     right.append(buildTabs(), rowsEl);
     buildRows();
     syncTabs();
     body.append(left, right);
-    const btns = el('div', 'mbtns');
-    btns.appendChild(el('div', 'hint', 'Generation runs on this device (10-20 s on phones)'));
-    // in the pause menu Resume is the primary button (focused), "New battle" the quieter one; at the start "Start
-    // battle" is
+    const btns = D.el('div', 'mbtns');
+    btns.appendChild(D.el('div', 'hint', 'Generation runs on this device (10-20 s on phones)'));
+    // in the pause menu Resume is the primary button (focused) and "New battle" the quieter one; at the start "Start
+    // battle" is the primary one
     const primary = !!onResume;
     if (MN.onOnline) {
-      const on = el('button', 'ghost', 'Play online');
+      const on = D.el('button', 'ghost', 'Play online');
       on.type = 'button';
       on.onclick = () => {
         MN.save(cur);
@@ -878,7 +812,7 @@
       };
       btns.appendChild(on);
     }
-    const go = el('button', primary ? 'ghost' : 'go', opts.inGame ? 'New battle' : 'Start battle');
+    const go = D.el('button', primary ? 'ghost' : 'go', opts.inGame ? 'New battle' : 'Start battle');
     go.type = 'button';
     go.onclick = () => {
       MN.save(cur);
@@ -888,7 +822,7 @@
     };
     let rs = null;
     if (onResume) {
-      rs = el('button', 'go', 'Resume');
+      rs = D.el('button', 'go', 'Resume');
       rs.type = 'button';
       rs.onclick = () => {
         MN.hide();
@@ -906,7 +840,7 @@
 
   /* Loading progress (0..1) with a stage label. */
   MN.progress = function (f, label) {
-    // (P38 R1: a pending preview must not compute (a 96 px map) while the real map loads)
+    // (a pending preview must not compute (a 96 px map) while the real map loads)
     clearTimeout(pvTimer); pvTimer = 0; pv = null;
     root.classList.remove('gone'); root.classList.remove('menu'); root.classList.remove('ingame');
     panel.style.display = 'none'; prog.style.display = '';
@@ -914,12 +848,12 @@
     if (label) lbl.textContent = label;
     pct.textContent = Math.round(f * 100) + '%';
   };
-  /* a failed start is not a dead end (R3): "Back to menu" returns to the settings form (the saved settings) */
+  /* a failed start is not a dead end: "Back to menu" returns to the settings form (the saved settings) */
   MN.error = function (msg) {
     MN.progress(0, 'Failed to start: ' + msg); prog.classList.add('err');
     let b = prog.querySelector('.back');
     if (!b) {
-      b = el('button', 'back', 'Back to menu');
+      b = D.el('button', 'back', 'Back to menu');
       b.type = 'button';
       prog.appendChild(b);
     }

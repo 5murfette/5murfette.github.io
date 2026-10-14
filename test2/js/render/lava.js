@@ -30,13 +30,12 @@
     uniform vec4 uVent[3];
     uniform sampler2D tNoise;
     uniform sampler2D tWater;
-    uniform float uWaterTex, uNL, uSL;
+    uniform float uNL;
     varying vec3 vW;
     varying vec4 vL;
     // P65f: how much the sea quenches this point (0 dry .. 1 under water or at the shoreline): water depth is read at
     // the point and on two rings (0.5 / 1.1 m)
     float quench(vec2 p, float y){
-      if (uWaterTex < 0.5) return 0.0;
       vec4 w0 = texture(tWater, (p * 2.0 + 0.5) / uNL);
       float k = w0.g > 0.01 ? 1.0 : 0.0;
       if (k > 0.5) return 1.0;
@@ -183,9 +182,7 @@
         sh.uniforms,
         {
           tWater: U.tWater,
-          uWaterTex: U.uWaterTex,
           uNL: U.uNL,
-          uSL: U.uSL,
           uO: U.uO,
           uN: U.uN,
           uHaze: U.uHaze,
@@ -304,7 +301,7 @@
       clearBox(box);
       box = null;
     }
-    const v = S.lava && S.lava.vent, F = SS.world.features || {}, vo = (F.volcanoes || [])[0];
+    const v = S.lava && S.lava.vent;
     const vs = (S.lava && S.lava.vents) || [];
     for (let q = 0; q < 3; q++) {
       const o = vs[q];

@@ -151,7 +151,7 @@
       v.wrapK = 0;
       return;
     }
-    const n = v.wrapN || 2.2, ph = (v.hugT = v.hugT || 0);
+    const n = v.wrapN || 2.2;
     for (let i = WRAP.jT - 8; i <= WRAP.jH + 8; i++) {
       const u = (WRAP.jH - i) / (WRAP.jH - WRAP.jT), e = M.sat(Math.min((i - (WRAP.jT - 8)) / 8, (WRAP.jH + 8 - i) / 8));
       sp.r[i] *= 1 - k * e * (0.11 + 0.05 * Math.cos(6.2832 * n * u));

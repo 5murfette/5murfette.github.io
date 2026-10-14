@@ -500,7 +500,6 @@
 
   /* ---------- gravity gun: outlines, the beam to the held object ---------- */
   let beamLine = null, lastOut = [], lastOutC = [], gloves = [];
-  const gl = [];
   const tmpList = [];
   function gravity(S, view, t) {
     const a = S.active, human = a && !SS.game.is_cpu(S, a.team) && S.phase === 'play' && !a.dead;

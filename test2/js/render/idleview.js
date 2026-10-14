@@ -21,18 +21,18 @@
 (function (SS) {
   'use strict';
   const T = window.THREE, M = SS.math, ID = SS.idle, IV = SS.idleView = {};
-  const P = ID.P, SK = ID.SK, CUE = ID.CUE, K = ID.K;
+  const P = ID.P, SK = ID.SK, CUE = ID.CUE;
   const MAXK = 3, FAR = 55;
   IV.enabled = !/[?&]idle=0/.test(window.location.search);
   IV.only = null;                                       // studio / tests: only this worm id may be bored
-  let scene = null, glowTx = null, clock = 0;
+  let glowTx = null, clock = 0;
   // per worm id: { m (Idle struct), I (input), kit, px, py, pz, aim, wp, fac, pend, ... }
   const sts = [];
   // built lazily: { grp, props[], inner[], sprites[], phone: { tex, glow, glowMat }, user }
   const kitPool = [];
   const OUT = ID.make_out();
   const H = new Float32Array(8);                        // the hand targets of the last face() / hands() call (root-local, mirrored)
-  const tv = new T.Vector3(), tq = new T.Vector3();
+  const tv = new T.Vector3();
   const rng = M.rng_make(12345);
   const TEX = {};                                       // glyph textures (shared)
 
@@ -478,7 +478,6 @@
   /* ---------- lifecycle ---------- */
   // (the first kit is built now: its programs are in the shader pre-warm)
   IV.init = function (sc, tx) {
-    scene = sc;
     glowTx = tx && tx.glow;
     buildTextures();
     mats();
@@ -627,7 +626,6 @@
     I.cx = r.cx;
     I.cy = r.cy;
     I.ha = r.ha;
-    const was = m.state;
     const o = ID.step(m, dt, I, OUT);
     if (m.state !== ID.ST.WAIT && !st.kit) {
       if (!grab(st, v)) {

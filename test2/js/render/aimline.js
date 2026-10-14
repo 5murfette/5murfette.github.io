@@ -20,7 +20,6 @@
   const T = window.THREE, C = SS.CFG, P = SS.plane, AV = SS.aimView = {};
   const NDOT = 28, R_AIM = 3.6;                                    // dot pool; reticle distance from the worm (m)
   let ret = null, dots = [], tint = null;
-  const col = { r: 1, g: 1, b: 1 };
   /* weapon -> muzzle distance along the aim (m): the held model's tip */
   const MUZ = { bazooka: 0.7, homing: 0.7, shotgun: 0.78, sniper: 1.2, gravgun: 0.6, zipline: 0.55, drill: 0.5, rope: 0.3 };
   AV.muzzle = w => (MUZ[w] != null ? MUZ[w] : 0.45);

@@ -286,7 +286,6 @@
     }
   }
   const rotY = (p, a) => [p[0] * Math.cos(a) + p[2] * Math.sin(a), p[1], -p[0] * Math.sin(a) + p[2] * Math.cos(a)];
-  const W1 = [1, 1, 1];
 
   /* ---------- the kinds ---------- */
   function mushroom(b, x, z, h, r, tint, spots, seed) {
@@ -442,7 +441,7 @@
     b.wf = null; b.A = b.B = TILE.endgrain;                                                    // one clean sawn end, one splintered break
     const e0 = rings[0], c0 = pts[0];
     for (let i = 0; i < n; i++) tri(b, c0, e0[i], e0[(i + 1) % n], [0.95, 0.85, 0.7]);
-    const e1 = rings[L], c1 = pts[L];
+    const e1 = rings[L];
     for (let i = 0; i < n; i += 1) {
       const sp = (i % 3 === 0 ? 0.16 : 0.03) * (0.5 + h3(i, 6, 6)), a0 = e1[i], a1 = e1[(i + 1) % n];
       tri(b, a0, a1, [(a0[0] + a1[0]) / 2 + sp, (a0[1] + a1[1]) / 2 + 0.01, (a0[2] + a1[2]) / 2], [1.0, 0.9, 0.75], [1.0, 0.9, 0.75], [

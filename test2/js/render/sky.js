@@ -14,7 +14,7 @@
  * Porting: one compute pass into a 2D LUT + a sky shader; the JS transmittance is plain C-like math. */
 (function (SS) {
   'use strict';
-  const T = window.THREE, M = SS.math;
+  const T = window.THREE;
   const SK = SS.skyView = {};
   const LW = 256, LH = 128;
   // per map: turbidity (Mie scale), aerosol absorption colour (per channel, x β_s; 0 = clean, ~0.1 for sea salt),

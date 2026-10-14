@@ -120,7 +120,7 @@
     return g;
   }
 
-  const GF = SS.decorKit.GF, KT = SS.decorKit.TILE;
+  const GF = SS.decorKit.GF;
   CL.kit = GF;
 
   /* P96 shared PBR atlas (assets/decor.js: 4 x 3 tiles of 256 px; albedo atlas + normal atlas whose blue channel is the

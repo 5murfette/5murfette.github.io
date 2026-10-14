@@ -172,13 +172,13 @@
   /* ---------- pools ---------- */
   const dummy = new T.Object3D(), col = new T.Color();
   dummy.rotation.order = 'YXZ';
-  let wings = null, wingN = 0, wPh, wAmp, wFr;                 // birds / gulls / bats / perched
-  let flies = null, flyN = 0, fPh, fAmp, fFr;                  // butterflies
-  let liz = null, lizN = 0, lPh, lAmp, lFr;
+  let wings = null, wPh, wAmp, wFr;                 // birds / gulls / bats / perched
+  let flies = null, fPh, fAmp, fFr;                  // butterflies
+  let liz = null, lPh, lAmp, lFr;
   let leaves = null, leafList = [];
   let fishM = null, fish = null;
   let ffP = null, embP = null, ashP = null;
-  let flocks = [], perched = [], bflies = [], lizards = [], leafN = 0, trees = [], treeT = 0, blasts = [], nextFish = 4, nextShore = 0;
+  let flocks = [], perched = [], bflies = [], lizards = [], trees = [], treeT = 0, blasts = [], nextFish = 4;
 
   function instMesh(geo, mat, n) {
     const im = new T.InstancedMesh(geo, mat, n);
@@ -279,7 +279,6 @@
     treeT = 0;
     blasts = [];
     nextFish = 4;
-    nextShore = 0;
     if (!on) return;
     for (const p of [ffP, embP, ashP]) {
       p.alive = 0;
@@ -330,10 +329,6 @@
     dummy.updateMatrix();
     wings.setMatrixAt(i, dummy.matrix);
     col.setRGB(r, g, b, T.SRGBColorSpace); wings.setColorAt(i, col);
-  }
-  function inView(x, z, sMax, tMin, tMax) {
-    const s = toS(x, z) - F.cs, t = toT(x, z);
-    return Math.abs(s) < sMax && t > tMin && t < tMax;
   }
 
   /* ---------- flocks: birds, gulls, bats ---------- */
@@ -397,7 +392,6 @@
     f.placed = 0; f.retry = 1.5; return false;
   }
   function updateFlocks(dt) {
-    const want = [];
     const birdsOK = (F.day || F.tod === 'dusk')
       && F.rain < 0.45
       && (F.biome === 'temperate' || F.biome === 'canyon' || F.biome === 'alpine' || F.biome === 'beach');
@@ -649,7 +643,6 @@
         placed: 0
       });
     while (bflies.length > want) bflies.pop();
-    const g = F.S;
     for (const b of bflies) {
       if (!b.placed) {
         const s = F.cs + RR(-14, 14), t = -dep(1.5, 9);

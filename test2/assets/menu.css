@@ -15,6 +15,7 @@
 .mhead{display:flex;align-items:center;gap:calc(var(--mu) * 22);padding:calc(var(--mu) * 14) calc(var(--mu) * 28) calc(var(--mu) * 10);border-bottom:1px solid var(--edge);background:linear-gradient(180deg,rgba(255,176,46,.09),transparent)}
 .mlogo{height:calc(var(--mu) * 74);filter:drop-shadow(0 6px 14px rgba(0,0,0,.55))}
 .mhead .sub{flex:1;color:var(--dim);font-size:calc(var(--mu) * 15);line-height:1.35}
+.mbuild{margin-left:auto;color:var(--dim);font:600 max(10px,calc(var(--mu) * 12))/1.2 var(--f-ui);letter-spacing:.04em;white-space:nowrap;font-variant-numeric:tabular-nums}
 .mbody{display:grid;grid-template-columns:minmax(0,calc(var(--mu) * 500)) minmax(0,1fr);gap:calc(var(--mu) * 26);padding:calc(var(--mu) * 18) calc(var(--mu) * 28);overflow:hidden;min-height:0;flex:1}
 .mleft{display:flex;flex-direction:column;gap:calc(var(--mu) * 12);min-width:0;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#5a4a3a transparent}
 .mright{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}

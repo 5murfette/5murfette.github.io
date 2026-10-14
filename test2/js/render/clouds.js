@@ -43,7 +43,7 @@
   const VIS = { beach: 42000, temperate: 45000, alpine: 70000, canyon: 32000, desert: 20000, volcanic: 14000 };
   const VIS_W = { clear: 1, cloudy: 0.85, rain: 0.35, storm: 0.3, snow: 0.3, blizzard: 0.12, ashfall: 0.6, fog: 0.03 };
 
-  let mesh = null, geo = null, mat = null, cam = null, n = 0, sortT = -1, order = null;
+  let mesh = null, geo = null, mat = null, n = 0, sortT = -1, order = null;
   let I = null;                 // instance arrays (CPU copy, sorted into the attributes)
   const U = {
     tA: { value: null }, tB: { value: null }, tC: { value: null }, tLut: { value: null },

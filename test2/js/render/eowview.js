@@ -25,21 +25,11 @@
   let built = null, saved = null, lastGrade = -1;
 
   const NOISE = /* glsl */`
-    float h13(vec3 p){
-      p = fract(p * 0.1031);
-      p += dot(p, p.zyx + 31.32);
-      return fract((p.x + p.y) * p.z);
-    }
-    float vn(vec3 p){
-      vec3 i = floor(p), f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      return mix(mix(mix(h13(i), h13(i + vec3(1,0,0)), f.x), mix(h13(i + vec3(0,1,0)), h13(i + vec3(1,1,0)), f.x), f.y),
-                 mix(mix(h13(i + vec3(0,0,1)), h13(i + vec3(1,0,1)), f.x), mix(h13(i + vec3(0,1,1)), h13(i + vec3(1,1,1)), f.x), f.y), f.z);
-    }
+    ${SS.glsl.VNOISE3}
     float fbm(vec3 p){
       float a = 0.5, s = 0.0;
       for (int i = 0; i < 5; i++) {
-        s += a * vn(p);
+        s += a * sl_vnoise3(p);
         p = p * 2.03 + 17.1;
         a *= 0.5;
       }
@@ -102,12 +92,12 @@
     ${NOISE}
     vec3 starLayer(vec3 d, float sc, float thr, float size, float gain){
       vec3 p = d * sc, i = floor(p), f = fract(p);
-      float h = h13(i);
+      float h = sl_hash13(i);
       if (h < thr) return vec3(0.0);
-      vec3 o = vec3(h13(i + 7.1), h13(i + 13.7), h13(i + 3.3));
+      vec3 o = vec3(sl_hash13(i + 7.1), sl_hash13(i + 13.7), sl_hash13(i + 3.3));
       float b = smoothstep(size, 0.0, length(f - (0.2 + 0.6 * o)));
-      float t = h13(i + 1.7);
-      b *= gain * (0.35 + 1.7 * pow(h13(i + 9.9), 3.0)) * (0.8 + 0.2 * sin(uTime * (1.0 + 3.0 * h13(i + 2.2)) + h * 40.0));
+      float t = sl_hash13(i + 1.7);
+      b *= gain * (0.35 + 1.7 * pow(sl_hash13(i + 9.9), 3.0)) * (0.8 + 0.2 * sin(uTime * (1.0 + 3.0 * sl_hash13(i + 2.2)) + h * 40.0));
       return mix(vec3(0.62, 0.74, 1.0), vec3(1.0, 0.8, 0.58), t) * b;
     }
     void main(){
@@ -123,7 +113,7 @@
       // the asteroid belt: a thin great circle of specks and dust
       float bn = dot(d, uBeltN), beltU = bn / 0.04, bb = exp(-beltU * beltU);
       vec3 bp = d * 230.0, bi = floor(bp);
-      float bh = h13(bi + 5.0);
+      float bh = sl_hash13(bi + 5.0);
       col += vec3(0.75, 0.62, 0.5) * bb * smoothstep(0.65, 0.95, bh) * smoothstep(0.3, 0.0, length(fract(bp) - 0.5)) * 0.8;
       col += vec3(0.16, 0.11, 0.08) * bb * (0.4 + fbm(d * 26.0)) * 0.18;
       // the moon: a dark body lit by the sun
@@ -857,17 +847,6 @@
       const r = 0.5 + 1.1 * b * b * b;
       ctx.fillRect(x, y, r, r);
     }
-  }
-  function glow(ctx, x, y, r) {
-    const q = ctx.createRadialGradient(x, y, 0, x, y, r * 2.6);
-    q.addColorStop(0, 'rgba(255,230,160,1)');
-    q.addColorStop(0.28, 'rgba(255,150,50,0.95)');
-    q.addColorStop(0.5, 'rgba(255,90,20,0.35)');
-    q.addColorStop(1, 'rgba(255,60,10,0)');
-    ctx.fillStyle = q;
-    ctx.beginPath();
-    ctx.arc(x, y, r * 2.6, 0, TAU);
-    ctx.fill();
   }
   // a rock: a noisy ellipse (top) with strata bands, or in a side view
   function rock(ctx, x, y, rx, ry, seed, depthTint) {
@@ -1693,7 +1672,7 @@
     shallow: 0x000000
   };
   const GRADE = { sat: 1.12, con: 0.3, vig: 0.34, sh: [0.0, 0.0, 0.016], hi: [1.02, 0.97, 0.93] };
-  const v3 = new T.Vector3(), SKY_FX = { horizon: [0.03, 0.035, 0.07] }, fxA = { x: 0, y: 0, z: 0 };
+  const SKY_FX = { horizon: [0.03, 0.035, 0.07] }, fxA = { x: 0, y: 0, z: 0 };
   // the acceleration (m/s2) the summed gravity field of the pieces gives a particle (render/fx.js FX.field)
   function fxField(x, y, z, out) {
     const S = EV.S;
@@ -1719,7 +1698,7 @@
         fill: [fill.color.getHex(), fill.intensity],
         lamp: [lamp.color.getHex(), lamp.distance, lamp.decay]
       };
-    const G = built, t = S.time, K = SS.eow.K, W = SS.world;
+    const G = built, t = S.time;
     for (const o of G.objs) o.visible = true;
     // hide the world's sky, clouds, sea and far land (as under ground does), the pollen becomes cold dust
     if (ctx.sky) ctx.sky.visible = false;

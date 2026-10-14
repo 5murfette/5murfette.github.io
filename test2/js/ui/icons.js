@@ -1,6 +1,5 @@
-/* ui/icons.js — the PoC's procedural vector weapon icons (inline SVG paths, currentColor), used when the setup
- * "Artwork" option is "procedural" (the painted icons are assets/icons/icon-<key>.webp). Copied from the PoC IC
- * table. */
+/* ui/icons.js — the procedural vector weapon icons (inline SVG paths, currentColor), used when the setup "Artwork"
+ * option is "procedural" (the painted icons are assets/icons/icon-<key>.webp). */
 (function (SS) {
   'use strict';
   SS.icons = {
@@ -37,7 +36,7 @@
     foam: '<circle cx="8" cy="15" r="5" fill="currentColor"/><circle cx="15" cy="13" r="6" fill="currentColor"/><circle cx="19" cy="18" r="3" fill="currentColor"/>',
     magnet: '<path d="M4 4v9a8 8 0 0 0 16 0V4h-5v9a3 3 0 0 1-6 0V4z" fill="currentColor"/>',
     spring: '<path d="M4 21h16M5 4h14M6 7l12 3-12 3 12 3-12 3" fill="none" stroke="currentColor" stroke-width="2"/>',
-    // P37-W3 (weapons A): original vector icons (the new weapons have no painted ones)
+    // weapons A: vector icons only (no painted art for them)
     flamethrower: '<rect x="1.5" y="10" width="8" height="8" rx="2.2" fill="currentColor"/><path d="M9 12.2h7v3.6H9z" fill="currentColor"/><path d="M5 10V7.5h3V10" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M16.5 14c.4-2.6 2.2-4 4.5-4.6-.8 1.2-.4 2.3.4 3 .6-.7.9-1.6.7-2.6 1.6 1.4 1.9 4 .1 5.9-1.7 1.8-4.4 1.6-5.7-.1z" fill="#ff8a3a"/>',
     acid: '<path d="M9 3h6v4l4.2 9.4A3.3 3.3 0 0 1 16.2 21H7.8a3.3 3.3 0 0 1-3-4.6L9 7z" fill="currentColor"/><path d="M6.4 15.5h11.2l.7 1.6c.5 1.1-.3 2.4-1.5 2.4H7.2c-1.2 0-2-1.3-1.5-2.4z" fill="#8bd83a"/><path d="M12 11.5c1 1.5 1.6 2.3 1.6 3a1.6 1.6 0 0 1-3.2 0c0-.7.6-1.5 1.6-3z" fill="#151d23"/>',
     gas: '<circle cx="8" cy="14" r="5" fill="currentColor"/><circle cx="15.5" cy="11" r="5.2" fill="currentColor"/><circle cx="18" cy="17" r="3.4" fill="currentColor"/><path d="M6 13.5a1.4 1.4 0 1 0 0 .01M12 11a1.2 1.2 0 1 0 0 .01M16 15a1.2 1.2 0 1 0 0 .01" stroke="#151d23" stroke-width="1.4" fill="none"/><path d="M10 3h4v3h-4z" fill="currentColor"/>',
@@ -47,7 +46,7 @@
     boomerang: '<path d="M4 4c8 0 14.5 6.2 16.2 16-2.2-5.4-8.4-8.2-12.6-8.2-.9 0-1.8.1-2.6.3C3.8 10.4 3.6 7.4 4 4z" fill="currentColor"/><path d="M15 6.5c2.6.2 4.7 1.4 6.2 3.3" stroke="currentColor" stroke-width="1.6" fill="none" stroke-dasharray="2 2"/>',
     raven: '<path d="M2 15c4.2-.4 6.6-3.2 8.6-6.6 1.6 1.3 3.6 1.7 5.4 1.2l5.4-2.8-2.2 3.4c.6 3.7-1.6 7.2-5.6 8.4-.2-1.8-.5-2.6-1.6-3.4-.4 1.5-1.2 2.7-2.6 3.4-.6-2.4-2-3.8-4.2-4.4z" fill="currentColor"/><rect x="2.5" y="17.5" width="6" height="4" rx=".6" fill="#f0e8d0"/><path d="M2.5 18l3 1.9 3-1.9" stroke="#151d23" stroke-width=".9" fill="none"/>',
     scrambler: '<circle cx="12" cy="14" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v5l4 2M9 3h6M12 3v3" fill="none" stroke="currentColor" stroke-width="2"/>',
-    // P37 W4: weapons B and the skills (vector icons only: no painted art for them)
+    // weapons B and the skills: vector icons only
     dog: '<path d="M3 11h10l2.5-3.2H19l2 2.8-2.2 1.6v2.2h-2v6h-2.2v-6H9.2v6H7v-6H5.2v-2.4L3 12z" fill="currentColor"/><circle cx="18.6" cy="9.4" r=".95" fill="#ff5b4f"/><path d="M3.2 11 1.8 7.5M14.5 7.4l.6-2.6" stroke="currentColor" stroke-width="1.5" fill="none"/>',
     punch: '<path d="M7 22v-7.2L5 12.6V9a2 2 0 0 1 4 0V8a2 2 0 0 1 4 0V7.6a2 2 0 0 1 4 0V9a2 2 0 0 1 3 1.8V15l-2 2.3V22z" fill="currentColor"/><path d="M12 6V1.5M9 3.2l3-2.6 3 2.6" stroke="#ffb02e" stroke-width="1.6" fill="none"/>',
     sentry: '<path d="M12 22 7.5 15.5h9z" fill="currentColor"/><rect x="8.6" y="8.4" width="6.8" height="5.4" rx="1.3" fill="currentColor"/><path d="M15.4 10.5H23" stroke="#ff5b4f" stroke-width="1.8" stroke-dasharray="2 1.6"/><path d="M8.6 11H5" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="6.2" r="1.4" fill="currentColor"/>',

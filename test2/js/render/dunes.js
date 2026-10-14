@@ -48,7 +48,7 @@
   const SLAB_FRONT = 3;       // m in front of the plane that the slab backdrop's grid reaches (the section rule clips it at the plane)
   // m behind the slab's back face over which the sea-level plain rises into the 3D desert's own dunes (dune_height)
   let slabRamp = 60;
-  let scene, U, mat, floorMat, depthMat, grid = null, floor = null, ax = null, NA = 0, n0 = 0, heightVer = -1, on = false;
+  let scene, U, mat, floorMat, depthMat, grid = null, floor = null, ax = null, NA = 0, on = false;
   let hRaw = null;            // unsunk grid heights (normals)
   // 'disc' (the 3D desert) | 'slab' (the 2D desert's backdrop) | null
   let mode = null, matS = null, matN = null, gridS = null, axS = null, azS = null, NAx = 0, NAz = 0;
@@ -69,7 +69,6 @@
     for (const p of ext) out.push(p);
     return { a: new Float32Array(out), n0: ext.length, NL };
   }
-  let NL = 193;
   /* the slab backdrop's axes: offsets from the slab's centre line, 1 m up to SLAB_FINE, then growing by GROW out to
    * FAR_EXT. x: symmetric about the map centre; z: from SLAB_FRONT m in front of the plane back to FAR_EXT m behind it
    * (ascending) */
@@ -258,8 +257,6 @@
     const A = axis();
     ax = A.a;
     NA = ax.length;
-    n0 = A.n0;
-    NL = A.NL;
     const N = NA * NA, pos = new Float32Array(N * 3), nrm = new Float32Array(N * 3);
     hRaw = new Float32Array(N);
     for (let k = 0; k < NA; k++)
@@ -430,12 +427,10 @@
     if (mode === 'slab' && !gridS) buildSlab();
     if (gridS) gridS.visible = mode === 'slab';
     U.uPlayR.value = mode === 'disc' ? S.playR : 0;
-    heightVer = -1;
     if (!on) return;
     const t0 = performance.now();
     if (mode === 'disc') fillHeights();
     else fillHeightsSlab();
-    heightVer = view.heightVer;
     DV.buildMs = performance.now() - t0;
   };
   DV.frame = function (S, view) {

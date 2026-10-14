@@ -67,21 +67,7 @@
   };
 
   const GLSL_NOISE = /* glsl */`
-    float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-    float n2(vec2 p) {
-      vec2 i = floor(p), f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
-    }
-    float fbm2(vec2 p) {
-      float a = 0.5, s = 0.0;
-      for (int i = 0; i < 4; i++) {
-        s += a * n2(p);
-        p = p * 2.03 + vec2(1.7, -0.6);
-        a *= 0.5;
-      }
-      return s;
-    }
+    ${SS.glsl.FBM2S}
     vec3 bbody(float t) {
       vec3 c = mix(vec3(0.3, 0.02, 0.0), vec3(0.95, 0.18, 0.01), smoothstep(0.0, 0.3, t));
       c = mix(c, vec3(1.0, 0.5, 0.06), smoothstep(0.3, 0.7, t));
@@ -443,7 +429,7 @@
       float x = vUv.x, age = vUv.y;                                      // x across -1..1, age along 0 (nozzle) .. 1 (tip)
       float edge = 1.0 - pow(abs(x), 1.6);
       vec2 q = vec2(x * 1.4, age * 3.5 - uTime * 7.0);
-      float n = fbm2(q + vec2(0.0, fbm2(q * 0.8 + 3.0)));
+      float n = sl_fbm2s(q + vec2(0.0, sl_fbm2s(q * 0.8 + 3.0)));
       float T = edge * (1.0 - age * 0.82) + (n - 0.5) * 0.55 * (0.3 + age);
       T = clamp(T * 1.15, 0.0, 1.0);
       if (T < 0.06) discard;
@@ -598,8 +584,7 @@
   const m4 = new T.Matrix4(),
     q4 = new T.Quaternion(),
     p3 = new T.Vector3(),
-    s3 = new T.Vector3(1, 1, 1),
-    eq = new T.Quaternion().setFromAxisAngle(new T.Vector3(1, 0, 0), -Math.PI / 2);
+    s3 = new T.Vector3(1, 1, 1);
   function makeAcid() {
     // (P44: the puddles are render/acid.js now: a mesh that follows the ground)
     dropsIM = new T.InstancedMesh(new T.SphereGeometry(0.07, 8, 6), new T.MeshBasicMaterial({ color: 0x9cf02a }), DROPN);
@@ -683,7 +668,7 @@
         void main() {
           float r = length(vUv) * 2.0;
           if (r > 1.0) discard;
-          float n = fbm2(vUv * 3.0 + vA.y * 17.0 + vec2(uTime * 0.12, 0.0));
+          float n = sl_fbm2s(vUv * 3.0 + vA.y * 17.0 + vec2(uTime * 0.12, 0.0));
           float a = (1.0 - smoothstep(0.35, 1.0, r + (n - 0.5) * 0.5)) * vA.z;
           vec3 c = mix(vec3(0.42, 0.55, 0.14), vec3(0.78, 0.9, 0.38), n);
           gl_FragColor = vec4(c, a);
@@ -724,7 +709,7 @@
   let casIM = null;
   const cas = [], mg = { t: -9, pos: null, dir: null, n: 0, worm: null };
   const TRN = 64;
-  let tracers = null, trT = [], trN = 0;
+  let tracers = null, trT = [];
   function makeMinigun() {
     const geo = new T.CylinderGeometry(0.011, 0.011, 0.055, 6);
     geo.rotateZ(Math.PI / 2);

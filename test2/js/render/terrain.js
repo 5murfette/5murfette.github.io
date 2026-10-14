@@ -13,7 +13,7 @@
  * Porting: chunk meshes = engine meshes; the clip/cap trick = a material keyword + a 3D texture. */
 (function (SS) {
   'use strict';
-  const T = window.THREE, C = SS.CFG, M = SS.math;
+  const T = window.THREE, C = SS.CFG;
   const TR = SS.terrain = {};
   const capN = { value: null };   // world-space lighting normal of the cut face (see capMaterial)
   /* D5: dry worlds — the cap also draws the cut face BEYOND the lattice (the far dunes' section; the D2 curtain is
@@ -410,8 +410,8 @@
       return m * (1.0 - smoothstep(0.55, 0.8, min(ax, min(ay, az))));
     }`;
   const COMMON = /* glsl */`
-    uniform float uNL, uSL;
-    ${CRACK_GLSL}   // P38: lattice columns per side / map side (m): textures and the water map are sized per map
+    uniform float uNL;   // the lattice columns per side (the textures and the water map are sized per map)
+    ${CRACK_GLSL}
     ${FOAM_GLSL}
     ${PLATE_GLSL}
     float gMetal = 0.0;
@@ -442,7 +442,7 @@
     ${HASH_GLSL}
     ${TUFF_GLSL}
     ${CONC_SURF}
-    uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uWaterTex, uDbgBack, uCtxSolid, uCtxHaze, uBeach,
+    uniform float uHalf, uBack, uAlpha, uTime, uSea, uWet, uSnow, uCaustic, uDetail, uDbgBack, uCtxSolid, uCtxHaze, uBeach,
       uConcNight;
     uniform float uEow;
     ${EOW_GLSL}
@@ -764,18 +764,17 @@
       col *= 1.0 - wet * poro * 0.42; rough = mix(rough, min(rough, mix(0.3, 0.62, poro)), wet);
       GD = max(GD, wet * (0.04 + 0.1 * (1.0 - poro)));    // film beads on wet ground, more on dense rock
       // water: wet band, depth tint and caustics below the (simulated) surface
-      // tWater: render/water.js map (one texel per column: r surface or bed, g depth, b foam, a wetness) or a blank
-      // texture (legacy: still sea at uSea)
-      vec4 wt = texture(tWater, uWaterTex > 0.5 ? (vW.xz * 2.0 + 0.5) / uNL : vW.xz / uSL);
+      // tWater: render/water.js map (one texel per column: r surface or bed, g depth, b foam, a wetness)
+      vec4 wt = texture(tWater, (vW.xz * 2.0 + 0.5) / uNL);
       // g < 0: dry bank next to water (signed depth)
-      float surf = uWaterTex > 0.5 ? (wt.g > -0.6 ? wt.r : -99.0) : (wt.r > 0.0 ? wt.r : uSea);
+      float surf = wt.g > -0.6 ? wt.r : -99.0;
       float under = surf - vW.y;
       float wetB = smoothstep(-0.45, 0.0, under);
-      if (uWaterTex > 0.5) wetB = max(wetB, wt.a * smoothstep(-0.7, -0.1, wt.r - vW.y));   // recent run-up dries slowly
+      wetB = max(wetB, wt.a * smoothstep(-0.7, -0.1, wt.r - vW.y));   // (a recent run-up dries slowly)
       // P61: wave lapping on the beach: the run-up edge oscillates (travelling along the shore), the sand behind it is
       // a darker wet band and a thin lace of foam stays on the edge (sea level beaches only)
       float lapFoam = 0.0;
-      if (uWaterTex < 0.5 || (wt.r > uSea - 0.5 && wt.r < uSea + 0.4)) {
+      if (wt.r > uSea - 0.5 && wt.r < uSea + 0.4) {
         float lnz = texture(tNoise, vW.xz * 0.35).b;
         float lapS = 0.5 + 0.5 * sin(uTime * 0.8 + vW.x * 0.35 + vW.z * 0.3 + lnz * 4.0);
         float u2 = uSea + 0.04 + 0.2 * lapS - vW.y;
@@ -792,12 +791,9 @@
       rough = mix(rough, 0.3 + 0.3 * (1.0 - poro), wetB * 0.7 * smoothstep(-0.45, 0.0, under));
       // water film: the smoothed mesh lies a few cm above the simulated bed in concave floors (one vertex per cell),
       // so a shallow pool's water is under it: terrain just above the surface of a wet column reads as a film
-      float film = 0.0;
-      if (uWaterTex > 0.5) {
-        film = smoothstep(0.0, 0.02, wt.g) * smoothstep(-0.07, -0.005, under);
-        col *= mix(1.0, 0.8, film);
-        rough = mix(rough, 0.07, film);
-      }
+      float film = smoothstep(0.0, 0.02, wt.g) * smoothstep(-0.07, -0.005, under);
+      col *= mix(1.0, 0.8, film);
+      rough = mix(rough, 0.07, film);
       RA *= (1.0 - film) * uDetail;                       // a puddle's water surface is flat (and Low has no relief)
       GD *= (1.0 - film) * (1.0 - smoothstep(-0.05, 0.05, under)) * uDetail * sky;   // none in puddles, under water, caves
       col = mix(col, vec3(0.95, 0.97, 1.0), lapFoam * (0.7 - 0.55 * uBeach) * (1.0 - smoothstep(0.0, 0.1, under)));
@@ -1528,7 +1524,7 @@
         uniform vec3 uLatR;
         uniform highp sampler3D tN3;
         uniform float uS0;
-        uniform float uNL, uSL;
+        uniform float uNL;
         uniform float uEow;
         uniform float uUnder, uCapDet, uCapDbg;
         uniform vec4 uCapFill, uCapGrade;
@@ -2125,12 +2121,12 @@
       uCaveAmb: { value: new T.Color(0, 0, 0) },
       uGrassTint: { value: new T.Color(1, 1, 1) }, uDryTint: { value: new T.Color(1, 1, 1) }, uSunDir: { value: new T.Vector3(0, 1, 0) },
       uHalf: { value: C.HALF }, uBack: { value: C.HALF }, uAlpha: { value: 0 }, uTime: { value: 0 }, uSea: { value: W.SEA },
-      uBeach: { value: 0 }, uWaterTex: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
+      uBeach: { value: 0 }, uWet: { value: 0 }, uSnow: { value: 0 },
       uConcNight: { value: 0 }, uCaustic: { value: 1 }, uCloudSh: { value: new T.Vector4(0, 0, 0, 0) },
       uDetail: { value: Q.detail ? 1 : 0 }, uPlayR: { value: 0 }, uVolc: { value: 0 },
       // P90: fumarole craters in the terrain shader (render/vents.js)
       uVent: { value: Array.from({ length: 8 }, () => new T.Vector4()) }, uNVent: { value: 0 }, uVentHot: { value: 0 },
-      uNL: { value: W.NX }, uSL: { value: W.SX },
+      uNL: { value: W.NX },
       uLatR: { value: new T.Vector3(48, 48, 0) },   // D6: dry worlds' lattice disc (x, z, r; r 0 = off, set per frame)
       // P37 W4: plate registry
       uPlA: { value: Array.from({ length: 24 }, () => new T.Vector4()) },
@@ -2340,7 +2336,7 @@
     volTex.image = { data: volData, width: W.NX, height: W.NY, depth: W.NZ };
     volTex.needsUpdate = true;
     VOLSIZE.set(W.NX, W.NY, W.NZ);
-    U.uNL.value = W.NX; U.uSL.value = W.SX;
+    U.uNL.value = W.NX;
     FAR.uLat.value.set(W.SX, W.SZ);
     farKey = null; farRange = null;
   }

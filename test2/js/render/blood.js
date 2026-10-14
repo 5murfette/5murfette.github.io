@@ -26,7 +26,6 @@
     tmpC = new T.Color(),
     m4 = new T.Matrix4(),
     q = new T.Quaternion(),
-    zAxis = new T.Vector3(0, 0, 1),
     nv = new T.Vector3(),
     sv = new T.Vector3(),
     pv = new T.Vector3();
@@ -185,7 +184,7 @@
       });
     }
   }
-  const runs = [], stT0 = [], stCol = [], bx2 = new T.Matrix4(), tg = new T.Vector3(), bt = new T.Vector3();
+  const runs = [], stT0 = [], bx2 = new T.Matrix4(), tg = new T.Vector3(), bt = new T.Vector3();
   let clock = 0, recT = 0;
   /* (dx, dy, dz): the travel direction of whatever made it (drop velocity, ray); no direction: a random one. Steep
    * faces get a slowly running rivulet. */

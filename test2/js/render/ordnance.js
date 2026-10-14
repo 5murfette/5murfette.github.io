@@ -51,12 +51,12 @@
   const PLUME_VS = 'varying vec2 vUv; varying vec3 vN; varying vec3 vV; void main(){ vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }';
   const PLUME_FS = [
     'uniform float uTime; uniform float uSeed; uniform float uHot; varying vec2 vUv; varying vec3 vN; varying vec3 vV;',
-    'float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
-    'float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }',
+    SS.glsl.VNOISE2S,
     'void main(){',
     '  float t = vUv.y;                                         // 0 at the nozzle, 1 at the plume tip',
     '  float rim = abs(dot(normalize(vN), normalize(vV)));      // 1 = facing the camera (the plume core)',
-    '  float fl = n(vec2(vUv.x * 6.0 + uSeed, t * 7.0 - uTime * 38.0)) * 0.6 + n(vec2(vUv.x * 13.0, t * 15.0 - uTime * 61.0)) * 0.4;',
+    '  float fl = sl_vnoise2s(vec2(vUv.x * 6.0 + uSeed, t * 7.0 - uTime * 38.0)) * 0.6',
+    '    + sl_vnoise2s(vec2(vUv.x * 13.0, t * 15.0 - uTime * 61.0)) * 0.4;',
     '  float body = pow(1.0 - t, 1.4) * smoothstep(0.0, 0.06, t + 0.02);',
     '  float a = clamp(body * pow(rim, 1.2) * (0.65 + 0.75 * fl) * uHot, 0.0, 1.0);',
     '  float core = pow(max(0.0, 1.0 - t * 2.2), 2.0) * pow(rim, 3.0);',

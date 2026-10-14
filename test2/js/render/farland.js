@@ -120,15 +120,13 @@
   let farScale = 0.5,
     farT = -99,
     farOK = false,
-    renderer = null,
     rt = null,
     farScene = null,
     farCam = null,
     quad = null,
     mesh = null,
     mat = null,
-    on = false,
-    mainScene = null;
+    on = false;
   const U = {
     tLut: { value: null }, uSun: { value: new T.Vector3(0, 1, 0) }, uSunC: { value: new T.Vector3(1, 1, 1) },
     uAmb: { value: new T.Vector3(0.3, 0.35, 0.45) },
@@ -220,7 +218,6 @@
     }`;
 
   FL.init = function (scene, tx, Q, rend) {
-    renderer = rend; mainScene = scene;
     farScene = new T.Scene();
     farCam = new T.PerspectiveCamera(42, 1, 30, 150000);
     // P38-R4: the pass is soft haze, distant relief and clouds: it renders at Q.farScale of the canvas, without MSAA

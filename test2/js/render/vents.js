@@ -16,7 +16,7 @@
       const t = M_clamp((x - a) / (b - a), 0, 1);
       return t * t * (3 - 2 * t);
     };
-  let scene = null, group = null, list = [], MAT = null, THROAT = null, hemi = null, sun = null;
+  let scene = null, group = null, list = [], hemi = null, sun = null;
   const PLUME_H = 5.5, PLUME_W = 3.6;                      // m: the billboard that carries the wisp
   // x -1..1, y 0..1
   const plumeGeo = (() => {
@@ -68,10 +68,8 @@
     m.frustumCulled = false; m.renderOrder = 7.2;
     return m;
   }
-  let QQ = null;
   VV.init = function (sc, Q) {
     scene = sc;
-    QQ = Q || null;
   };
   VV.reset = function (S) {
     lastT = -1;

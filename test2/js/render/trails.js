@@ -12,7 +12,7 @@
  * is cheap and always on). API: init(scene, quality), frame(S, view, camera, dt), clear(), stats(), smoke(x, y, z). */
 (function (SS) {
   'use strict';
-  const T = window.THREE, M = SS.math, P = SS.plane;
+  const T = window.THREE, P = SS.plane;
   const TV = SS.trailView = {};
   let scene = null, Q = null, marks = null, rings = null, track = new Map(), breathT = new Map();
   const MCAP = 90, RCAP = 24;
@@ -29,8 +29,7 @@
     s0: new Float32Array(RCAP),
     s1: new Float32Array(RCAP)
   };
-  const dummy = new T.Object3D(),
-    q1 = new T.Quaternion(),
+  const q1 = new T.Quaternion(),
     q2 = new T.Quaternion(),
     up = new T.Vector3(0, 1, 0),
     nv = new T.Vector3(),
@@ -71,7 +70,8 @@
     }
     if (inner <= 0) {
       pos.push(0, 0, 0);
-      for (let i = 0; i < N; i++) idx.push(i * 2, ((i + 1) % N) * 2, N * 2);
+      // (counter-clockwise seen from above, as the ring: the face looks up, the side the decal material draws)
+      for (let i = 0; i < N; i++) idx.push(i * 2, N * 2, ((i + 1) % N) * 2);
     }
     const g = new T.BufferGeometry();
     g.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
@@ -127,20 +127,11 @@ attribute vec3 aTan;
     uniform float uLife;
     varying vec4 vS;
     varying vec3 vP;
-    float h3(vec3 p){
-      p = fract(p * 0.1031);
-      p += dot(p, p.zyx + 31.32);
-      return fract((p.x + p.y) * p.z);
-    }
-    float vn(vec3 p){
-      vec3 i = floor(p), f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      return mix(mix(mix(h3(i), h3(i + vec3(1,0,0)), f.x), mix(h3(i + vec3(0,1,0)), h3(i + vec3(1,1,0)), f.x), f.y),
-                 mix(mix(h3(i + vec3(0,0,1)), h3(i + vec3(1,0,1)), f.x), mix(h3(i + vec3(0,1,1)), h3(i + vec3(1,1,1)), f.x), f.y), f.z);
-             }
+    ${SS.glsl.VNOISE3}
     void main(){
       float u = vS.x, ag = vS.y, L = vS.z, secs = ag * uLife;
-      float nz = 0.55 * vn(vec3(L * 1.5, u * 1.4, secs * 0.9)) + 0.3 * vn(vec3(L * 3.9 + 4.0, u * 3.1, secs * 1.4 + 2.0)) + 0.15 * vn(vec3(L * 8.0 + 9.0, u * 6.0, secs * 2.0));
+      float nz = 0.55 * sl_vnoise3(vec3(L * 1.5, u * 1.4, secs * 0.9)) + 0.3 * sl_vnoise3(vec3(L * 3.9 + 4.0, u * 3.1, secs * 1.4 + 2.0))
+        + 0.15 * sl_vnoise3(vec3(L * 8.0 + 9.0, u * 6.0, secs * 2.0));
       // a soft, billowing edge: thick and thin patches along the strip
       float prof = 1.0 - smoothstep(0.05 + 0.6 * nz, 1.0, abs(u) + 0.4 * (nz - 0.5));
       float env = smoothstep(0.0, 0.03, ag) * pow(1.0 - ag, 1.5);

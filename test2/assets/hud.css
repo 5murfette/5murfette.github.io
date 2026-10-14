@@ -291,7 +291,6 @@ body:not(.touch) .dtg,body:not(.touch) #teams .jk,body:not(.touch) #log .lt,body
 body.over #banner,body.over #rotnow,body.over #labbadge{display:none}
 /* the Lab badge folds into a chip a few seconds after the match start (ui/hud.js labBadge); a tap or click shows the list again */
 #labbadge{pointer-events:auto;cursor:pointer}
-#labbadge.chip{padding:1px calc(var(--u) * 7);letter-spacing:.06em;opacity:.85}
 body.overcard #maps,body.overcard #feed,body.overcard #tbWx{display:none}
 
 /* ---------- perk draft ---------- */

@@ -17,7 +17,7 @@
  * API: init(scene, textures), clear(), frame(S, view, camera, dt), onEvent(S, e), stats(). */
 (function (SS) {
   'use strict';
-  const T = window.THREE, C = SS.CFG;
+  const T = window.THREE;
   const FV = SS.ffView = {};
   let scene = null, tx = null, root = null, clock = 0;
   const NR = 8;
@@ -50,7 +50,7 @@
     uniform sampler2D tScene;
     uniform vec2 uRes;
     uniform vec3 uView0, uView1, uView2;
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    ${SS.glsl.HASH12S}
     // hex lattice: returns (distance to the nearest cell edge in 0..0.5 from the cell edge inwards, cell id)
     vec4 hexc(vec2 p) {
       vec2 r = vec2(1.0, 1.7320508), h = r * 0.5, a = mod(p, r) - h, b = mod(p - h, r) - h, gv = dot(a, a) < dot(b, b) ? a : b;
@@ -92,7 +92,7 @@
       vec3 d = vL, ad = abs(d);
       vec2 uv = ad.x > ad.y && ad.x > ad.z ? d.yz / ad.x : ad.y > ad.z ? d.xz / ad.y : d.xy / ad.z;
       vec4 hx = hexc(uv * 6.5);
-      float edge = smoothstep(0.40, 0.5, hexEdge(hx.xy)), cid = hash(hx.zw + floor(d * 3.0).xy);
+      float edge = smoothstep(0.40, 0.5, hexEdge(hx.xy)), cid = sl_hash12s(hx.zw + floor(d * 3.0).xy);
       float cellGlow = edge * (0.5 + 0.5 * sin(uT * 1.6 + cid * 6.28));
       // ripples: a gaussian front at arc length (age x 5 m/s) with a few inner rings, decaying
       float rip = 0.0;
@@ -110,7 +110,7 @@
       }
       // the contact line: energy racing round along the ground (azimuth around the generator), a hex-cell pattern, a
       // hot core
-      float az = atan(vL.z, vL.x), flow = 0.55 + 0.45 * sin(az * 9.0 - uT * 3.0 + hash(floor(vec2(az * 4.0, 0.0))) * 6.28),
+      float az = atan(vL.z, vL.x), flow = 0.55 + 0.45 * sin(az * 9.0 - uT * 3.0 + sl_hash12s(floor(vec2(az * 4.0, 0.0))) * 6.28),
         hexg = 0.65 + 0.35 * cellGlow;
       float cl = contact * (0.55 + 0.45 * flow) * hexg;
       float a = 0.05 + fres * 0.55 + cellGlow * 0.16 + rip * 0.5 + spec * 0.9 + uFlash * (0.25 + 0.3 * fres) + uHit * 0.18;
@@ -304,7 +304,7 @@
    * under it (W.version), at most every 3rd frame. Render side only: it reads the sim's world, never writes. */
   const GN = 48;
   function groundTex(it, f, c) {
-    const W = window.POC && POC.W;
+    const W = SS.world;
     if (!W || !W.sample) return;
     const u = it.dome.material.uniforms;
     if (!it.gtex) {
@@ -449,7 +449,7 @@
         break;
     }
   };
-  const q0 = new T.Quaternion(), vq = new T.Vector3(), xAxis = new T.Vector3(1, 0, 0);
+  const vq = new T.Vector3(), xAxis = new T.Vector3(1, 0, 0);
   FV.frame = function (S, view, camera, dt) {
     if (!scene) return;
     const t = clock = view.time || 0;

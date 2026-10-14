@@ -31,9 +31,9 @@
   };
   let scene = null, tx = null, Q = null, U = null, own = null;
   let woodMat, leafMat, coreMat, woodMats, leafMats, coreMats, woodDepth, leafDepth, coreDepth, meshes = [];
-  let stTex = null, stData = null, builtFor = null, nRows = 0, fire = null, fireSeed = null, maxFire = 0, fireN = 0;
+  let stTex = null, stData = null, builtFor = null, nRows = 0;
   const flames = new Map();
-  let time = 0, tris = 0, lastSig = '', lastBoom = null;
+  let time = 0, tris = 0, lastBoom = null;
 
   /* ---------- shaders ---------- */
   const VHEAD = /* glsl */`
@@ -749,7 +749,6 @@
       tris += B.idx.length / 3;
     };
     mk(Bw, woodMats, woodDepth); mk(Bl, leafMats, leafDepth); mk(Bc, coreMats, coreDepth);
-    lastSig = '';
   }
 
   TV.init = function (sc, textures, quality) {

@@ -31,7 +31,7 @@
   const T = THREE;
   const EV = SS.edgeView = { enabled: true };
   const SHOW_DELAY = 0.45, FADE = 0.5, REFRESH = 0.4, REBUILD_MIN = 0.35, EDGE_LAG = 0.1;
-  let Q = null, tx = null, meshO = null, meshT = null, dens = 1, step = 0.05, bseg = 3, K = null, FACE = null;
+  let tx = null, meshO = null, meshT = null, dens = 1, step = 0.05, bseg = 3, K = null, FACE = null;
   const U = { uTime: { value: 0 }, uDir: { value: new T.Vector3(1, 0, 0) }, uWind: { value: 0 } };
   const st = { mpp: 0.018, zoomB: 19, sec: null, shown: false, showT: -99, births: new Map(), prev: null, refreshT: -99, vegVer: -1,
     waterVer: -1, lavaVer: -1,
@@ -1295,7 +1295,7 @@
             '#include <color_fragment>',
             '#include <color_fragment>\n          if (vEdg >= 0.0) diffuseColor.a *= clamp(vEdg / max(fwidth(vEdg), 1e-6), 0.0, 1.0);'
           )
-          .replace('#include <normal_fragment_begin>', T.ShaderChunk.normal_fragment_begin.replace('gl_FrontFacing ? 1.0 : - 1.0', '1.0'))
+          .replace('#include <normal_fragment_begin>', SS.glsl.ONE_SIDED_NORMAL)
           .replace('#include <specularmap_fragment>', 'float specularStrength = clamp(1.0 - vRgh * 1.1, 0.0, 1.0);')
           .replace(
             '#include <emissivemap_fragment>',
@@ -1331,7 +1331,7 @@
   }
 
   function rebuild(S, view, sec, fresh) {
-    const t0 = performance.now(), E = sec.edge, look = view.look || (SS.view && SS.view.LOOKS.temperate);
+    const t0 = performance.now(), E = sec.edge, look = view.look || SS.look.LOOKS.temperate;
     palette(look); st.biome = S.biome;
     F.ox = sec.O.x;
     F.oz = sec.O.z;
@@ -1376,7 +1376,6 @@
   /* ---------- API ---------- */
   EV.init = function (scene, txx, q) {
     tx = txx;
-    Q = q;
     K = SS.edge.CLS;
     FACE = SS.edge.FACE;
     bandTable();

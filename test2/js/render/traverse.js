@@ -8,7 +8,7 @@
  * the canopy. */
 (function (SS) {
   'use strict';
-  const T = window.THREE, C = SS.CFG, M = SS.math, P = SS.plane;
+  const T = window.THREE, M = SS.math, P = SS.plane;
   const V = SS.travView = {};
   let scene = null, root = null, canopy = null, bolt = null, trolley = null, stake = null, boltEnd = null;
   const pools = {};                                           // name -> { meshes[], n, mat }

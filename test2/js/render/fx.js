@@ -132,18 +132,8 @@
     varying float vAl;
     varying vec3 vP;
     varying vec4 vW;
-    float h3(vec3 p){
-      p = fract(p * 0.1031);
-      p += dot(p, p.zyx + 31.32);
-      return fract((p.x + p.y) * p.z);
-    }
-    float vn(vec3 p){
-      vec3 i = floor(p), f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      return mix(mix(mix(h3(i), h3(i + vec3(1,0,0)), f.x), mix(h3(i + vec3(0,1,0)), h3(i + vec3(1,1,0)), f.x), f.y),
-                 mix(mix(h3(i + vec3(0,0,1)), h3(i + vec3(1,0,1)), f.x), mix(h3(i + vec3(0,1,1)), h3(i + vec3(1,1,1)), f.x), f.y), f.z);
-             }
-    float fbm(vec3 p){ return 0.55 * vn(p) + 0.28 * vn(p * 2.03 + 1.7) + 0.17 * vn(p * 4.11 + 3.1); }
+    ${SS.glsl.VNOISE3}
+    float fbm(vec3 p){ return 0.55 * sl_vnoise3(p) + 0.28 * sl_vnoise3(p * 2.03 + 1.7) + 0.17 * sl_vnoise3(p * 4.11 + 3.1); }
     // black body (Helland's fit of the Planck locus, sRGB) -> linear RGB, normalised
     vec3 bb(float K){
       float t = K / 100.0, r, g, b;
@@ -1055,7 +1045,6 @@
     // a blast that reached the ground throws it: dust of the crater's own colours (blend of the removed materials), a
     // ground-hugging shock skirt, a fountain of fines, solid chunks (clods / rock / ice shards), pebbles and a rain of
     // dirt, all by material
-    const amt = hit ? Math.min(2.2, 0.35 + mf.best / 160) * (1 - 0.6 * rain) : 0;
     if (hit) {
       const col = mf.dust, nd = cnt(Math.min(22, 4 + mf.best / 30) * mf.amt * (1 - 0.5 * rain));
       for (let i = 0; i < nd; i++) {
