@@ -176,7 +176,7 @@
     PAL.ash = avg(10);
     PAL.scree = avg(11);
     PAL.gBase = lin(look.gBase); PAL.gTip = lin(look.gTip); PAL.gDry = lin(look.gDry);
-    PAL.root = mixc(PAL.soil, [0.3, 0.22, 0.14], 0.45);   // (dark, close to the soil: pale roots read as tiny worms)
+    PAL.root = mixc(PAL.soil, [0.2, 0.14, 0.09], 0.4);   // (dark, close to the soil: pale roots read as tiny worms)
     PAL.char = [0.022, 0.019, 0.017]; PAL.ember = [1.0, 0.36, 0.06];
     PAL.snowW = mixc(PAL.snow, [0.92, 0.95, 1.0], 0.6); PAL.snowB = [0.55, 0.64, 0.8];
     PAL.iceHi = [0.82, 0.94, 1.0]; PAL.iceLo = [0.42, 0.66, 0.86];
