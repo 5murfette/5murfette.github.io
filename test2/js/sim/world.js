@@ -37,13 +37,19 @@
   const idx = (i, j, k) => (k * NY + j) * NX + i;
   W.CS = 32;
   W.sizeVer = 0;
+  /* the fields a world of sx x sz m derives from its size, set on o: this world, or worldgen's preview dummy (one
+   * formula for both, so the preview plans the same map) */
+  W.size_fields = function (o, sx, sz) {
+    o.SX = sx; o.SZ = sz;
+    o.MX = sx / 2;
+    o.MZ = sz / 2;
+    o.PR = sx / 2 - 3.5;
+    o.RIM = M.min(sx, sz) / 2 - 0.5;
+    o.SC = sx / 96;
+    return o;
+  };
   W.resize = function (sx, sz) {
-    W.SX = sx; W.SZ = sz;
-    W.MX = sx / 2;
-    W.MZ = sz / 2;
-    W.PR = sx / 2 - 3.5;
-    W.RIM = M.min(sx, sz) / 2 - 0.5;
-    W.SC = sx / 96;
+    W.size_fields(W, sx, sz);
     NX = W.NX = Math.round(sx / H) + 1;
     NY = W.NY = Math.round(W.SY / H) + 1;
     NZ = W.NZ = Math.round(sz / H) + 1;

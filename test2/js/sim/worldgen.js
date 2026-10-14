@@ -1546,24 +1546,18 @@
     const sv = { W, NX, NY, NZ, H, SEA, ISL_MAX, rng, seed, hgt, ginv, lavaZone, canalD, extra, F, BE, shape: G.shape, GCX, GCZ };
     // P38: the preview has the size of the map it previews
     const real = W || SS.world, sx = real.size_of ? real.size_of(settings) : real.SX;
-    const dummy = {
+    const dummy = SS.world.size_fields({
       NX: Math.round(sx / real.H) + 1,
       NY: real.NY,
       NZ: Math.round(sx / real.H) + 1,
       H: real.H,
-      SX: sx,
-      SZ: sx,
       SY: real.SY,
-      MX: sx / 2,
-      MZ: sx / 2,
-      PR: sx / 2 - 3.5,
-      SC: sx / 96,
       SEA: 3,
       SEA_WET: real.SEA_WET,
       dry: false,
       under: false,
       features: {}
-    };
+    }, sx, sx);
     const out = {
       n,
       sx,
