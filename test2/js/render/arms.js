@@ -84,11 +84,8 @@
       add(g, G.sph(0.025), M.black, 0.16, 0.02, 0);
       return g;
     }),
-    bananalet: () => {
-      const g = BUILD.banana();
-      g.scale.setScalar(0.65);
-      return g;
-    },
+    // (as big as the banana: ordnance.js draws the glowing one)
+    bananalet: () => BUILD.banana(),
     // an original orb: gilded sphere with a band and a little crown of studs (no cross)
     holy: baked('proj_holy', () => {
       const g = new T.Group();

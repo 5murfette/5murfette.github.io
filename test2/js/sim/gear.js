@@ -1,7 +1,6 @@
-/* sim/gear.js — P89: per-team "rescue gear": a small stock of charges per team plus an ON / OFF toggle the team's
- * player
+/* sim/gear.js — per-team "rescue gear": a small stock of charges per team plus an ON / OFF toggle the team's player
  * sets in the HUD. The gear is used by itself (nobody presses anything) when its trigger happens, also off-turn.
- * First user: the life jacket (sim/lifejacket.js, kind JACKET). The EOW jetpack (branch p86-eow) has the same shape and
+ * The first kind is the life jacket (sim/lifejacket.js, kind JACKET). The EOW jetpack has the same shape and
  * can take the next kind id: append a row to GR.TABLE (+ its settings keys) and call SS.gear.ready / use from its
  * trigger.
  *

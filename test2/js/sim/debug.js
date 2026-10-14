@@ -1,4 +1,4 @@
-/* sim/debug.js — P49: the debug toolbox's side of the simulation (portable, deterministic; no DOM / Three.js).
+/* sim/debug.js — the debug toolbox's side of the simulation (portable, deterministic; no DOM / Three.js).
  *
  * A drop is an INPUT command: the platform fills the Input fields { dbk, dbp0, dbp1, dbs, dby, dbsky } for ONE step,
  * sim.step calls DB.apply(S, inp) at a fixed point (right after the input is sanitised) and the sim creates the object

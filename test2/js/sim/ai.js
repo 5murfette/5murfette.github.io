@@ -20,6 +20,8 @@
   const K = { TURN_MAX: 30, SPECIAL_MIN: 18, THINK: 0.8, TARGETS: 3, EVAL_PER_STEP: 14, OWN_K: 2.2, TAIL_K: 0.7, TAIL_FREE: 6, NEAR_D: 4.5,
     NEAR_PEN: 45, BREACH_K: 8, BREACH_MIN: 1.0, BREACH_OWN: 12, BREACH_R: 1.9, SEALED_N: 10, SELF_RISK: 500, SELF_DV: 7, KILL: 25,
     WALK_T: 2.5, MAX_T: 7,
+    // the share of a split shell's bomblets that bursts at its target (a worm at the pop: 1 to 2 of the 5)
+    SPLIT_HIT: 0.2,
     // aim / power noise = the PoC's skills exactly (Rookie / Soldier / Sharpshooter, PoC aiStep: [0.1, 0.12], [0.04,
     // 0.045], [0.01, 0.012]); aim / pow = the search grid steps
     DIFF: {
@@ -181,9 +183,7 @@
           wet = true; vs *= 0.35; vy *= 0.3;
         }
         if (imp && t > 0.2)
-          for (const o of S.worms)
-            if (!o.dead && o !== a && M.len3(wp.x - o.pos.x, ny - o.pos.y, wp.z - o.pos.z) < C.WORM_R + 0.12)
-              return { x: wp.x, y: ny, z: wp.z, t, wet };
+          if (SS.worm.first_near(S, wp.x, ny, wp.z, C.WORM_R + 0.12, a.id, SS.worm.NEAR.ANY)) return { x: wp.x, y: ny, z: wp.z, t, wet };
         // a bouncing shell bounces off a worm's body (= sim.js wormBounce, P32)
         if (!imp && !pd.foam) {
           let hitO = null;
@@ -263,7 +263,11 @@
   function score(S, c, W, split, dmg) {                              // dmg: the PoC damage of that blast (P24.1)
     const me = S.active.team;
     let v = 0;
-    if (split) W += split.n * (C.PROJ[split.kind].W) * 0.35;           // bomblets scatter: a fraction of their charge counts
+    // bomblets scatter: a fraction of their charge and of their damage counts
+    if (split) {
+      W += split.n * C.PROJ[split.kind].W * 0.35;
+      dmg += split.n * C.PROJ[split.kind].dmg * K.SPLIT_HIT;
+    }
     // the bomblets can land anywhere within ~SCAT m (their throw at 0.65 v + jitter): own worms in that ring are at
     // risk
     if (split) {
@@ -318,11 +322,8 @@
     const out = [];
     for (const b of S.bodies) {
       if (!b.prop || (b.prop !== 'barrel' && b.prop !== 'mine') || b.held || (b.prop === 'mine' && b.disarmed)) continue;
-      for (const o of S.worms)
-        if (!o.dead && M.len3(o.pos.x - b.pos.x, o.pos.y - b.pos.y, o.pos.z - b.pos.z) < 7) {
-          out.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop });
-          break;
-        }
+      if (SS.worm.first_near(S, b.pos.x, b.pos.y, b.pos.z, 7, -1, SS.worm.NEAR.ANY))
+        out.push({ x: b.pos.x, y: b.pos.y, z: b.pos.z, kind: b.prop });
       if (out.length >= 12) break;
     }
     return out;

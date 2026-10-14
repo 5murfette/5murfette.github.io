@@ -14,12 +14,14 @@
  *     from any angle. Pulled a little toward the camera in depth (polygon offset: in a cave world the cut face lies in
  *     the very same plane and the ribbon z-fought with it into yellow dots) and true yellow (sRGB: a raw linear colour
  *     came out orange);
- *   - a faint translucent yellow plane showing the slice extent (the plane x the world box), double sided, no depth
- *     write, with a crisp border of constant 3 px (screen derivatives: no 1 px line primitive).
+ *   - a faint translucent yellow plane showing the slice extent (the plane x the round play area: the chord, the same
+ *     length at every heading through the centre; the End of the World: the world box), double sided, no depth write,
+ *     with a crisp border of constant 3 px (screen derivatives: no 1 px line primitive).
  * Everything fades with the overview (insp 0..1). End of the World: the plane only (the rocks' cut line would mark
  * nothing). Presentation only. A cave world (its rock has no outside: the only surfaces are the tunnels) also gets the
- * edges of the world box on the far side of the plane, a thin warm frame round the back half, so the section face reads
- * as the front of a cut block (the tunnels inside it are the glass of render/terrain.js, the face is the cap). */
+ * edges of the play area's cylinder on the far side of the plane (its arc at the floor and the roof, an edge up at each
+ * end of the chord), a thin warm frame round the back half, so the section face reads as the front of a cut drum (the
+ * tunnels inside it are the glass of render/terrain.js, the face is the cap). */
 (function (SS) {
   'use strict';
   const T = window.THREE, SC = SS.secCut = {};
@@ -73,22 +75,24 @@
     scene.add(plane);
     scene.add(frame);
   };
-  /* the lattice rectangle on the far side of the section plane (t <= 0): the footprint of the back half of the world
-   * box (the box clipped by the half plane, Sutherland-Hodgman) */
-  function behindPoly(S) {
-    const W = SS.world,
-      n = SS.plane.nrm(S),
-      O = S.O,
-      R = [[0, 0], [W.SX, 0], [W.SX, W.SZ], [0, W.SZ]],
-      out = [],
-      f = p => (p[0] - O.x) * n.x + (p[1] - O.z) * n.z;
-    for (let i = 0; i < 4; i++) {
-      const a = R[i], b = R[(i + 1) % 4], fa = f(a), fb = f(b);
-      if (fa <= 0) out.push(a);
-      if ((fa < 0 && fb > 0) || (fa > 0 && fb < 0)) {
-        const k = fa / (fa - fb);
-        out.push([a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]);
-      }
+  /* the footprint of the play area's back half (t <= 0): the arc of its circle from one end of the chord round the
+   * back to the other (an open polyline of 49 points), or null when the plane misses the circle */
+  const PD = { x: 0, z: 0, r: 0 };
+  function behindArc(S) {
+    const c = SS.world.play_disc(PD), ch = c && SS.plane.chord(S);
+    if (!ch) return null;
+    const n = SS.plane.nrm(S), d = SS.plane.dir(S), O = S.O;
+    const a0 = Math.atan2(O.z + d.z * ch[0] - c.z, O.x + d.x * ch[0] - c.x),
+      a1 = Math.atan2(O.z + d.z * ch[1] - c.z, O.x + d.x * ch[1] - c.x);
+    // go round the side the back point (centre - n r) is on
+    let da = a1 - a0;
+    da -= Math.round(da / (2 * Math.PI)) * 2 * Math.PI;
+    const am = a0 + da / 2, back = (Math.cos(am) * n.x + Math.sin(am) * n.z) <= 0;
+    if (!back) da -= Math.sign(da || 1) * 2 * Math.PI;
+    const out = [];
+    for (let i = 0; i <= 48; i++) {
+      const a = a0 + da * i / 48;
+      out.push([c.x + Math.cos(a) * c.r, c.z + Math.sin(a) * c.r]);
     }
     return out;
   }
@@ -220,24 +224,11 @@
     info.chains = SS.world.under && sec.edge ? sec.edge.nc : 0;
     return g;
   }
-  /* the slice x the world box: s range along the plane's direction from S.O */
+  /* the slice x the round play area (the chord; the End of the World: the world box): s range along the plane's
+   * direction from S.O */
   function extent(S) {
-    const W = SS.world, c = Math.cos(S.theta), sn = Math.sin(S.theta);
-    let lo = -1e9, hi = 1e9;
-    for (const [o, d, m] of [[S.O.x, c, W.SX], [S.O.z, sn, W.SZ]]) {
-      if (Math.abs(d) < 1e-6) {
-        if (o < 0 || o > m) return null;
-        continue;
-      }
-      let a = (0 - o) / d, b = (m - o) / d;
-      if (a > b) {
-        const t = a;
-        a = b;
-        b = t;
-      }
-      lo = Math.max(lo, a); hi = Math.min(hi, b);
-    }
-    return hi > lo ? [lo, hi] : null;
+    const ch = SS.plane.chord(S);
+    return ch && ch[1] > ch[0] ? ch : null;
   }
   SC.frame = function (S, view, camera, insp, dist) {
     if (!scene) return;
@@ -267,18 +258,18 @@
     }
     plane.visible = !!plane.userData.ok;
     plane.material.uniforms.uA.value = a;
-    // a cave world: the edges of the box behind the plane (rebuilt with the plane): the footprint polygon at the floor
-    // and at the roof and an edge up at every corner
+    // a cave world: the edges of the cylinder behind the plane (rebuilt with the plane): the back arc at the floor and
+    // at the roof and an edge up at both ends of the chord
     frame.visible = !!W.under && plane.visible;
     if (frame.visible) {
       if (key !== fKey) {
         fKey = key;
-        const P = behindPoly(S), n = P.length, v = [];
-        for (let i = 0; i < n; i++) {
-          const p0 = P[i], p1 = P[(i + 1) % n];
+        const P = behindArc(S) || [], n = P.length, v = [];
+        for (let i = 0; i + 1 < n; i++) {
+          const p0 = P[i], p1 = P[i + 1];
           for (const y of [0, W.SY]) v.push(p0[0], y, p0[1], p1[0], y, p1[1]);
-          v.push(p0[0], 0, p0[1], p0[0], W.SY, p0[1]);
         }
+        for (const p of n ? [P[0], P[n - 1]] : []) v.push(p[0], 0, p[1], p[0], W.SY, p[1]);
         frame.geometry.dispose();
         const g = new T.BufferGeometry();
         g.setAttribute('position', new T.BufferAttribute(new Float32Array(v), 3));

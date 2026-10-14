@@ -47,30 +47,30 @@
   };
   ST.input_make = () => ({
     move: 0, up: 0, down: 0,          // held axes
-    jump: 0, backflip: 0, jet: 0,     // edge-triggered (jet: P86, the team's jetpack switch in space)
+    jump: 0, backflip: 0, jet: 0,     // edge-triggered (jet: the team's jetpack switch in space)
     fire_pressed: 0, fire_held: 0,
     weapon: '',                       // '' or weapon key to select
     rotate: 0, rotate_mouse: 0, fine: 0,
     // align_id = worm id + 1 (top map click)
     align_step: 0, align_crate: 0, align_refocus: 0, align_id: 0, end_turn: 0, reset: 0, inspect: 0,
-    // P2 (PoC arsenal): fuse 1-5 (0 = unchanged); tgt = 1 sets the target point (ts, ty) in plane coords (target
+    // (the PoC arsenal) fuse 1-5 (0 = unchanged); tgt = 1 sets the target point (ts, ty) in plane coords (target
     // weapons fire on it when fire_pressed comes with it; homing keeps it); sdir -1 / 1 strike side; gang +-1 girder
     // angle step; drop = drop the selected weapon from the rope
     fuse: 0, tgt: 0, ts: 0, ty: 0, sdir: 0, gang: 0, gturn: 0, drop: 0,
     wsel: 0,                          // PoC worm select: switch to the team's next worm (option, first 10 s)
     aimset: 0, aimv: 0, face: 0,      // PoC mouse aim: set the aim angle (rad) and facing (-1 / 1) from the cursor
-    gear: 0,                          // P89: toggle the active team's rescue gear kind + 1 (sim/gear.js: 1 = life jacket)
-    // P37: + / - step (+1 / -1) of the selected weapon's parameter: fuse 0.5-5 s, mortar burst height 1-5 m, planted
+    gear: 0,                          // toggle the active team's rescue gear kind + 1 (sim/gear.js: 1 = life jacket)
+    // + / - step (+1 / -1) of the selected weapon's parameter: fuse 0.5-5 s, mortar burst height 1-5 m, planted
     // mine fuse 0-3 s
     adj: 0,
-    // P49 debug toolbox (sim/debug.js; obeyed only while S.debugOn, never online): dbk = drop kind (DB.KIND, 0 none),
+    // the debug toolbox (sim/debug.js; obeyed only while S.debugOn, never online): dbk = drop kind (DB.KIND, 0 none),
     // dbp0 / dbp1 = its parameters, (dbs, dby) = the clicked point on the section, dbsky = 1 drop from the sky
     dbk: 0, dbp0: 0, dbp1: 0, dbs: 0, dby: 0, dbsky: 0
   });
 
   /* 9b: a hash of the game state for the lockstep desync check (cheap: worms, bodies, time, turn, RNG, world
    * version) */
-  /* instant replay support (P22a): a full copy of the deterministic state (S + the voxel world's arrays) and its
+  /* instant replay support: a full copy of the deterministic state (S + the voxel world's arrays) and its
    * restore; the platform re-runs the recorded inputs from it. W.version is kept MONOTONIC across a restore (the
    * renderers rebuild what a version bump marks: restore marks the whole lattice) and S.verBase follows it, so hashes
    * (which use version - verBase) match. ~20 MB per snapshot (d f32 + mat + heat + tops). */
@@ -86,18 +86,17 @@
     const w = W, c = structuredClone(snap.S);   // R7-OK
     for (const k of Object.keys(S)) if (!(k in c)) delete S[k];   // R7-OK
     Object.assign(S, c);
-    if (snap.sx && snap.sx !== w.SX) w.resize(snap.sx, snap.sx);                  // P38: a snapshot of a map of another size
+    if (snap.sx && snap.sx !== w.SX) w.resize(snap.sx, snap.sx);                  // a snapshot of a map of another size
     w.d.set(snap.d);
     w.mat.set(snap.mat);
     w.heat.set(snap.heat);
     w.top.set(snap.top);
     w.topJ.set(snap.topJ);
-    w.SEA = snap.sea;
-    // P66b   // (sudden death raises the sea)
+    w.SEA = snap.sea;                                                 // (sudden death raises the sea)
     w.crack = snap.crack ? snap.crack.slice() : null;
     if (SS.cracks) SS.cracks.bump(w);
     // quiet: the renderers rebuild everything, the sim modules get their own pending rects back (a whole-lattice
-    // refresh re-derived every water column and the replay's water / floes drifted off the live run: review P36)
+    // refresh would re-derive every water column, and the replay's water / floes would drift off the live run)
     w.mark_all(true); S.verBase = (S.verBase || 0) + (w.version - snap.ver);   // hash: version - verBase unchanged
     for (const m of DIRTY_MODS)
       if (SS[m] && SS[m].dirty_set) SS[m].dirty_set(snap.dirty ? snap.dirty[m] : null);
@@ -118,9 +117,33 @@
     HH = Math.imul(HH ^ q, 16777619) >>> 0;
   };
 
+  // a string's hash (the phase, the weapon, string settings)
+  function str(v) {
+    v = String(v);
+    let t = 7;
+    for (let i = 0; i < v.length; i++) t = Math.imul(t ^ v.charCodeAt(i), 16777619);
+    return t >>> 0;
+  }
+  function sum(a) {
+    let t = 0;
+    for (let i = 0; i < a.length; i++) t += a[i];
+    return t;
+  }
+  /* sim.hash: the whole game state in one fixed order, section by section (each section below keeps its mix order; a
+   * module's own state is mixed by its hash(S, mix), some only once their feature acted, so the hashes of games without
+   * it stay what they were) */
   ST.hash = function (S) {
     HH = 2166136261;
-    // version counts across resets: relative
+    hash_core(S);
+    hash_weapons(S);
+    hash_modules(S);
+    hash_fluids(S);
+    hash_turn(S);
+    hash_world();
+    return HH;
+  };
+  // time, turn, RNG, world version (relative: it counts across resets), section angle; worms, bodies, shells
+  function hash_core(S) {
     mix(S.time);
     mix(S.turnNo || 0);
     mix(S.rng ? S.rng.s : 0);
@@ -141,8 +164,9 @@
       mix(p.s);
       mix(p.y);
     }
-    // P38 R1: the weapons.js lists too (a desync in a device, a hole, a plane, a bullet, a zap, a crate, a moai or a
-    // fragment showed late)
+  }
+  // the weapon lists: devices, holes, strikes, bullets, zaps, moais, crates, fragments and the weapons-A state
+  function hash_weapons(S) {
     if (S.devices)
       for (const d of S.devices) {
         mix(d.pos.x);
@@ -198,7 +222,7 @@
         mix(q.z);
       }
     }
-    if (S.wa) {                                                       // P37-W3: weapons A
+    if (S.wa) {
       const wa = S.wa;
       mix(wa.rng.s % 100003);
       mix(wa.stream ? wa.stream.t : -1);
@@ -231,24 +255,24 @@
         mix(w.stickT || 0);
       }
     }
-    if (SS.gadgets && S.dogs) SS.gadgets.hash(S, mix);                         // P37 W4: dogs, sentries, claymores, ...
+  }
+  // the modules with their own state: gadgets, force fields, weather (wind, whirlwinds, respawns), skills, the End of
+  // the World (jetpacks, drifting crates), the Lab (only with a Lab flag on)
+  function hash_modules(S) {
+    if (SS.gadgets && S.dogs) SS.gadgets.hash(S, mix);
     if (SS.ffield && S.ffields) SS.ffield.hash(S, mix);
-    if (SS.weather && S.weather && SS.weather.hash) SS.weather.hash(S, mix);   // P65a: wind, whirlwind life cycle, respawn queue
+    if (SS.weather && S.weather && SS.weather.hash) SS.weather.hash(S, mix);
     if (SS.skills && S.skRng) SS.skills.hash(S, mix);
-    // P86: jetpack charges / switches, free crates' drift (End of the World only)
     if (S.eow) SS.eow.hash(S, mix);
-    if (SS.lab && S.lab) SS.lab.hash(S, mix);                                  // P42: only with a Lab flag on (baseline hashes unchanged)
-    // (review P36: the fluid / ice state too, so a divergence there shows before it moves a worm; a sum per field,
-    // every HASH_EVERY steps in a match: ~40k cells each)
+    if (SS.lab && S.lab) SS.lab.hash(S, mix);
+  }
+  // the fluids and the ice, so a divergence there shows before it moves a worm (a sum per field: ~40k cells each), and
+  // the alien life (eggs, face huggers, the parasite, aliens, acid)
+  function hash_fluids(S) {
     for (const w of S.worms) {
       mix(w.swim ? 1 : 0);
       mix(w.iceV || 0);
     }
-    const sum = a => {
-      let t = 0;
-      for (let i = 0; i < a.length; i++) t += a[i];
-      return t;
-    };
     if (S.water) {
       mix(sum(S.water.h));
       mix(S.water.pend.length);
@@ -267,16 +291,11 @@
       mix(sum(S.lava.h));
       mix(sum(S.lava.T));
     }
-    if (S.alien && SS.alien) SS.alien.hash(S, mix);              // P37 / P47: eggs, face huggers, the parasite, aliens, acid
-    /* P38 D6 (coverage found by the round-4 review, silent.cjs): the turn machine and the weapon state, per-team ammo,
-     * worm motion / facing / base HP, the sim-relevant settings, and strided sums of the voxel arrays themselves
-     * (before: only the version counter, so a different crater with the same number of edits passed). */
-    const str = v => {
-      v = String(v);
-      let t = 7;
-      for (let i = 0; i < v.length; i++) t = Math.imul(t ^ v.charCodeAt(i), 16777619);
-      return t >>> 0;
-    };
+    if (S.alien && SS.alien) SS.alien.hash(S, mix);
+  }
+  // the turn machine and the weapon state, the rescue gear (once used), per-team ammo, worm motion / facing / base HP,
+  // the hashed settings, the crate levels (away from the default only), fort mode and the 2D dimension (only when on)
+  function hash_turn(S) {
     HH = Math.imul(HH ^ str(S.phase), 16777619) >>> 0; HH = Math.imul(HH ^ str(S.weapon), 16777619) >>> 0;
     mix(S.round || 0);
     mix(S.sdRound || 0);
@@ -289,7 +308,6 @@
     mix(S.shots || 0);
     mix(S.fuse || 0);
     mix(S.active ? S.active.id : -1);
-    // P89: rescue gear (only once a charge was used / a toggle changed: baseline hashes unchanged)
     if (SS.gear) SS.gear.hash(S, mix);
     if (S.teams)
       for (const t of S.teams)
@@ -314,7 +332,6 @@
         const v = S.settings[k];
         mix(typeof v === 'number' ? v : typeof v === 'boolean' ? (v ? 1 : 0) : typeof v === 'string' ? str(v) % 1000003 : -1);
       }
-    // P84: crate levels (at the default: the hashes stay what they were)
     if (S.settings)
       for (const k of C.CRATES.SLIDERS) {
         const v = S.settings[k];
@@ -323,37 +340,36 @@
           mix(v);
         }
       }
-    if (S.settings && S.settings.fort) mix(2003);                          // P68b: fort mode (off: the hashes stay what they were)
-    // P68a: the dimension, only while it is 2D (3D hashes stay what they were)
+    if (S.settings && S.settings.fort) mix(2003);
     if (S.settings && S.settings.dim === '2d') mix(2002);
-    {
-      const wd = W, d = wd.d, mt = wd.mat;
-      let t = 0, u = 0;
-      for (let i = 0; i < d.length; i += 97) t += d[i];
-      for (let i = 3; i < mt.length; i += 101) u += mt[i];
-      mix(t);
-      mix(u);
-      mix(wd.SEA);
-      mix(wd.SX);
-    }
-    return HH;
-  };
+  }
+  // strided sums of the voxel arrays themselves (the version counter alone let a different crater with the same number
+  // of edits pass), the sea level and the map size
+  function hash_world() {
+    const d = W.d, mt = W.mat;
+    let t = 0, u = 0;
+    for (let i = 0; i < d.length; i += 97) t += d[i];
+    for (let i = 3; i < mt.length; i += 101) u += mt[i];
+    mix(t);
+    mix(u);
+    mix(W.SEA);
+    mix(W.SX);
+  }
   /* the settings keys the guests receive (main.js 'start' whitelist + the menu's rule / density keys) and the sim
    * reads */
   // the hashed settings: the HASH rows of the settings schema, in their order (sim.hash mixes them in exactly this
   // order)
   const HASH_SETTINGS = C.setting_keys(C.SF.HASH);
 
-  /* The worm struct (P38 R7 / P3): EVERY field exists from the first step with its default (before, ~40 of them
-   * appeared lazily; a missing field
-   * read as undefined, which `||`, `== null` and `> 0` tests turned into 0 / false / null: the defaults below are
-   * exactly those values). C: struct Worm { i16 id, team; char name[24]; f32 hp, hp0; u8 dead, facing(i8); Grave
-   *   *grave; u8 cause; f32 dmgAcc, dmgT, hotT, fireT; i32 fireStep; f32 iceV; Swim *swim; Wet *ropeWet; Skills skills;
-   * vec3 pos, vel; f32 vs, vy, foot; u8 rest, air; ... } (the `grave`, `swim`, `ropeWet`, `rope`, `batHit`, `hitDir`
-   * `pinProbe` pointers are inline structs there with a `used` flag). Times are S.time stamps: 0 = never for the ones
-   * only tested `> S.time`; null = never for the ones the view tests with `!= null` (squash, flipAt, flipRope, coughAt,
-   * acidT, mgKill); -1e9 for burnT (the view computes `S.time - burnT < 0.3`: a 0 would read as "burning" in the first
-   * second). */
+  /* The worm struct: EVERY field exists from the first step with its default (the defaults below are exactly the
+   * values the `||`, `== null` and `> 0` tests give a missing field: 0 / false / null). C: struct Worm { i16 id, team;
+   *   char name[24]; f32 hp, hp0; u8 dead, facing(i8); Grave *grave; u8 cause; f32 dmgAcc, dmgT, hotT, fireT; i32
+   * fireStep; f32 iceV; Swim *swim; Wet *ropeWet; Skills skills; vec3 pos, vel; f32 vs, vy, foot; u8 rest, air; ... }
+   * (the `grave`, `swim`, `ropeWet`, `rope`, `batHit`, `hitDir` `pinProbe` pointers are inline structs there with a
+   * `used` flag). Times are S.time stamps: 0 = never for the ones only tested `> S.time`; null = never for the ones the
+   * view tests with `!= null` (squash, flipAt, flipRope, coughAt, acidT, mgKill); -1e9 for burnT (the view computes
+   * `S.time - burnT < 0.3`: a 0 would read as "burning" in the first second), washT and waveT (S.time - t against a
+   * cool-down). */
   ST.worm_make = function (id, team, name, hp, spot) {
     return {
       id, team, name, hp, hp0: hp, dead: false, facing: 1, grave: null, cause: 0, dmgAcc: 0, dmgT: 0, hotT: -9, fireT: -9, fireStep: -1,
@@ -363,7 +379,8 @@
       // movement / traversal (sim.js controlActive, traverse.js)
       windUp: 0, windFace: 0, walking: false, slide: false, hop: false, hopAt: 0, flip: false, flipAt: null, flipK: 0, flipW: 0,
       flipRope: null, squash: null, springFall: false, landDmg: 0,
-      stillT: 0, pinT: 0, dizzyUntil: 0, shoveT: 0, bodyHitT: 0, washT: 0, lsink: 0, pinProbe: null, rope: null, aimMem: null,
+      stillT: 0, pinT: 0, dizzyUntil: 0, shoveT: 0, bodyHitT: 0, washT: -1e9, waveT: -1e9, wdx: 0, wdz: 0, lsink: 0, pinProbe: null,
+      rope: null, aimMem: null,
       reserve: false,
       // life cycle / damage (sim.js hurt, kill, drown)
       dying: false, drowning: 0, swimOuts: 0, gravePending: false, hitDir: null, burnT: -1e9, mgKill: null, batHit: null,
@@ -373,17 +390,27 @@
     };
   };
 
+  /* a new match on the generated world: the per-game fields, the modules' state, the worms, everything that stands on
+   * the map, then the first turn (or the placement) */
   function initState(S) {
     const st = S.settings;
     M.rng_seed(S.rng, (C.LAYOUT_SEED + Math.imul(st.seed | 0, 7919)) >>> 0);
-    // Every per-game field, once, with its default (a rematch must equal a fresh start: lockstep peers and replays
-    // compare them). Modules add their own state in their init (weapons, game, weather, water, veg, lava, ice).
+    reset_fields(S);
+    init_modules(S);
+    const taken = [], fortOn = !!SS.fort && SS.fort.is();
+    spawn_worms(S, taken, fortOn);
+    populate_world(S, taken, fortOn);
+    start_match(S);
+  }
+  /* Every per-game field, once, with its default (a rematch must equal a fresh start: lockstep peers and replays
+   * compare them). Modules add their own state in their init (weapons, game, weather, water, veg, lava, ice). */
+  function reset_fields(S) {
     Object.assign(S, {
       // lists and id counters
       worms: [], bodies: [], trees: [], proj: [], pending: [], planeBodies: [], flames: [], fx: [], frags: [], spat: [], log: [],
       bunkers: [],
       bodyId: 0, nextBodyId: 1, fragId: 0, spatId: 0, structId: 0, projN: 0, crateId: 0,
-      // (P38 R1: a rematch starts from the same CPU memory / log throttle as a fresh game)
+      // (a rematch starts from the same CPU memory and log throttle as a fresh game)
       fragRng: null, spatRng: null, spatAcc: 0, spatTick: 0, aiPlan: null, aiRng: null, aiMem: null, _treeLogT: null,
       // clock, phase, section
       tick: 0, time: 0, phase: PHASE.PLAY, theta: 0, O: { x: W.MX, z: W.MZ }, thetaGoal: null, sectionDirty: true, lastRotate: -99,
@@ -392,9 +419,8 @@
       acted: false,
       retreatT: 0, attackStart: 0, resolveT: 0, quietT: 0, resolveBack: 0, shots: 0, over: null,
       weapon: 'grenade', aim: 0.45, power: 0, charging: false, rope: null, hook: null, ropeHopT: -9, mouseRot: 0,
-      // P37 W2 / P38 R7: the traverse state (SS.traverse; structs in its header), all present from the reset:
-      // S.ropeMem, S.chute, S.zip
-      crateSel: -1,                                                // (P38 R9: the Shift+TAB crate cursor, rotlock.js: -1 = none)
+      // the traverse state (SS.traverse; structs in its header): rope memory, parachute, zipline
+      crateSel: -1,                                                // (the Shift+TAB crate cursor, rotlock.js: -1 = none)
       ropeMem: { aim: 0, chain: 0, relT: -9 }, chute: { open: 0, wid: -1, t: 0, sway: 0, steer: 0 },
       zip: { state: 0, wid: -1, as: 0, ay: 0, bs: 0, by: 0, len: 0, t: 0, v: 0, age: 0, bolt: null },
 
@@ -406,29 +432,34 @@
     });
     S.events.length = 0;
     S.biome = W.biome;
-    if (SS.eow) SS.eow.init(S);                                    // P68c: the End of the World biome (S.eow = null elsewhere)
-    // P38 R7: every RNG stream is created here (S.rng above; weapons.init: armRng, ...)
+  }
+  // the modules' state, in this order (every RNG stream is created here: S.rng above, the modules' own streams in
+  // their init)
+  function init_modules(S) {
+    if (SS.eow) SS.eow.init(S);                                    // the End of the World biome (S.eow = null elsewhere)
     if (SS.shrapnel) SS.shrapnel.init(S);
     if (SS.spatter) SS.spatter.init(S);
     if (SS.ai) SS.ai.init(S);
-    if (SS.weapons) SS.weapons.init(S);                           // P2: holes, strikes, devices, crates, fuse ...
-    if (SS.lab) SS.lab.init(S);                                   // P42: the Lab's state + RNG stream (settings.labFlags)
-    if (SS.cracks) SS.cracks.init(S);                             // P66b: the damage field (only with the CRACKS flag)
-    SS.game.setup(S);                                              // P1: teams, rounds, sudden death (before subsystems / spawns)
+    if (SS.weapons) SS.weapons.init(S);                           // holes, strikes, devices, crates, fuse ...
+    if (SS.lab) SS.lab.init(S);                                   // the Lab's state + RNG stream (settings.labFlags)
+    if (SS.cracks) SS.cracks.init(S);                             // the damage field (only with the CRACKS flag)
+    SS.game.setup(S);                                              // teams, rounds, sudden death (before subsystems / spawns)
     if (SS.weather) SS.weather.init(S);
     if (SS.water) SS.water.init(S);
     if (SS.veg) SS.veg.init(S);
     if (SS.lava) SS.lava.init(S);
-    if (SS.veg && SS.lava && SS.veg.clear_hot) SS.veg.clear_hot(S);   // P102: no grass on / near lava or vents
-    if (SS.ice) SS.ice.init(S);                                   // Step I: sea / pool ice (after the water)
+    if (SS.veg && SS.lava && SS.veg.clear_hot) SS.veg.clear_hot(S);   // no grass on / near lava or vents
+    if (SS.ice) SS.ice.init(S);                                   // sea / pool ice (after the water)
     sim.emit(S, EV.RESET, {});
-    const taken = [], nT = S.teams.length, nW = nT * M.clamp(S.settings.worms | 0 || 3, 1, 4), names = SS.game.names(S, nW);
-    const hp0 = M.clamp(S.settings.hp | 0 || 100, 1, 999), sep = nW > 8 ? 11 : 15, fortOn = !!SS.fort && SS.fort.is();
-    // P116: nobody spawns on a hut's pad (the village stays clear; props / palms keep out of the huts too)
+  }
+  // the worms, interleaved round-robin across the teams (PoC populate); in fort mode a team's first worm sits in its
+  // bunker and the rest stand on the team's fort; nobody spawns on a beach hut's pad
+  function spawn_worms(S, taken, fortOn) {
+    const nT = S.teams.length, nW = nT * M.clamp(S.settings.worms | 0 || 3, 1, 4), names = SS.game.names(S, nW);
+    const hp0 = M.clamp(S.settings.hp | 0 || 100, 1, 999), sep = nW > 8 ? 11 : 15;
     if (S.biome === 'beach' && !W.under && W.features && W.features.beach && W.features.beach.huts)
       for (const h of W.features.beach.huts) taken.push({ x: h.x, y: h.y, z: h.z });
-    for (let i = 0; i < nW; i++) {                                   // interleaved round-robin across the teams (PoC populate)
-      // P68b: fort mode: worm t (the team's first) sits in its bunker, the rest on the team's fort
+    for (let i = 0; i < nW; i++) {
       const team = i % nT, fo = fortOn ? { team } : undefined;
       const spot = fortOn && i < nT
         ? SS.fort.seat(team)
@@ -439,37 +470,37 @@
       taken.push(spot);
       S.worms.push(ST.worm_make(i, team, names[i], hp0, spot));
     }
-    // P68a: the 2D slab: derelict ship / alien nest stay 3D (P72: bridges, bunkers, ruins stamp their cross section)
+  }
+  /* everything that stands on the map, in this order: the End of the World's suits, the forts (instead of the structure
+   * stamps), buried rooms, then steel bridges, concrete bunkers, the derelict ship, the volcanic ruins and the alien
+   * eggs (before props and trees: those avoid them; on the 2D slab the ship stays out and the others stamp their cross
+   * section, whose floating pieces are removed), worms freed from the stamps, the spawn audit, props, room furniture,
+   * trees (none underground), and the vegetation settled on the final ground */
+  function populate_world(S, taken, fortOn) {
     const flat = W.flat;
-    // P68c: the worms' suit state (no bridges, bunkers, ruins, aliens, trees in space)
     if (S.eow) SS.eow.spawned(S);
-    // P68b: the forts' bunkers (+ the bunker worms), instead of the structure stamps below
     if (fortOn) SS.fort.populate(S, taken);
-    // PoC buried rooms (option)
     if (S.settings.rooms && !W.under && !flat) SS.game.rooms(S);
     else S.rooms = [];
     if (!S.eow) {
-      // M: steel bridges (before props / trees: they avoid the abutments; P72: 2D: one truss on the plane)
       if (SS.struct && !fortOn) SS.struct.populate(S, taken);
-      if (SS.bunker && !fortOn) SS.bunker.populate(S, taken);                  // P29d: concrete bunkers (before props / trees too)
-      // P37: the crashed derelict alien ship (voxel stamp)
+      if (SS.bunker && !fortOn) SS.bunker.populate(S, taken);
       if (SS.derelict && !flat && !fortOn) SS.derelict.populate(S, taken);
-      // P37: volcanic ruined town + rocks (voxel stamps, before the props)
       if (SS.ruins && !fortOn) SS.ruins.populate(S, taken);
-      if (SS.alien) SS.alien.populate(S, taken);                    // P37: face-hugger eggs (after the ship: the nest)
-      // P72: 2D stamps (wall fragments, rubble, a cut footing) that hold on nothing are removed, nothing floats
+      if (SS.alien) SS.alien.populate(S, taken);
       if (flat && SS.collapse && SS.collapse.remove_floating_all(W) > 0) W.mark_all();
-      // P38 R1: lift a worm the hull / rubble stamps entombed (before the props use taken)
       SP.unbury_worms(S, taken);
-      SP.spawn_audit(S, taken);                                           // P95: no worm starts on sand / lava / water that hurts at once
-    } else if (SS.alien) SS.alien.populate(S, taken);                 // (P68c: in space only the alien state is made)
+      SP.spawn_audit(S, taken);                                           // no worm starts on sand / lava / water that hurts at once
+    } else if (SS.alien) SS.alien.populate(S, taken);                 // (in space only the alien state is made)
     if (SS.scatter) SS.scatter.populate(S, taken);
     SS.game.furnish_rooms(S);
-    if (SS.trees && !W.under && !S.eow) SS.trees.populate(S, taken);           // U: no trees (no light) underground
-    // the stamps are done: no cover on a concrete roof, steel, glass or ground they moved (the first frame shows the
-    // final ground)
+    if (SS.trees && !W.under && !S.eow) SS.trees.populate(S, taken);
     if (SS.veg && SS.veg.settle) SS.veg.settle(S);
-    if (S.settings.placement === 'user') SS.game.begin_placement(S);  // P13: the players place their worms first
+  }
+  // the first turn (or the players place their worms first), the hash's version base, the 2D pinning, the intro line
+  function start_match(S) {
+    const flat = W.flat;
+    if (S.settings.placement === 'user') SS.game.begin_placement(S);
     else TN.next_turn(S, true);
     S.verBase = W.version;
     if (flat) SS.dim2d.constrain(S);
@@ -486,7 +517,7 @@
       );
   }
   ST.init_state = initState;
-  /* Input sanitising (P38 D2): a hostile peer must not be able to freeze or poison the sim with one packet (move 1e9
+  /* Input sanitising: a hostile peer must not be able to freeze or poison the sim with one packet (move 1e9
    * made
    * ~1e9 sub-steps, ts 1e300 looped forever). Every numeric field is forced into its legal range (NaN / Infinity -> 0);
    * the weapon key must be an arsenal key. Table = { field, lo, hi, int }: in a port, clamp the fields of the Input

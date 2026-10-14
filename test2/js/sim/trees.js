@@ -24,13 +24,21 @@
  * burning neighbours; a tree ignites at IGNITE + IGNITE_GREEN (1 - dry); burning consumes leaves (LEAF_BURN_T) and
  * chars the wood (BURN_T), drops embers on the grass under the crown, lights props and neighbours, burns worms near the
  * trunk or inside the crown; water at the root puts it out. Burnt trees (char 1) stay as charred snags.
+ * A burst right at the wood (a cut) shatters SHATTER_K x the cut radius of it either side of the burst into splinters
+ * ('treesplinter'): the lower part stays as a jagged stump (cut_at: a new segment, cut 1), the part above falls, torn
+ * into one log per segment. A minigun round that meets the wood chips CHIP_A m2 out of its section at the hit (a
+ * notch: chip, chipU) and strips LEAF_CHIP per m of its path through the leaves; once the notch has eaten CHIP_CUT of
+ * the section the wood above it falls (TR.chip). Napalm (TR.napalm) sets the wood and leaves it touches on fire at once
+ * and burns NAPALM_BURN times as fast; as a tree chars, its twigs (thinner than TWIG_R) burn away at CHAR_TWIG and its
+ * limbs burn down to stubs (STUB_K of their length) at CHAR_LIMB: a black spike of a trunk is left. S.treeVer counts
+ * the changes of the wood's shape (the render rebuilds the trees on it).
  * Plane: standing trunk / branch segments crossing slice zero are solid capsules on the gameplay plane.
  *
- * C layout: struct Seg { i32 p; vec3 a, b; f32 r0, r1; u8 kind, on; };
+ * C layout: struct Seg { i32 p; vec3 a, b; f32 r0, r1; u8 kind, on, cut; f32 chip, chipU; };
  *   struct Leaf { vec3 c; f32 r, f; i32 s; };
  *   struct Tree { i32 id; u8 sp, alive; vec3 root; f32 h, crown, dry, burn, heat, thr, char; Seg seg[]; Leaf leaf[]; };
- * API: populate(S, taken), blast(S, c, W), heat_burst(S, c, r), tick(S, dt), fire_at(S, x, y, z), on_edit(S, box),
- *   plane_sections(S), strike(S, t) (lightning hook), stats(S).
+ * API: populate(S, taken), blast(S, c, W), heat_burst(S, c, r), napalm(S, c, r), chip(S, t, i, p), wood_hit(S, x, y,
+ *   z), tick(S, dt), fire_at(S, x, y, z), on_edit(S, box), plane_sections(S), strike(S, t) (lightning hook), stats(S).
  */
 (function (SS) {
   'use strict';
@@ -49,7 +57,7 @@
 
   /* ---------- growth ---------- */
   function seg(t, p, a, b, r0, r1, kind) {
-    t.seg.push({ p, a, b, r0, r1, kind, on: 1 });
+    t.seg.push({ p, a, b, r0, r1, kind, on: 1, cut: 0, chip: 0, chipU: 0 });
     return t.seg.length - 1;
   }
   function leaf(t, s, x, y, z, r) { t.leaf.push({ x, y, z, r, f: 1, s }); }
@@ -323,6 +331,125 @@
     SS.sim.emit(S, EV.TREEBREAK, { tree: t.id, seg: s, body: b.id, why, x: com.x, y: com.y, z: com.z, mass });
     return b;
   }
+  /* the subtree of segment s leaves the tree torn apart: one log per segment, twigs lighter than MIN_KG gone (a blast
+   * at the wood rips the crown up). Returns the number of logs */
+  function detach_apart(S, t, s, c, Wkg, why) {
+    const m = subtree(t, s);
+    let n = 0;
+    for (let i = t.seg.length - 1; i >= s; i--)
+      if (m[i] && t.seg[i].on && detach(S, t, i, c, Wkg, why)) n++;
+    return n;
+  }
+  /* cut segment i where its axis is nearest p: gap m of the wood either side are gone (splinters: 'treesplinter'), the
+   * lower part stays on the tree as a new segment (a jagged stump: cut 1), the upper part and everything above it fall
+   * (one log, or torn apart: detach_apart). The root stump (segment 0) is never cut here. Returns the logs that
+   * fell. */
+  function cut_at(S, t, i, p, gap, why, c, Wkg, apart) {
+    const g = t.seg[i];
+    if (i === 0 || !g.on) return 0;
+    const ax = g.b.x - g.a.x, ay = g.b.y - g.a.y, az = g.b.z - g.a.z, L = M.max(1e-3, M.len3(ax, ay, az));
+    const u = M.sat(((p.x - g.a.x) * ax + (p.y - g.a.y) * ay + (p.z - g.a.z) * az) / (L * L)), u0 = u - gap / L, u1 = u + gap / L;
+    const at = f => v(g.a.x + ax * f, g.a.y + ay * f, g.a.z + az * f), rad = f => g.r0 + (g.r1 - g.r0) * f, pc = at(u);
+    SS.sim.emit(S, EV.TREESPLINTER, { tree: t.id, x: pc.x, y: pc.y, z: pc.z, r: rad(u), len: L * (M.min(1, u1) - M.max(0, u0)), why });
+    S.treeVer = (S.treeVer | 0) + 1;
+    if (u0 > 0.02) {
+      const j = seg(t, g.p, g.a, at(u0), g.r0, rad(u0), g.kind);
+      t.seg[j].cut = 1;
+      // (spruce foliage tiers below the cut stay on the stump)
+      for (const l of t.leaf)
+        if (l.s === i && l.y < pc.y) l.s = j;
+    }
+    if (u1 >= 0.98) {
+      // the cut reaches the tip: the segment is gone, what grew from it falls
+      g.on = 0;
+      for (const l of t.leaf)
+        if (l.s === i) {
+          l.f = 0;
+          l.s = -1;
+        }
+      let n = 0;
+      for (let k = t.seg.length - 1; k > i; k--)
+        if (t.seg[k].on && t.seg[k].p === i) n += apart ? detach_apart(S, t, k, c, Wkg, why) : detach(S, t, k, c, Wkg, why) ? 1 : 0;
+      return n;
+    }
+    g.a = at(u1);
+    g.r0 = rad(u1);
+    g.chip = 0;
+    return apart ? detach_apart(S, t, i, c, Wkg, why) : detach(S, t, i, c, Wkg, why) ? 1 : 0;
+  }
+  /* the wood of a standing tree at the point (x, y, z): { t, i } of the first segment (thicker than SOLID_R) whose
+   * cylinder holds it (no end caps: a cut leaves a flat stump top), else null. list: the trees to look at (default
+   * all) */
+  const woodHit = { t: null, i: -1 };
+  TR.wood_hit = function (S, x, y, z, list) {
+    const L = list || S.trees;
+    if (!L) return null;
+    for (const t of L) {
+      if (!t.alive || M.len2(t.x - x, t.z - z) > t.crown + 0.5 || y < t.y - 0.5 || y > t.top + 0.5) continue;
+      for (let i = 0; i < t.seg.length; i++) {
+        const g = t.seg[i];
+        if (!g.on || g.r0 < K.SOLID_R) continue;
+        const ax = g.b.x - g.a.x, ay = g.b.y - g.a.y, az = g.b.z - g.a.z;
+        const u = ((x - g.a.x) * ax + (y - g.a.y) * ay + (z - g.a.z) * az) / (ax * ax + ay * ay + az * az || 1);
+        if (u >= 0 && u <= 1 && M.len3(x - g.a.x - ax * u, y - g.a.y - ay * u, z - g.a.z - az * u) < g.r0 + (g.r1 - g.r0) * u) {
+          woodHit.t = t;
+          woodHit.i = i;
+          return woodHit;
+        }
+      }
+    }
+    return null;
+  };
+  /* the standing trees whose crown reaches the line from o along the unit dir for len m (horizontal distance), into out
+   * (cleared); returns out */
+  TR.near_line = function (S, o, dir, len, out) {
+    out.length = 0;
+    if (!S.trees) return out;
+    const hl = M.len2(dir.x, dir.z);
+    for (const t of S.trees) {
+      if (!t.alive) continue;
+      const dx = t.x - o.x, dz = t.z - o.z;
+      // (a near vertical round: the trees round its foot)
+      if (hl < 1e-3) {
+        if (M.len2(dx, dz) < t.crown + 0.5) out.push(t);
+        continue;
+      }
+      const along = M.clamp((dx * dir.x + dz * dir.z) / hl, 0, len * hl);
+      if (M.len2(dx - dir.x / hl * along, dz - dir.z / hl * along) < t.crown + 0.5) out.push(t);
+    }
+    return out;
+  };
+  /* leaves of the trees in list at (x, y, z) lose k of their cluster (a round's path through it); returns the leaf
+   * area stripped */
+  TR.shred = function (list, x, y, z, k) {
+    let a = 0;
+    for (const t of list)
+      for (const l of t.leaf)
+        if (l.s >= 0 && l.f > 0 && M.len3(x - l.x, y - l.y, z - l.z) < l.r) {
+          const f0 = l.f;
+          l.f = M.max(0, l.f - k);
+          a += (f0 - l.f) * l.r * l.r;
+        }
+    return a;
+  };
+  /* a minigun round hits segment i of tree t at p: CHIP_A m2 of the section chipped out (the notch's area chip, its
+   * place chipU along the segment: the mean of the hits); a notch that has eaten CHIP_CUT of the section fells the
+   * wood above it (a thin cut, one log). Returns true when the wood fell */
+  TR.chip = function (S, t, i, p) {
+    const g = t.seg[i], ax = g.b.x - g.a.x, ay = g.b.y - g.a.y, az = g.b.z - g.a.z;
+    const u = M.sat(((p.x - g.a.x) * ax + (p.y - g.a.y) * ay + (p.z - g.a.z) * az) / (ax * ax + ay * ay + az * az || 1));
+    g.chipU = g.chip > 0 ? (g.chipU * g.chip + u * K.CHIP_A) / (g.chip + K.CHIP_A) : u;
+    g.chip += K.CHIP_A;
+    const r = g.r0 + (g.r1 - g.r0) * g.chipU, eaten = g.chip / (Math.PI * r * r);
+    SS.sim.emit(S, EV.TREECHIP, { tree: t.id, seg: i, x: p.x, y: p.y, z: p.z, eaten: M.min(1, eaten / K.CHIP_CUT) });
+    if (eaten < K.CHIP_CUT) return false;
+    if (i === 0) {
+      detach(S, t, 0, null, 0, 'chip');
+      return true;
+    }
+    cut_at(S, t, i, v(g.a.x + ax * g.chipU, g.a.y + ay * g.chipU, g.a.z + az * g.chipU), 0.04, 'chip', null, 0, false);
+    return true;
+  };
   /* T1: the root system holds the tree. Roots spread over a plate of radius ROOT_R_K x crown (>= ROOT_R_MIN) and
    * ROOT_D deep; the tree falls when less than ROOT_HOLD of that plate still has ground (probes: centre +
    * 3 rings x 8 azimuths x 2 depths + the tap root TAP_D deep). Thick roots are far stronger than soil: a crater beside
@@ -526,10 +653,15 @@
         broke.push(1);
         cutS[1] = 1;
       }
+      // a burst at the wood shatters it there and tears the rest of what falls apart
+      const torn = broke.some(i => cutS[i]), gap = K.SHATTER_K * cut;
       for (const i of broke) {
         const g = t.seg[i];
         g.brk = 0;
-        if (g.on) detach(S, t, i, c, Wkg, cutS[i] ? 'cut' : 'snap');
+        if (!g.on) continue;
+        if (cutS[i] && i > 0) cut_at(S, t, i, c, gap, 'cut', c, Wkg, true);
+        else if (torn) detach_apart(S, t, i, c, Wkg, cutS[i] ? 'cut' : 'snap');
+        else detach(S, t, i, c, Wkg, cutS[i] ? 'cut' : 'snap');
       }
       if (direct) {                                         // stump + roots shattered: nothing stays in the crater
         const g = t.seg[0];
@@ -587,6 +719,23 @@
       if (best > r) continue;
       t.heat += K.FIREBALL_HEAT * Math.sqrt(1 - M.max(0, best) / r);
       if (t.heat >= t.thr) ignite(S, t, 'fireball');
+    }
+  };
+  /* burning napalm (a drop that hit, a patch of it) within r of a tree's wood or leaves: the gel sticks and burns, the
+   * tree goes up at once whatever its moisture and burns NAPALM_BURN times as fast (t.napalm) */
+  TR.napalm = function (S, c, r) {
+    if (!S.trees) return;
+    for (const t of S.trees) {
+      if (!t.alive || t.char >= 1 || M.len2(t.x - c.x, t.z - c.z) > r + t.crown || c.y < t.y - r - 0.5 || c.y > t.top + r) continue;
+      let near = false;
+      for (const l of t.leaf)
+        if (l.f > 0.05 && dist3(c, l) - l.r < r) near = true;
+      for (const g of t.seg)
+        if (!near && g.on && segd(c, g.a, g.b) - g.r0 < r) near = true;
+      if (!near) continue;
+      t.napalm = 1;
+      t.heat = M.max(t.heat, t.thr);
+      ignite(S, t, 'napalm');
     }
   };
   /* P38-A4: acid. A pool / spot of radius r at (x, y, z) eats the trunk of a tree rooted in / beside it: the leaves
@@ -655,9 +804,13 @@
           continue;
         }
         t.burn += TK;
+        const nk = t.napalm ? K.NAPALM_BURN : 1;
         for (const l of t.leaf)
-          if (l.s >= 0 && l.f > 0) l.f = M.max(0, l.f - TK / K.LEAF_BURN_T);
-        t.char = M.min(1, t.char + TK / K.BURN_T);
+          if (l.s >= 0 && l.f > 0) l.f = M.max(0, l.f - TK * nk / K.LEAF_BURN_T);
+        const ch0 = t.char;
+        t.char = M.min(1, t.char + TK * nk / K.BURN_T);
+        if (ch0 < K.CHAR_TWIG && t.char >= K.CHAR_TWIG) burnAway(S, t, false);
+        if (ch0 < K.CHAR_LIMB && t.char >= K.CHAR_LIMB) burnAway(S, t, true);
         const I = TR.intensity(t);
         // embers on the grass under the crown, heat on neighbours, props in the flames
         if (st && (t.emb++ % 5) === 0) SS.veg.ignite_disc(S, t.x, t.y, t.z, M.min(2.5, t.crown * 0.7), 0.8);
@@ -694,6 +847,32 @@
     }
   };
   TR.intensity = t => (t.burn < 0 ? 0 : M.min(1, t.burn / 3) * (0.55 + 0.45 * (t.leaf0 > 0 ? M.min(1, leafLeft(t) / t.leaf0) : 0)));
+  /* a burning tree loses its thin wood: the twigs (branches thinner than TWIG_R) burn away, later (limbs) every branch
+   * burns down to a stub of STUB_K of its length with nothing on it: the black spike of a trunk with a few stubs
+   * is left */
+  function burnAway(S, t, limbs) {
+    for (let i = t.seg.length - 1; i > 0; i--) {
+      const g = t.seg[i];
+      if (!g.on || g.kind !== 2) continue;
+      if (!limbs && g.r0 >= K.TWIG_R) continue;
+      if (g.r0 < K.TWIG_R) {
+        g.on = 0;
+        continue;
+      }
+      g.b = v(g.a.x + (g.b.x - g.a.x) * K.STUB_K, g.a.y + (g.b.y - g.a.y) * K.STUB_K, g.a.z + (g.b.z - g.a.z) * K.STUB_K);
+      g.r1 = g.r0 + (g.r1 - g.r0) * K.STUB_K;
+      g.cut = 1;
+      for (let k = i + 1; k < t.seg.length; k++)
+        if (t.seg[k].p === i) t.seg[k].on = 0;
+    }
+    for (const l of t.leaf)
+      if (l.s > 0 && !t.seg[l.s].on) {
+        l.f = 0;
+        l.s = -1;
+      }
+    S.treeVer = (S.treeVer | 0) + 1;
+    SS.sim.emit(S, EV.TREEBURNOFF, { tree: t.id, x: t.x, y: t.y + t.h * 0.6, z: t.z, limbs: limbs ? 1 : 0 });
+  }
   /* flame intensity at a worm's centre: next to a burning trunk or inside a burning crown */
   TR.fire_at = function (S, x, y, z) {
     if (!S.trees) return 0;

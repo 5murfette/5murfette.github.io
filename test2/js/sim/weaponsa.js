@@ -330,13 +330,13 @@
    * terrain within RANGE. Worm: DMG HP + a small push + 'bloodhit' (+ 'gib' when it goes down: the worm is torn apart);
    * terrain: a CHIP-radius bite (soft ground more than rock), splash on worms near the impact, sparks / dust events.
    * opts = { range, dmg, name }. Returns { kind: 'worm' | 'terrain' | 'water' | 'none', x, y, z, worm } */
-  const hitOut = { kind: 'none', x: 0, y: 0, z: 0, worm: null };
+  const hitOut = { kind: 'none', x: 0, y: 0, z: 0, worm: null }, nearTrees = [];
   WA.minigun_round = function (S, o, dir, owner, opts) {
     const K = A.MINIGUN, w = W(), range = (opts && opts.range) || K.RANGE, dmg = (opts && opts.dmg) || K.DMG, STEP = 0.14;
     const wa = ens(S);
     hitOut.kind = 'none'; hitOut.worm = null;
-    let x = o.x, y = o.y, z = o.z, L = 0, px = x, py = y, pz = z;
-    const wr = C.WORM_R + 0.08;
+    let x = o.x, y = o.y, z = o.z, L = 0, px = x, py = y, pz = z, shred = 0;           // shred: leaf area stripped
+    const wr = C.WORM_R + 0.08, TR = SS.trees, trees = TR ? TR.near_line(S, o, dir, range, nearTrees) : nearTrees;
     while (L < range) {
       px = x; py = y; pz = z;
       x += dir.x * STEP;
@@ -379,6 +379,25 @@
           }
         }
         return hitOut;
+      }
+      // a tree: the round chips the wood it meets and stops there (trees.js chip: a notch that fells it); it shreds the
+      // leaves it passes through
+      if (trees.length) {
+        const wh = TR.wood_hit(S, x, y, z, trees);
+        if (wh) {
+          TR.chip(S, wh.t, wh.i, { x, y, z });
+          hitOut.kind = 'terrain';
+          hitOut.x = px;
+          hitOut.y = py;
+          hitOut.z = pz;
+          sim().emit(S, EV.MGIMPACT, { x: px, y: py, z: pz, nx: -dir.x, ny: -dir.y, nz: -dir.z, mat: 0 });
+          return hitOut;
+        }
+        shred += TR.shred(trees, x, y, z, C.TREES.LEAF_CHIP * STEP);
+        if (shred > 0.02) {
+          sim().emit(S, EV.LEAFSTRIP, { tree: 0, x, y, z, amount: shred });
+          shred = 0;
+        }
       }
       let bodyHit = false;
       for (const b of S.bodies) {
@@ -468,9 +487,14 @@
     const top = W().top_at(x, z);
     return top > -1e8 && Math.abs(top - y0) < 2.5 ? top : y0;
   };
-  // a burning gel patch (flamethrower): merged with a patch within MERGE m (it grows, keeps burning), else a new one
+  // a burning gel patch (flamethrower): merged with a patch within MERGE m (it grows, keeps burning), else a new one;
+  // the gel sets a tree it lands on on fire (at the hit and at the patch)
   function gelPatch(S, pos) {
     const K = A.FLAME, y = firePatchY(S, pos.x, pos.z, pos.y);
+    if (SS.trees) {
+      SS.trees.napalm(S, pos, K.R + A.NAPALM.TREE_R);
+      if (y !== pos.y) SS.trees.napalm(S, { x: pos.x, y, z: pos.z }, K.R + A.NAPALM.TREE_R);
+    }
     if (y < sim().surface_at(S, pos.x, pos.z) + 0.05) {
       sim().emit(S, EV.STEAM, { x: pos.x, y, z: pos.z, power: 0.25 });
       return;

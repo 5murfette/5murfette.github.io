@@ -1,4 +1,4 @@
-/* sim/lab.js — P42 "Lab": experimental game mechanics, each a flag of settings.labFlags (int bit mask, OFF = 0 by
+/* sim/lab.js — the "Lab": experimental game mechanics, each a flag of settings.labFlags (int bit mask, OFF = 0 by
  * default).
  * With every flag off nothing here changes a single number of the simulation (the hooks return neutral values, no RNG
  * draws, no hash input), so a match without the Lab equals the pre-Lab game bit for bit. The mask travels with the
@@ -18,7 +18,7 @@
  *             (blast W METEOR_W, within MET_R m of the section origin, never in water).
  *   CLOCK     overtime:   the turn clock shrinks 10 % per round (down to CLOCK_MIN s); only with a turn time set.
  *   MOON      low gravity: every 3rd round worms and props fall with MOON_K x gravity (shells are not affected).
- * Batch 2 (P50):
+ * Batch 2:
  *   PERKS     draft:      at the start of the match and of every 3rd round (rounds 1, 4, 7 ...) each living team in
  *             seat order is offered 3 of
  *             the 6 perks it does not own yet and keeps 1 for the rest of the match: RADIUS (+15 % blast radius of its
@@ -36,7 +36,7 @@
  *             make ITS next shot sway:
  *             a random aim error of up to +-0.1 rad (5.7 deg) x metres / 25, drawn at fire time from the Lab stream.
  *             Standing still = a fresh aim.
- *   CRACKS    terrain:    (P66b, rules in sim/cracks.js) blasts leave persistent 3D cracks (W.crack) that weaken the
+ *   CRACKS    terrain:    (rules in sim/cracks.js) blasts leave persistent 3D cracks (W.crack) that weaken the
  *             ground; after a blast the land around it
  *             is weighed (voxels, worms, bodies) against the bonds that still hold it, and a cut-off ledge or a block
  * on a thin neck falls. C layout: struct Lab { u32 rng; f32 gustT; i32 meteorN; Meteor met[LAB_METEORS]; u8 moon,
@@ -68,7 +68,7 @@
     draft: { on: false, first: false, n: 0, idx: 0, team: -1, order: [0, 0, 0, 0], opts: [0, 0, 0], nopt: 0, t: 0 } });
   LB.init = function (S) {
     S.lab = LB.lab_make(S); S.lab.gustT = F.GUST_T0;
-    if (SS.lab4) SS.lab4.init(S);                                       // P79: batch 4 state (own RNG stream)
+    if (SS.lab4) SS.lab4.init(S);                                       // batch 4 state (own RNG stream)
     for (let i = 0; i < C.LIMITS.WORMS; i++) {
       S.lab.moved.push(0);
       S.lab.tired.push(0);
@@ -145,7 +145,7 @@
   };
   LB.landing_dmg = function (S, w, dmg) {
     if (LB.has(S, w.team, F.PERK.PADDED)) dmg = M.max(1, Math.round(dmg * F.PADDED_K));
-    // P79 SLICK: mud soaks up a fall
+    // SLICK: mud soaks up a fall
     if (SS.lab4 && dmg > 0 && S.lab && S.lab.b4) {
       const k = SS.lab4.landing_k(S, w);
       if (k < 1) dmg = M.max(1, Math.round(dmg * k));
@@ -452,8 +452,8 @@
       mix(S.wind.speed);
       mix(S.wind.dir);
     }
-    if ((fl & F.FLAG.CRACKS) && SS.cracks) SS.cracks.hash(S, mix);                     // P66b: the damage field
-    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.hash(S, mix);                           // P79
+    if ((fl & F.FLAG.CRACKS) && SS.cracks) SS.cracks.hash(S, mix);                     // the damage field
+    if (SS.lab4 && (fl & SS.lab4.MASK)) SS.lab4.hash(S, mix);                           // batch 4
     if (fl & (F.FLAG.PERKS | F.FLAG.STREAK | F.FLAG.FATIGUE)) {
       for (let i = 0; i < 4; i++) {
         mix(L.perks[i]);

@@ -1,4 +1,4 @@
-/* sim/skills.js — P37 W4: tool deliveries (a third kind of supply crate) and the skills they grant.
+/* sim/skills.js — tool deliveries (a third kind of supply crate) and the skills they grant.
  * Every worm has w.skills = { freerot, laser, fastwalk, lowgrav, tinfoil } = turns left (tinfoil 1 = for the rest of
  * the game). W1 creates the field and reads freerot / fastwalk / lowgrav (sim.walk_speed, sim.gravity_k, the rotation
  * lock); this module grants, counts down, shows and uses the rest:
@@ -12,7 +12,7 @@
  *             (S.lightning is set around those strikes, sim.hurt applies the factor)                  for the game
  *   overload  not a skill: a rare delivery that drops 10 different crates around the whole map, in 3D
  * Tool crates: S.crates[] entries { kind: 'tool', tool }, dropped like weapon crates (WP.turn_start -> turn_start here)
- * P84: no longer a roll per turn: one plan per ROUND (SK.crate_plan, levels crateW / crateH / crateT 0..10, C.CRATES),
+ * no longer a roll per turn: one plan per ROUND (SK.crate_plan, levels crateW / crateH / crateT 0..10, C.CRATES),
  * at most one crate per round.
  * C layout: struct Skills { u8 freerot, laser, fastwalk, lowgrav, tinfoil; };  Crate += { u8 tool; }.
  * API: init(S), crate_plan(S, first), crate_level(S, kind), crate_chances(S), drop_tool(S), turn_end(S, w), pickup(S,
@@ -47,7 +47,7 @@
     overload: 'Ten crates rain down all over the map'
   };
   KS.OVERLOAD_N = 10;
-  KS.OVERLOAD_TOOL = 0.25;      // P38 R3: share of the non-health overload crates that are tools
+  KS.OVERLOAD_TOOL = 0.25;      // share of the non-health overload crates that are tools
   KS.LASER_KEYS = { shotgun: 1, sniper: 1, handgun: 1, minigun: 1, uzi: 1, mgun: 1 };
   KS.LASER_RANGE = 600;
   const rng = S => M.rng_next(S.skRng);
@@ -95,7 +95,7 @@
     }
     return KS.POOL[0][0];
   };
-  /* ---------- P84: when does a crate fall? One plan per ROUND, not a roll per turn ---------- */
+  /* ---------- when does a crate fall? One plan per ROUND, not a roll per turn ---------- */
   /* level 0..10 of a crate kind ('weapon' | 'health' | 'tool'): settings crateW / crateH / crateT. The legacy
    * toolCrates ('off' | 'low' | 'normal' | 'high')
    * still works while crateT is at its default (the old tests, URL parameters and saved settings): it maps through
@@ -147,7 +147,7 @@
       let alive = 0;
       for (let t = 0; t < (S.teams ? S.teams.length : 2); t++)
         if (SS.worm.team_alive(S, t)) alive++;
-      // (P98 x P84: the match's first turn draws nothing, so round 1's plan is drawn one turn late: skip that turn so
+      // (the match's first turn draws nothing, so round 1's plan is drawn one turn late: skip that turn so
       // the slot always lies ahead and round 1 keeps the full chance; every later round starts at n 0)
       const n0 = !S.crPlan && r === 1 ? 1 : 0, span = M.max(1, alive - n0);
       S.crPlan = { round: r, kind, at: M.min(M.max(alive - 1, n0), n0 + Math.floor(at * span)), n: n0 };
@@ -164,8 +164,8 @@
   /* a tool delivery (the plan said 'tool') */
   SK.drop_tool = function (S) {
     const tool = pick(S), WP = SS.weapons;
-    if (!WP.crate_room(S, true)) return;     // (P38 R3: the tool crates' own cap, the oldest landed one makes room)
-    // P86: random spot in space, no parachute
+    if (!WP.crate_room(S, true)) return;     // (the tool crates' own cap, the oldest landed one makes room)
+    // random spot in space, no parachute
     if (S.eow) {
       if (SS.eow.crate_add(S, 'tool', null, tool))
         sim().emit(S, EV.BANNER, { title: 'Tool delivery', sub: 'A crate drifts in from the dark' });
@@ -186,7 +186,7 @@
    * section): health, weapon and tool crates, no two the same */
   SK.overload = function (S, a) {
     const w = W(), n = KS.OVERLOAD_N, used = {}, kinds = [], B = SS.balance, WPN = SS.weapons;
-    // P38 R3: drawn like the normal supply: the health share, the rarity-weighted weapon draw (B.crate_pick) and some
+    // drawn like the normal supply: the health share, the rarity-weighted weapon draw (B.crate_pick) and some
     // tools; no two weapons / tools the same
     const hs = WPN.CRATE.HEALTH;
     for (let guard = 0; kinds.length < n && guard < 400; guard++) {
@@ -208,14 +208,14 @@
       kinds.push({ kind: 'weapon', weapon: k });
     }
     let made = 0;
-    // P86: space: at random spots, drifting
+    // space: at random spots, drifting
     if (S.eow)
       for (const e of kinds) {
         if (WPN.crate_room(S, e.kind === 'tool') && SS.eow.crate_add(S, e.kind, e.weapon || null, e.tool || null)) made++;
       }
     else
       for (const e of kinds) {
-        // (P38 R3: the caps; the oldest landed crate of the class makes room)
+        // (the caps; the oldest landed crate of the class makes room)
         if (!WPN.crate_room(S, e.kind === 'tool')) continue;
         for (let tries = 0; tries < 20; tries++) {
           const x = rr(S, 6, w.SX - 6), zr = rr(S, 6, w.SZ - 6), z = w.flat ? w.MZ : zr, top = M.max(w.top_at(x, z), w.SEA);
@@ -243,7 +243,7 @@
     out.pts = []; out.hit = null;
     const ad = sim().aim_dir(S), ap = P.to_plane(S, a.pos);
     const s0 = ap.s + ad.s * 0.6, y0 = a.pos.y + ad.y * 0.6;
-    // (P38 R1: bullet_path takes the aim DIRECTION {s, y} (before it got S.aim, a number: NaN path) and only knows the
+    // (bullet_path takes the aim DIRECTION {s, y} (before it got S.aim, a number: NaN path) and only knows the
     // handgun / minigun rounds; the sniper (drop) and the shotgun / others take the generic path below)
     if ((key === 'handgun' || key === 'minigun') && SS.weaponsA && SS.weaponsA.bullet_path) {
       const r = SS.weaponsA.bullet_path(S, key, s0, y0, ad);

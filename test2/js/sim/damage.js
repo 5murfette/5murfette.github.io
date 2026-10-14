@@ -19,11 +19,11 @@
   /* event 'hurt' { worm, amount, src, arg, dir, dot }: src = DamageSrc (C.DS, config.js: the table gives the cause /
    * turn rule / text), arg = i16 name
    * index for the `a % hit` / `a flying %` rows (-1 none); dot = damage over time (drowning, lava, fire, gas ...):
-   * presentation only (blood, flash, shouts); the camera director never follows it (P37-3), a discrete hit (blast,
+   * presentation only (blood, flash, shouts); the camera director never follows it, a discrete hit (blast,
    * shot, landing) it does */
-  // a discrete hit on the active worm ends its turn (play) / its retreat (attack); P38 R1: also called by the shrapnel
+  // a discrete hit on the active worm ends its turn (play) / its retreat (attack); also called by the shrapnel
   // pass (its hurt is quiet)
-  /* P38 R3: the cause of a death. hurt() stores the code of the last damage in w.cause (int); kill() logs / animates by
+  /* the cause of a death. hurt() stores the code of the last damage in w.cause (int); kill() logs / animates by
    * it (C.CAUSE, config.js).
    * Blood on: only BLAST / SHOT / CRUSH / SHRED burst into gibs; the rest collapse by cause. Blood off: the dying
    * beat's small blast (PoC) only for the gib causes, the rest collapse quietly (cause FX in render/react.js). */
@@ -72,17 +72,17 @@
     }
     flags = flags | 0; src = src | 0; arg = arg === undefined ? -1 : arg;
     const sf = C.DS_FLAGS[src], quiet = (flags & HF.QUIET) !== 0, dot = (flags & HF.DOT) !== 0 || (sf & DSF.DOT) !== 0;
-    // P37 W4: the tinfoil hat grounds lightning
+    // the tinfoil hat grounds lightning
     if (S.lightning && w.skills && w.skills.tinfoil) dmg = M.max(1, Math.round(dmg * ((C.SKILL && C.SKILL.TINFOIL_K) || 0.1)));
     w.hp -= dmg; w.cause = C.DS_CAUSE[src];
     // dir: where the hit pushed (blood sprays that way)
     sim.emit(S, EV.HURT, { wormId: w.id, amount: dmg, src, arg, dir: S.hitDir || null, dot });
     w.hitDir = S.hitDir || null; S.hitDir = null;
-    // P84: a shotgun pellet / a hit over 30 HP tears a face hugger off
+    // a shotgun pellet / a hit over 30 HP tears a face hugger off
     if (w.hug != null && w.hug >= 0 && SS.alien) SS.alien.on_hit(S, w, dmg, src);
-    // P1 (PoC activeHurt): a hit on the active worm ends its turn / its retreat; so does FIRE (user 2026-10-08, PoC:
-    // napalm, burning oil / grass / props); the poc5-only steady hazards (lava, hot sand, the black hole's core) do not
-    // (P38 R3: a sentry gun hit does not end the turn in play: turn denial)
+    // (PoC activeHurt) a hit on the active worm ends its turn / its retreat; so does FIRE (napalm, burning oil / grass
+    // / props, as in the PoC); the steady hazards (lava, hot sand, the black hole's core) do not
+    // (a sentry gun hit does not end the turn in play: turn denial)
     if (w === S.active && !quiet && (!dot || (sf & DSF.FIRE) !== 0) && !w.dead && !(S.phase === PHASE.PLAY && (sf & DSF.NOEND_PLAY) !== 0))
       DM.hit_ends_turn(S, w);
     const t = P.to_plane(S, w.pos).t;
@@ -97,7 +97,7 @@
         kill(S, w, 'gib');
         w.gravePending = true;
       }
-      // P38 R3: burn / lava / poison / fall / shock ... collapse by cause: no gib, no grave blast
+      // burn / lava / poison / fall / shock ... collapse by cause: no gib, no grave blast
       else if (S.settings.blood) kill(S, w, CAUSE_NAME[w.cause] || 'beat');
       else if (!w.dying) {
         w.dying = true;
@@ -126,7 +126,7 @@
       hurt(S, w, n, src, flags | HF.DOT);
     }
   };
-  DM.kill = (S, w, how) => kill(S, w, how);                      // P68c (eow.js: lost in the void)
+  DM.kill = (S, w, how) => kill(S, w, how);                      // (eow.js: lost in the void)
   DM.kill_now = (S, w, how) => {
     if (!w.dead) {
       kill(S, w, how);
@@ -134,10 +134,10 @@
     }
   };
   function kill(S, w, how) {
-    // the grave: its BASE (ground contact) under the worm; it falls / settles in stepGraves (user 2026-10-08: graves
-    // floated where a worm died in the air or once the ground under them was blown away)
-    if (SS.alien && SS.alien.burst) SS.alien.burst(S, w);          // P37: an embryo bursts out of the host
-    // (P47: a worm the alien ate leaves no tombstone)
+    // the grave: its BASE (ground contact) under the worm; it falls / settles in stepGraves (so no grave floats where a
+    // worm died in the air or where the ground under it was blown away)
+    if (SS.alien && SS.alien.burst) SS.alien.burst(S, w);          // an embryo bursts out of the host
+    // (a worm the alien ate leaves no tombstone)
     w.dead = true;
     w.hp = 0;
     w.dying = false;

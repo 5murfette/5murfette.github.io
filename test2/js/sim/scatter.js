@@ -22,6 +22,7 @@
   const KINDS = ['crate', 'barrel', 'mine', 'boulder', 'girder'];
   const rand = S => M.rng_next(S.rng);
   const lc = { sub: 0, heat: 0, surf: 0 };
+  const NEARW = [];                                    // the worms a burning prop reaches (scratch: SS.worm.near)
   // fire damage does not stack: one burning source per worm per step
   function scorch(S, w, dt, src) {
     const k = S.tick;
@@ -361,24 +362,21 @@
       }
       // mine proximity fuse
       if (b.prop === 'mine' && !b.disarmed && !b.armed && !(b.armAt > S.time)) {     // (P2: a dropped mine arms after MINE.ARM s)
-        for (const w of S.worms) {
-          if (w.dead) continue;
-          if (M.len3(w.pos.x - b.pos.x, w.pos.y - b.pos.y, w.pos.z - b.pos.z) < P.MINE.PROX) {
-            // P37-W3: the fuse after a trip: a planted mine = the planter's setting (0-3 s, + / -), a map mine =
-            // settings.mineFuse
-            const fz = SS.weaponsA ? SS.weaponsA.mine_fuse(S, b, P.MINE.FUSE) : P.MINE.FUSE;
-            b.armed = true; arm(S, b, fz);
-            sim.emit(S, EV.MINEARM, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, fuse: fz });
-            sim.log(S, `${w.name} trips a mine!`, 0xff8060);
-            break;
-          }
+        const w = SS.worm.first_near(S, b.pos.x, b.pos.y, b.pos.z, P.MINE.PROX, -1, SS.worm.NEAR.ANY);
+        if (w) {
+          // P37-W3: the fuse after a trip: a planted mine = the planter's setting (0-3 s, + / -), a map mine =
+          // settings.mineFuse
+          const fz = SS.weaponsA ? SS.weaponsA.mine_fuse(S, b, P.MINE.FUSE) : P.MINE.FUSE;
+          b.armed = true; arm(S, b, fz);
+          sim.emit(S, EV.MINEARM, { body: b.id, x: b.pos.x, y: b.pos.y, z: b.pos.z, fuse: fz });
+          sim.log(S, `${w.name} trips a mine!`, 0xff8060);
         }
       }
       // burning: hurts worms nearby, spreads to neighbours, ends in ash (crate) or a blast (barrel)
       if (b.burn >= 0) {
         b.burnT += dt;
-        for (const w of S.worms)
-          if (!w.dead && M.len3(w.pos.x - b.pos.x, w.pos.y - b.pos.y, w.pos.z - b.pos.z) < P.FIRE_R + b.rb) scorch(S, w, dt, C.DS.FIRE);
+        const n = SS.worm.near(S, b.pos.x, b.pos.y, b.pos.z, P.FIRE_R + b.rb, -1, SS.worm.NEAR.ANY, NEARW);
+        for (let i = 0; i < n; i++) scorch(S, NEARW[i], dt, C.DS.FIRE);
         if (b.burnT > P.IGNITE_T && (tick + b.id) % 12 === 0) {
           for (const o of S.bodies)
             if (o !== b && o.prop && o.burn < 0 && M.len3(o.pos.x - b.pos.x, o.pos.y - b.pos.y, o.pos.z - b.pos.z) < P.SPREAD + b.rb + o.rb)

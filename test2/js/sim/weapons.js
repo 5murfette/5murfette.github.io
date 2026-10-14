@@ -305,7 +305,7 @@
       return;
     }
     if (SS.lab) SS.lab.bank_set(S, p.bank);                                   // P42: the bank shot's hard bounces
-    if (pd.W > 0) sim().explode(S, pos, { W: pd.W, dmg: pd.dmg, name, frag: pd.frag, boom: pd.boom }, p.owner);
+    if (pd.W > 0) sim().explode(S, pos, { W: pd.W, dmg: pd.dmg, name, frag: pd.frag, boom: pd.boom, push: pd.push }, p.owner);
     if (SS.lab) SS.lab.bank_set(S, 0);
     // PoC slowmo(0.7)
     if (pd.big) {
@@ -1186,8 +1186,12 @@
 
   /* ---------- fire (napalm, flames): burning patches = scatter's S.flames (they burn worms, light props) + grass
    * ---------- */
+  /* a patch of burning napalm where a drop of it came down (on the ground under the hit within 2.5 m); the wood or
+   * leaves of a tree it touches go up at once (trees.js napalm: at the hit, a drop that met the crown or the trunk, and
+   * at the patch) */
   function firePatch(S, pos, r) {
     const w = W();
+    if (SS.trees) SS.trees.napalm(S, pos, r + A.NAPALM.TREE_R);
     let y = pos.y;
     const top = w.top_at(pos.x, pos.z);
     if (top > -1e8 && Math.abs(top - y) < 2.5) y = top;
@@ -1197,6 +1201,7 @@
     }
     sim().pool_push(S.flames, C.LIMITS.FLAMES, { x: pos.x, y, z: pos.z, r, t1: S.time + rr(S, A.NAPALM.LIFE0, A.NAPALM.LIFE1), napalm: 1 });
     if (SS.veg && SS.veg.ignite_disc) SS.veg.ignite_disc(S, pos.x, y, pos.z, r + 0.4, 1);
+    if (SS.trees && y !== pos.y) SS.trees.napalm(S, { x: pos.x, y, z: pos.z }, r + A.NAPALM.TREE_R);
   }
   WP.fire_patch = firePatch;
   function napalmBurst(S, p) {

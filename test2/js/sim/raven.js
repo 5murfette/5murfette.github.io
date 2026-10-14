@@ -3,8 +3,8 @@
  *
  * Boomerang (S.wa.boom[]): P93 flight = a harmonic orbit about an off-axis centre (see WA.boom_acc), lift GK, drag, a
  * sink; it leaves on the aim vector, curls round and comes back LOWER and past the thrower (never homing). Any contact
- * (terrain, prop / mine / barrel / bridge body, device, landed crate, a worm other than the thrower) blows it up like
- * ONE cluster bomblet (C.PROJ.clusterlet W / dmg, the normal HE crater), and a worm hit head-on is punched along the
+ * (terrain, prop / mine / barrel / bridge body, device, landed crate, a worm other than the thrower) blows it up with
+ * its small blast (C.ARMS.BOOM W / DMG, the normal HE crater), and a worm hit head-on is punched along the
  * flight. Past T x END s it is a spent piece of wood: it drops, thuds and vanishes (no blast). The thrower catches it
  * near them (no damage, no refund); a contact within SAFE_R m of the thrower after ARM_OWN s is a dud (a thud, no
  * blast), so a return pass never blasts its own thrower. Mail raven (S.wa.ravens[], S.wa.letters[]): see RAVEN in
@@ -76,16 +76,16 @@
     S.wa.boom.splice(i, 1);
     sim().emit(S, EV.BOOMEND, { x: P.to_world(S, b.s, b.y).x, y: b.y, z: P.to_world(S, b.s, b.y).z, why });
   }
-  // the blast of ONE cluster bomblet (C.PROJ.clusterlet: W, dmg); a worm hit head-on is also punched along the flight
+  // the boomerang's small blast (A.BOOM W, DMG); a worm hit head-on is also punched along the flight
   function boomBlast(S, i, wp, hitWorm, dx, dy) {
-    const b = S.wa.boom[i], pd = C.PROJ.clusterlet, K = A.BOOM;
+    const b = S.wa.boom[i], K = A.BOOM;
     S.wa.boom.splice(i, 1);
     sim().emit(S, EV.BOOMHIT, { wormId: hitWorm ? hitWorm.id : -1, x: wp.x, y: wp.y, z: wp.z });
     if (hitWorm && !hitWorm.dead) {
       const v = pw(S, dx * K.PUSH, dy * K.PUSH + K.PUSH_UP);
       WPm().shove(S, hitWorm, v.x, v.y, v.z);
     }
-    sim().explode(S, wp, { W: pd.W, dmg: pd.dmg, name: 'a boomerang' }, b.owner);
+    sim().explode(S, wp, { W: K.W, dmg: K.DMG, name: 'a boomerang' }, b.owner);
     S.lastBoom = S.time;
   }
   function stepBoom(S, dt) {

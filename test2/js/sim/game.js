@@ -1,11 +1,11 @@
-/* sim/game.js — match rules ported from the PoC "Burrow Brawl" (P1; docs/poc-gameplay.md §1): 2-4 teams of 1-4
+/* sim/game.js — match rules ported from the PoC "Burrow Brawl" (docs/poc-gameplay.md §1): 2-4 teams of 1-4
  * worms, worm HP, per-team control (human / CPU) and names, round-robin turns that skip dead teams, the turn timer,
  * the RETREAT window after an attack (the worm may still move, the section stays locked), sudden death after
  * sdRound rounds, per-team ammo. Portable and deterministic: sim time only, names from their own RNG stream (so the
  * layout RNG S.rng, and with it every pinned map hash, is untouched).
  * C layout: struct Team { char name[20]; u32 rgb; u8 ctl; i8 wi; i16 ammo[NWEAPONS]; u8 lastWeapon; WeaponSet ws; };
- * // P84: ws = { f32 fz[NFUSE], mortarH, mineF } per team
- *           GameState += { u16 sdStart; f32 sdAcc, sdRise; CratePlan crPlan {u16 round; i8 kind; u8 at, n;} }   // P84
+ *           ws = { f32 fz[NFUSE], mortarH, mineF } per team
+ *           GameState += { u16 sdStart; f32 sdAcc, sdRise; CratePlan crPlan {u16 round; i8 kind; u8 at, n;} }
  *           GameState += { Team teams[4]; u8 nTeams; u16 round, sdRound, sdFinal; bool sudden; f32 turnT, retreatT; }.
  * API: setup(S), team_count(S), is_cpu(S, team), skill(S), next_team(S) -> team, names(S, n), step(S, dt),
  *      retreat_for(weaponKey), ammo(S, team, weaponKey), use_ammo(S, team, weaponKey). */
@@ -47,7 +47,7 @@
         lastWeapon: null,
         ws: SS.weaponsA && SS.weaponsA.ws_make ? SS.weaponsA.ws_make() : null
       });
-      if (SS.gear) S.teams[i].gear = SS.gear.setup(S);                  // P89: rescue gear (life jackets): charges + toggle per team
+      if (SS.gear) S.teams[i].gear = SS.gear.setup(S);                  // rescue gear (life jackets): charges + toggle per team
     }
     const wpt = M.clamp(st.worms | 0 || 3, 1, 4);
     S.round = 1;
@@ -59,7 +59,7 @@
     S.crPlan = null;
     S.turnT = 0;
     S.retreatT = 0;
-    // PoC beginMatch: ~7-9 rounds (P38-R5: a round earlier with 4 teams: a round is 4 turns, the matches ran 60 turns)
+    // PoC beginMatch: ~7-9 rounds (a round earlier with 4 teams: a round is 4 turns, the matches ran 60 turns)
     S.sdRound = 6 + M.max(0, 4 - wpt) + (n > 3 ? -1 : n > 2 ? 0 : 1);
     // PoC beginMatch: a random team starts (settings.first: 'random' (default) or a team index; own seeded stream)
     const fr = st.first == null || st.first === 'random'
@@ -82,7 +82,7 @@
     return out;
   };
   /* round-robin over teams with a living worm; a wrap starts a new round (PoC pickNextTurn / startTurn) */
-  // P38 R3: a round ends where the FIRST mover's turn would come again (seat order counted from S.firstTeam): every
+  // a round ends where the FIRST mover's turn would come again (seat order counted from S.firstTeam): every
   // team has had the same number of turns when sudden death starts (it used to depend on the seat of the first mover:
   // up to one turn apart)
   G.peek_team = function (S) {
@@ -117,7 +117,7 @@
     if (t && t.ammo[key] != null && t.ammo[key] !== Infinity) t.ammo[key] = M.max(0, t.ammo[key] - 1);
   };
 
-  /* sudden death begins at the turn change after round sdRound (if enabled). P84: from then on the sea rises
+  /* sudden death begins at the turn change after round sdRound (if enabled). from then on the sea rises
    * CONTINUOUSLY (G.sd_step, every sim
    * step, a constant small rate: nothing jumps at a turn or round change, the turn timer is untouched; a player may end
    * a turn early to buy the next worm time). The turn change only starts it and checks for the final stand (sim.js
@@ -125,7 +125,7 @@
   G.turn_change = function (S) {
     if (!S.settings.sd) return;
     const nt = G.peek_team(S);
-    // (P38 R3: right where round sdRound ends)
+    // (right where round sdRound ends)
     if (!S.sudden && (S.round > S.sdRound || (S.round === S.sdRound && nt >= 0 && G.wraps(S, nt)))) {
       S.sudden = true;
       S.sdStart = S.round;
@@ -170,7 +170,7 @@
       }
     }
   };
-  /* P84: the constant rate of sudden death, m/s of sea level: SD_RISE_K per metre of map height, a little more with
+  /* the constant rate of sudden death, m/s of sea level: SD_RISE_K per metre of map height, a little more with
    * fewer worms per team (the PoC's
    * 26 px per turn became ~0.5 m per turn of 45 s on a 40 m map, with no jumps). Deterministic: map height + settings
    * only. */
@@ -188,7 +188,7 @@
       return;
     }
     if (d.under || d.eow || !SS.water || !SS.water.raise) return;
-    const room = d.SY - K.SD_SEA_GAP - d.SEA;                       // (P38 R9: the sea stops at the cap)
+    const room = d.SY - K.SD_SEA_GAP - d.SEA;                       // (the sea stops at the cap)
     if (room <= 1e-6) {
       S.sdAcc = 0;
       return;
@@ -200,7 +200,7 @@
       S.sdAcc -= K.SD_QUANT; SS.water.raise(S, dh); S.sdRise = (S.sdRise || 0) + dh;
     }
   };
-  /* P38 R9: the drain of the final stage, HP per second for every living worm (0 = not yet): GAME.SD_DRAIN in the first
+  /* the drain of the final stage, HP per second for every living worm (0 = not yet): GAME.SD_DRAIN in the first
    * turn, +SD_DRAIN_RAMP per
    * further turn, at most SD_DRAIN_MAX. Called from sim.js hazards. */
   G.final_drain = function (S) {
@@ -208,7 +208,7 @@
     return M.min(K.SD_DRAIN_MAX, K.SD_DRAIN + K.SD_DRAIN_RAMP * (S.sdFinal - 1));
   };
 
-  /* P13 (PoC user placement): teams take turns placing one worm each (setup order), 15 s each on SIM time (lockstep
+  /* (PoC user placement) teams take turns placing one worm each (setup order), 15 s each on SIM time (lockstep
    * safe; the PoC used real time); a click on the section places it (lifted out of shallow ground, never into another
    * worm), Enter or the timeout auto-places, CPU teams place themselves after a short think. Reserve worms have no
    * physical presence (they are kept `dead` + `reserve` until placed, so every system ignores them). The section can
@@ -220,7 +220,7 @@
     const n = S.teams.length,
       per = S.teams.reduce((m, t, i) => M.max(m, S.worms.filter(w => w.team === i).length), 0),
       fort = !!SS.fort && SS.fort.is();
-    // P68b: the first worm of each team already sits in its fort's bunker
+    // the first worm of each team already sits in its fort's bunker
     const seated = w => fort && w.id < n;
     for (let k = 0; k < per; k++)
       for (let t = 0; t < n; t++) {
@@ -262,7 +262,7 @@
       const yy = y + l, p = P.to_world(S, s, yy);
       if (yy < 0.6 || yy > w.SY - 1 || P.overlap2(S, s, yy) > 0) continue;
       if (yy - 0.5 < SS.sim.surface_at(S, p.x, p.z)) return null;
-      // P68b: only on the team's own fort
+      // only on the team's own fort
       if (S.active && SS.fort && SS.fort.is() && !SS.fort.spot_ok(p.x, p.z, yy, S.active.team)) return null;
       if (w.dry && !SS.sim.in_play(S, p.x, p.z)) return null;
       if (S.worms.some(o => !o.dead && M.len3(o.pos.x - p.x, o.pos.y - yy, o.pos.z - p.z) < PL.SEP)) return null;
@@ -280,12 +280,12 @@
     w.vs = 0;
     w.vy = 0;
     // the section jumps to the new worm: rebuild it and treat the jump like a turn of the section (the material edge
-    // fades out and is rebuilt here; user 2026-10-08: the old outline stayed while a CPU placed elsewhere)
+    // fades out and is rebuilt here, else the old outline stays while a CPU places elsewhere)
     S.O.x = p.x;
     S.O.z = p.z;
     S.sectionDirty = true;
     S.lastRotate = S.time;
-    // hangs until the beam has built it (user 2026-10-11)
+    // hangs until the beam has built it
     if (SS.weapons && SS.weapons.tele_hold) SS.weapons.tele_hold(w, p.x, p.y, p.z);
     SS.sim.emit(S, EV.TELEPORT, { wormId: w.id, from: { x: p.x, y: p.y + 30, z: p.z }, to: { x: p.x, y: p.y, z: p.z }, deploy: 1 });
     SS.sim.log(S, `${w.name} ${how}.`, SS.sim.team_rgb(S, w.team));
@@ -293,7 +293,7 @@
   }
   function autoSpot(S) {
     const taken = S.worms.filter(o => !o.dead).map(o => ({ x: o.pos.x, z: o.pos.z }));
-    const fo = S.active && SS.fort && SS.fort.is() ? { team: S.active.team } : undefined;     // P68b
+    const fo = S.active && SS.fort && SS.fort.is() ? { team: S.active.team } : undefined;     // (fort mode: its own fort)
     const sp = SS.sim.find_spot(S, 8, taken, fo) || SS.sim.find_spot(S, 3, taken, fo);
     return sp ? { x: sp.x, y: sp.y + 0.55, z: sp.z } : null;
   }
@@ -409,7 +409,7 @@
 
   /* per step: the turn clock (play phase only; 0 = no limit) and the retreat window */
   G.step = function (S, dt) {
-    G.sd_step(S, dt);                                                 // P84: sudden death, every step
+    G.sd_step(S, dt);                                                 // sudden death, every step
     if (S.phase === PHASE.PLAY && S.settings.turnTime > 0 && S.active && !S.active.dead) {
       S.turnT -= dt;
       if (S.turnT <= 0) {

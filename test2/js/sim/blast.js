@@ -8,10 +8,12 @@
  *   crater           a lattice point fails where dP(r) exceeds its material strength: r_mat = Zcrit(strength) W^(1/3)
  *                    (bisection on Z, cached per material). Soft topsoil blows out wider than the rock under it;
  *                    bedrock never fails.
- *   worms            Peff = dP · shield · REFLECT, dmg = DMG_MAX (Peff / (Peff + P_HALF))^2; far out dP ~ 1/R
- *                    (energy flux ~ 1/R^2, pressure ~ its square root) so damage ~ 1/R^2.
- *                    shield = 0.25 + 0.75 exp(-L / SHIELD_L), L = metres of solid on the centre→target line.
- *                    knock-back dv = I · shield · AREA_K / WORM_KG − FRICTION_DV (capped at VMAX), radial + upward.
+ *   worms            the PoC's damage and knock-back (worm_effect): dmg = dmgPoC fk, with fk the PoC pressure factor
+ *                    of the distance to the body (1 - 0.65 sqrt(d / Rk) inside Rk = 2.83 W^(1/3), beyond it a tail
+ *                    from 0.35 down to 0 at 2.1 Rk, cut by the solid on the line); knock-back dv = (dmgPoC fk 6.5 + 50
+ *                    fk) px/s x 0.0643 m/px x opts.push, away from the blast + 0.45 up. The reported overpressure is
+ *                    weighed by shield = 0.25 + 0.75 exp(-L / SHIELD_L), L = metres of solid on the centre→target line.
+ *   explode(S, c, W, opts): opts { owner, kind, dmg (PoC damage), boom (C.BOOM class), push (shove factor, 1) }.
  * Other subsystems react through optional hooks (feature-detected, so this module works alone):
  *   SS.bodies.blast(S, c, W), SS.veg.blast(S, c, W), SS.veg.ignite(S, c, r), SS.water.blast(S, c, W), SS.lava.blast(S,
  *   c, W), SS.scatter.blast(S, c, W) — props: shatter crates, set off barrels / mines, ignite.
@@ -183,12 +185,14 @@
       wet,
       pushes: []
     });
-    // worms (after the crater: the wave travels through the opened hole)
-    const d = SS.plane.dir(S);
+    // worms (after the crater: the wave travels through the opened hole). o.push scales the shove (a bomb casing
+    // that only bursts to scatter its bomblets throws a worm little, so they still land round it)
+    const d = SS.plane.dir(S), push = o.push != null ? o.push : 1;
     let hits = 0;
     for (const w of S.worms) {
       if (w.dead) continue;
       const e = BL.worm_effect(c, Wkg, w.pos, o.dmg);
+      e.dv *= push;
       if (S.eow) SS.eow.blast_k(S, c, Wkg, w, e);                       // P68d: no air shock wave in vacuum
       if (e.r > 14) continue;
       if (e.dv > 0.01) {                // any blast that reaches a worm throws it, cuts its rope and makes it skid (PoC)

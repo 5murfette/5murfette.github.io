@@ -33,7 +33,9 @@
     wool: std(0xf4f1e8, { roughness: 1, metalness: 0 }),
     foam: std(0xf6fbff, { roughness: 0.9, metalness: 0 }), ash: std(0xc89a5a, { roughness: 0.55, metalness: 0 }),
     stone: std(0x8d857a, { roughness: 0.95, metalness: 0 }),
-    banana: std(0xffe330, { roughness: 0.35, metalness: 0.05, emissive: 0x4a3a00, emissiveIntensity: 1 }),   // user: brighter
+    banana: std(0xffe330, { roughness: 0.35, metalness: 0.05, emissive: 0x4a3a00, emissiveIntensity: 1 }),
+    // the bomblets glow brighter than the banana they came from (they are small, fast and fall through dark rock)
+    bananaGlow: std(0xfff04a, { roughness: 0.3, metalness: 0, emissive: 0xc8a000, emissiveIntensity: 1.2 }),
     star: std(0xffe24a, { emissive: 0xffc020, emissiveIntensity: 0.9, roughness: 0.4, metalness: 0 })
   };
   for (const k in MAT) MAT[k].userData.shared = true;          // actors.clear() disposes per-worm materials, never these
@@ -289,10 +291,12 @@
       s.add(mesh(new T.SphereGeometry(0.03, 8, 6), MAT.black, -0.15, -0.015));
       s.add(mesh(new T.CylinderGeometry(0.018, 0.022, 0.05, 6), MAT.wood, 0.155, -0.02));
     }, 0.12),
+    // a bomblet: the banana itself (as big), glowing: every mesh of it in the bright material
     bananalet: () => {
       const g = BUILD.banana();
-      g.userData.spin.scale.setScalar(0.65);
-      g.userData.R = 0.08;
+      g.userData.spin.traverse(o => {
+        if (o.isMesh) o.material = MAT.bananaGlow;
+      });
       return g;
     },
     // (both bananas tumble freely on all three axes: FREE3 in OR.proj)

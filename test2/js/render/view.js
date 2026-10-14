@@ -7,6 +7,7 @@
   'use strict';
   const T = window.THREE, C = SS.CFG, M = SS.math, P = SS.plane;
   const V = SS.view = {};
+  const VPD = { x: 0, z: 0, r: 0 };                                // (scratch: the round play area, world.js play_disc)
   let headSpot,
     renderer,
     scene,
@@ -1410,6 +1411,26 @@
           if (SS.fx.steam) SS.fx.steam(e.x, e.y, e.z, 0.15);
           break;
         case 'steelcut': SS.fx.dust(e.x, e.y, e.z, 2, 0.35, 0x8a8580); SS.fx.spark(e.x, e.y, e.z); break;
+        // a burst at the wood: the shattered length flies as splinters (pale heartwood, dark bark) with a few chunks
+        case 'treesplinter': {
+          const n = Math.min(40, 12 + Math.round((e.len || 0.5) * (e.r || 0.15) * 160));
+          SS.fx.chips(e.x, e.y, e.z, [0.74, 0.6, 0.4], n, 7, 0.07);
+          SS.fx.chips(e.x, e.y, e.z, [0.3, 0.22, 0.15], Math.round(n * 0.4), 5, 0.1);
+          SS.fx.chips(e.x, e.y, e.z, [0.62, 0.48, 0.3], 4, 3.5, 0.2);
+          SS.fx.dust(e.x, e.y, e.z, 3, 0.6, 0x8a6a48);
+          break;
+        }
+        // a minigun round bites the wood: a few splinters and bark dust (the notch grows: e.eaten 0..1)
+        case 'treechip':
+          SS.fx.chips(e.x, e.y, e.z, [0.72, 0.58, 0.38], 2, 2.6, 0.045);
+          if (Math.random() < 0.35) SS.fx.dust(e.x, e.y, e.z, 1, 0.25, 0x9a7a55);
+          break;
+        // a burning tree's twigs / limbs burn away: glowing bits fall out of the crown
+        case 'treeburnoff':
+          for (let i = 0; i < (e.limbs ? 10 : 6); i++)
+            SS.fx.spark(e.x + (Math.random() - 0.5) * 2, e.y + Math.random(), e.z + (Math.random() - 0.5) * 2);
+          SS.fx.chips(e.x, e.y, e.z, [0.12, 0.08, 0.06], e.limbs ? 8 : 4, 2, 0.08);
+          break;
         case 'bridgefall': SS.fx.dust(e.x, e.y, e.z, 5, 1.2, 0x7a7068); SS.fx.chips(e.x, e.y, e.z, [0.45, 0.33, 0.2], 10, 5, 0.12); break;
         case 'lavasplash': SS.fx.lava(e.x, e.y, e.z, Math.min(2.2, 0.6 + Math.sqrt(e.volume || 0))); break;
         case 'lavabreach': SS.fx.lava(e.x, e.y, e.z, 1.2); break;
@@ -1641,8 +1662,10 @@
     const tilt = TILT0 + (TILT_CLOSE - TILT0) * ck + insp * (0.5 + view.orbit.tilt),
       yaw = insp * (0.55 + view.orbit.yaw) + (co && insp < 0.05 ? co.yaw : 0),
       dist0 = M.max(co ? M.min(7, zc) : 0, (view.camZ || view.zoom) * (1 + insp * 0.9) * (co ? co.k : 1)),
+      // (the overview frames the round play area: its diameter; a 2D slab / the End of the World: the box's diagonal)
       fitD = oi > 0 && Wd
-        ? 0.52 * Math.hypot(Wd.SX, Wd.SZ) / Math.tan(camera.fov * Math.PI / 360) * (camera.aspect < 1.3 ? 1.3 / camera.aspect : 1)
+        ? 0.52 * (Wd.play_disc(VPD) ? 2 * VPD.r : Math.hypot(Wd.SX, Wd.SZ)) / Math.tan(camera.fov * Math.PI / 360)
+          * (camera.aspect < 1.3 ? 1.3 / camera.aspect : 1)
         : 0,
       dist = dist0 + (M.max(dist0, fitD) - dist0) * oi;
     // P85 (user: "when zooming out dont multiply the fog ... player wants to see more of the map not more of the fog"):

@@ -61,12 +61,12 @@
     //  key           ammo  dmg dmgN dot knock terr  range hits a t e  u  cond prem counter
     R('bazooka',      Infinity, 50, 82, 0, 5, 22, 160, 1, 2, 0, 1, 0, 1, 0, 'cover, distance, wind'),
     R('grenade',      Infinity, 51, 105, 0, 7, 47, 160, 1, 2, 1, 1, 0, 1, 0, 'cover, distance'),
-    R('cluster',      3, 25, 40, 0, 3, 48, 160, 6, 2, 1, 1, 0, 1, 0, 'cover; bomblets scatter'),
+    R('cluster',      3, 60, 73, 0, 2, 105, 160, 6, 2, 1, 1, 0, 1, 0, 'cover; bomblets scatter'),
     R('shotgun',      Infinity, 50, 50, 0, 11, 0, 50, 2, 1, 0, 1, 0, 1, 0, 'cover, range'),
     R('bat',          2, 30, 90, 0, 15, 0, 2.4, 1, 1, 0, 3, 1, 1, 0, 'do not stand beside the enemy'),
     R('homing',       1, 49, 84, 0, 2, 19, 167, 1, 0, 0, 1, 0, 1, 0, 'cover; the missile can be out-run by a wall'),
     R('dynamite',     2, 41, 123, 0, 39, 212, 0, 1, 0, 2, 3, 1, 1, 0, 'distance, a tunnel; the thrower must flee'),
-    R('banana',       1, 82, 170, 0, 11, 308, 160, 6, 2, 1, 2, 0, 1, 0, 'cover, distance'),
+    R('banana',       1, 98, 265, 0, 11, 305, 160, 6, 2, 1, 2, 0, 1, 0, 'cover, distance'),
     R('airstrike',    1, 59, 176, 0, 5, 95, 999, 5, 0, 1, 0, 0, 0.9, 0, 'roofs / tunnels, spreading the team'),
     R('holy',         0, 75, 228, 0, 42, 705, 142, 1, 3, 1, 1, 0, 1, 0, 'distance, cover, the sea behind you'),
     R('sheep',        2, 49, 95, 0, 17, 133, 0, 1, 1, 2, 1, 0, 1, 0, 'walls, water; the sheep takes 10 s'),
@@ -162,6 +162,14 @@
       why: 'its usable value was 88 (super band) only because of the group bonus (59 HP on one foe, 176 on three) and it sat in every kit. The plane needs open sky (not in caves, not under a roof: condition 0.9) and its 4 s flight lets a foe walk out (timing 1): U 74. Removing it as well as the holy grenade made matches 7-20 turns longer in the review (4 teams 48 turns, always sudden death), so it stays in the kit once per team. CPU: 177 uses, 51 HP / use before; 180 uses, 48 HP / use after.' },
     { what: 'P38 R5 B3: difficulty ratings: boulder aim 2 -> 3, sniper aim 3 -> 2, homing aim 1 -> 0; banana measured on the 30 m shot (dmg 43 -> 82, exposure 1 -> 2)',
       why: 'the noisy-aim measurement (hit share easy / normal / hard): boulder 0.33 / 0.67 / 1 (rolling rock, hard to place), sniper 0.67 / 0.83 / 1 (a hitscan with a laser: easier than a lob), homing 1 / 1 / 1 (it steers: no aim at all). Boulder U 60 -> 54 (uncommon, weight 6), sniper 26 -> 29 (common), homing 50 -> 54 (uncommon). The banana row used the 12 m one-foe shot (43 HP: the bomblets bounce past a single foe at that range); the 30 m shot gives 82 HP (far 86, group 170) and it is the biggest self-damager (4.9 self HP per use, 11 own-team kills in 146 uses): exposure 2. U 54 -> 68: rare band, crate weight 6 -> 4; ammo stays 1. After round 5: 3.5 self HP per use, 5 own kills in 162 uses.' },
+    {
+      what: 'P121: cluster and banana re-made (a small casing pop that throws worms little, bomblets bigger than it, a tighter '
+        + 'scatter): cluster one foe 25 -> 60 HP, three 40 -> 73; banana (30 m) 82 -> 98, three 170 -> 265',
+      why: 'user: the bomblets flew too far and the main burst did most of the damage; the parts should spread a few metres with '
+        + 'the bomblets the stronger blasts, the cluster ~250 HP in all when every part hits (20 + 5 x 46; banana 30 + 5 x 52, under '
+        + 'the 100 HP of one foe that would make it crate-only). The cluster goes common -> uncommon (U 21 -> 46, crate weight '
+        + '10 -> 6), the banana rare -> super (U 68 -> 91, crate weight 4 -> 3).'
+    },
     { what: 'P38 R5 B6: sudden death one round earlier with 4 teams (sdRound 7 -> 6 for 3 worms per team)',
       why: 'with the holy grenade out of the kits the 4-team CPU matches ran 60 turns (master: 48), 32 of them after sudden death; a round is 4 turns. One round earlier: 38.7 turns over 40 matches, 39 of 40 reach sudden death, the winner seats 11 / 8 / 4 / 14. 2 and 3 teams unchanged (22.6 / 33.9 turns).' });
   /* the CPU rules of round 5 (docs/BALANCE.md section 6b) */

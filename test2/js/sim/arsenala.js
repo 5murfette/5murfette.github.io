@@ -129,10 +129,12 @@
     // Boomerang (P93): thrown at vmax (17, x VK) m/s x power along the aim; a harmonic orbit (period T s) about a
     // centre KL x speed / om from the throw point at KAP rad to the lifting side of the aim; the wings carry GK of
     // gravity, DRAG 1/s bleeds it, the centre sinks SINK m over the flight so the return pass is lower; after T x END s
-    // it is spent and drops. Any contact blows up as one cluster bomblet (C.PROJ.clusterlet); a worm hit head-on is
-    // punched PUSH (+ PUSH_UP) along the flight. WIND_K: light, a nudge. OBJ_R: contact radius for devices / landed
-    // crates; CATCH_R: the thrower catches it.
+    // it is spent and drops. Any contact blows up with a small blast (W kg, DMG HP); a worm hit head-on is punched
+    // PUSH (+ PUSH_UP) along the flight. WIND_K: light, a nudge. OBJ_R: contact radius for devices / landed crates;
+    // CATCH_R: the thrower catches it.
     BOOM: {
+      W: Wr(22),
+      DMG: 18,
       T: 3.6,
       KL: 0.7,
       KAP: 0.5,
@@ -263,7 +265,7 @@
       vmax: 17,
       crate: 1,
       wa: 1,
-      info: 'Curls out on the aim and back LOWER, past you, into caves; explodes like one cluster bomblet on contact and punches a worm along its flight'
+      info: 'Curls out on the aim and back LOWER, past you, into caves; a small blast on contact punches a worm along its flight'
     },
     raven: {
       name: 'Mail Raven',

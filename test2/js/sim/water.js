@@ -9,9 +9,12 @@
  * them. Edited columns are refreshed through W.listeners (a crater next to the sea floods, re-baked rubble displaces
  * water). The outer RING cells relax toward a reservoir at SEA plus a swell entering from the upwind edges (a plane
  * wave, SWELL_A / SWELL_L / SWELL_DIR, phase from S.time) and absorb waves leaving the map.
- * Blasts (blast.js hook): a cavity (-A) with its volume thrown onto a rim, then the cavity's collapse (implosion)
- * throws up a central jet: a mound at t + 0.3 s under water / 0.2 s at the surface (P30g: A = 1.1 W^1/3 under water,
- * 0.7 W^1/3 at the surface, R = 2.8 W^1/3; the 'waterblast' event carries tJet and the jet height jetH for the render).
+ * Blasts (blast.js hook): a cavity A deep (BLAST_A_UNDER / BLAST_A_SURF x W^1/3, under water / at the surface) of
+ * radius R = BLAST_R W^1/3; its volume is thrown onto a rim out to BLAST_RIM R that leaves outward at BLAST_OUT sqrt(g
+ * A): the blast drives the water away as one ring wave, which loses height as it spreads, runs up beaches and reflects
+ * off walls. Then the cavity's collapse (implosion) throws up a central jet: a mound at t + 0.3 s under water / 0.2 s
+ * at the surface (the 'waterblast' event carries tJet and the jet height jetH for the render). Waves travel at sqrt(g
+ * dx) = 2.2 m/s at any depth (virtual pipes of a fixed section dx^2).
  *
  * Open lava (S.lava.h) lies under the water and raises its effective bed (bed = b + lava), so a flow entering the
  * sea displaces it; lava.js quenches where h > WET.
@@ -449,8 +452,9 @@
     if (surf === DRY) return;
     const depth = surf - c.y, s3 = M.cbrt(Wkg);
     if (depth < -1.2 * s3) return;                                   // air burst too high to dent the water
-    const under = depth > 0.3, att = depth > 3 ? M.exp(-(depth - 3) / 3) : 1, R = 2.8 * s3, A = (under ? 1.1 : 0.7) * s3 * att;
-    const H = w.H, Rr = 1.7 * R, i0 = M.max(0, Math.floor((c.x - Rr) / H)), i1 = M.min(st.NX - 1, Math.ceil((c.x + Rr) / H));
+    const under = depth > 0.3, att = depth > 3 ? M.exp(-(depth - 3) / 3) : 1, R = K.BLAST_R * s3;
+    const A = (under ? K.BLAST_A_UNDER : K.BLAST_A_SURF) * s3 * att;
+    const H = w.H, Rr = K.BLAST_RIM * R, i0 = M.max(0, Math.floor((c.x - Rr) / H)), i1 = M.min(st.NX - 1, Math.ceil((c.x + Rr) / H));
     const k0 = M.max(0, Math.floor((c.z - Rr) / H)), k1 = M.min(st.NZ - 1, Math.ceil((c.z + Rr) / H));
     let vout = 0, wr = 0;
     for (let k = k0; k <= k1; k++)
@@ -465,13 +469,22 @@
         }
         else if (d < Rr) wr += M.sin(Math.PI * (d - R) / (Rr - R));
       }
+    // the rim: the cavity's water on a sine bump from R to Rr, moving outward at u0 (as pipe fluxes u h dx)
+    const u0 = K.BLAST_OUT * Math.sqrt(C.G * A);
     if (wr > 0)
       for (let k = k0; k <= k1; k++)
         for (let i = i0; i <= i1; i++) {
           const q = k * st.NX + i;
           if (st.h[q] <= K.WET) continue;
           const d = M.len2(i * H - c.x, k * H - c.z);
-          if (d >= R && d < Rr) st.h[q] += vout * M.sin(Math.PI * (d - R) / (Rr - R)) / wr;
+          if (d < R || d >= Rr) continue;
+          const wg = M.sin(Math.PI * (d - R) / (Rr - R));
+          st.h[q] += vout * wg / wr;
+          const f = u0 * wg * st.h[q] * H, ux = (i * H - c.x) / d, uz = (k * H - c.z) / d;
+          if (ux > 0) st.fR[q] += f * ux;
+          else st.fL[q] -= f * ux;
+          if (uz > 0) st.fF[q] += f * uz;
+          else st.fB[q] -= f * uz;
         }
     // the cavity collapses inward (implosion) and its converging walls throw up the central jet: a mound at t + 0.2-0.3
     // s that falls back as the second ring (both for charges under the surface and for contact bursts on it)

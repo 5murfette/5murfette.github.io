@@ -25,7 +25,7 @@
     for (let c = 0; c < cs.length; c++)
       for (const pt of cs[c].pts)
         if (M.len2(pt[0] - x, pt[2] - z) < pt[3] * 0.5 + 2.5) return true;
-    if (S.eow && SS.eow.hot_near(S, x, W.topHeight(x, z), z)) return true;       // P68g: no spawn on or within 1.5 m of a hot vein
+    if (S.eow && SS.eow.hot_near(S, x, W.topHeight(x, z), z)) return true;       // no spawn on or within 1.5 m of a hot vein
     return false;
   }
   SP.near_lava = nearLava;
@@ -51,9 +51,10 @@
         if (w.sample(x + dx, y + 0.3, z + dz) > 0 || w.sample(x + dx, y - 0.4, z + dz) <= 0) ok = false;
       }
       if (!ok) continue;
-      if (o.team != null && !SS.fort.spot_ok(x, z, y, o.team)) continue;           // P68b: the worm's own fort
+      if (o.team != null && !SS.fort.spot_ok(x, z, y, o.team)) continue;           // the worm's own fort
       const m = w.mat_at(x, y - 0.2, z);
       if (m === MAT.LAVA || (m === MAT.ICE && !o.ice) || (o.mats && o.mats.indexOf(m) < 0)) continue;
+      if (!w.flat && M.len2(x - w.MX, z - w.MZ) > w.PR) continue;                // (the round play area)
       if (taken.some(t => M.len3(t.x - x, t.z - z, (t.y - y) * 1.5) < minSep)) continue;
       return { x, y, z };
     }
@@ -77,7 +78,8 @@
       const x = 8 + rand(S) * (w.SX - 16), z = w.zpick(rand(S), 8), top = w.topHeight(x, z);
       if (top < w.SEA + (o.minAlt || 1.5) || top > (o.maxAlt || 99)) continue;
       if (w.dry && SP.arena_r(x, z) > DRY.SPAWN_R) continue;                     // dry: everything starts in the play area
-      if (o.team != null && !SS.fort.spot_ok(x, z, top, o.team)) continue;        // P68b: the worm's own fort
+      if (!w.dry && !w.flat && M.len2(x - w.MX, z - w.MZ) > w.PR) continue;      // (the round play area)
+      if (o.team != null && !SS.fort.spot_ok(x, z, top, o.team)) continue;        // the worm's own fort
       const m = w.mat_at(x, top - 0.2, z);
       if (m === MAT.LAVA || m === MAT.ICE && !o.ice || (o.mats && o.mats.indexOf(m) < 0)) continue;
       let ok = true;
@@ -87,7 +89,7 @@
       if (!ok || w.sample(x, top + (o.clear || 1.3), z) > 0) continue;
       const F = w.features;
       if ((F.volcanoes || []).some(v => M.len2(x - v.x, z - v.z) < v.Rc + 3)) continue;
-      // P25: never on / beside a lava river (pre-filled, but they flow: keep 4 m from every canal centre line)
+      // never on / beside a lava river (pre-filled, but they flow: keep 4 m from every canal centre line)
       if (F.canals && F.canals.some(cn => cn.pts.some(q => M.len2(q[0] - x, q[2] - z) < 4 + (q[3] || 0)))) continue;
       if (nearLava(S, x, z)) continue;
       let clash = false;
@@ -120,7 +122,7 @@
             || w.mat_at(x, top - 0.2, z) === MAT.LAVA
             || !WM.body_free(o, x, y, z)
           ) continue;
-          if (SS.fort && SS.fort.is() && SS.fort.team_at(x, z, y) !== o.team) continue;      // P68b: stay on the worm's own fort
+          if (SS.fort && SS.fort.is() && SS.fort.team_at(x, z, y) !== o.team) continue;      // stay on the worm's own fort
           if (!(w.sample(x, y - 0.6, z) > 0)) continue;                               // stand on something
           let clash = false;
           for (const p of S.worms)
@@ -133,7 +135,7 @@
           o.rest = false;
           done = true;
           moved++;
-          // (P38 R3: the spot list follows the lifted worm: props / boulders / trees placed later keep clear of the new
+          // (the spot list follows the lifted worm: props / boulders / trees placed later keep clear of the new
           // place)
           if (taken && taken[o.id]) taken[o.id] = { x, y: top, z };
         }
@@ -142,7 +144,7 @@
   }
   SP.unbury_worms = unbury_worms;
 
-  /* P95: the spawn audit. A worm must never start where the environment hurts it at once: beyond the play circle of a
+  /* the spawn audit. A worm must never start where the environment hurts it at once: beyond the play circle of a
    * dry world (hot sand, 1 HP / 5 s from the first second),
    * in or beside lava, in water (the map's own pools). find_spot, the fort seats, the fall-back spot and the stamps'
    * lift each guard some of these; this is the one place that checks the finished layout and moves a worm that is still

@@ -142,9 +142,14 @@
     W.flat = true; W.kz = kz; W.sepk = C.DIM2.SEP_K;
     // P72: the slice cuts 3D arches / bridges / lips whose support was sideways: nothing may float in the section
     if (SS.collapse) SS.collapse.remove_floating_all(W);
-    // a finite slab: no endless dunes, no frozen ring (the desert's hot-sand rules are 3D)
+    // a finite slab: no endless dunes, no frozen ring (the desert's hot-sand rules are 3D). Beyond its ends: the sea of
+    // a wet map, the rock of a cave world (its W.far stays), or on a dry map the flat plain the backdrop draws at the
+    // generation's sea level (real ground: what falls off an end cliff lands on it, it never meets a phantom sea)
     W.dry = false;
-    W.far = null;
+    if (!W.under) {
+      const floor = W.SEA;
+      W.far = W.sea_exists(floor) ? null : () => floor;
+    }
     W.circ = null;
     W.frz = null;
   };

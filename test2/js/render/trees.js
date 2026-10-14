@@ -698,6 +698,7 @@
   }
   const REBUILD_MIN = 0.3, REBUILD_LAG = 0.07;
   let rebuildWanted = false, rebuildAt = -1e9, wantedAt = 0;     // (the throttle of the rebuild after a blast; presentation only)
+  let lastTreeVer = 0;                                             // (S.treeVer: the sim changed the shape of some wood)
   function rebuild(S) {
     rebuildWanted = false; rebuildAt = performance.now();
     drop();
@@ -778,6 +779,12 @@
     // T3: a blast near a tree may have uncovered / torn its roots: rebuild the wood (root segments now in air dropped).
     // Keyed on the explosion record itself (S.lastBoom also moves on every shot fired / projectile removed)
     else {
+      // a cut (minigun notch, a shattered trunk) or burnt-off limbs change the wood itself
+      if ((S.treeVer | 0) !== lastTreeVer) {
+        lastTreeVer = S.treeVer | 0;
+        if (!rebuildWanted) wantedAt = performance.now();
+        rebuildWanted = true;
+      }
       if (S.lastExplosion !== lastBoom) {
         lastBoom = S.lastExplosion;
         const e = S.lastExplosion;
@@ -814,9 +821,11 @@
           stData[o + j * 4] = j < t.seg.length ? t.seg[j].on : 0;
           stData[o + j * 4 + 1] = 0;
         }
-        // exposed top
-        for (let j = 1; j < t.seg.length && j < LEAF0; j++)
+        // exposed top: a segment whose child broke off, or a cut / burnt-down end
+        for (let j = 1; j < t.seg.length && j < LEAF0; j++) {
           if (!t.seg[j].on && t.seg[j].p >= 0) stData[o + t.seg[j].p * 4 + 1] = 1;
+          if (t.seg[j].cut) stData[o + j * 4 + 1] = 1;
+        }
         for (let k = 0; k < TREE_T - LEAF0; k++) stData[o + (LEAF0 + k) * 4] = k < t.leaf.length && t.leaf[k].s >= 0 ? t.leaf[k].f : 0;
         const q = o + TREE_T * 4, qr = o + ROOT_T * 4;
         stData[qr] = t.x; stData[qr + 1] = t.z;

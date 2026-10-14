@@ -270,7 +270,7 @@
   };
 
   /* ---------- helpers on worms ---------- */
-  const livingWorm = o => !o.dead && o.hp > 0 && !o.drowning;
+  const livingWorm = o => SS.worm.active(o);
   /* the point a hugger leaps at: the face of the worm. The sim does not know the section direction the worm is drawn
    * in: the drawn face is
    * ~0.5 m ahead of the disc centre along the section; the renderer closes the last bit of the leap onto the real face
@@ -341,11 +341,7 @@
         continue;
       }
       if (e.st === 0) {
-        for (const o of S.worms)
-          if (livingWorm(o) && M.len3(e.x - o.pos.x, e.y + 0.5 - o.pos.y, e.z - o.pos.z) < K.TRIG_R) {
-            wake(S, e);
-            break;
-          }
+        if (SS.worm.first_near(S, e.x, e.y + 0.5, e.z, K.TRIG_R, -1, SS.worm.NEAR.ACTIVE)) wake(S, e);
       } else if (e.st === 1 && S.time - e.t0 >= K.OPEN_T) {
         e.st = 3;
         SS.sim.emit(S, EV.EGG_HATCH, { id: e.id, x: e.x, y: e.y + 0.7, z: e.z });
@@ -1342,12 +1338,12 @@
         a.y += a.vy * dt;
         a.z += a.vz * dt;
         let hit = false;
-        for (const o of S.worms)
-          if (livingWorm(o) && M.len3(o.pos.x - a.x, o.pos.y - a.y, o.pos.z - a.z) < 0.6) {
-            S.hitDir = { x: a.vx * 0.1, y: 0.2, z: a.vz * 0.1 };
-            SS.sim.hurt(S, o, K.ACID_HIT, C.DS.ACID_BLOOD); o.acidT = S.time + K.ACID_BURN; hit = true;
-            SS.sim.emit(S, EV.ACID_HIT, { x: a.x, y: a.y, z: a.z, wormId: o.id }); break;
-          }
+        const o = SS.worm.first_near(S, a.x, a.y, a.z, 0.6, -1, SS.worm.NEAR.ACTIVE);
+        if (o) {
+          S.hitDir = { x: a.vx * 0.1, y: 0.2, z: a.vz * 0.1 };
+          SS.sim.hurt(S, o, K.ACID_HIT, C.DS.ACID_BLOOD); o.acidT = S.time + K.ACID_BURN; hit = true;
+          SS.sim.emit(S, EV.ACID_HIT, { x: a.x, y: a.y, z: a.z, wormId: o.id });
+        }
         if (hit) {
           A.acid.splice(i, 1);
           continue;

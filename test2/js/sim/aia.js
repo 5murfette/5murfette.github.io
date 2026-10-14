@@ -8,7 +8,8 @@
  *   mortar        AI.predict at full power over a fan of angles: the bomblets (22 HP) within 3.2 m of the burst
  *   acid / gas    AI.predict over angles x powers: acid within 2.6 m of the flask (min(hp, 30)), gas within 3.6 m (18
  *   per foe)
- *   boomerang     P93: the real curved flight (WA.boom_acc) run forward over angles x powers: one bomblet (18 HP, 2.2
+ *   boomerang     P93: the real curved flight (WA.boom_acc) run forward over angles x powers: its small blast (18 HP,
+ *                 2.2
  *                 m) at the first thing it touches, so it also finds foes behind cover
  *   raven         five letters (18 HP) on the target when a clear 22 m launch line exists (the first 19 m are flown
  *                 straight)
@@ -41,7 +42,7 @@
     return true;
   };
   // P93: the boomerang's flight run forward with the real force law (WA.boom_make / boom_acc, no wind): the first foe
-  // touched, or the terrain / body it hits, is the burst point (one cluster bomblet); a spent (END) flight or the
+  // touched, or the terrain / body it hits, is the burst point (its small blast); a spent (END) flight or the
   // thrower's own vicinity gives nothing. Returns { x, y, z } or null.
   const bacc = { s: 0, y: 0 };
   function boomHit(S, a, aim, facing, pw) {
@@ -53,10 +54,7 @@
       const ns = b.s + b.vs * dt, ny = b.y + b.vy * dt, wp = P.to_world(S, ns, ny);
       if (ny < SS.sim.surface_at(S, wp.x, wp.z) || ny < 0.3) return null;
       if (P.solid2(S, ns, ny) || (S.planeBodies.length && P.body_at2(S, ns, ny, true) >= 0)) return wp;
-      for (const o of S.worms) {
-        if (o.dead || (o === a && b.age < K.ARM_OWN)) continue;
-        if (M.len3(o.pos.x - wp.x, o.pos.y - wp.y, o.pos.z - wp.z) < C.WORM_R + 0.18) return wp;
-      }
+      if (SS.worm.first_near(S, wp.x, wp.y, wp.z, C.WORM_R + 0.18, b.age < K.ARM_OWN ? a.id : -1, SS.worm.NEAR.ANY)) return wp;
       b.s = ns; b.y = ny;
     }
     return null;

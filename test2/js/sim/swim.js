@@ -20,8 +20,8 @@
   const WM = SS.worm;
   const TN = SS.turn;
 
-  /* ---------- P33: in the water: swimming, struggling, back out ----------
-   * (user 2026-10-08) A worm that falls in does not go under at once: it floats, struggling, losing SWIM_DPS HP/s.
+  /* ---------- in the water: swimming, struggling, back out ----------
+   * A worm that falls in does not go under at once: it floats, struggling, losing SWIM_DPS HP/s.
    * Land (dry ground, or sea ice) within SWIM_R m and at most SWIM_CLIMB m above the water: it swims there and climbs
    * out (the active worm along the section only). No land in reach after SWIM_FLOAT_T s, too long swimming
    * (SWIM_MAX_T) or 0 HP: it drowns (the PoC sink, now resting on the bottom). Its turn ends as it falls in. */
@@ -34,10 +34,12 @@
     }
     if (SS.water && S.water && SS.water.depth(S, x, z) > 0.004) return -1e9;
     if (SS.lava && S.lava && SS.lava.depth_at(S, x, z) > 0.01) return -1e9;
+    // a worm put down there (feet at t + 0.02) must be held by the ground under its feet, as body3D tests a resting
+    // worm (y - foot - 0.06 solid): a bank's edge it would slide off back into the water is no landing
     const t = w.top[k * w.NX + i];
-    return t >= surf - 0.4 && t <= surf + WD.SWIM_CLIMB ? t : -1e9;
+    return t >= surf - 0.4 && t <= surf + WD.SWIM_CLIMB && w.sample(x, t - 0.04, z) > 0 ? t : -1e9;
   }
-  /* P91: the turn-start guarantee. The worm that gets the turn must be able to act. The rotation skips swimmers, but a
+  /* the turn-start guarantee. The worm that gets the turn must be able to act. The rotation skips swimmers, but a
    * whole team in the water
    * (or a lone survivor) still hands the turn to one; and a stale swim state on dry ground (the water went away under a
    * jacket swimmer) blocks every input (controlActive, weapons, jumps all refuse a swimmer). Only states that really
@@ -101,7 +103,7 @@
       return;
     }
     const WD = C.WORM_DYN, surf = sim.surface_at(S, w.pos.x, w.pos.z), d = P.dir(S), act = w === S.active;
-    // P38 A5: the entry speed scales the splash (render only)
+    // the entry speed scales the splash (render only)
     const vin = Math.abs(act ? w.vy : w.vel.y);
     w.swim = { t0: S.time, acc: 0, tick: S.time, tx: 0, tz: 0, land: false, stuck: 0 };
     for (let r = 0.25; r <= WD.SWIM_R + 1e-6 && !w.swim.land; r += 0.25)
@@ -119,7 +121,7 @@
     w.rope = null;
     w.springFall = false;
     w.dying = false;
-    // P37-4: a back salto ends on water entry (it spun on forever in the water)
+    // a back salto ends on water entry (it spun on forever in the water)
     w.flip = false; w.hop = false; w.slide = false;
     // (end_retreat rebuilds vel from vs / vy)
     if (act) {
@@ -136,7 +138,7 @@
       w.air = false;
       w.vel.x = w.vel.y = w.vel.z = 0;
     }
-    const jk = SS.jacket ? SS.jacket.enter(S, w, surf) : false;                      // P89: a life jacket inflates (sim/lifejacket.js)
+    const jk = SS.jacket ? SS.jacket.enter(S, w, surf) : false;                      // a life jacket inflates (sim/lifejacket.js)
     sim.emit(S, EV.SPLASH, { x: w.pos.x, y: surf, z: w.pos.z, size: M.min(2.2, 0.8 + 0.07 * vin) });
     sim.emit(S, EV.SWIM, { wormId: w.id, land: w.swim.land, jk: jk ? 1 : 0 });
     if (!jk)
@@ -172,13 +174,13 @@
     // the swim is scripted: no velocity survives it (a blast's push, the fall) to fling the worm on climb-out or drift
     // it while it sinks; a swimmer holds the turn (the resolve gate waits on S.lastBoom too)
     w.vel.x = w.vel.y = w.vel.z = 0; w.vs = 0; w.vy = 0;
-    // P89: a life jacket swim (sim/lifejacket.js): no struggle, no HP drain, the turn does not wait for it for long
+    // a life jacket swim (sim/lifejacket.js): no struggle, no HP drain, the turn does not wait for it for long
     if (sw.jk) {
       if (SS.jacket.holds(S, w)) S.lastBoom = S.time;
       SS.jacket.step(S, w, dt);
       return;
     }
-    // (P99: not for ever: a hp-1 worm that crawls out and slides back into the sea on a slick bank held the turn for
+    // (not for ever: a hp-1 worm that crawls out and slides back into the sea on a slick bank held the turn for
     // 900 s in 2 of 40 lab soak matches; the 4th crawl-out of a turn stops the hold)
     if (w.swimOuts < 4) S.lastBoom = S.time;
     if (!waterDamage(S, w, dt, sw)) return;
@@ -267,7 +269,7 @@
   function sinkStep(S, w, dt) {
     const WD = C.WORM_DYN;
     w.pos.y -= WD.DROWN_V * dt; w.vel.x *= 0.97; w.vel.z *= 0.97;
-    // P33a: comes to rest on the bottom
+    // comes to rest on the bottom
     const fl = bedAt(S, w.pos.x, w.pos.z) + 0.3;
     if (w.pos.y < fl) {
       w.pos.y = fl;

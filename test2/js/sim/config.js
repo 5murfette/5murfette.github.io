@@ -35,46 +35,46 @@
     { name: 'crust', strength: 180, rho: 2500, rgb: 0x2a2523, mu: 0.75, veg: 1 },
     { name: 'ash', strength: 60, rho: 1000, rgb: 0x55504c, granular: 1, repose: 1, mu: 0.7, veg: 2, cover: 0.06 },
     { name: 'scree', strength: 100, rho: 1900, rgb: 0x8d8780, granular: 1, repose: 1, mu: 0.6, veg: 2, cover: 0.12 },
-    // P2 (PoC): girder steel (indestructible like bedrock, anchors what it touches) and foam-mortar foam (the weakest
+    // (PoC) girder steel (indestructible like bedrock, anchors what it touches) and foam-mortar foam (the weakest
     // solid, floats where it touches the sea surface)
-    // P37 W4: the girder PLATE is strong but destructible now (user): a 1 kg grenade pits it 0.44 m, three on one spot
+    // the girder PLATE is strong but destructible: a 1 kg grenade pits it 0.44 m, three on one spot
     // go through its 0.6 m; it still anchors what it touches (collapse.js) and plain carves (torch, bullets) skip it
     { name: 'steel', strength: 5000, rho: 7850, rgb: 0xa0663a, mu: 0.5, fixed: 1, veg: 0 },
     { name: 'foam', strength: 25, rho: 60, rgb: 0xe4eef8, buoyant: 1, mu: 0.6, veg: 0 },
-    // P29d bunkers: reinforced concrete (a 1 kg grenade digs ~0.66 m: a 0.9 m wall is scarred, not breached; it takes
-    // several hits in one place; strength 800 gave 1.11 m and one grenade 0.3 m off the wall breached it)
+    // bunkers: reinforced concrete (a 1 kg grenade digs ~0.66 m: a 0.9 m wall is scarred, not breached; it takes
+    // several hits in one place; at strength 800 one grenade 0.3 m off the wall breached it)
     { name: 'concrete', strength: 2600, rho: 2400, rgb: 0x8c8a84, mu: 0.7, veg: 0 },
-    // P31: volcanic glass, lava quenched where it meets water (lava.js quench): hard, brittle, glossy black
+    // volcanic glass, lava quenched where it meets water (lava.js quench): hard, brittle, glossy black
     { name: 'obsidian', strength: 240, rho: 2400, rgb: 0x141216, mu: 0.55, veg: 0 }
   ];
 
   SS.CFG = {
     STEP: 1 / 120,          // fixed simulation step (s)
     G: 9.81,                // gravity (m/s^2)
-    SECT_BAND: 2.0,         // P37-2: worms within this distance (m) of the gameplay plane move ON it (HALF + WORM_R)
+    SECT_BAND: 2.0,         // worms within this distance (m) of the gameplay plane move ON it (HALF + WORM_R)
     HALF: 1.5,              // half thickness of the visible slab (m) — visual only
     WORM_R: 0.45,           // collision radius of a worm in the plane (m)
     WORM_H: 0.98,           // visual height of a worm (m)
     WORM_MASS: 6,           // kg (game-scale, sets blast knock-back)
     WORM_AREA: 0.42,        // m^2 presented to a blast wave
-    // P37-7 (user 2026-10-10: "worms should be walking 30% slower"): WALK = the PoC's walkWorm 46 px/s (1 px = 0.0643
+    // WALK = the PoC's walkWorm 46 px/s (1 px = 0.0643
     // m: a worm 14 px wide = 0.9 m) x WALK_K. Everything that needs a worm's walking speed (sim, AI, render) asks
     // sim.walk_speed(S, w) (which adds the fast-walk skill), never C.WALK_POC.
     WALK_POC: 2.96, WALK_K: 0.7, WALK: 2.072,
     /* tool-crate skills (worm.skills, turns left; tinfoil 1 = the rest of the game): speed / gravity / lightning
      * factors */
     SKILL: { FASTWALK_K: 1.6, LOWGRAV_K: 0.45, TINFOIL_K: 0.1 },
-    /* Worm dynamics = the PoC's exactly (user 2026-10-07: "the way worms jump"), converted by LENGTH only (1 px =
+    /* Worm dynamics = the PoC's exactly (the way worms jump), converted by LENGTH only (1 px =
      * 0.0643 m, times unchanged), so jumps, landings, skids and rope swings keep their PoC shapes AND timings. That
      * makes the worms' own gravity G_WORM = 520 px/s^2 = 33.44 m/s^2 (worm bodies only; projectiles, props, water and
      * terrain keep g = 9.81). Every value below cites the PoC game.js line it comes from. */
     G_WORM: 33.44,
     WORM_DYN: {
-      // P37-7: the PoC jump (vx 200 px/s = 12.86 m/s: 8.2 m in 0.64 s, 4x faster than walking) is no longer a way to
+      // the PoC jump (vx 200 px/s = 12.86 m/s: 8.2 m in 0.64 s, 4x faster than walking) is no longer a way to
       // travel: the worm stops and tilts back for JUMP_WIND s, then springs with JUMP_VY and the horizontal speed that
       // covers exactly the distance walking would have covered in the whole time (wind-up + flight): sim.jump_vs(S, w)
       JUMP_WIND: 0.3, JUMP_VS: 12.86, JUMP_VY: 10.67,   // (JUMP_VS = the PoC value, kept for reference / the old readers)
-      // P112: the least time between two back hops (the hop flies 0.75 s): chained back hops are no faster than walking
+      // the least time between two back hops (the hop flies 0.75 s): chained back hops are no faster than walking
       // back (0.93x)
       HOP_VS: -2.19, HOP_VY: 12.47, HOP_GAP: 0.85,
       // back hop L3663: vx -34, vy -194 -> 2.3 m high, 1.6 m back, 0.75 s
@@ -86,7 +86,7 @@
       BOUNCE: 0.3, FRIC: 0.72,                  // integrateBody(w, dt, 0.3, 0.72) per contact
       FIRM_NY: 0.34, SOFT_NY: 0.55, SOFT_V: 3.5, STILL_V: 1.29, STILL_T: 0.45,   // land / soft landing / still rest
       READY_V: 0.77,                            // weaponReady L4342: speed < 12 px/s
-      // P88 worm-worm contact: a worm is a solid ball of WORM_R for every other worm (stand on / walk over / roll off);
+      // worm-worm contact: a worm is a solid ball of WORM_R for every other worm (stand on / walk over / roll off);
       // STACK_NY = the smallest contact normal.y that still holds a worm on another's head (the head is a ball: past
       // ~32 degrees off the top it rolls off), STACK_GAP = how far (m) from touching a worm still counts as resting on
       // it, SEP_D / SEP_V = resting worms closer than SEP_D (m, side by side) slide apart at SEP_V m/s (never into
@@ -94,16 +94,22 @@
       STACK_NY: 0.85, STACK_REACH: 0.06, STACK_GAP: 0.08, SEP_D: 0.84, SEP_V: 1.5,
       HEAD_SHOVE_V: 11.3, SHOVE_K: 0.28, SHOVE_MIN: 2.6, SHOVE_MAX: 6.4, SHOVE_UP: 2.25, SHOVE_COOL: 0.45,   // L3611-3634
       DROWN_T: 2.2, DROWN_V: 1.67,              // drown L3534 / L3559: sinks 26 px/s for 2.2 s
-      // P33 (user 2026-10-08, over the PoC's instant drowning): a worm in the water floats struggling SWIM_FLOAT_T s,
+      // (instead of the PoC's instant drowning) a worm in the water floats struggling SWIM_FLOAT_T s,
       // losing SWIM_DPS HP/s (in SWIM_TICK s chunks); land within SWIM_R m whose ground is at most SWIM_CLIMB m above
       // the water: it swims there at SWIM_V (SWIM_MAX_T s at most) and climbs out. Floats FLOAT_D m under the surface
       // (body centre). On the ninja rope it stays in control under water, losing SWIM_DPS too.
       SWIM_DPS: 10, SWIM_TICK: 0.5, ROPE_GRACE: 2, ROPE_TICK: 1, ROPE_DMG: 5, SWIM_FLOAT_T: 2.5, SWIM_R: 2, SWIM_CLIMB: 1.0, SWIM_V: 0.9,
       SWIM_MAX_T: 4, FLOAT_D: 0.3,
-      WASH_V: 1.2, WASH_VS: 4.5, WASH_VY: 3.86, WASH_K: 0.8, WASH_KY: 0.4, WASH_COOL: 1.2,   // washWorms L6283
+      // a wave over a worm (worm.js wavePush): the drag of the water (density WAVE_RHO, drag coefficient WAVE_CD) on
+      // the wet part of a worm WAVE_H tall pushes its WAVE_KG against the friction of a standing worm (WAVE_MU x its
+      // weight less the buoyancy of the wet part); a drift faster than WAVE_KNOCK m/s is a 'wash' (one per WASH_COOL
+      // s); in water faster than WAVE_V m/s with ground within WAVE_GROUND m under its feet it stands in the wave (no
+      // swimming) for WAVE_HOLD s
+      WAVE_RHO: 1000, WAVE_CD: 1.1, WAVE_H: 0.9, WAVE_KG: 40, WAVE_MU: 0.6, WAVE_KNOCK: 0.3, WAVE_V: 0.4, WAVE_HOLD: 0.8,
+      WAVE_GROUND: 0.5, WASH_COOL: 1.2,
       AIM_RATE: 1.5, CHARGE_T: 1.15, MIN_POWER: 0.08, AIM0: 0.35,   // L5154, L5160, launch L4305, makeWorm aim 0.35
       SETTLE_QUIET: 0.6, SETTLE_CAP: 16,        // settle L5107-5110
-      // P38 R9: a worm never moves faster than V_MAX m/s (terminal velocity: a human in free fall tops out near 55 m/s;
+      // a worm never moves faster than V_MAX m/s (terminal velocity: a human in free fall tops out near 55 m/s;
       // a blast launches ~30-45); a worm that is airborne and has not moved vertically for PIN_T s while it "falls"
       // (wedged in rock: gravity built up a runaway speed against a contact the solver treats as leaving) is moved to
       // the nearest free spot within PIN_R m (cube shells of PIN_STEP m), else crushed
@@ -120,9 +126,9 @@
     FALL_SAFE: 30.2,        // (= WORM_DYN.FALL_SAFE; kept for older readers)
     SEED: 7, LAYOUT_SEED: 4242,
     CTX_HOLD: 2.5, CTX_FADE: 1.2,
-    ROT_WINDOW: 10,         // P37-6: s of free rotation at the turn start (rotation lock); then the view is fixed
+    ROT_WINDOW: 10,         // s of free rotation at the turn start (rotation lock); then the view is fixed
     ROT_SPEED: 0.9, ALIGN_SPEED: Math.PI * 2,
-    /* P1: teams and worm names from the PoC (TEAM_DEF, NAMES); settings.names overrides a team's name */
+    /* teams and worm names from the PoC (TEAM_DEF, NAMES); settings.names overrides a team's name */
     TEAMS: [
       { name: 'Red Rebels', rgb: 0xff5b4f },
       { name: 'Blue Moles', rgb: 0x4ea8ff },
@@ -133,9 +139,9 @@
       'Spud', 'Noodle', 'Clod', 'Gristle', 'Boris', 'Squirm', 'Pip', 'Mulch', 'Slick', 'Fang', 'Doris', 'Kevin', 'Biscuit', 'Turnip',
       'Nugget', 'Wiggles', 'Gus', 'Mabel', 'Pickles', 'Rusty', 'Sprout', 'Taffy', 'Dobbs', 'Mort'
     ],
-    /* P1 match rules (PoC): retreat after an attack (s; per weapon `retreat`), CPU skills, sudden death steps */
+    /* match rules (PoC): retreat after an attack (s; per weapon `retreat`), CPU skills, sudden death steps */
     GAME: { RETREAT: 5, SKILLS: ['easy', 'normal', 'hard'],
-      // P84: sudden death is CONTINUOUS (the turn timer is untouched): from the end of round sdRound the sea rises
+      // sudden death is CONTINUOUS (the turn timer is untouched): from the end of round sdRound the sea rises
       // every sim step at a constant rate, SD_RISE_K m/s per metre of map height (SY 40 m: 0.01 m/s = ~0.5 m in a 45 s
       // turn, ~1 m in a round of two teams), x (1 + SD_RISE_WORMS per missing worm below 4 per team: a 1-worm match is
       // quick anyway and its land is scarcer). The rise is handed to water.raise in quanta of SD_QUANT m (1 cm:
@@ -143,15 +149,15 @@
       // SD_DRY_RATE m/s. The nominal rise of one turn (SD_RISE) is only what the CPU's "climb away from the sea" margin
       // is based on.
       SD_RISE_K: 0.00025, SD_RISE_WORMS: 0.12, SD_QUANT: 0.01, SD_RISE: 0.5, SD_AI_MARGIN: 2, SD_DRY_RATE: 0.04, SD_DRY_MIN: 14,
-      // P84: a sea that rises this slowly may never reach its cap in a match: after SD_MAX_ROUNDS rounds of sudden
+      // a sea that rises this slowly may never reach its cap in a match: after SD_MAX_ROUNDS rounds of sudden
       // death the final stand starts anyway
       SD_MAX_ROUNDS: 10,
-      // P38 R9: the final stage of sudden death, once the shrink has nothing left to take (dry: the play circle at
+      // the final stage of sudden death, once the shrink has nothing left to take (dry: the play circle at
       // SD_DRY_MIN, wet: the sea at its cap SY - SD_SEA_GAP, caves: from the start of sudden death). Every living worm
       // then loses HP continuously (DS.SUDDEN_DEATH), SD_DRAIN HP/s in the first turn, +SD_DRAIN_RAMP per further turn,
       // at most SD_DRAIN_MAX: the weakest team falls first, the match always ends
       SD_SEA_GAP: 10, SD_DRAIN: 0.25, SD_DRAIN_RAMP: 0.1, SD_DRAIN_MAX: 2 },
-    /* P84: supply crates. Per type a level 0..10 (settings crateW weapon, crateH health, crateT tool; 5 = default). The
+    /* supply crates. Per type a level 0..10 (settings crateW weapon, crateH health, crateT tool; 5 = default). The
      * chance of ONE crate in a round
      * = P_LEVEL x the highest level (5 -> 20 %, 10 -> 40 %, all 0 -> never); the type of that crate is drawn in
      * proportion to the levels (all 5: a third each; a single type at 10 with the others 0: that type, 40 % of the
@@ -189,12 +195,12 @@
       LEAF_I: 20,           // impulse (Pa·s) where leaves start to strip (W 1: Z ~ 9 m; was 8 -> stripped within ~20 m)
       LEAF_SPAN: 80,        // ...and are fully stripped at LEAF_I + LEAF_SPAN (W 1: ~83 % at 2 m, 24 % at 5 m)
       FIRE_R: 1.25,         // fireball radius / W^(1/3) (m): ignites dry fuel
-      // P66a: a detonation (BOOM.HE) has no fireball: its heat reach is this share of FIRE_R (W 1: 0.7 m, inside the
+      // a detonation (BOOM.HE) has no fireball: its heat reach is this share of FIRE_R (W 1: 0.7 m, inside the
       // crater); BOOM.FUEL keeps the full one
       HE_FIRE_K: 0.2,
       R_MAX: 7              // never edit terrain farther than this (m)
     },
-    // P66a: explosion class (WeaponDef / ProjDef .boom; blast.explode opts.boom; the 'explode' event .boom). HE =
+    // explosion class (WeaponDef / ProjDef .boom; blast.explode opts.boom; the 'explode' event .boom). HE =
     // detonation: flash, shock wave, dust and soot, no fireball, almost no fire; FUEL = deflagration / incendiary
     // (napalm, fuel barrel, car tank, a molotov or thermobaric): rolling fireball, burning ground
     BOOM: { HE: 0, FUEL: 1 },
@@ -207,9 +213,9 @@
       { id: 'canyon', name: 'Red canyon', lavaChance: 0.3, storm: 0.2 },
       { id: 'desert', name: 'Desert dunes', lavaChance: 0.25, storm: 0.1, dry: true },   // dry: no sea (C.DRY, Step D)
       { id: 'volcanic', name: 'Volcano', lavaChance: 1, storm: 0.6 },
-      // P68c: sim/eow.js (never a 'random' pick)
+      // sim/eow.js (never a 'random' pick)
       { id: 'eow', name: 'End of the World (experimental)', lavaChance: 0, storm: 0, experimental: true },
-      // P116: sandy cove, granite boulders, palms (appended last: the other biomes keep their seed offsets)
+      // sandy cove, granite boulders, palms (appended last: the other biomes keep their seed offsets)
       { id: 'beach', name: 'Tropical cove', lavaChance: 0, storm: 0.12 }
     ],
     /* Weather patterns (C: enum Weather). */
@@ -276,7 +282,7 @@
        * updraft */
       WHIRL: {
         MAX: 4, RATE: 0.08, NEAR: 30, MIN_WIND: 2, RC: [0.7, 1.6], VMAX: [4, 9], UP: [2, 5], H: [6, 18],
-        /* P65a life cycle (s): FORMING T_FORM, MATURE LIFE (SHORT_P of them the short LIFE_SHORT: an abrupt collapse),
+        /* life cycle (s): FORMING T_FORM, MATURE LIFE (SHORT_P of them the short LIFE_SHORT: an abrupt collapse),
          * DECAYING T_DECAY */
         T_FORM: [3, 5.5], LIFE: [8, 22], LIFE_SHORT: [3, 6], SHORT_P: 0.25, T_DECAY: [2.5, 4.5], FLUCT: 0.25,
         /* track: wind(2 m) x TRACK_K + downslope SLOPE_K (m/s per unit slope) + wander (m/s); STEEP = the rise per
@@ -323,26 +329,26 @@
     },
 
     /* Settings the player can change (map menu). 'auto' = picked from the biome/seed. */
-    /* P68a: the 2D dimension (settings.dim = '2d', sim/dim2d.js): the slab is SZ m thick (NZ = SZ / H + 1 lattice
+    /* the 2D dimension (settings.dim = '2d', sim/dim2d.js): the slab is SZ m thick (NZ = SZ / H + 1 lattice
      * slices, the middle one is the gameplay plane) */
-    // P104: GEN_ROWS = lattice rows each side of the slice that the generator fills (worldgen band)
+    // GEN_ROWS = lattice rows each side of the slice that the generator fills (worldgen band)
     DIM2: { SZ: 4, COUNT_K: 0.5, SEP_K: 0.5, GEN_ROWS: 12 },
     /* Settings (the sim's defaults; the menu starts from the PoC defaults: turnTime 45, sd on, ctl human / cpu).
-     * P1: teams 2-4, worms per team 1-4, hp, turnTime (s, 0 = no limit), ctl[] per team 'human' | 'cpu' (null =
+     * teams 2-4, worms per team 1-4, hp, turnTime (s, 0 = no limit), ctl[] per team 'human' | 'cpu' (null =
      * legacy: cpu != 'off' makes team 1 a CPU of that skill), names[] per team, skill (CPU), sd (sudden death). */
-    /* P38: map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is
+    /* map size. SIDE: metres per side of the square lattice; DEFAULT: the size of a biome when the setting is
      * 'auto'. */
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
-    // (R7: exact Math.imul seed mixing for seeds > ~2.7e6, wrap_angle floor) P38 R6: bump when the sim rules change
-    // (net.js adds a hash of the arsenal / biome tables): peers of other builds refuse each other
-    BUILD: 'p120-mobile-m',
+    // the version of the sim rules: bump it when they change (net.js adds a hash of the arsenal / biome tables); peers
+    // of other builds refuse each other
+    BUILD: 'p121-fix-m',
     // first: the team that starts (0..3 or 'random' = PoC; the menu default)
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,
       collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off',
       cpu: 'off',
       teams: 2, worms: 3, hp: 100, turnTime: 0, ctl: null, names: null, skill: 'normal', sd: false, placement: 'random',
-      blood: false, select: false, keepRope: false, rooms: false, time: 'day', art: 'painted', shape: 'island',
-      // (P84: crate levels 0..10; toolCrates is the legacy name of crateT; contracts: W1 / W3 / W4 read them; the menu
+      blood: false, select: false, keepRope: false, rooms: false, time: 'day', art: 'painted', shape: 'islands',
+      // (crate levels 0..10; toolCrates is the legacy name of crateT; contracts: W1 / W3 / W4 read them; the menu
       // sets them; mineFuse 'default' = the old 1.6 s, 'random' | 0..3 s)
       rotLock: true, dim: '3d', fort: false, labFlags: 0, jackets: 3, jacketOn: true, jetpacks: 3, mineFuse: 'default', teamBlood: false,
       toolCrates: 'normal', crateW: 5, crateH: 5, crateT: 5,
@@ -361,7 +367,7 @@
      * worms, bodies and projectiles land and walk there. Beyond FAR_R (inside the drawn, still opaque far grid) a
      * projectile leaves the game, a worm is lost and a body removed. */
     DRY: { SEA: -1, CX: 48, CZ: 48, PLAY_R: 34, SPAWN_R: 30, HOT_DPS: 0.2, FAR_R: 300,
-      // D6 (user: "everything should be a circle"): the lattice is used only inside the disc LAT_R (beyond it the
+      // a circular world: the lattice is used only inside the disc LAT_R (beyond it the
       // analytic far dunes: sim W.far, render far grid, cap far strip); terrain edits only reach lattice columns
       // within EDIT_R (the ring EDIT_R..LAT_R keeps its generated state, so the crater wall ends inside the disc)
       LAT_R: 46, EDIT_R: 45 },
@@ -418,7 +424,7 @@
     /* Sea / pool ice (Step I, sim/ice.js; research §8 "Ice (I)"): Stefan growth, Gold bearing capacity, blasts */
     ICE: {
       ALWAYS: { alpine: true },                                   // freezes whatever the weather (cold climate)
-      // P118a (Q-04): the air of each biome at its day temperature by weather kind (a kind that is not listed, fog,
+      // the air of each biome at its day temperature by weather kind (a kind that is not listed, fog,
       // takes the biome's clear). Sea water freezes at T_FREEZE (about -1.9 °C, the salt lowers it), and only SUSTAINED
       // cold makes ice: a night is 5 °C colder than the day (T_TOD), so every non-snow weather of a warm biome stays
       // well above it at night (before: the shared 'other' row had 4 °C by day, -1 °C at night, and the sea of every
@@ -427,7 +433,7 @@
       // sea ice to the other biomes.
       T_AIR: {                                                    // air temperature (°C) by biome x weather kind
         alpine: { clear: -10, cloudy: -8, rain: 1, storm: -2, snow: -12, blizzard: -20 },
-        beach: { clear: 29, cloudy: 27, rain: 25, storm: 24, snow: 2, blizzard: 1, ashfall: 27 },     // P116: a tropical sea never freezes
+        beach: { clear: 29, cloudy: 27, rain: 25, storm: 24, snow: 2, blizzard: 1, ashfall: 27 },     // a tropical sea never freezes
         temperate: { clear: 14, cloudy: 11, rain: 9, storm: 8, snow: -4, blizzard: -9, ashfall: 10 },
         canyon: { clear: 20, cloudy: 16, rain: 12, storm: 12, snow: -4, blizzard: -9, ashfall: 16 },
         volcanic: { clear: 24, cloudy: 21, rain: 19, storm: 18, snow: -4, blizzard: -9, ashfall: 26 },
@@ -450,7 +456,7 @@
       H_MIN: 0.5,           // cm: thinner is slush (no support, not drawn as ice)
       FREEBOARD: 0.12,      // ice top above the water = this x the thickness
       A_FAIL: 9,            // kg / cm²: Gold P = A h² at failure for sea ice (~60 % of clear fresh ice, 15-20)
-      WORM_KG: 14,          // a worm's load on the ice (game scale, P30: one-turn ice ~1.5 cm carries a standing worm; a hard
+      WORM_KG: 14,          // a worm's load on the ice (game scale: one-turn ice ~1.5 cm carries a standing worm; a hard
       // landing breaks it; 2-turn ice ~2.5 cm takes a 1 m drop)
       STOP_D: 0.05,         // m: stopping distance of a landing (F = m g (1 + sqrt(1 + 2 H / d)))
       HOLE_R: 0.45,         // m: hole where a load breaks through
@@ -460,7 +466,7 @@
       PUNCH: 2.2e5,         // J / m²: punching work ~ tau pi D h x h (tau 0.7 MPa, D 0.1 m): x h² (m)
       K_SURF: 1.2, K_UNDER: 3.5, H_REF: 20, HOLE_F: 0.45,       // blast: R = k W^1/3 / (1 + h / H_REF cm), hole HOLE_F R
       LOCK_H: 1.5,          // cm: a floating body is frozen in once its cell's ice is this thick
-      // P30 floes, blast waves, snow on the ice, slipperiness
+      // floes, blast waves, snow on the ice, slipperiness
       FLOE_SIZE: 1.1,       // m: broken ice comes apart in pieces about this big
       FLOE_MAX: 320,        // floating floes at most (the oldest goes; a grenade's wave in 4 cm ice makes ~150)
       FLOE_DRAG: 0.5,       // 1/s: a floe takes up the water's velocity (low: a sheet on water keeps its momentum)
@@ -478,7 +484,7 @@
 
       MAX: 64, ITERS: 16, BAUMGARTE: 0.25, SLOP: 0.01, MAX_PUSH: 2.0,   // contact solver (projection: 25 %/step of pen - slop, <= 2 m/s)
       LIN_DAMP: 0.05, ANG_DAMP: 0.3, WATER_DRAG: 1.5, WATER_CD: 0.8,                  // 1/s
-      REST_V: 1.0, REST_LIN: 3, REST_ANG: 5,                          // P105: extra damping (1/s) of a touching chunk below REST_V m/s
+      REST_V: 1.0, REST_LIN: 3, REST_ANG: 5,                          // extra damping (1/s) of a touching chunk below REST_V m/s
       ROLL_DAMP: 2.5,                                                  // 1/s on spin while touching ground (rolling resistance)
       ROLL_MU: 0.25,                                                   // B1: Coulomb rolling resistance coefficient (rock on soil)
       TORSION_R: 0.3,                                                  // B1: contact patch radius / sphere radius (torsional friction)
@@ -500,6 +506,9 @@
       SWELL_DIR: 0.6,       // swell heading (rad, travel direction in xz); the weather step will drive these
       WET: 0.004,           // depth (m) below which a column counts as dry
       FR_MAX: 1.5, VMAX: 6, // reported velocity cap: Froude number and absolute (m/s); fluxes are not limited
+      // a blast in the water (water.js blast): the cavity's depth x W^(1/3) under the surface / at it, and the speed
+      // the rim leaves at, x sqrt(g x that depth)
+      BLAST_A_UNDER: 1.6, BLAST_A_SURF: 1.3, BLAST_OUT: 1.1, BLAST_R: 3.0, BLAST_RIM: 1.9,
       /* groundwater (water table = SEA): a pit dug below the table into permeable ground fills from below at SEEP m
        * per ROUND (every team moved once): each turn change releases SEEP / teams over SEEP_T s into the seeping
        * cells that are wet or a local low point of the surface, so the pool level (not each cell) rises ~2 cm/round */
@@ -562,13 +571,19 @@
       // T1/T2: roots hold (plate radius ROOT_R_K x crown >= ROOT_R_MIN, ROOT_D deep; falls below ROOT_HOLD of it in
       // ground); a direct hit within the cut radius of the stem up to STEM_LOW m destroys stump + roots; torn-off
       // leaves pass LEAF_HOLD of their impulse on to the branch.
-      // P118a (Q-27): and a tree STANDS on ground under its trunk: FOOT_D m under the base the trunk axis and FOOT_MIN
+      // and a tree STANDS on ground under its trunk: FOOT_D m under the base the trunk axis and FOOT_MIN
       // of 8 probes on a ring of the trunk radius + FOOT_PLATE m (the small root plate that carries the trunk) must be
       // solid, else it falls (trees.js foot_ok)
       ROOT_R_K: 1.5, ROOT_R_MIN: 2.0, ROOT_D: 0.8, TAP_D: 1.5, ROOT_HOLD: 0.1, FOOT_D: 0.3, FOOT_PLATE: 0.25, FOOT_MIN: 2, STEM_LOW: 1.0,
       LEAF_HOLD: 0.5,
       DRAG_CD: 1.2, JOINT: 0.6, // blast-wind drag coefficient (cylinder); branch junction strength vs clear wood
-      CUT_D: 0.7                // a burst within CUT_K W^(1/3) + r cuts wood up to CUT_D sqrt(W) m thick
+      CUT_D: 0.7,               // a burst within CUT_K W^(1/3) + r cuts wood up to CUT_D sqrt(W) m thick
+      // a cut shatters SHATTER_K x the cut radius of wood either side of the burst; a minigun round chips CHIP_A m2 out
+      // of a section (CHIP_CUT of it gone: the wood above falls) and strips LEAF_CHIP of a leaf cluster per m of its
+      // path; napalm burns a tree NAPALM_BURN x as fast; twigs (< TWIG_R m) burn away at char CHAR_TWIG, limbs to stubs
+      // of STUB_K of their length at CHAR_LIMB
+      SHATTER_K: 0.6, CHIP_A: 0.0025, CHIP_CUT: 0.6, LEAF_CHIP: 0.03, NAPALM_BURN: 2.5, TWIG_R: 0.08, CHAR_TWIG: 0.35,
+      CHAR_LIMB: 0.7, STUB_K: 0.35
     },
     /* Props (sim/scatter.js): rigid bodies with a little state. Overpressure thresholds in kPa (blast.overpressure). */
     PROPS: {
@@ -609,7 +624,7 @@
         volcanic: [2, 3, 6, 5, 2],
         beach: [3, 3, 6, 2, 1]
       },
-      // P24.10 (PoC PROPS): explosive cars (a strong blast or fire sets one off: R54 dmg 44 + burning fuel, a wreck
+      // (PoC PROPS) explosive cars (a strong blast or fire sets one off: radius 54 px, damage 44, burning fuel, a wreck
       // stays), metal junk (fridge, vending machine, phone booth: break under a blast, conduct lightning), stone
       // monuments (column, obelisk: heavy, never break). Size: PoC px x 0.0643. Placed after the classic props (own
       // stream).
@@ -643,11 +658,10 @@
      * surface slope s: u = g h^2 s / (3 nu) (1 - 1.5 r + 0.5 r^3), r = hc / h, hc = Y / s. nu = NU_HOT e^(NU_K (1 -
      * T)), Y = YIELD e^(YIELD_K (1 - T)), T = 1 eruption ... 0 solidus. NU_HOT 50 m^2/s = mu 1.3e5 Pa s (cooling basalt
      * to andesite), Y 0.006 m = yield stress ~150 Pa: a 0.7 m canal on a 0.3-0.6 slope creeps at ~1 m/min. */
-    /* P29d bunkers (user 2026-10-08: "3D objects that look like they were built for defence: 1 entrance, a window big
-     * enough
-     * to shoot from, a dome on top, thick concrete walls"): a round reinforced-concrete pillbox stamped into the voxel
-     * world (MAT.CONCRETE: solid for worms and shots, destructible but tough, cut by the section like any rock).
-     * N per map on flat open land; the embrasure faces the map centre, the door the other way. Metres. */
+    /* bunkers, built for defence: one entrance, a window big enough to shoot from, a dome on top, thick concrete walls:
+     * a round reinforced-concrete pillbox stamped into the voxel world (MAT.CONCRETE: solid for worms and shots,
+     * destructible but tough, cut by the section like any rock). N per map on flat open land; the embrasure faces the
+     * map centre, the door the other way. Metres. */
     BUNKER: { N: 2, R_OUT: 3.2, WALL: 0.9, H_WALL: 2.3, DOME_K: 0.9, FOUND: 0.6, DOOR_W: 1.7, DOOR_H: 2.0,
       SLIT_W_IN: 1.4, SLIT_W_OUT: 2.4, SLIT_Y0: 0.8, SLIT_Y1: 1.6, FLAT: 1.6, CLEAR: 7, APART: 20, EDGE: 12 },
     // (openings >= 3 lattice cells: the 0.5 m lattice and the cut face's smoothing close anything thinner)
@@ -662,9 +676,9 @@
       // transit, a stagnant 0.5 m lobe bakes in ~15 min, a 0.1 m sheet in ~3 min (m/s)
       STILL_K: 8,           // a stagnant sheet grows a crust and cools this much faster
       STILL_V: 0.00017,     // below this mean speed (m/s, 1 cm/min) a column counts as still
-      // P31 (user: lava against water "should be steaming A LOT and cool down on the connection pretty quickly, turning
-      // into obsidian"): open lava under water or with water against its flank cools QUENCH_SIDE / h per s (1 m deep:
-      // ~3 s to T_SOLID; before P31 the sea took QUENCH 0.02, ~45 s)
+      // lava against water steams a lot and cools quickly where they meet, turning into obsidian: open lava under water
+      // or with water against its flank cools QUENCH_SIDE / h per s (1 m deep: ~3 s to T_SOLID; QUENCH 0.02 alone would
+      // take ~45 s)
       // and bakes into OBSIDIAN; voxel lava touching water-filled cells turns into OBSIDIAN at once (one voxel: the
       // glass skin insulates the melt behind it), boiling QV_BOIL m of water off that column per voxel and hissing
       // steam for STEAM_T s. Swept QV_ROWS lattice rows every QV_EVERY s (a full map sweep ~0.5 s).
@@ -708,7 +722,7 @@
   }
   SS.CFG.veg_level = m => (m > 0 && m < MATS.length ? SS.CFG.VEG_LEVEL[m] : 0);
   SS.CFG.veg_cover = m => (m > 0 && m < MATS.length ? SS.CFG.VEG_COVER[m] : 0);
-  /* P37 W5: world content density (menu sub-menu). Settings keys dTrees, dRocks, dBarrels, dProps, dCrates, dMines,
+  /* world content density (menu sub-menu). Settings keys dTrees, dRocks, dBarrels, dProps, dCrates, dMines,
    * dBunkers, dTown, dEggs hold 'none' | 'low' | 'medium' | 'high' (absent = 'medium' = the classic counts, so old
    * saves / tests / net peers without the keys generate the same map). C: int density_count(const Settings*, int key,
    * int base). */
@@ -718,7 +732,7 @@
     const v = st && st[key], i = SS.CFG.DENSITY.LEVELS.indexOf(v);
     return i < 0 ? 2 : i;
   };
-  /* P116: each biome's own weather pool. A biome without an entry takes every kind (nothing changed for the five old
+  /* each biome's own weather pool. A biome without an entry takes every kind (nothing changed for the five old
    * maps); the beach is tropical: clear, cloudy,
    * rain, a (tropical) storm and fog, never snow, blizzard or ash. A kind the biome does not have (a saved setting, a
    * URL, a peer) is mapped to the nearest one that it has (WEATHER_MAP): snow -> rain, blizzard -> storm, ash fall ->
@@ -733,25 +747,25 @@
   SS.CFG.density_count = (st, key, base) => {
     const lv = SS.CFG.density_level(st, key);
     if (base <= 0) return base;
-    const sc = SS.world && SS.world.size_of ? SS.world.size_of(st) / 96 : 1;      // P38: content grows with the map's AREA
+    const sc = SS.world && SS.world.size_of ? SS.world.size_of(st) / 96 : 1;      // content grows with the map's AREA
     if (sc !== 1) base = Math.round(base * sc * sc);
-    // P68a: a slice has a line of ground, not an area
+    // a slice has a line of ground, not an area
     if (st && st.dim === '2d') base = M.max(1, Math.round(base * SS.CFG.DIM2.COUNT_K));
     if (lv === 2) return base;
     if (lv === 0) return 0;
     return lv === 1 ? M.max(1, Math.round(base * 0.5)) : Math.round(base * 2);
   };
-  /* ---------- P38 R7 (P1): damage sources. Gameplay never reads English text: hurt(S, w, dmg, src, flags, arg) takes a
-   * DamageSrc (enum) and
-   * everything derived from it (the cause of a death, whether the hit ends the turn, the log text) comes from one
-   * table. The text is built at presentation (sim.src_text) from the row's `text` and, for the three families with a
-   * name (a projectile, a flying prop), the i16 `arg`. C: enum DamageSrc { DS_NONE = 0, DS_BLAST, ... }; struct
-   *   DmgSrcRow { const char *text; u8 cause; u8 flags; }; const DmgSrcRow DS_TBL[DS_COUNT]; cause (enum Cause): 0
-   *   none, 1 blast, 2 shot, 3 crush, 4 burn, 5 lava, 6 poison, 7 drown, 8 shock, 9 fall, 10 alien, 11 acid, 12 shred
-   *   (minigun) flags: DSF_FIRE = 1 (fire: ends the active worm's turn even as damage over time, PoC activeHurt),
-   *          DSF_NOEND_PLAY = 2 (a sentry gun hit does not end the turn in the play phase: turn denial), DSF_DOT = 4
-   *   (always damage over time), DSF_FX_HOT = 8 (a worm shouts / burns: hud, audio) hurt flags (argument): HF_QUIET = 1
-   *   (no log, no turn end), HF_DOT = 2 (damage over time: presentation only, the camera does not follow it) */
+  /* ---------- damage sources. Gameplay never reads English text: hurt(S, w, dmg, src, flags, arg) takes a
+   * DamageSrc (enum) and everything derived from it (the cause of a death, whether the hit ends the turn, the log text)
+   * comes from one table. The text is built at presentation (sim.src_text) from the row's `text` and, for the three
+   * families with a name (a projectile, a flying prop), the i16 `arg`. C: enum DamageSrc { DS_NONE = 0, DS_BLAST, ...
+   *   }; struct DmgSrcRow { const char *text; u8 cause; u8 flags; }; const DmgSrcRow DS_TBL[DS_COUNT]; cause (enum
+   *   Cause): 0 none, 1 blast, 2 shot, 3 crush, 4 burn, 5 lava, 6 poison, 7 drown, 8 shock, 9 fall, 10 alien, 11 acid,
+   *   12 shred (minigun) flags: DSF_FIRE = 1 (fire: ends the active worm's turn even as damage over time, PoC
+   *          activeHurt), DSF_NOEND_PLAY = 2 (a sentry gun hit does not end the turn in the play phase: turn denial),
+   *   DSF_DOT = 4 (always damage over time), DSF_FX_HOT = 8 (a worm shouts / burns: hud, audio) hurt flags (argument):
+   *   HF_QUIET = 1 (no log, no turn end), HF_DOT = 2 (damage over time: presentation only, the camera does not follow
+   *   it) */
   const CAUSE = {
     NONE: 0, BLAST: 1, SHOT: 2, CRUSH: 3, BURN: 4, LAVA: 5, POISON: 6, DROWN: 7, SHOCK: 8, FALL: 9, ALIEN: 10, ACID: 11, SHRED: 12
   };
@@ -777,7 +791,7 @@
     ['FLY_SUPPLY_CRATE', 'a flying supply crate', CAUSE.CRUSH, F_DOT],
     ['DROWNING', 'drowning', CAUSE.DROWN, F_DOT],
     ['HOT_SAND', 'hot sand', CAUSE.BURN, F_DOT | F_HOT],
-    ['SUDDEN_DEATH', 'sudden death', CAUSE.POISON, F_DOT],     // P38 R9: the final stage drain (GAME.SD_DRAIN)
+    ['SUDDEN_DEATH', 'sudden death', CAUSE.POISON, F_DOT],     // the final stage drain (GAME.SD_DRAIN)
     ['LAVA', 'lava', CAUSE.LAVA, F_DOT | F_HOT],
     ['FIRE', 'fire', CAUSE.BURN, F_FIRE | F_DOT | F_HOT],
     ['BURNING_OIL', 'burning oil', CAUSE.BURN, F_FIRE | F_DOT | F_HOT],
@@ -817,8 +831,7 @@
   SS.CFG.DS_COUNT = DS_ROWS.length;
   SS.CFG.DSF = { FIRE: F_FIRE, NOEND_PLAY: F_NOEND, DOT: F_DOT, FX_HOT: F_HOT };
   SS.CFG.HF = { QUIET: 1, DOT: 2 };
-  /* ---------- P38 R7 (P10): the caps of every pool in S (one table; C: #define / const int; every list is a fixed
-   * array + count there).
+  /* ---------- the caps of every pool in S (one table; C: #define / const int; each list is a fixed array + count).
    * Semantics: a list at its cap DROPS ITS OLDEST entry (index 0) to make room (sim.pool_push: C memmove / ring),
    * except PLANE_BODIES (rebuilt every step: the extra section is dropped). The numbers are well above what the longest
    * CPU matches / all weapon shots reached (measured max in brackets) so no rule changes: proj [136], flames [45],
@@ -829,7 +842,7 @@
     WORMS: 16, PROJ: 512, PENDING: 256, FLAMES: 512, DEVICES: 64, HOLES: 16, STRIKES: 16, BULLETS: 64, ZAPS: 16, MOAIS: 16, FX: 256,
     PLANE_BODIES: 512, EVENTS: 4096, LOG: 7, LAB_METEORS: 8, WHIRLS: 4, WHIRL_RESP: 4
   };
-  /* P42 Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic. Bit 8192 is unused:
+  /* the Lab (sim/lab.js): flags of settings.labFlags and the tuning of each experimental mechanic. Bit 8192 is unused:
    * ALL leaves it out, so a stored mask that has it set loads without it. */
   SS.CFG.LAB = {
     FLAG: {
@@ -875,7 +888,7 @@
       SC_NONE: 0
     }
   };
-  /* P66b cracks (sim/cracks.js, lab flag CRACKS): persistent per-voxel damage W.crack (u8) + a structural load check.
+  /* cracks (sim/cracks.js, lab flag CRACKS): persistent per-voxel damage W.crack (u8) + a structural load check.
    * Units: kPa strength (MATS[].strength), kg, N, m. Bond capacity of one voxel face = H^2 x strength x K[direction] x
    * (1 - damage). */
   SS.CFG.CRACK = {
@@ -901,7 +914,7 @@
     MIN_DAMAGE: 0.02,             // a damaged bond keeps at least this fraction
     COMPS_MAX: 4096, PIECE_N: 320, PIECE_CRACK: 0.6, PIECE_MAX: 8   // collapse: voxels per piece, shrink at full damage, cap
   };
-  /* ---------- enums (P38 R7 / P8). The JS sim keeps strings as the enum NAMES (a C port compiles each list into an
+  /* ---------- enums. The JS sim keeps strings as the enum NAMES (a C port compiles each list into an
    * enum; the index is the value):
    *   phase: C.PH / C.PHASE_NAME  (S.phase is the name in JS);  weapon: C.WEAPON_KEYS (the wire carries index + 1);
    *   weather: C.WEATHER;  biome: C.BIOMES[i].id;
@@ -1223,9 +1236,12 @@
     THUNDER: 'thunder',
     TREEACID: 'treeacid',
     TREEBREAK: 'treebreak',
+    TREEBURNOFF: 'treeburnoff',
     TREEBURNT: 'treeburnt',
+    TREECHIP: 'treechip',
     TREEFIRE: 'treefire',
     TREESHATTER: 'treeshatter',
+    TREESPLINTER: 'treesplinter',
     TREESTRIKE: 'treestrike',
     TURN: 'turn',
     UNWEDGE: 'unwedge',

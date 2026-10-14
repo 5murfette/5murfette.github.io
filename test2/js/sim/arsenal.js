@@ -8,7 +8,8 @@
  * limit); key (PoC hotkey, informational: the platform maps keys); proj (projectile model, below); retreat (s);
  * payload (may be dropped from the rope); crate (in the supply-crate pool).
  * Projectile model (p.type = weapon or sub-munition key, all in C.PROJ): impact (bursts on contact) | bouncy (rest =
- * restitution, fric = tangential retention per bounce, fuse s, fuseSet = F key sets it) ; W (kg TNT-eq), windK, drag
+ * restitution, fric = tangential retention per bounce, fuse s, fuseSet = F key sets it) ; W (kg TNT-eq), push (the
+ * blast's shove on worms x push, 1 when absent), windK, drag
  * (1/s), arm (s before terrain contact counts), split {kind, n, jx, vy0, vy1} (m/s), fire (burning patches), metal
  * (magnets pull it), boom (P66a explosion class C.BOOM: HE detonation when absent / 0, FUEL = napalm and other fuel /
  * incendiary), special handlers: homing | sheep | hole | foam | napalm | flame.
@@ -25,13 +26,15 @@
   C.PROJ = {
     bazooka: { dmg: 50, impact: 1, W: 0.8, windK: 1, frag: 1, metal: 1, r: 0.06 },
     grenade: { dmg: 50, bouncy: 1, rest: 0.45, fric: 0.9, fuse: 3, fuseSet: 1, W: 1.0, windK: 0, frag: 1, metal: 1, r: 0.09 },
-    cluster: { dmg: 25, bouncy: 1, rest: 0.4, fric: 0.9, fuse: 3, fuseSet: 1, W: Wr(30), windK: 0, metal: 1, r: 0.09,
-      split: { kind: 'clusterlet', n: 5, jx: 170 * kT, vy0: 220 * kT, vy1: 430 * kT } },
-    clusterlet: { dmg: 18, impact: 1, arm: 0.08, W: Wr(22), windK: 0, metal: 1, r: 0.05 },
-    banana: { dmg: 70, bouncy: 1, rest: 0.68, fric: 0.94, fuse: 3, fuseSet: 1, W: Wr(56), windK: 0, r: 0.1,
-      // user 2026-10-08: the sub-bananas flew too far (PoC jx 250, vy 220-430 px/s): 150 / 180-320
-      split: { kind: 'bananalet', n: 5, jx: 150 * kT, vy0: 180 * kT, vy1: 320 * kT } },
-    bananalet: { dmg: 42, impact: 1, arm: 0.12, W: Wr(42), windK: 0, r: 0.07 },
+    /* the cluster and the banana: the casing bursts with a small pop (little damage, push: it throws a worm little)
+     * and scatters five bomblets a few metres round, each a bigger blast than the pop: the cluster's parts sum to
+     * 250 HP at their centres (20 + 5 x 46, a worm shut in a box with it), the banana's to 290 (30 + 5 x 52) */
+    cluster: { dmg: 20, bouncy: 1, rest: 0.4, fric: 0.9, fuse: 3, fuseSet: 1, W: Wr(24), push: 0.35, windK: 0, metal: 1, r: 0.09,
+      split: { kind: 'clusterlet', n: 5, jx: 80 * kT, vy0: 140 * kT, vy1: 250 * kT } },
+    clusterlet: { dmg: 46, impact: 1, arm: 0.08, W: Wr(30), windK: 0, metal: 1, r: 0.05 },
+    banana: { dmg: 30, bouncy: 1, rest: 0.68, fric: 0.94, fuse: 3, fuseSet: 1, W: Wr(36), push: 0.35, windK: 0, r: 0.1,
+      split: { kind: 'bananalet', n: 5, jx: 100 * kT, vy0: 160 * kT, vy1: 280 * kT } },
+    bananalet: { dmg: 52, impact: 1, arm: 0.12, W: Wr(46), windK: 0, r: 0.07 },
     holy: { dmg: 100, bouncy: 1, rest: 0.3, fric: 0.8, fuse: 3, W: Wr(110), windK: 0, metal: 1, r: 0.12, big: 1 },
     // turn / lock: PoC 1.2 rad/s, 0.8-1.8 s, made 2.5 x as agile: poc5 speeds are lower relative to the map (P.4), so
     // PoC values loop 25 m wide
@@ -82,7 +85,8 @@
       W_A_K: 6e5 * kL * kL * kL, W_A_D2: 600 * kL * kL, CORE: 1.0, CORE_DPS: 12, CARVE_T: 0.12, CARVE_R0: 0.5, CARVE_R1: 1.5,
       W_END: Wr(64) },
     PLANE: { SPEED: 560 * kT, START: 40, ALT: 9, N: 5, GAP: 1.8, DROP_VS: 170 * kT, DROP_VY: -90 * kT },
-    NAPALM: { PATCH_R: 0.55, LIFE0: 4, LIFE1: 7, SHELL_FIRE: 6 },
+    // TREE_R: m beyond a patch's radius that its fire reaches a tree's wood or leaves (they go up at once)
+    NAPALM: { PATCH_R: 0.55, LIFE0: 4, LIFE1: 7, SHELL_FIRE: 6, TREE_R: 0.35 },
     TESLA: { DELAY: 0.7, W: Wr(24), R1: 3.9, D1: 16, R2: 5.5, D2: 26, BOLT_D: 10, CHAIN_R: 3.9, CONDUCT_R: 1.4, PUSH_UP: 120 * kL },
     MOAI: { V0: 260 * kT, SMASH_V: 170 * kT, SMASH_N: 2, W: Wr(32), LIFE: 3.5, ALT: 14, KG: 900 },
     SHOTGUN: { RANGE: 25, DMG: 25, PUSH: 240 * kL, PUSH_UP: 90 * kL, W: 0.012, SHOTS: 2 },

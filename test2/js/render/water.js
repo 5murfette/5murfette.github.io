@@ -10,8 +10,8 @@
  *     Also bound to the terrain as tWater (wet band, under-water tint and caustics follow the real surface);
  *   - inner grid: one vertex per column (or every second on low quality), displaced from tW in the vertex shader,
  *     normal from the simulated surface + procedural ripples; Fresnel sky reflection, sun specular, depth colour,
- *     shore / crest / simulated foam; eased to SEA along the map border, where the outer ocean plane (flat, deep,
- *     to the horizon) takes over;
+ *     shore / crest / simulated foam; eased to SEA over the last 4 m to the round edge of the play area (uRim: the
+ *     2D strip, its square border), where the outer ocean plane (flat, deep, to the horizon) takes over;
  *   - the same rule as the terrain: nothing in front of slice zero (during inspection it fades in), so the collision
  *     section is never hidden. The cut through the water at slice zero is an aquarium face: from the rock (terrain
  *     cap, via the 3D density texture) up to the simulated surface, depth colour, sun shafts, a bright meniscus.
@@ -24,6 +24,7 @@
   let N1 = 193;                       // lattice columns per side (P38: per map, WV.resize)
   const WETH = 0.004, WET_T = 9, FOAM_T = 2.6, DAMP = 0.9, DAMP_T = 2.5;
   let ms = 0, scene, tx, Q, U, tex, data, foam, wetA, grid, outer, face, gridMat, outerMat, faceMat, stateRef = null, ver = -1, lastT = 0;
+  let shownWet = null;                                   // per column: drawn wet (refill's hysteresis)
   const own = {
     tW: { value: null }, tSky: { value: null }, tEnv: { value: null }, uEnv: { value: 0 },
     uSun: { value: new T.Vector3(0.5, 0.6, 0.3).normalize() },
@@ -37,6 +38,8 @@
     uWc2: { value: new T.Color(0x0f2a24) },
     // lattice texels / map side (m) / map centre
     tShelf: { value: null }, uNW: { value: 193 }, uSW: { value: 96 }, uMC: { value: new T.Vector2(48, 48) },
+    // the round edge of the play area (W.RIM, m) and 1 = round (3D) / 0 = the 2D strip's square border
+    uRim: { value: new T.Vector2(47.5, 1) },
     uRing: { value: [0, 1, 2, 3, 4, 5].map(() => new T.Vector4(0, 0, -99, 0)) }   // P29l: open-sea ring waves (x, z, start time, strength)
   };
   let ringN = 0, windT = 0, wsx = 0, wsz = 0, wAng = 0, wInit = false;
@@ -305,6 +308,7 @@
         uniform highp sampler2D tW;
         uniform sampler2D tShelf;
         uniform float uSea, uNW;
+        uniform vec2 uRim, uMC;
         varying vec3 vW;
         varying vec3 vNg;
         varying vec4 vD;
@@ -320,17 +324,22 @@
           vec4 d = texelFetch(tW, ij, 0);
           float y = d.r;
           float e = float(min(min(ij.x, ij.y), min(int(uNW) - 1 - ij.x, int(uNW) - 1 - ij.y)));
-          if (d.g > ${WETH}) y = mix(uSea, y, clamp(e / 3.0, 0.0, 1.0));      // meet the flat outer ocean at the border
+          // the play area is round: over the last 4 m to its edge the sim's relief, foam and slope fade out and the sea
+          // meets the flat outer ocean along the circle (the 2D strip: along its square border)
+          bool circ = uRim.y > 0.5;
+          float rim = circ ? max(0.0, uRim.x - length(position.xz - uMC)) : e * 0.5, kn = circ ? smoothstep(0.0, 4.0, rim) : 1.0;
+          if (d.g > ${WETH}) y = circ ? mix(uSea, y, kn) : mix(uSea, y, clamp(e / 3.0, 0.0, 1.0));
           float hx = lvl(ij + ivec2(1, 0), y) - lvl(ij - ivec2(1, 0), y), hz = lvl(ij + ivec2(0, 1), y) - lvl(ij - ivec2(0, 1), y);
-          vNg = normalize(vec3(-hx, 1.0, -hz));
+          vNg = normalize(vec3(-hx * kn, 1.0, -hz * kn));
           vD = d.gbag;
+          if (vD.y > 0.0) vD.y *= kn;                                     // (the sea's foam; not the inland sign)
           {
             float dxp = texelFetch(tW, clamp(ij + ivec2(1, 0), ivec2(0), ivec2(int(uNW) - 1)), 0).g - texelFetch(tW, clamp(ij - ivec2(1, 0), ivec2(0), ivec2(int(uNW) - 1)), 0).g,
               dzp = texelFetch(tW, clamp(ij + ivec2(0, 1), ivec2(0), ivec2(int(uNW) - 1)), 0).g - texelFetch(tW, clamp(ij - ivec2(0, 1), ivec2(0), ivec2(int(uNW) - 1)), 0).g;
             // P116: slope of the bed under the water (m / m: 2 columns = 1 m), smooth across the grid: surf round rocks
-            vSl = length(vec2(dxp, dzp)) * 1.0;
+            vSl = length(vec2(dxp, dzp)) * kn;
           }
-          vSh = vec2(texelFetch(tShelf, ij, 0).r * 255.0 / 8.0, e * 0.5);      // m to the coast, m to the lattice border
+          vSh = vec2(texelFetch(tShelf, ij, 0).r * 255.0 / 8.0, rim);          // m to the coast, m to the edge of the play area
           vec4 w = modelMatrix * vec4(position.x, y, position.z, 1.0);
           vW = w.xyz;
           gl_Position = projectionMatrix * viewMatrix * w;
@@ -364,17 +373,23 @@
         }`,
       fragmentShader: /* glsl */`uniform highp sampler2D tW;
         uniform float uBack, uAlpha, uNW, uSW;
-        uniform vec2 uMC;
+        uniform vec2 uMC, uRim;
 ` + SURF + /* glsl */`void main(){
           float vis = 1.0;
+          bool circ = uRim.y > 0.5;
           if (vW.x > 0.0 && vW.z > 0.0 && vW.x < uSW && vW.z < uSW) {
-            // inside the map the grid draws the water; over dry land beyond the slab, while the surrounding world (the
-            // terrain context) is hidden, the sea continues flat, so the slab stands in an unbroken sea
-            if (texture2D(tW, (vW.xz * 2.0 + 0.5) / uNW).g > 0.0 || dot(vW - uO, uN) > -uBack) discard;
-            vis = 1.0 - uAlpha;
-            if (vis < 0.01) discard;
+            // inside the round play area the grid draws the water; beyond its edge (the square's corners) this
+            // plane does, under the grid, which shades exactly like it there (deep, flat): no seam along the
+            // lattice's border. Over dry land beyond the slab, while the surrounding world (the terrain context) is
+            // hidden, the sea continues flat, so the slab stands in an unbroken sea
+            bool wet = texture2D(tW, (vW.xz * 2.0 + 0.5) / uNW).g > 0.0, open = circ && length(vW.xz - uMC) >= uRim.x;
+            if (wet ? !open : dot(vW - uO, uN) > -uBack) discard;
+            if (!wet) {
+              vis = 1.0 - uAlpha;
+              if (vis < 0.01) discard;
+            }
           }
-          vec2 o = max(max(-vW.xz, vW.xz - uSW), 0.0);
+          vec2 o = circ ? vec2(max(0.0, length(vW.xz - uMC) - uRim.x), 0.0) : max(max(-vW.xz, vW.xz - uSW), 0.0);
           // P29f (user 2026-10-08: "a strange cut-off at a distance, like an island in the air"): the plane fades out
           // over its last 150 m, beyond render/farland.js's R_IN (520 m), so the far ocean (drawn under it, the same
           // surface down to the true horizon) carries the horizon: before, the fogged edge of this plane lay as a pale
@@ -416,10 +431,10 @@
       fragmentShader: /* glsl */`
         uniform highp sampler2D tW;
         uniform highp sampler3D tVol;
-        uniform sampler2D tNoise;
-        uniform vec3 uVolSize, uSun, uDeep, uShallow, uFog, uN;
+        uniform sampler2D tNoise, tShelf;
+        uniform vec3 uVolSize, uSun, uDeep, uShallow, uFog, uN, uSunCol, uWc0, uWc1, uWc2;
         uniform vec4 uFaceK;
-        uniform float uWTime, uFogD, uSea, uNW, uSW, uFaceH, uFaceT, uRain, uCloud;
+        uniform float uWTime, uFogD, uSea, uNW, uSW, uFaceH, uFaceT, uRain, uCloud, uClear;
         varying vec3 vW;
         void main(){
           vec2 g = vW.xz * 2.0;
@@ -429,7 +444,7 @@
           float turb = clamp(uFaceT + uRain * 0.7 + uCloud * 0.45, 0.0, 1.0);          // storm / ash murk 0..1
           // chop on the top edge: along-face waves, finer ripples riding on them, wilder under rain and wind
           float rip = (0.015 + 0.075 * turb) * ((texture2D(tNoise, vec2(u * 0.8 + uWTime * 0.33, 0.13)).r - 0.5) * 1.3 + (texture2D(tNoise, vec2(u * 3.3 - uWTime * 0.8, 0.57)).g - 0.5) * 0.55);
-          float surf, inl = 0.0, bedY = -1.0;
+          float surf, inl = 0.0, bedY = -1.0, dA = 12.0, wetF = 1.0;
           if (g.x < 0.0 || g.y < 0.0 || g.x > uNW - 1.0 || g.y > uNW - 1.0) {
             // beyond the map: the open sea at rest over a seabed falling away to the diorama base
             vec2 o = max(max(-vW.xz, vW.xz - uSW), 0.0);
@@ -439,42 +454,70 @@
             // simulated surface over the wet corners only (dry corners hold the bed)
             ivec2 i0 = ivec2(floor(g));
             vec2 f = g - vec2(i0);
-            float sw = 0.0, sh = 0.0, dep = 0.0;
+            float sw = 0.0, sh = 0.0, dep = 0.0, coast = 0.0;
             inl = 0.0;
             for (int q = 0; q < 4; q++) {
               ivec2 o = ivec2(q & 1, q >> 1);
               vec4 d = texelFetch(tW, min(i0 + o, ivec2(int(uNW) - 1)), 0);
               float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
               dep += d.g * w;
-              if (d.g > ${WETH}) {
-                sw += w;
-                sh += w * d.r;
-                inl += w * step(d.b, -0.5);
+              coast += w * texelFetch(tShelf, min(i0 + o, ivec2(int(uNW) - 1)), 0).r * 255.0 / 8.0;
+              // (a corner's share fades out with its depth: the top edge does not jump when a corner dries)
+              float wk = w * smoothstep(${WETH}, 0.06, d.g);
+              if (wk > 0.0) {
+                sw += wk;
+                sh += wk * d.r;
+                inl += wk * step(d.b, -0.5);
               }
             }
-            if (sw < 1e-3 || dep < ${WETH}) discard;
+            // a thin run-up film fades out instead of switching on and off with every wet / dry tick of the sim (the
+            // water face blinked against the sand at the waterline)
+            wetF = smoothstep(${WETH}, 0.08, dep);
+            if (sw < 1e-3 || wetF < 0.01) discard;
             surf = sh / sw; inl /= sw;
             if (vW.y > surf + rip) discard;
             // rock: the terrain cap (a hair of margin: no water sliver on the rock edge)
             if (texture(tVol, (vW / 0.5 + 0.5) / uVolSize).r > -0.04) discard;
+            // the column's APPARENT depth as the surface colours it (the LS1 shelf: deeper off the coast)
+            float nzS = texture2D(tNoise, vW.xz * 0.023 + 0.37).r;
+            dA = dep + ${SHELF_D}.0 * smoothstep(mix(1.5, 4.0, uClear), mix(12.0, 30.0, uClear), coast * (0.6 + 0.8 * nzS));
           }
           float dd = surf + rip - vW.y;
           // bed proximity: rock a few decimetres below (inside the lattice), the sloping seabed beyond it
           float nearBed = bedY > -0.5 ? exp(-(vW.y - bedY) * 2.2) : max(step(0.0, texture(tVol, (vW - vec3(0.0, 0.3, 0.0)) / 0.5 / uVolSize + 0.5 / uVolSize).r) * 0.9, step(0.0, texture(tVol, (vW - vec3(0.0, 0.7, 0.0)) / 0.5 / uVolSize + 0.5 / uVolSize).r) * 0.45);
-          // Beer-Lambert: the body keeps the blue-green, the red is absorbed first; murk shortens the visibility
-          vec3 kAbs = vec3(0.78, 0.3, 0.17) * (1.0 + 1.1 * turb);
-          vec3 col = uShallow * 0.95 * exp(-dd * kAbs) + uDeep * 0.62 * (1.0 - exp(-dd * (0.42 + 0.5 * turb)));
+          // the water body in the colour of its own surface (the same shallow -> deep ramp by the apparent depth, the
+          // clear tropical palette where the sea is clear): a blue sea has a blue side, the jungle beach's green water
+          // a green one; down the face the daylight dies and the colour sinks toward the deep tone
+          vec3 shW = mix(uShallow, vec3(dot(uShallow, vec3(0.333))) * vec3(0.55, 0.6, 0.58), 0.62 * turb) * (1.0 - 0.45 * turb);
+          vec3 body = mix(shW, uDeep, smoothstep(0.3, 4.5, dA));
+          // (the clear water's surface owes its bright green to the sand under it; the side sees the water itself,
+          // lifted toward that green)
+          if (uClear > 0.0) {
+            vec3 cc = mix(mix(uWc0, uWc1, smoothstep(0.15, 2.4, dA)), uWc2, smoothstep(1.8, 7.0, dA));
+            body = mix(body, mix(cc * 2.5, vec3(0.06, 0.3, 0.17), 0.5), uClear);
+          }
+          vec3 col = mix(body * (0.85 + 0.35 * exp(-dd * 1.2)), uDeep * 0.5, 1.0 - exp(-dd * (0.3 + 0.35 * turb)));
           col = mix(col, mix(vec3(0.16, 0.15, 0.11), vec3(0.05, 0.06, 0.055), smoothstep(0.0, 1.2, dd)), inl);   // groundwater pool: murky
-          // sun shafts along the refracted sun direction, drifting, fading with depth; a cloud deck leaves none
+          // a cloud deck leaves no shafts / caustics
+          float sunK = 1.0 - clamp(uCloud * 1.3 + uFaceT * 0.6, 0.0, 1.0) * 0.92;
+          // sun shafts along the refracted sun direction, drifting, fading with depth
           float sl = clamp(dot(uSun.xz, dW) / max(uSun.y, 0.2), -2.0, 2.0) * 0.75;
           float s = u + dd * sl;
-          float r1 = texture2D(tNoise, vec2(s * 0.43 + uWTime * 0.02, 0.37)).r, r2 = texture2D(tNoise, vec2(s * 0.11 - uWTime * 0.008, 0.71)).g;
+          float r1 = texture2D(tNoise, vec2(s * 0.43 + uWTime * 0.05, 0.37)).r;
+          float r2 = texture2D(tNoise, vec2(s * 0.11 - uWTime * 0.02, 0.71)).g;
           float rays = smoothstep(0.55, 0.85, r1) * smoothstep(0.3, 0.7, r2);
-          col += vec3(0.3, 0.48, 0.44) * rays * exp(-dd * 0.6) * 0.5 * (1.0 - clamp(uCloud * 1.3 + uFaceT * 0.6, 0.0, 1.0) * 0.92);
+          col += mix(body, vec3(0.3, 0.48, 0.44), 0.4) * 0.9 * rays * exp(-dd * 0.6) * 0.5 * sunK;
+          // the waves above refract the daylight: bright wavy bands shimmer and crawl just under the surface
+          float shv = sin(u * 3.1 + uWTime * 1.7 + 2.5 * texture2D(tNoise, vec2(u * 0.35 + uWTime * 0.07, 0.4)).r)
+            * sin(u * 1.3 - uWTime * 1.1 + vW.y * 2.0);
+          // (faded out where a pixel spans a good part of a band: from afar the thin bands would only sparkle)
+          float shk = exp(-dd * 2.2) * sunK * (1.0 - inl) * (1.0 - smoothstep(0.04, 0.15, fwidth(u)));
+          col += uSunCol * smoothstep(0.5, 1.0, shv) * 0.14 * shk;
           // suspended ash / silt: slow plumes (two scales) + falling streaks (flocs settling), thicker with the murk
           // and toward the bed
-          float pl = texture2D(tNoise, vec2(u * 0.62 + uWTime * 0.012, vW.y * 0.8 - uWTime * 0.02)).r * 0.55 + texture2D(tNoise, vec2(u * 1.7 - uWTime * 0.02, vW.y * 2.1 + 0.31)).g * 0.45;
-          float stk = smoothstep(0.62, 0.9, texture2D(tNoise, vec2(u * 2.1, vW.y * 0.11 + uWTime * 0.012)).b);
+          float pl = texture2D(tNoise, vec2(u * 0.62 + uWTime * 0.03, vW.y * 0.8 - uWTime * 0.04)).r * 0.55
+            + texture2D(tNoise, vec2(u * 1.7 - uWTime * 0.04, vW.y * 2.1 + 0.31)).g * 0.45;
+          float stk = smoothstep(0.62, 0.9, texture2D(tNoise, vec2(u * 2.1, vW.y * 0.11 + uWTime * 0.025)).b);
           float ash = clamp(0.1 + 0.55 * turb, 0.0, 1.0) * (smoothstep(0.42, 0.66, pl) * 0.85 + stk * 0.5) * (1.0 - exp(-dd * 1.1));
           vec3 ashC = mix(vec3(0.075, 0.07, 0.065), vec3(0.2, 0.17, 0.12), 0.3 * (1.0 - turb));   // volcanic ash is dark; plain silt is tan
           col = mix(col, ashC * (0.55 + 1.0 * pl), clamp(ash, 0.0, 0.88));
@@ -500,7 +543,7 @@
           // cool and dark), overcast seas greyer
           col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, uFaceK.w) * uFaceK.rgb;
           col = mix(col, uFog * 0.55, uFaceH * (1.0 - 0.5 * smoothstep(0.0, 4.0, dd)));
-          float a = mix(0.8, 0.97, smoothstep(0.0, 1.6, dd)) + 0.03 * turb;
+          float a = (mix(0.8, 0.97, smoothstep(0.0, 1.6, dd)) + 0.03 * turb) * wetF;
           float fd = length(cameraPosition - vW);
           col = mix(col, uFog, 1.0 - exp(-fd * fd * uFogD * uFogD));
           gl_FragColor = vec4(col, min(a, 1.0));
@@ -606,13 +649,17 @@
       }
   }
   WV.onEvent = function (e) {
-    // the open sea (beyond the simulated lattice, or within 3 m of its border): a ring wave on the outer ocean
+    // the open sea (beyond the round play area, or within 3 m of its edge; the 2D strip: its border): a ring wave on
+    // the outer ocean
     // P65l: a splash anywhere starts a visible ring wave whose strength follows the entry (size = f(speed x mass)); the
     // lattice's own dip of a worm / body adds the real wave on top; blasts inside the lattice have the simulated one
     // no sea, no ring wave and no foam (what the sim calls a splash there is something leaving the world:
     // view.js)
     if (!SS.world.has_sea()) return;
-    const rim = e.x < 3 || e.z < 3 || e.x > SS.world.SX - 3 || e.z > SS.world.SZ - 3;
+    const Wd = SS.world,
+      rim = Wd.flat
+        ? e.x < 3 || e.z < 3 || e.x > Wd.SX - 3 || e.z > Wd.SZ - 3
+        : Math.hypot(e.x - Wd.MX, e.z - Wd.MZ) > Math.min(Wd.SX, Wd.SZ) / 2 - 0.5 - 3;
     if (e.type === 'waterblast' && rim || e.type === 'splash') {
       own.uRing.value[ringN].set(
         e.x,
@@ -634,11 +681,17 @@
   /* Signed depth: a dry column next to water gets the neighbours' water level and depth = level − ground (< 0), so
    * the interpolated depth crosses zero at the real shoreline and the mesh stays flat instead of climbing the bank
    * (a cliff column's bed is metres above the sea). Dry columns away from water: bed − 5 cm, depth −1. */
+  /* A thin run-up film wets and dries a column every few ticks (its depth hovers round WETH); drawn as is, the
+   * waterline jumped by a column back and forth and the beach blinked between sand and water. Drawn with a hysteresis:
+   * a column shows wet from WETH_ON up and stays wet down to WETH (presentation only). */
+  const WETH_ON = 0.015;
   function refill(S, dt) {
     const st = S.water, h = st.h, bed = st.bed || st.b, ux = st.ux, uz = st.uz, seep = st.seep, NX = N1;
     const fd = Math.exp(-dt / FOAM_T), wd = dt / WET_T, wu = dt / DAMP_T;
+    if (!shownWet || shownWet.length !== st.N) shownWet = new Uint8Array(st.N);
     for (let c = 0, o = 0; c < st.N; c++, o += 4) {
-      const hc = h[c], wet = hc > WETH;
+      const hc = h[c], wet = shownWet[c] ? hc > WETH : hc > WETH_ON;
+      shownWet[c] = wet ? 1 : 0;
       const sp2 = ux[c] * ux[c] + uz[c] * uz[c];
       let f = foam[c] * fd;
       if (wet && sp2 > 0.81) f = Math.max(f, Math.min(1.5, f + dt * (Math.sqrt(sp2) - 0.9) * 0.9));
@@ -653,21 +706,21 @@
     for (let k = 0; k < N1; k++)
       for (let i = 0; i < N1; i++) {
         const c = k * NX + i;
-        if (h[c] > WETH) continue;
+        if (shownWet[c]) continue;
         let sw = 0, sl = 0;
-        if (i > 0 && h[c - 1] > WETH) {
+        if (i > 0 && shownWet[c - 1]) {
           sw++;
           sl += data[(c - 1) * 4];
         }
-        if (i < N1 - 1 && h[c + 1] > WETH) {
+        if (i < N1 - 1 && shownWet[c + 1]) {
           sw++;
           sl += data[(c + 1) * 4];
         }
-        if (k > 0 && h[c - NX] > WETH) {
+        if (k > 0 && shownWet[c - NX]) {
           sw++;
           sl += data[(c - NX) * 4];
         }
-        if (k < N1 - 1 && h[c + NX] > WETH) {
+        if (k < N1 - 1 && shownWet[c + NX]) {
           sw++;
           sl += data[(c + NX) * 4];
         }
@@ -722,6 +775,8 @@
     // every world that had it (not the 3D desert's), whether the sea is drawn or not
     const sea = SS.world.has_sea(), on = !!st && !SS.world.dry;
     grid.visible = face.visible = on && sea; outer.visible = sea;
+    // (every frame: a 2D slab may share its lattice width with a 3D map, so resize alone would miss the change)
+    own.uRim.value.set(Math.min(SS.world.SX, SS.world.SZ) / 2 - 0.5, SS.world.flat ? 0 : 1);
     own.uWTime.value = view.time;
     // the wind (smoothed: a new turn's wind must not make the ripples jump) carries the chop along
     {

@@ -143,21 +143,18 @@
   };
 
 
-  /* ninja rope, parachute, zipline: sim/traverse.js (P37). Thin delegates keep the old API for tools and tests. */
+  /* ninja rope, parachute, zipline: sim/traverse.js. Thin delegates keep the old API for tools and tests. */
   sim.shoot_rope = S => SS.traverse.rope_fire(S);
   sim.hook_resolve = S => SS.traverse.hook_resolve(S);
   sim.ROPE_TUNE = SS.CFG.TRAV ? SS.CFG.TRAV.ROPE : null;
 
-  /* fire the charged weapon (UI, AI, timer); P2: every weapon goes through sim/weapons.js */
+  /* fire the charged weapon (UI, AI, timer); every weapon goes through sim/weapons.js */
   sim.fire = function (S, power) { return SS.weapons.use(S, power); };
 
   /* ---------- projectiles: confined to the attack plane until they explode ---------- */
-  function hitWorm(S, pt, p) {
-    for (const w of S.worms)
-      if (!w.dead && !(w.id === p.owner && p.age < 0.25) && M.v3_dist(pt, w.pos) < C.WORM_R + 0.12) return w;
-    return null;
-  }
-  /* P32: a thrown / bouncing shell (grenade, cluster, banana, holy, dynamite...) does not pass through a worm: it hits
+  // (the shooter's own worm is no target while the shell leaves it, 0.25 s)
+  const hitWorm = (S, pt, p) => WM.first_near(S, pt.x, pt.y, pt.z, C.WORM_R + 0.12, p.age < 0.25 ? p.owner : -1, WM.NEAR.ANY);
+  /* a thrown / bouncing shell (grenade, cluster, banana, holy, dynamite...) does not pass through a worm: it hits
    * the soft body (a disc of WORM_R + the shell's radius about w.pos, in the plane, worms within WORM_R of it), bounces
    * off with most of its speed absorbed (restitution 0.15, then x0.5) and drops next to it; a hit faster than 3 m/s
    * into the body costs the worm 1 HP, once per shell and worm (p.hitW: bit mask of worm ids). Returns true on
@@ -213,7 +210,7 @@
       if (S.proj.indexOf(p) < 0) continue;                      // (detonated by another one this step)
       p.age += dt;
       const def = C.PROJ[p.type] || C.WEAPONS[p.type];
-      // P2: specials first (homing steering, napalm airburst, the walking sheep)
+      // specials first (homing steering, napalm airburst, the walking sheep)
       const pre = WP.pre(S, p, dt);
       if (pre === 'gone') {
         removeProj(S, p);
@@ -221,7 +218,7 @@
       }
       if (pre === true) continue;
       const wp0 = P.to_world(S, p.s, p.y);
-      // P68d: left every gravity well
+      // left every gravity well
       if (S.eow && SS.eow.proj_escape(S, p, dt)) {
         removeProj(S, p);
         continue;
@@ -241,7 +238,7 @@
         p.vy *= dr;
       }
       const gk = p.gk != null ? p.gk : 1, imp = !!def.impact && !(def.arm && p.age < def.arm);
-      const ddx = M.cos(S.theta), ddz = M.sin(S.theta);               // (P68c: the plane direction for the field)
+      const ddx = M.cos(S.theta), ddz = M.sin(S.theta);               // (the plane direction for the field)
       const n = M.max(1, Math.ceil(M.len2(p.vs, p.vy) * dt / 0.06)), h = dt / n;
       let done = false;
       for (let i = 0; i < n && !done; i++) {
@@ -250,7 +247,7 @@
           p.vs *= dr;
           p.vy = p.vy * dr - C.G * 0.55 * h;
         }
-        // P68c: the summed chunk fields
+        // the summed chunk fields
         else if (S.eow) {
           SS.eow.proj_acc(S, wp0.x, p.y, wp0.z, ddx, ddz, eg);
           p.vs += eg.s * gk * h;
@@ -271,14 +268,14 @@
           done = true;
           break;
         }
-        // P37 W4: a force field's dome throws the shell off into a random 3D direction (it leaves the plane)
+        // a force field's dome throws the shell off into a random 3D direction (it leaves the plane)
         if (S.ffields && S.ffields.length && SS.ffield.proj_hit(S, p, P.to_world(S, p.s, p.y), wp, def)) {
           removeProj(S, p);
           done = true;
           break;
         }
         // dry worlds (D4): beyond the lattice W.sample is the analytic far dunes, so shots bounce / hit there as inside
-        // Step I / P30: sea ice over the water. The speed INTO the ice decides (punching work, SS.ice.impact): a fast,
+        // sea ice over the water. The speed INTO the ice decides (punching work, SS.ice.impact): a fast,
         // steep shell goes through (and goes off in the water under it), a gentle, shallow or vertical slow drop does
         // not: a rocket's contact fuse fires on the ice, a grenade bounces and skids on (ice: next to no friction)
         if (SS.ice && S.ice && !p.wet && !p.subm && !p.pierced && p.vy < 0) {
@@ -309,7 +306,7 @@
         const surf = sim.surface_at(S, wp.x, wp.z);
         if (p.subm && ny > surf) p.subm = false;
         if (!p.wet && !p.subm && ny < surf && p.vy < 0) {
-          // water entry: the rocket's contact fuse fires on impact, a grenade plunges and keeps its fuse (P2: homing
+          // water entry: the rocket's contact fuse fires on impact, a grenade plunges and keeps its fuse (homing
           // flies on through the water, foam builds an island at the surface, fire fizzles)
           emit(S, EV.SPLASH, { x: wp.x, y: surf, z: wp.z, size: M.min(1.6, 0.4 + M.len2(p.vs, p.vy) * 0.05), proj: 1 });
           if (SS.water) SS.water.disturb(S, wp.x, wp.z, 0.6, -0.25 * M.min(1, M.len2(p.vs, p.vy) / 15));
@@ -319,7 +316,7 @@
             done = true;
             break;
           }
-          // (a shell that punched through ice goes off in the water under it: P30)
+          // (a shell that punched through ice goes off in the water under it)
           if (r === 'burst') {
             WP.detonate(S, p, {
               x: wp.x,
@@ -400,7 +397,7 @@
             const rest = def.rest != null ? def.rest : 0.4, fric = def.fric != null ? def.fric : 0.9;
             p.vs -= (1 + rest * soft) * vn * nn.s; p.vy -= (1 + rest * soft) * vn * nn.y;
             const fr = mat === MAT.ICE ? 0.98 : fric * soft + 0.1 * (1 - soft);
-            // (P42: hard bounces, the bank shot)
+            // (hard bounces, the bank shot)
             p.vs *= fr;
             p.vy *= fr;
             p.bounces++;
@@ -446,8 +443,8 @@
   /* Explosion entry point. wp: weapon def ({W} TNT-equivalent kg; legacy {R} accepted). */
   sim.explode = function (S, c, wp, ownerId) {
     let Wkg = wp.W != null ? wp.W : M.pow((wp.R || 3) / 3, 3);
-    if (SS.lab) Wkg = SS.lab.blast_w(S, Wkg, ownerId);              // P50: the RADIUS perk
-    // P37 W4: a blast inside a force field is contained
+    if (SS.lab) Wkg = SS.lab.blast_w(S, Wkg, ownerId);              // the RADIUS perk
+    // a blast inside a force field is contained
     const Wfull = Wkg, ffx = SS.ffield && S.ffields && S.ffields.length ? SS.ffield.contain_pre(S, c, Wkg, wp) : null;
     if (ffx) Wkg = ffx.W;
     S.lastBoom = S.time;
@@ -455,14 +452,15 @@
     S.lastBlastW = Wkg;
     S.lastBlastT = S.time;
     let ev;
-    if (SS.blast) ev = SS.blast.explode(S, c, Wkg, { owner: ownerId, kind: wp.name || 'blast', dmg: wp.dmg, boom: wp.boom || 0 });
+    if (SS.blast)
+      ev = SS.blast.explode(S, c, Wkg, { owner: ownerId, kind: wp.name || 'blast', dmg: wp.dmg, boom: wp.boom || 0, push: wp.push });
     else {
       W.carve(c.x, c.y, c.z, 3 * M.cbrt(Wkg));
       ev = emit(S, EV.EXPLODE, { x: c.x, y: c.y, z: c.z, R: 3 * M.cbrt(Wkg), W: Wkg });
     }
     S.sectionDirty = true;
     sim.pool_push(S.fx, C.LIMITS.FX, { x: c.x, y: c.y, z: c.z, t: 0 });
-    if (SS.weapons) SS.weapons.blast(S, c, Wkg, wp.dmg);          // P2: devices, supply crates
+    if (SS.weapons) SS.weapons.blast(S, c, Wkg, wp.dmg);          // devices, supply crates
     if (wp.frag && SS.shrapnel) SS.shrapnel.spawn(S, c, Wkg);       // X2: casing fragments (grenade, bazooka)
     if (ffx) SS.ffield.contain_post(S, c, Wfull, wp, ffx);
     return ev;
@@ -472,7 +470,7 @@
     sim.pool_push(S.pending, C.LIMITS.PENDING, { t: S.time + delay, c: M.v3_copy(c), W: Wkg, kind, src, dmg });
     S.lastBoom = S.time;
   };
-  /* P29l: on wet worlds a shot flies on over the open sea (beyond the lattice the world samples as air, the sea surface
+  /* on wet worlds a shot flies on over the open sea (beyond the lattice the world samples as air, the sea surface
    * is W.SEA) and splashes / blasts in the water like inside; it is dropped only this far out (it was 6 m: shells
    * vanished just off the coast without a splash) */
   const OOB_SEA = 120;
@@ -482,7 +480,7 @@
   sim.step = function (S, inp, dt) {
     S.tick++; S.time += dt;       // tick: the integer step count (stagger keys, once-per-step guards; exact in a port)
     let a = S.active;
-    // P49: the human's input keeps its debug drop even when a CPU worm's plan replaces `inp` below
+    // the human's input keeps its debug drop even when a CPU worm's plan replaces `inp` below
     const dbgInp = inp;
     // 9a: a CPU team's worm is driven by sim/ai.js (deterministic; the human input is ignored on its turn)
     // (a cleared Input struct, filled by the plan)
@@ -492,15 +490,15 @@
       sim.reset(S, S.settings);
       return;
     }
-    if (inp.gear && SS.gear) SS.gear.input(S, inp);               // P89: the rescue gear toggle (HUD button / key)
-    // P49: the debug toolbox's drop (only while S.debugOn)
+    if (inp.gear && SS.gear) SS.gear.input(S, inp);               // the rescue gear toggle (HUD button / key)
+    // the debug toolbox's drop (only while S.debugOn)
     if (dbgInp.dbk && SS.debug) {
       if (dbgInp !== inp) ST.sanitize_input(dbgInp);
       SS.debug.apply(S, dbgInp);
     }
-    if (S.phase === PHASE.PERK && SS.lab) {                           // P50: the perk draft (a pick may start the first turn)
+    if (S.phase === PHASE.PERK && SS.lab) {                           // the perk draft (a pick may start the first turn)
       SS.lab.perk_step(S, inp, dt); a = S.active;
-      // (R11: the key / click that picked a card (1 / 2 / 3 are weapon keys too) is spent: it must not also act in the
+      // (the key / click that picked a card (1 / 2 / 3 are weapon keys too) is spent: it must not also act in the
       // first turn that the last pick starts)
       inp.weapon = '';
       inp.fuse = 0;
@@ -513,7 +511,7 @@
       inp.wsel = 0;
       inp.drop = 0;
     }
-    if (S.phase === PHASE.PLACE) {                                    // P13: deployment (the world runs, worms are placed)
+    if (S.phase === PHASE.PLACE) {                                    // deployment (the world runs, worms are placed)
       if (inp.rotate || inp.rotate_mouse) TN.rotate_by(S, (inp.rotate + inp.rotate_mouse) * (inp.fine ? 0.25 : 1) * C.ROT_SPEED * dt);
       SS.game.place_step(S, inp, dt);                             // (the world steps below; control needs 'play')
     }
@@ -526,7 +524,7 @@
         log(S, `${a.name} ends the turn.`);
         TN.end_turn(S, 0.3);
       }
-      // P34: re-read the active worm after a switch: the old one must not be driven in the new worm's section (its
+      // re-read the active worm after a switch: the old one must not be driven in the new worm's section (its
       // plane (s, y) mapped onto the new plane teleported it tens of metres, into a river on volcanic 6721)
       if (inp.wsel && TN.switch_worm(S)) a = S.active;
     } else if (inp.align_step || inp.align_crate || inp.align_refocus || (inp.rotate && S.phase !== PHASE.OVER)) TN.locked(S);
@@ -547,7 +545,7 @@
 
     // world subsystems
     if (SS.weather) SS.weather.step(S, dt);
-    if (SS.lab) SS.lab.step(S, dt);                               // P42: wind gusts, meteor impacts
+    if (SS.lab) SS.lab.step(S, dt);                               // wind gusts, meteor impacts
     if (SS.bodies) SS.bodies.plane_sections(S);
     if (SS.trees) SS.trees.plane_sections(S);
     if (SS.struct) SS.struct.plane_sections(S);
@@ -561,7 +559,7 @@
       if (Math.abs(q.t) > C.WORM_R) continue;
       P.pb_add(S.planeBodies, 0, q.s, o.pos.y, 0, 0, C.WORM_R, -1, -1, -1, -1, o.id, false);
     }
-    WM.unpin_others(S);                                               // P88: a prop on a worm that is not under control
+    WM.unpin_others(S);                                               // a prop on a worm that is not under control
     if (S.phase === PHASE.PLAY && a && !a.dead && !a.swim) WM.control_active(S, a, dt, inp, false);
     else if (S.phase === PHASE.ATTACK && S.retreatT > 0 && a && !a.dead && !a.swim && !S.dig)
       WM.control_active(
@@ -571,7 +569,7 @@
         SS.game.is_cpu(S, a.team) ? (SS.ai && SS.ai.retreat ? SS.ai.retreat(S, a, NOINPUT) : NOINPUT) : inp,
         true
       );
-    // P107: a worm afloat in a life jacket is a playable worm
+    // a worm afloat in a life jacket is a playable worm
     else if (
       a && !a.dead && a.swim && a.swim.jk && SS.jacket && (S.phase === PHASE.PLAY || (S.phase === PHASE.ATTACK && S.retreatT > 0 && !S.dig))
     ) {
@@ -587,7 +585,7 @@
     }
     SS.game.step(S, dt);
     stepProjectiles(S, dt);
-    if (SS.weapons) SS.weapons.step(S, dt);                       // P2: holes, planes, lightning, moai, dig, bullets, devices, crates
+    if (SS.weapons) SS.weapons.step(S, dt);                       // holes, planes, lightning, moai, dig, bullets, devices, crates
     if (SS.shrapnel) SS.shrapnel.step(S, dt);
     if (SS.spatter) SS.spatter.step(S, dt);
     for (let i = S.pending.length - 1; i >= 0; i--) {
@@ -603,12 +601,12 @@
     if (SS.water) SS.water.step(S, dt);
     if (SS.ice) SS.ice.step(S, dt);
     if (SS.veg) SS.veg.step(S, dt);
-    if (S.eow) SS.eow.step(S, dt);                                  // P68d: shots lost to space keep drifting for the view
-    if (SS.lava && !S.eow) SS.lava.step(S, dt);                    // (P68c: the magma pockets stay put in space)
-    if (SS.alien) SS.alien.step(S, dt);                           // P37: eggs, face huggers, the alien, acid
+    if (S.eow) SS.eow.step(S, dt);                                  // shots lost to space keep drifting for the view
+    if (SS.lava && !S.eow) SS.lava.step(S, dt);                    // (the magma pockets stay put in space)
+    if (SS.alien) SS.alien.step(S, dt);                           // eggs, face huggers, the alien, acid
     for (const w of S.worms) {
       if (w.dead) continue;
-      WM.unentomb(S, w);                                             // P88: buried at rest
+      WM.unentomb(S, w);                                             // buried at rest
       if (w.dead) continue;
       if (w.drowning) {
         SW.sink_step(S, w, dt);
@@ -637,7 +635,7 @@
     } else S.quietT = 0;
     if (S.phase === PHASE.RESOLVE && S.time - S.resolveT > 0.8) {
       // something moved again during the wait (a trap, a late blast): settle first (PoC startTurn waits for landings)
-      // (P99: at most 3 bounces back per turn: a hp-1 worm that crawls out of the sea and slides back in forever (lab
+      // (at most 3 bounces back per turn: a hp-1 worm that crawls out of the sea and slides back in forever (lab
       // SLICK mud, 2 of 40 soak matches) held the turn for 900 s)
       if (!TN.settled(S) && S.time - S.lastBoom < 10 && S.resolveBack < 3) {
         S.resolveBack++;
@@ -651,9 +649,9 @@
     // Surrounding world: revealed while rotating, faded out a few seconds after rotation stops.
     const want = S.time - S.lastRotate < C.CTX_HOLD ? 1 : 0;
     S.ctx += M.clamp(want - S.ctx, -dt / C.CTX_FADE, dt / 0.25);
-    // (P37 W4: S.forceInspect = the force field's full 3D view)
+    // (S.forceInspect = the force field's full 3D view)
     S.inspect += M.clamp((inp.inspect || S.time < (S.forceInspect || 0) ? 1 : 0) - S.inspect, -dt / 0.35, dt / 0.35);
-    if (W.flat) SS.dim2d.constrain(S);               // P68a: everything that can leave the plane goes back onto it (and no 3D inspection)
+    if (W.flat) SS.dim2d.constrain(S);               // everything that can leave the plane goes back onto it (and no 3D inspection)
   };
 
   /* ---------- compatibility: the names the sim core had on SS.sim before it was split into files. The callers outside

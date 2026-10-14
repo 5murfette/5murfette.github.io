@@ -1,6 +1,6 @@
-/* sim/rotlock.js — P37-6: the rotation lock (setting `rotLock`, default ON) and the section-aiming rules. Portable,
+/* sim/rotlock.js — the rotation lock (setting `rotLock`, default ON) and the section-aiming rules. Portable,
  * deterministic: only S state, S.rng (the sim stream) and the fixed step.
- * Rule (user 2026-10-10, "free rotation makes obstacles too easy to pass"): a turn opens with the section aimed at a
+ * Rule (free rotation would make obstacles too easy to pass): a turn opens with the section aimed at a
  * RANDOM worm of the enemy team with the highest total HP (the classic idea: aim at the strongest enemy; the active
  * player's own team never counts, so when it is the strongest the opponent team with the highest HP is used). The
  * player may rotate for C.ROT_WINDOW s (the HUD shows a "ROTATE NOW" countdown); the view is fixed for the rest of the

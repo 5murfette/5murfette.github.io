@@ -9,14 +9,38 @@
   const P = SS.plane = {};
   const W = () => SS.world;
 
-  P.dir = S => ({ x: M.cos(S.theta), z: M.sin(S.theta) });
-  P.nrm = S => ({ x: -M.sin(S.theta), z: M.cos(S.theta) });
-  P.to_world = (S, s, y) => ({ x: S.O.x + s * M.cos(S.theta), y, z: S.O.z + s * M.sin(S.theta) });
-  P.to_plane = (S, p) => {
-    const c = M.cos(S.theta), sn = M.sin(S.theta), dx = p.x - S.O.x, dz = p.z - S.O.z;
-    return { s: dx * c + dz * sn, t: -dx * sn + dz * c };
+  /* the plane's frame: cos / sin of S.theta, recomputed only when the angle changes (M.cos / M.sin are exact software
+   * functions, slow; the angle changes a few times a turn, the plane is asked thousands of times a step). The values
+   * are the same numbers either way. C: static f64 FT, FC, FS. */
+  let FT = NaN, FC = 1, FS = 0;
+  const frame = th => {
+    if (!Object.is(th, FT)) {
+      FT = th;
+      FC = M.cos(th);
+      FS = M.sin(th);
+    }
   };
-  P.sample2 = (S, s, y) => W().sample(S.O.x + s * M.cos(S.theta), y, S.O.z + s * M.sin(S.theta));
+  P.dir = S => {
+    frame(S.theta);
+    return { x: FC, z: FS };
+  };
+  P.nrm = S => {
+    frame(S.theta);
+    return { x: -FS, z: FC };
+  };
+  P.to_world = (S, s, y) => {
+    frame(S.theta);
+    return { x: S.O.x + s * FC, y, z: S.O.z + s * FS };
+  };
+  P.to_plane = (S, p) => {
+    frame(S.theta);
+    const dx = p.x - S.O.x, dz = p.z - S.O.z;
+    return { s: dx * FC + dz * FS, t: -dx * FS + dz * FC };
+  };
+  P.sample2 = (S, s, y) => {
+    frame(S.theta);
+    return W().sample(S.O.x + s * FC, y, S.O.z + s * FS);
+  };
   P.solid2 = (S, s, y) => P.sample2(S, s, y) > 0;
   /* terrain or a body cross-section on the plane */
   P.blocked2 = (S, s, y) => P.sample2(S, s, y) > 0 || (S.planeBodies && S.planeBodies.length > 0 && P.body_at2(S, s, y) >= 0);
@@ -150,6 +174,17 @@
   };
   P.grounded2 = (S, s, y) => P.blocked2(S, s, y - 0.53) || P.blocked2(S, s - 0.25, y - 0.47) || P.blocked2(S, s + 0.25, y - 0.47);
   P.in_section = (S, p, r) => Math.abs(P.to_plane(S, p).t) <= SS.CFG.HALF + (r || 0);
+  // [s0, s1] range of the plane inside the round play area (W.play_disc: the chord; null when the plane misses it),
+  // or inside the world box (P.range) on a 2D slab / in the End of the World
+  const PD = { x: 0, z: 0, r: 0 };
+  P.chord = S => {
+    const c = W().play_disc(PD);
+    if (!c) return P.range(S);
+    const d = P.dir(S), ox = S.O.x - c.x, oz = S.O.z - c.z, b = ox * d.x + oz * d.z, D = b * b - (ox * ox + oz * oz - c.r * c.r);
+    if (D <= 0) return null;
+    const sq = Math.sqrt(D);
+    return [-b - sq, -b + sq];
+  };
   // [s0, s1] range of the plane that lies inside the world box.
   P.range = S => {
     const d = P.dir(S), w = W();

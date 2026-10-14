@@ -12,6 +12,9 @@
  *               struct.js off, the hot-sand HUD. dim2d.crop clears it: the 2D desert is a finite slab with none of
  *               those rules. It does NOT mean "no sea" (the 2D desert has no sea and is not dry).
  *   W.under     an underground map; W.eow the End of the World; W.flat a 2D slab (dim2d).
+ *   W.PR, W.RIM the play area is a CIRCLE about (MX, MZ), never the lattice square: W.PR the play circle (spawns, the
+ *               island's coast), W.RIM the round edge the views draw (the sea, sea ice, caves, the hills' land stay
+ *               inside it). A 2D slab has its strip instead.
  *   W.SEA       the sea level in metres. Below 0 (C.DRY.SEA, caves, the End of the World: -1) the level lies under the
  *               lattice floor.
  *   W.has_sea() "this world has a sea" = the sea level exists (W.sea_exists(W.SEA)), read LIVE: sudden death raises a
@@ -39,6 +42,7 @@
     W.MX = sx / 2;
     W.MZ = sz / 2;
     W.PR = sx / 2 - 3.5;
+    W.RIM = M.min(sx, sz) / 2 - 0.5;
     W.SC = sx / 96;
     NX = W.NX = Math.round(sx / H) + 1;
     NY = W.NY = Math.round(W.SY / H) + 1;
@@ -187,6 +191,16 @@
   /* D6: on a dry world the lattice part is a disc (W.circ = { x, z, r }: C.DRY.LAT_R about the map centre, set by
    * worldgen); beyond it W.far is the ground. Wet worlds: the lattice square. */
   W.circ = null;
+  /* the round play area the views draw (no square anywhere): the dry world's lattice disc (W.circ), else the circle
+   * W.RIM about the map centre; null on a 2D slab and in the End of the World. Fills out { x, z, r } */
+  W.play_disc = function (out) {
+    if (W.flat || W.eow) return null;
+    const c = W.circ;
+    out.x = c ? c.x : W.MX;
+    out.z = c ? c.z : W.MZ;
+    out.r = c ? c.r : W.RIM;
+    return out;
+  };
   const outside = (x, z) => {
     const c = W.circ;
     if (c) {

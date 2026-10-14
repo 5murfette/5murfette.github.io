@@ -33,6 +33,8 @@
 
   TN.team_name = (S, t) => (S.teams && S.teams[t] ? S.teams[t].name : C.TEAMS[t].name);
   TN.team_rgb = (S, t) => (S.teams && S.teams[t] ? S.teams[t].rgb : C.TEAMS[t].rgb);
+  /* the end of a turn: the match ends when at most one team has a living worm; else the Lab's perk draft may come first
+   * (next_turn runs again when it ends), then the next team's next worm starts its turn */
   TN.next_turn = function (S, first) {
     S.rope = null;
     S.charging = false;
@@ -41,42 +43,50 @@
     S.retreatT = 0;
     S.resolveBack = 0;
     for (const w of S.worms) w.swimOuts = 0;
-    // P1: N teams: the match ends when at most one team has a living worm (none = a draw)
-    const alive = S.teams.map((t, i) => WM.living(S, i).length), standing = alive.filter(n => n > 0).length;
-    if (standing <= 1) {
-      S.over = alive.findIndex(n => n > 0); S.phase = PHASE.OVER;
-      TN.victory_align(S);                                              // P119b: the section turns to the winners (3D)
-      // (P119b: "after 1 round", not "1 rounds")
-      sim.log(
-        S,
-        S.over >= 0
-          ? `${TN.team_name(S, S.over)} win after ${S.round} round${S.round === 1 ? '' : 's'}. Press R for a new map.`
-          : 'Nobody survived. Press R for a new map.',
-        0xfff3b0
-      );
-      sim.emit(S, EV.GAMEOVER, { team: S.over, round: S.round });
-      return;
-    }
-    if (SS.lab && SS.lab.draft_begin(S, first)) return;           // P50: the perk draft (phase 'perk'); next_turn runs again when it ends
+    if (match_over(S)) return;
+    if (SS.lab && SS.lab.draft_begin(S, first)) return;
     if (!first) SS.game.turn_change(S);
     S.teamTurn = SS.game.next_team(S);
-    // never hand a turn to a worm that is swimming / sinking: the rotation goes on past it (it keeps its place in the
-    // order: indexing a shorter list reordered the team); a whole team in the water: the last one tried
+    start_turn(S, next_worm(S), first);
+  };
+  // at most one team with a living worm (none = a draw): the match is over, the section turns to the winners (3D)
+  function match_over(S) {
+    const alive = S.teams.map((t, i) => WM.living(S, i).length), standing = alive.filter(n => n > 0).length;
+    if (standing > 1) return false;
+    S.over = alive.findIndex(n => n > 0); S.phase = PHASE.OVER;
+    TN.victory_align(S);
+    sim.log(
+      S,
+      S.over >= 0
+        ? `${TN.team_name(S, S.over)} win after ${S.round} round${S.round === 1 ? '' : 's'}. Press R for a new map.`
+        : 'Nobody survived. Press R for a new map.',
+      0xfff3b0
+    );
+    sim.emit(S, EV.GAMEOVER, { team: S.over, round: S.round });
+    return true;
+  }
+  /* the next worm of the team on turn: nextIdx[team] = the id after the worm that moved last, the next living id
+   * wrapping (a death never reindexes the rotation); a worm swimming or sinking is passed over (it keeps its place in
+   * the order); a whole team in the water: the last one tried */
+  function next_worm(S) {
     const team = WM.living(S, S.teamTurn).sort((a, b) => a.id - b.id);
     let w, left = team.length;
-    // (P38 R3: nextIdx[team] = the id after the worm that moved last: the next living id, wrapping; a death no longer
-    // reindexes the rotation: a worm got 2 turns in 3)
     do {
       const nx = S.nextIdx[S.teamTurn] | 0;
       w = team.find(q => q.id >= nx) || team[0];
       S.nextIdx[S.teamTurn] = w.id + 1;
     } while ((w.swim || w.drowning) && --left > 0);
-    // (P38 R1: a jump wind-up begun in the last moments of the turn does not outlive it)
+    return w;
+  }
+  // worm w takes the turn: the last worm keeps its aim, the new one gets the clock, the team's last weapon and its own
+  // aim, the world's turn hooks run (weather, water, ice), the view aligns with its target, a kept rope swings on
+  function start_turn(S, w, first) {
+    // (a jump wind-up begun in the last moments of the turn does not outlive it)
     if (S.active) {
       S.active.aimMem = S.aim;
       S.active.windUp = 0;
     }
-    if (S.active && SS.skills) SS.skills.turn_end(S, S.active);           // P37 W4: skills count their turns down
+    if (S.active && SS.skills) SS.skills.turn_end(S, S.active);           // skills count their turns down
     S.active = w;
     if (SS.weaponsA && SS.weaponsA.turn_sync) SS.weaponsA.turn_sync(S);
     w.rest = false;
@@ -104,28 +114,29 @@
     if (SS.water && !first) SS.water.new_turn(S);
     if (SS.ice && !first) SS.ice.new_turn(S);
     focusActive(S, w);
-    // a worm hanging on a kept rope: the section turns to contain the rope, the worm swings on (in-plane rope again)
-    if (w.rope) {
-      const r = w.rope;
-      w.rope = null;
-      if (M.len2(r.x - w.pos.x, r.z - w.pos.z) > 0.15) {
-        S.theta = W.flat ? 0 : clamp_heading(S, M.atan2(r.z - w.pos.z, r.x - w.pos.x), S.theta);
-        S.O.x = w.pos.x;
-        S.O.z = w.pos.z;
-      }
-      const q = P.to_plane(S, r), dd = P.dir(S);
-      S.rope = SS.traverse.rope_make(q.s, r.y, r.len, Math.abs(q.t) < 0.5);
-      w.air = true;
-      w.vs = w.vel.x * dd.x + w.vel.z * dd.z;
-      w.vy = w.vel.y;
-    }
-    if (SS.weapons) SS.weapons.turn_start(S, first);              // P2: device lifetimes, supply drops
-    if (SS.lab) SS.lab.turn_start(S, first);                      // P42: pressure clock, moon phase, underdog notice, meteors
+    if (w.rope) keep_rope(S, w);
+    if (SS.weapons) SS.weapons.turn_start(S, first);              // device lifetimes, supply drops
+    if (SS.lab) SS.lab.turn_start(S, first);                      // pressure clock, moon phase, underdog notice, meteors
     if (first) S.mapMinesUntil = S.time + C.ARMS.TRAPS.MAP_MINES_SEEN;   // the map's mines: seen by all, then they burrow
-    SW.ensure_control(S, w);                                     // P91: whatever happened before, the worm that starts a turn can act
+    SW.ensure_control(S, w);                                     // whatever happened before, the worm that starts a turn can act
     sim.emit(S, EV.TURN, { wormId: w.id});
     if (!first) sim.log(S, `${TN.team_name(S, w.team)} · ${w.name}'s turn. Section aligned with ${S.target.name}.`, TN.team_rgb(S, w.team));
-  };
+  }
+  // a worm hanging on a kept rope: the section turns to contain the rope, the worm swings on (an in-plane rope again)
+  function keep_rope(S, w) {
+    const r = w.rope;
+    w.rope = null;
+    if (M.len2(r.x - w.pos.x, r.z - w.pos.z) > 0.15) {
+      S.theta = W.flat ? 0 : clamp_heading(S, M.atan2(r.z - w.pos.z, r.x - w.pos.x), S.theta);
+      S.O.x = w.pos.x;
+      S.O.z = w.pos.z;
+    }
+    const q = P.to_plane(S, r), dd = P.dir(S);
+    S.rope = SS.traverse.rope_make(q.s, r.y, r.len, Math.abs(q.t) < 0.5);
+    w.air = true;
+    w.vs = w.vel.x * dd.x + w.vel.z * dd.z;
+    w.vy = w.vel.y;
+  }
 
   /* PoC worm select (setup option): in the first SELECT_T s of a turn, before the worm acts, the player may hand the
    * turn to the team's next living worm (the clock keeps running) */
@@ -150,7 +161,7 @@
     S.rope = null;
     S.charging = false;
     if (SS.traverse) SS.traverse.reset(S);
-    // (P38 R1: the new worm gets its own rotation window; nobody keeps a jump wind-up)
+    // (the new worm gets its own rotation window; nobody keeps a jump wind-up)
     a.windUp = 0; w.windUp = 0; S.turnStart = S.time;
     a.aimMem = S.aim; focusActive(S, w); S.aim = w.aimMem != null ? w.aimMem : WD.AIM0;
     sim.emit(S, EV.SWITCH, { wormId: w.id});
@@ -161,7 +172,7 @@
   function focusActive(S, w) {
     S.O.x = w.pos.x;
     S.O.z = w.pos.z;
-    // P37-6: the section opens on a RANDOM worm of the strongest enemy team (sim/rotlock.js); without the module: the
+    // the section opens on a RANDOM worm of the strongest enemy team (sim/rotlock.js); without the module: the
     // nearest foe
     const foes = M.sort_stable(
       WM.living(S).filter(o => o.team !== w.team),
@@ -170,7 +181,7 @@
     S.target = SS.rotlock ? SS.rotlock.pick_start_target(S, w) || foes[0] : foes[0];
     S.theta = M.atan2(S.target.pos.z - w.pos.z, S.target.pos.x - w.pos.x);
     S.theta = clamp_heading(S, S.theta, S.theta);     // D6: a worm out in the hot sand faces a plane through the play area
-    if (W.flat) S.theta = 0;                        // P68a: the 2D plane never turns (+x is to the right)
+    if (W.flat) S.theta = 0;                        // the 2D plane never turns (+x is to the right)
     S.thetaGoal = null; w.facing = 1; S.tgt = null;   // (a target belongs to the old plane)
     // a worm that takes over in mid-air keeps its momentum (in the new plane)
     const dd = P.dir(S), vx = w.vel ? w.vel.x : 0, vz = w.vel ? w.vel.z : 0, vy = w.vel ? w.vel.y : 0;
@@ -178,9 +189,9 @@
     w.vs = w.air ? vx * dd.x + vz * dd.z : 0; w.vy = w.air ? vy : 0;
   }
   function locked(S) {
-    if (W.flat) return true;                        // P68a: the 2D view never turns (no message: there is nothing to wait for)
+    if (W.flat) return true;                        // the 2D view never turns (no message: there is nothing to wait for)
     if (S.phase === PHASE.PLACE) return false;
-    // P37-6: the rotation lock (sim/rotlock.js): a free window at the turn start, then fixed
+    // the rotation lock (sim/rotlock.js): a free window at the turn start, then fixed
     if (S.phase === PHASE.PLAY) {
       if (!SS.rotlock || SS.rotlock.allowed(S)) return false;
       if (S.time - S.lockMsgT > 1.5) {
@@ -202,7 +213,7 @@
    * [lo, hi], φ = heading to the centre, ±α = ±asin(PLAY_R / dist) (θ and θ + π are the same plane seen from the
    * other side; α -> 90° at the edge, so walking out never makes the heading jump). The window is WIDENED to the
    * plane through every other living worm (+ AIM_MARGIN or the worm's own angular size): a worm out there can always
-   * be aimed at (user: "couldnt find any rotation angle to aim at that worm"). Inside the play circle (and on wet
+   * be aimed at (there is always a rotation angle that aims at it). Inside the play circle (and on wet
    * worlds) every heading is free: null (a ROT_R 30 < PLAY_R once stopped full turns at r 30..34). */
   const AIM_MARGIN = 0.06;     // rad (3.4°) past a worm's plane, so it can be centred and passed slightly
   function heading_window(S) {
@@ -259,7 +270,7 @@
   };
   TN.align_to = function (S, w) {
     if (!w || w.dead || locked(S) || !S.active) return;
-    // (P38 R1: the CPU's alien pseudo-targets (SS.alien.ai_foes) are no worm: the HUD / the log read name and team off
+    // (the CPU's alien pseudo-targets (SS.alien.ai_foes) are no worm: the HUD / the log read name and team off
     // S.target)
     if (!w.alien) S.target = w;
     TN.align_to_point(S, w.pos.x, w.pos.z);
@@ -295,7 +306,7 @@
     const c = SS.rotlock.next_crate(S);
     if (c) TN.align_to_point(S, c.pos.x, c.pos.z);
   };
-  /* P119b (Q-25 in 3D, "the winners outside the section are not framed"): the match is over (next_turn: one team left):
+  /* the match is over (next_turn: one team left), and in 3D winners outside the section would not be framed:
    * the section is turned so that the celebration shows as many of the
    * winners as one picture can. A winner is SHOWN when it lies in the visible slab of the thinnest slice view: t in
    * [-VIC_BACK, VIC_FRONT] (the section rule hides everything in front of the plane, the slab ends 1.5 m behind it, a
@@ -456,12 +467,12 @@
     if (SS.shrapnel && !SS.shrapnel.settled(S)) return false;
     if (SS.spatter && !SS.spatter.settled(S)) return false;
     if (SS.weapons && !SS.weapons.settled(S)) return false;
-    if (SS.alien && SS.alien.busy(S)) return false;                // P37: a face hugger / alien on the move
+    if (SS.alien && SS.alien.busy(S)) return false;                // a face hugger / alien on the move
     if (fire_active(S)) return false;
     return S.fx.length === 0;
   }
   TN.settled = settled;
-  /* P29 (user 2026-10-08: "the round ends before the napalm damage is done"): the turn stays open while fire can
+  /* the turn stays open while fire can
    * still hurt: a napalm / oil / car flame burns, or a worm burned within FIRE_HOLD s (w.fireT: flames, oil, burning
    * grass ON the worm). A grass / tree fire that touches no worm does not hold it (it can creep for a long time: the
    * lockstep test waited out the 16 s cap for one). Lava and hot sand are steady hazards: they never hold the turn.
@@ -536,7 +547,7 @@
     for (const o of S.worms) {
       const g = o.grave;
       if (!o.dead || !g) continue;
-      // P68c: graves float where the worm died
+      // graves float where the worm died
       if (S.eow) {
         SS.eow.grave(S, o, g);
         continue;
@@ -563,14 +574,14 @@
         }
         g.y = ny;
       }
-      // landT: settled for good (no charge left on it): the plants grow from then (user: only after the grave blast)
+      // landT: settled for good (no charge left on it): the plants grow from then (only after the grave blast)
       if (g.rest) {
         g.vy = 0;
         if (g.landT < 0 && !o.gravePending) g.landT = S.time;
       }
     }
   }
-  TN.step_graves = stepGraves;         // 1/s: a shell skidding on bare sea ice slows this little (P30)
+  TN.step_graves = stepGraves;         // 1/s: a shell skidding on bare sea ice slows this little
   // the dying beat's end (blood off): the PoC's small blast ('a dying worm') for the gib causes, a cause collapse
   // otherwise
   TN.die_now = function (S, w) {

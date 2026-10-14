@@ -849,6 +849,7 @@
       last_error: AM ? AM.stat.last_error : ''
     };
   };
+  let chipAt = -1e9;                                                  // (the last minigun knock in wood, ms)
   const S2 = (id, vol, rate, fallback, pos, opt) => {
     if (!AU.play(id, vol, rate, undefined, pos, opt) && fallback) fallback();
   };
@@ -1076,7 +1077,15 @@
         break;
       case 'icebreak': S2('ice_crack', 0.9, 1, () => SFX.crunch(0.4)); break;
       case 'bridgefall': S2('bridge_fall', 1, 1, () => SFX.crack(1)); break;
-      case 'treebreak': case 'treeshatter': S2('tree_crack', 0.9, 1, () => SFX.wood(0.9)); break;
+      case 'treebreak': case 'treeshatter': case 'treesplinter': S2('tree_crack', 0.9, 1, () => SFX.wood(0.9)); break;
+      // a minigun round in the wood: a short knock, at most every 70 ms
+      case 'treechip':
+        if (performance.now() - chipAt > 70) {
+          chipAt = performance.now();
+          SFX.wood(0.25);
+        }
+        break;
+      case 'treeburnoff': S2('fire_ignite', 0.5, 0.8, null); break;
       case 'holy': S2('holy_orb_burst', 1, 1, null); break;
       case 'lightning': S2('lightning_crack', 1, 1, null); break;
       case 'moai': S2('moai_whoosh', 1, 1, () => SFX.whoosh(1)); break;

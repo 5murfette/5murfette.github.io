@@ -203,13 +203,13 @@
       });
       st.floes.splice(i, 1);
     }
-    // spread: open water next to land (a shore) or to ice freezes as new thin ice
-    const h0 = K.A_GROW * M.pow(dF, 0.5) * K.NEW_K, mark = st.scratch;
+    // spread: open water next to land (a shore) or to ice freezes as new thin ice, inside the round play area (W.RIM)
+    const h0 = K.A_GROW * M.pow(dF, 0.5) * K.NEW_K, mark = st.scratch, w = W(), H = w.H;
     mark.fill(0);
     for (let k = 1; k < NZ - 1; k++)
       for (let i = 1; i < NX - 1; i++) {
         const c = k * NX + i;
-        if (h[c] > 0 || warm[c] || !(wh[c] > K.WET)) continue;
+        if (h[c] > 0 || warm[c] || !(wh[c] > K.WET) || (!w.flat && M.len2(i * H - w.MX, k * H - w.MZ) > w.RIM)) continue;
         if (h[c - 1] >= K.H_MIN || h[c + 1] >= K.H_MIN || h[c - NX] >= K.H_MIN || h[c + NX] >= K.H_MIN ||
           !(wh[c - 1] > K.WET) || !(wh[c + 1] > K.WET) || !(wh[c - NX] > K.WET) || !(wh[c + NX] > K.WET)) mark[c] = 1;
       }

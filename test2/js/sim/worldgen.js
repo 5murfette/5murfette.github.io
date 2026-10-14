@@ -634,6 +634,7 @@
     const levels = [[5, 11], [14, 21], [24, 31]], n = 8 + M.rng_int(rng, 3);
     for (let t = 0; ch.length < n && t < 600; t++) {
       const L = levels[ch.length % 3], x = RR(12, 84), z = RR(12, 84), y = RR(L[0], L[1]);
+      if (M.len2(x - W.MX, z - W.MZ) > W.RIM - 12) continue;                     // (inside the round play area)
       if (ch.some(c => M.len3(c.x - x, c.z - z, (c.y - y) * 2) < 15)) continue;
       ch.push({ x, y, z, rx: RR(4, 7.5), rz: RR(4, 7.5), ry: RR(2.6, 4) });
     }
@@ -1291,7 +1292,8 @@
 
   /* Resumable job so the platform layer can show a progress bar (C: WorldgenJob; worldgen_step()). */
   /* PoC "Terrain shape" (setup option). islands = the poc5 island (default); caverns = the underground map; hills = the
-   * land rolls out almost to the map border (a thin sea ring stays for the far ocean); canyon = a winding gorge cut
+   * land rolls out almost to the round edge of the play area (W.RIM: a thin sea ring stays for the far ocean, the land
+   * is round, never the lattice square); canyon = a winding gorge cut
    * across the land down below sea level (struct.js then spans it with a footbridge: PoC "Canyon and bridge").
    * 'random' picks one by seed. Own RNG (the layout stream is untouched). */
   const SHAPES = ['islands', 'hills', 'caverns', 'canyon'];
@@ -1307,7 +1309,7 @@
       const ph = M.rng_next(r) * 100;
       for (let k = 0; k < NZ; k++)
         for (let i = 0; i < NX; i++) {
-          const x = i * H, z = k * H, e = M.min(M.min(M.min(i, k), NX - 1 - i), NZ - 1 - k) * H;
+          const x = i * H, z = k * H, e = W.RIM - M.len2(x - W.MX, z - W.MZ);
           const roll = SEA + 2.5 + 7 * M.fbm2(x / 22 + ph, z / 22, seed + 11, 4) + 3 * M.sin(x / 13 + ph) * M.sin(z / 17);
           const c = k * NX + i, want = M.lerp(SEA - 3, roll, sm(M.clamp((e - 3) / 9, 0, 1)));
           if (want > hgt[c]) hgt[c] = M.lerp(hgt[c], want, 0.85);

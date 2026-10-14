@@ -1,8 +1,6 @@
-/* sim/lifejacket.js — P89: the life jacket (user 2026-10-12: "life jackets, default 3, enabled by default; when a worm
- * lands in
- * water it inflates the jacket (after losing some health), then floats and slowly, on its own, swims back to the land;
- * in a river small currents can move it a bit off course, in the ocean it saves the life too and there are no
- * currents").
+/* sim/lifejacket.js — the life jacket (3 per team by default, enabled by default): when a worm lands in water it
+ * inflates the jacket (after losing some health), then floats and slowly, on its own, swims back to the land; in a
+ * river small currents can move it a bit off course, in the ocean it saves the life too and there are no currents.
  *
  * It rides on the existing water entry of sim.js (swimStart / swimStep: the worm becomes a swimmer, w.swim). When the
  * worm's team has the jacket enabled with charges left (sim/gear.js), swimStart calls enter() and the swim becomes a
@@ -30,16 +28,15 @@
  * Not rescued: lava (it burns), EOW (no water), a puddle shallower than K.MIN_DEPTH (the old shallow swim), a worm
  * already swimming (no second charge: a hit while floating is a normal hit, a blast's push is ignored as for every
  * swimmer). C layout: struct SwimJk { u8 jk; f32 ys, rt, stuck, gx, gz; i16 pi, npath; f32 path[2 * PATH_MAX]; } inside
- * struct Swim; scratch i32 par[], seen[], queue[] (NX * NZ). P107 (user 2026-10-12: "my blue worm was on a life jacket
- * but no land to get to, it was my turn and I couldn't use anything, no rope, no teleport"): a jacket worm on its own
- * turn is a PLAYABLE worm. sim.js used to skip controlActive for every swimmer, so the turn timer ran out on a floating
- * worm. Now control() runs the shared control (weapon choice, aim, the fire key) with the jacket rules: left / right
- * paddles (K.PADDLE m/s, along the section, the auto-swim to the shore pauses while a key is held), the ninja rope /
- * teleport are allowed and the jacket comes off cleanly (release: no swim state, the charge stays spent) when the rope
- * bites or the teleport lands, shells and bolts may be fired from the surface; what needs a footing (drops, melee,
- * torch / drill, parachute, zipline) is greyed out with a hint (no_weapon, also sim.weapons.can_use, so the CPU never
- * picks it). The EOW jetpack: there is no water in space, nothing to do. API: enter(S, w, surf), step(S, w, dt),
- * holds(S, w), control(S, a, dt, inp, retreat), release(S, w, why), no_weapon(S, key), K (constants).
+ * struct Swim; scratch i32 par[], seen[], queue[] (NX * NZ). A jacket worm on its own turn is a PLAYABLE worm (with no
+ * land in reach it would otherwise sit out its turn unable to use anything): control() runs the shared control (weapon
+ * choice, aim, the fire key) with the jacket rules: left / right paddles (K.PADDLE m/s, along the section, the
+ * auto-swim to the shore pauses while a key is held), the ninja rope / teleport are allowed and the jacket comes off
+ * cleanly (release: no swim state, the charge stays spent) when the rope bites or the teleport lands, shells and bolts
+ * may be fired from the surface; what needs a footing (drops, melee, torch / drill, parachute, zipline) is greyed out
+ * with a hint (no_weapon, also sim.weapons.can_use, so the CPU never picks it). The EOW jetpack: there is no water in
+ * space, nothing to do. API: enter(S, w, surf), step(S, w, dt), holds(S, w), control(S, a, dt, inp, retreat),
+ * release(S, w, why), no_weapon(S, key), K (constants).
  */
 (function (SS) {
   'use strict';
@@ -165,7 +162,7 @@
   function retarget(S, w, sw) {
     let line = w === S.active || !!W().flat;
     let ok = line ? lineSearch(S, w, sw) : search(S, w, sw);
-    // P91: no shore along the section: a swimmer is not under control, so the search may leave the plane (the next turn
+    // no shore along the section: a swimmer is not under control, so the search may leave the plane (the next turn
     // re-centres it)
     if (!ok && line) {
       ok = search(S, w, sw);
@@ -229,7 +226,7 @@
     sim().emit(S, EV.SWIMOUT, { wormId: w.id }); sim().emit(S, EV.JACKETEND, { wormId: w.id, why: why });
     sim().log(S, `${w.name} climbs out and the life jacket deflates.`, 0xffa24a);
   }
-  /* P107: the jacket comes off at once (the rope bit, the teleport landed): the worm is an ordinary airborne worm, no
+  /* the jacket comes off at once (the rope bit, the teleport landed): the worm is an ordinary airborne worm, no
    * swim flag is left behind */
   JK.release = function (S, w, why) {
     if (!w.swim || !w.swim.jk) return false;
@@ -244,7 +241,7 @@
     sim().log(S, `${w.name} slips the life jacket off (${why}).`, 0xffa24a);
     return true;
   };
-  /* P107: which weapons a worm afloat can use. Shells, bolts, strikes from the sky, the rope and the teleport work from
+  /* which weapons a worm afloat can use. Shells, bolts, strikes from the sky, the rope and the teleport work from
    * the surface; what needs a footing
    * (dropped / planted things sink, a swing or a torch needs ground, a parachute needs a fall, a zipline needs a higher
    * anchor than the water) does not. Returns the reason (for the HUD hint and the log) or '' when the weapon is
@@ -263,7 +260,7 @@
     if (!d || key === 'ffield') return '';
     return JK.REFUSE[d.kind] || '';
   };
-  /* P107: the active jacket worm's turn (or retreat). The shared control of sim.js does the weapon choice / aim / fire
+  /* the active jacket worm's turn (or retreat). The shared control of sim.js does the weapon choice / aim / fire
    * key; the swim step (JK.step) keeps floating it. */
   JK.control = function (S, a, dt, inp, retreat) {
     const sw = a.swim;
@@ -312,7 +309,7 @@
     if (S.teleT > 0 && !tele) JK.release(S, a, 'teleport');
   };
 
-  /* P91: haul a jacket swimmer out NOW (the turn was handed to it: a worm in the water cannot act). Returns true when
+  /* haul a jacket swimmer out NOW (the turn was handed to it: a worm in the water cannot act). Returns true when
    * it is on land. */
   JK.haul = function (S, w) {
     const sw = w.swim;
@@ -343,7 +340,7 @@
         return;
       }
     }
-    // P91: the water is gone from under the swimmer (it receded, or the worm waded onto a bar): it stands on the ground
+    // the water is gone from under the swimmer (it receded, or the worm waded onto a bar): it stands on the ground
     // it is over, no jacket swim on dry land
     if (!wetAt(S, w.pos.x, w.pos.z) && !lavaAt(S, w.pos.x, w.pos.z)) {
       const g = land(S, w.pos.x, w.pos.z, sw.ys);
@@ -378,7 +375,7 @@
     }
     sw.cx = cx; sw.cz = cz;                                // presentation (the wake leans with it)
     let nx = w.pos.x + cx * dt, nz = w.pos.z + cz * dt;
-    if (sw.land && sw.path.length >= 2 && sw.manual !== S.tick) {                       // (P107: not while the player paddles)
+    if (sw.land && sw.path.length >= 2 && sw.manual !== S.tick) {                       // (not while the player paddles)
       const np = sw.path.length / 2;
       while (sw.pi < np - 1 && M.len2(sw.path[sw.pi * 2] - w.pos.x, sw.path[sw.pi * 2 + 1] - w.pos.z) < 0.6) sw.pi++;
       let j = M.min(np - 1, sw.pi + K.LOOK);

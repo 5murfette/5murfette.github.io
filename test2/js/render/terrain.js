@@ -58,7 +58,14 @@
    * below: both halves, nothing opaque in front of the face; render/section.js keeps the rule on, SEC.cutOv). capOv =
    * that state this frame. */
   let capOv = false, holoMat = null;
-  const XR = { uK: { value: 0 }, uCF: { value: new T.Color(0.35, 0.65, 1.0) }, uCB: { value: new T.Color(1.0, 0.72, 0.3) } };
+  const XR = {
+    uK: { value: 0 },
+    uCF: { value: new T.Color(0.35, 0.65, 1.0) },
+    uCB: { value: new T.Color(1.0, 0.72, 0.3) },
+    // the round play area (x, z, r; r 0 = none): no glass outside it
+    uDisc: { value: new T.Vector3(48, 48, 0) }
+  };
+  const XRD = { x: 0, z: 0, r: 0 };
   let scene, tx, Q, chunks = [], volTex, volData, slabMat, slabDepth, ctxFar, ctxNear, bodyMats = null, cap, capMat;
   const U = {};               // shared uniforms
   TR.uniforms = U;
@@ -2239,7 +2246,7 @@
   function xrayMaterial() {
     const m = new T.ShaderMaterial({
       transparent: true, depthWrite: false, depthTest: false, side: T.DoubleSide, blending: T.AdditiveBlending, fog: false,
-      uniforms: { uO: U.uO, uN: U.uN, uK: XR.uK, uCF: XR.uCF, uCB: XR.uCB },
+      uniforms: { uO: U.uO, uN: U.uN, uK: XR.uK, uCF: XR.uCF, uCB: XR.uCB, uDisc: XR.uDisc },
       vertexShader: /* glsl */`varying vec3 vN;
         varying vec3 vW;
         void main() {
@@ -2248,11 +2255,12 @@
           vN = normalize(mat3(modelMatrix) * normal);
           gl_Position = projectionMatrix * viewMatrix * w;
         }`,
-      fragmentShader: `uniform vec3 uO, uN, uCF, uCB;
+      fragmentShader: `uniform vec3 uO, uN, uCF, uCB, uDisc;
         uniform float uK;
         varying vec3 vN;
         varying vec3 vW;
         void main() {
+          if (uDisc.z > 0.0 && length(vW.xz - uDisc.xy) > uDisc.z) discard;
           float f = 1.0 - abs(dot(normalize(vN), normalize(cameraPosition - vW)));
           float t = dot(vW - uO, uN), side = step(0.0, t);
           float a = (0.02 + 0.25 * f * f) * exp(-abs(t) / 48.0) * mix(0.8, 1.0, side) * uK;
@@ -2407,11 +2415,13 @@
     // P29a: down to CAP_DEEP below the lattice floor; wet worlds also CAP_EXT beyond the lattice exits (rock under the
     // sea) the overview of a cave world shows the section of the world box only: the 3 km x 400 m rock wall round it
     // was a dark strata field filling the lower half of the picture
+    // (the cave overview: the face of the round play area only, the chord)
     const box = W.under && S.inspect > 0.02,
+      rb = box ? SS.plane.chord(S) || r : r,
       ext = W.dry || box ? 0 : CAP_EXT,
       deep = box ? 0 : CAP_DEEP,
-      mid = (r[0] + r[1]) / 2,
-      L = r[1] - r[0] + 2 * ext;
+      mid = (rb[0] + rb[1]) / 2,
+      L = rb[1] - rb[0] + 2 * ext;
     cap.position.set(S.O.x + d.x * mid - n0.x * 0.002, (W.SY - deep) / 2, S.O.z + d.z * mid - n0.z * 0.002);
     cap.scale.set(L, W.SY + deep, 1);
     cap.rotation.set(0, Math.atan2(n0.x, n0.z), 0);
@@ -2513,6 +2523,10 @@
     const under = !!SS.world.under, ov = inspect > 0.05 && !under;
     capOv = inspect > 0.05 && under;
     XR.uK.value = capOv ? inspect : 0;
+    {
+      const pd = SS.world.play_disc(XRD);
+      XR.uDisc.value.set(pd ? pd.x : 0, pd ? pd.z : 0, pd ? pd.r : 0);
+    }
     if (backUser === null) backUser = U.uBack.value;
     if (ov !== ovr) {
       ovr = ov;
