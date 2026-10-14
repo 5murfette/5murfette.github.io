@@ -24,7 +24,11 @@
   /* Grass blades: instanced over the whole world, clipped to the section slab in the vertex shader.
    * Reads the simulation surface state (cover / dryness / char / burning) and the wind field uniforms. */
   MAT.grass = function (tx) {
-    const m = new T.MeshStandardMaterial({ roughness: 0.85, side: T.DoubleSide });
+    // (grass marks 1 in the stencil: the worms' x-ray film is never drawn over it, render/actors.js)
+    const m = new T.MeshStandardMaterial({
+      roughness: 0.85, side: T.DoubleSide, stencilWrite: true, stencilRef: 1, stencilFunc: T.AlwaysStencilFunc,
+      stencilZPass: T.ReplaceStencilOp
+    });
     const U = m.userData.uniforms = {
       uTime: { value: 0 }, tNoise: { value: tx.noise }, tSurf: { value: null }, uO: { value: new T.Vector3() },
       uN: { value: new T.Vector3(0, 0, 1) }, uHalf: { value: C.HALF }, uBack: { value: C.HALF },

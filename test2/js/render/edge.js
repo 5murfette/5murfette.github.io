@@ -176,7 +176,7 @@
     PAL.ash = avg(10);
     PAL.scree = avg(11);
     PAL.gBase = lin(look.gBase); PAL.gTip = lin(look.gTip); PAL.gDry = lin(look.gDry);
-    PAL.root = mixc(PAL.soil, [0.5, 0.4, 0.28], 0.75);
+    PAL.root = mixc(PAL.soil, [0.3, 0.22, 0.14], 0.45);   // (dark, close to the soil: pale roots read as tiny worms)
     PAL.char = [0.022, 0.019, 0.017]; PAL.ember = [1.0, 0.36, 0.06];
     PAL.snowW = mixc(PAL.snow, [0.92, 0.95, 1.0], 0.6); PAL.snowB = [0.55, 0.64, 0.8];
     PAL.iceHi = [0.82, 0.94, 1.0]; PAL.iceLo = [0.42, 0.66, 0.86];
@@ -489,10 +489,10 @@
     const l = Math.hypot(ds, dy) || 1;
     ds /= l;
     dy /= l;
-    const np = rootWalk(s - ns * 0.03, y - ny * 0.03, ds, dy, (0.15 + rnd() * 0.3) * k, 0.03, PAL.root, CB2, false);
+    const np = rootWalk(s - ns * 0.03, y - ny * 0.03, ds, dy, (0.15 + rnd() * 0.3) * k, 0.015, PAL.root, CB2, false);
     if (np > 3 && rnd() < 0.5) {
       const bs = RP[4], by = RP[5], sgn = rnd() < 0.5 ? -1 : 1;
-      rootWalk(bs, by, ds * 0.5 + sgn * 0.8, dy * 0.5 - 0.3, (0.07 + rnd() * 0.1) * k, 0.018, PAL.root, CB2, false);
+      rootWalk(bs, by, ds * 0.5 + sgn * 0.8, dy * 0.5 - 0.3, (0.07 + rnd() * 0.1) * k, 0.009, PAL.root, CB2, false);
     }
     cur.birth = b0;
   }

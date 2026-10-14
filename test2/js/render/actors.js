@@ -237,6 +237,22 @@
   }
   A.faceNormals = faceNormals;                                  // (tests)
   A.wormSpine = p => spine(Object.assign({ t: 0, crawl: 0, air: 0, headD: 0, arcD: 0, wave: 0 }, p));   // tests / tools
+  /* the active worm stows its weapon while it walks and for WALK_STOW s after: no weapon in its hands, no aim guide
+   * (render/aimline.js). A.STOW_WALK = false keeps them out (a walk-and-shoot mode). */
+  const WALK_STOW = 0.25;
+  A.STOW_WALK = true;
+  let walkId = -1, walkT = -1e9;
+  A.walkStowed = function (S) {
+    const a = S.active;
+    if (!A.STOW_WALK || !a) return false;
+    // (a new worm, or the clock went back: an instant replay)
+    if (a.id !== walkId || S.time < walkT) {
+      walkId = a.id;
+      walkT = -1e9;
+    }
+    if (a.walking) walkT = S.time;
+    return S.time - walkT < WALK_STOW;
+  };
   const HEAD_NAT = 2.27 - 3.32;                // the head's heading in the rest pose (rad, facing frame)
   const EYE_GEO = new T.SphereGeometry(0.075, 16, 12),
     PUPIL_GEO = new T.SphereGeometry(0.043, 12, 8),
@@ -1224,7 +1240,8 @@
           && !(S.zip && S.zip.state === 2)
           && !(w.dizzyUntil > S.time)
           && wkey !== 'skip'
-          && !(idl && idl.hideHeld);
+          && !(idl && idl.hideHeld)
+          && !A.walkStowed(S);
         if (v.held.visible) {
           let hm = v.heldBy[wkey];
           if (!hm && SS.ordnance) {

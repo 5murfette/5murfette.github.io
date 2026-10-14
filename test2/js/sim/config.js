@@ -393,7 +393,7 @@
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
     // the version of the sim rules: bump it when they change (net.js adds a hash of the arsenal / biome tables); peers
     // of other builds refuse each other
-    BUILD: 'p114-r6-m',
+    BUILD: 'p129-seep',
     // first: the team that starts (0..3 or 'random' = PoC; the menu default)
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,
       collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off',

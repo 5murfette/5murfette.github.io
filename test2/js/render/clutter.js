@@ -336,7 +336,12 @@
       metalness: o.metal || 0,
       side: sway || o.dbl ? T.DoubleSide : T.FrontSide,
       flatShading: !!flat,
-      transparent: true
+      transparent: true,
+      // (a plant marks 1 in the stencil: the worms' x-ray film is never drawn over it, render/actors.js)
+      stencilWrite: true,
+      stencilRef: 1,
+      stencilFunc: T.AlwaysStencilFunc,
+      stencilZPass: T.ReplaceStencilOp
     });
     // (P118c: transparent only for the worm see-through fade, alpha is 1 elsewhere: no back-then-front double draw)
     m.forceSinglePass = true;
@@ -1159,9 +1164,11 @@
     const A = UW.uWorm.value, ws = S.worms || [], act = S.active, ft = view && view.camT, pd = SS.plane.dir(S);
     const fx = ft ? ft.x : act ? act.pos.x : 0, fz = ft ? ft.z : act ? act.pos.z : 0;
     wormList.length = 0;
+    // (only the worms that are drawn: one off the slab, 20-46 m behind the plane, cut see-through circles into the
+    // plants in front of nothing, sliding with the camera)
     for (let i = 0; i < ws.length; i++) {
       const w = ws[i];
-      if (w && !w.dead && w !== act && w.pos) wormList.push(w);
+      if (w && !w.dead && w !== act && w.pos && SS.view.inSlab(S, w.pos)) wormList.push(w);
     }
     wormList.sort(
       (a, b) => (a.pos.x - fx) * (a.pos.x - fx)

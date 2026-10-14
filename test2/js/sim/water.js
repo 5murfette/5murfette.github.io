@@ -88,7 +88,23 @@
       }
     }
   }
-  /* seep cells: not sea, bed below SEA, permeable material at the bed (the lattice node holding the bed surface) */
+  /* a pit dug to the map's floor: the bedrock under it is sealed, but the ground water comes in through the walls. Is
+   * there permeable ground within WALL_R columns at the first lattice level above the floor (below SEA)? */
+  const WALL_R = 6;
+  function wallSeeps(w, i, k, j) {
+    const NX = w.NX, NZ = w.NZ, NY = w.NY;
+    if (j + 1 >= NY || (j + 1) * w.H >= w.SEA) return false;
+    for (let dk = -WALL_R; dk <= WALL_R; dk++)
+      for (let di = -WALL_R; di <= WALL_R; di++) {
+        const i2 = i + di, k2 = k + dk;
+        if (i2 < 0 || k2 < 0 || i2 >= NX || k2 >= NZ) continue;
+        const o = (k2 * NY + j + 1) * NX + i2;
+        if (w.d[o] > 0 && PERM[w.mat[o]]) return true;
+      }
+    return false;
+  }
+  /* seep cells: not sea, bed below SEA, permeable material at the bed (the lattice node holding the bed surface), or a
+   * bedrock floor with permeable walls */
   function seepMask(st, w) {
     const NX = st.NX, NZ = st.NZ, NY = w.NY, SEA = w.SEA, H = w.H, b = st.b, sea = st.sea, seep = st.seep, list = st.seepList;
     seaFlood(st, w);
@@ -99,8 +115,11 @@
         seep[c] = 0;
         if (sea[c] || b[c] >= SEA - 0.01) continue;
         let j = M.clamp(Math.floor(b[c] / H + 1e-4), 0, NY - 1), o = (k * NY + j) * NX + i;
-        if (w.d[o] <= 0 && j > 0) o -= NX;
-        if (!PERM[w.mat[o]]) continue;
+        if (w.d[o] <= 0 && j > 0) {
+          o -= NX;
+          j--;
+        }
+        if (!PERM[w.mat[o]] && !(w.mat[o] === C.MAT.BEDROCK && wallSeeps(w, i, k, j))) continue;
         seep[c] = 1; list[n++] = c;
       }
     st.nSeep = n; st.seepDirty = false; st.seepVer++;

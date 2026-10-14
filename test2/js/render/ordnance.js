@@ -389,7 +389,7 @@
         // P45: the exhaust is a stream of procedural tongues (render/flame.js)
         if (on && SS.flameView) {
           g.updateMatrixWorld(true); u.fire.getWorldPosition(PV0); PV1.set(-1, 0, 0).transformDirection(g.matrixWorld);
-          SS.flameView.exhaust(g.id, PV0.x, PV0.y, PV0.z, PV1.x, PV1.y, PV1.z, 1.5 * fl, 0.3 + 0.06 * Math.min(4, u.R / 0.04), 1.2, dt);
+          SS.flameView.exhaust(g.id, PV0.x, PV0.y, PV0.z, PV1.x, PV1.y, PV1.z, 0.9 * fl, 0.09 + 0.015 * Math.min(4, u.R / 0.04), 1.2, dt);
         }
       }
     } else if (u.kind === 'tumble') {

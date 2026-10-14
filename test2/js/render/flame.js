@@ -348,12 +348,12 @@
         ox + rnd(-rr, rr),
         oy + rnd(-rr, rr),
         oz + rnd(-rr, rr),
-        dx * 2.5,
-        dy * 2.5,
-        dz * 2.5,
+        dx * 9,
+        dy * 9,
+        dz * 9,
         w * rnd(0.7, 1.2),
         len * rnd(0.7, 1.2),
-        rnd(0.16, 0.3),
+        rnd(0.07, 0.13),
         I * rnd(0.9, 1.2),
         2,
         dx,
@@ -363,7 +363,7 @@
       );
     }
     // the white-hot core at the nozzle
-    puff(x + dx * w * 0.5, y + dy * w * 0.5, z + dz * w * 0.5, dx * 2, dy * 2, dz * 2, w * 0.75, 0.09, 2900, 6, 0.4);
+    puff(x + dx * w * 0.8, y + dy * w * 0.8, z + dz * w * 0.8, dx * 6, dy * 6, dz * 6, w * 0.5, 0.05, 2900, 6, 0.4);
     let ks = 26 * qn * dt + Math.random();
     ks = Math.floor(ks);
     for (let j = 0; j < ks; j++) {

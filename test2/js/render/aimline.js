@@ -65,6 +65,7 @@
       && a
       && !a.dead
       && AV.aims(S)
+      && !SS.actors.walkStowed(S)
       && !(SS.cine && SS.cine.moving && SS.cine.moving())
       && !(SS.cine && SS.cine.victory && SS.cine.victory());
     if (!on) {

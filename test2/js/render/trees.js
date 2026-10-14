@@ -47,6 +47,7 @@
     varying float vLeafF;
     varying float vCut;
     varying float vRootT;
+    varying float vRootF;
     varying vec3 vCenT;
     varying float vRoot;
     vec3 treeXform(vec3 p) {
@@ -56,6 +57,7 @@
       vLeafF = 1.0;
       vCut = step(0.95, fract(aInfo.w * 64.0));
       vRootT = 0.0;
+      vRootF = -1.0;
       return p;
     #else
       int row = int(aInfo.x + 0.5), part = int(aInfo.y + 0.5);
@@ -64,6 +66,7 @@
       vTr = tr;
       vec4 rt = texelFetch(tState, ivec2(${ROOT_T}, row), 0);
       vRootT = dot(vec2(rt.x - uO.x, rt.y - uO.z), uN.xz);    // root distance from slice zero: picks slab vs context for the whole tree
+      vRootF = vRootT - rt.z;                                  // the back of the trunk base (rt.z its radius): > 0 = all in front
       bool leaf = part >= ${LEAF0};
       float f = pt.r;
       // a card disappears once the cluster has lost more than its share of leaves (seed = fract part of aInfo.w)
@@ -103,6 +106,7 @@
     varying float vLeafF;
     varying float vCut;
     varying float vRootT;
+    varying float vRootF;
     varying vec3 vCenT;
     varying float vRoot;
     uniform vec3 uO, uN, uHaze;
@@ -146,7 +150,9 @@
       // P118c (Q-OV1): in the overview (P85: the whole map solid) the trees in front of the plane are as solid as the
       // terrain under them; a = uInsp only dithers (screen door) during the 0.35 s transition. It used to be a 30 %
       // ghost fading with the distance: a green stipple swarm over the island
-      if (uSecG < 0.5 && t > 0.02 - jag) {
+      // a tree whose trunk stands wholly in front of the plane goes as a whole: none of its leaves or branches is left
+      // floating behind the plane
+      if (uSecG < 0.5 && (t > 0.02 - jag || vRootF > 0.02)) {
         if (uInsp < 0.02) discard;
         a = uInsp;
       }
@@ -828,7 +834,7 @@
         }
         for (let k = 0; k < TREE_T - LEAF0; k++) stData[o + (LEAF0 + k) * 4] = k < t.leaf.length && t.leaf[k].s >= 0 ? t.leaf[k].f : 0;
         const q = o + TREE_T * 4, qr = o + ROOT_T * 4;
-        stData[qr] = t.x; stData[qr + 1] = t.z;
+        stData[qr] = t.x; stData[qr + 1] = t.z; stData[qr + 2] = t.seg.length ? t.seg[0].r0 : 0;
         stData[q] = t.alive ? 1 : 0;
         stData[q + 1] = t.char;
         stData[q + 2] = SS.trees ? SS.trees.intensity(t) : 0;

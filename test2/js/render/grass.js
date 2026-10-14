@@ -164,6 +164,8 @@
     }
     im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true;
     im.receiveShadow = true; im.frustumCulled = false; im.userData.chunk = c;
+    // (drawn after the other opaque things: its stencil mark is then where a blade is really the nearest surface)
+    im.renderOrder = 1;
     scene.add(im); per.set(ci, im);
   };
   GR.rebuildAll = function (chunks) {
