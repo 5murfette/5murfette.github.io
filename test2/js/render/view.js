@@ -452,6 +452,24 @@
   };
   V.quality = () => Q;
   V.camera = () => camera; V.scene = () => scene; V.renderer = () => renderer;
+  /* the listener for the audio (platform/audio.js AU.ears_make, AU.frame): the camera focus (the point the player
+   * looks at, usually the active worm), the camera position and its right vector; ok false until the camera has a
+   * focus */
+  V.ears = function (out) {
+    out.ok = !!(camera && view.camT);
+    if (!out.ok) return out;
+    const e = camera.matrixWorld.elements, p = camera.position, f = view.camT;
+    out.fx = f.x;
+    out.fy = f.y;
+    out.fz = f.z;
+    out.cx = p.x;
+    out.cy = p.y;
+    out.cz = p.z;
+    out.rx = e[0];
+    out.ry = e[1];
+    out.rz = e[2];
+    return out;
+  };
   V.vis = w => SS.actors.vis(w);
   /* P9: client (x, y) -> the point on the section plane under the cursor, {s, y} in plane coordinates (or null) */
   const rc = new T.Raycaster(), ndc = new T.Vector2();

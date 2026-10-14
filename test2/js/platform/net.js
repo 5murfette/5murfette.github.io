@@ -6,37 +6,26 @@
  * STAR: the host links every guest. Guests send their inputs / hashes to the host; the host relays a guest's inputs to
  * the other guests and broadcasts its own (and its CPU teams'). 2-4 teams: host = team 0, guests = the next teams in
  * join order, the remaining teams CPU (driven by the host).
- * TRANSPORTS (same messages):
- *   - room codes (PoC): PeerJS (local vendor/peerjs.min.js, loaded on demand) with the public PeerJS broker for
- *     signalling, Google / Cloudflare STUN and the PeerJS TURN relay (as in the PoC). Needs the internet.
- *   - LAN codes (9b): copy / paste WebRTC offer / answer codes, no server, host candidates only (file://, offline);
- *     the host makes one offer per guest.
+ * TRANSPORT: platform/rtc.js (WebRTC: PeerJS room codes over the internet, LAN copy / paste codes) behind links:
+ * net.js hands it the sink below (link, opened, closed, data) and only ever sees link.send / close / buffered. A Steam
+ * build swaps rtc.js for a lobby + connection module with the same calls (docs/PORTING.md "Multiplayer").
  * FRIEND LEFT (PoC friendLeft): the host turns the leaver's team into a CPU team at an agreed step k (its own current
  * step: no other peer can be past it for that team's inputs, they all come through the host) and tells the others
- * ('ctl'); every peer switches at step k (main.js applies ctl_due before stepping).
+ * ('ctl'); every peer switches at step k (platform/session.js applies ctl_due before stepping).
  * Messages (JSON): {t:'hello', name} guest -> host; {t:'lobby', names[]} host -> guests; {t:'start', settings, seats,
  * you}; {t:'ins', k0, a:[...]}; {t:'hash', k, h}; {t:'ctl', team, k}; {t:'bye'}.
  * API: room_host(name) -> Promise<code>; room_join(code, name) -> Promise; host(settings, name) -> Promise<offer>
  * (LAN, one per guest); accept(answer); join(offer, name) -> Promise<answer>; start(settings) -> settings to play
  * (host); on(name, fn): 'open' (guest linked), 'peers' (lobby list), 'start', 'desync', 'close', 'leave';
  * drives(team), active, team, isHost, started, pack / unpack, queueInput, takeInput, flush, hash, due, ctl_due(k),
- * stepNow (set by main.js), close(), stats(). */
+ * stepNow (set by platform/session.js), close(), stats(). */
 (function (SS) {
   'use strict';
   const NT =
     SS.net = { active: false, team: -1, isHost: false, mode: null, seats: null, code: null, name: '', started: false, stepNow: null };
-  const HASH_EVERY = 120, LAN_CFG = { iceServers: [] }, PREFIX = 'burrowbrawl3d-v1-';
-  // the PoC's ICE servers (public STUN + the PeerJS TURN relay) for room-code play over the internet
-  const NET_CFG = {
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }]
-  };
-  const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const HASH_EVERY = 120;
   let links = [],
     hostLink = null,
-    pendingRtc = null,
-    peer = null,
     handlers = {},
     inbox = new Map(),
     outbox = [],
@@ -92,8 +81,6 @@
     });
     return true;
   }
-  const enc = o => btoa(unescape(encodeURIComponent(JSON.stringify(o))));
-  const dec = s => JSON.parse(decodeURIComponent(escape(atob(s.trim()))));
   NT.on = (name, fn) => { (handlers[name] = handlers[name] || []).push(fn); };
   const fire = (name, a) => {
     for (const f of handlers[name] || []) f(a);
@@ -174,7 +161,7 @@
   }
   function lobby() { NT.send({ t: 'lobby', names: [NT.name || 'Host'].concat(links.map(l => l.name)) }); }
   NT.peers = () => [{ id: 0, name: NT.name || 'Host', team: 0 }].concat(links.map(l => ({ id: l.id, name: l.name, team: l.team })));
-  // peer data is untrusted: malformed messages are dropped; main.js whitelists the settings
+  // peer data is untrusted: malformed messages are dropped; platform/session.js whitelists the settings
   function onData(l, raw) {
     let m = raw;
     if (typeof raw === 'string') {
@@ -264,175 +251,34 @@
     }
   }
 
-  /* ---------- transport 1: room codes over PeerJS (the PoC's online friend matches) ---------- */
-  function loadPeer() {
-    if (window.Peer) return Promise.resolve();
-    return new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'vendor/peerjs.min.js';
-      s.onload = () => (window.Peer ? res() : rej(new Error('PeerJS did not load')));
-      s.onerror = () => rej(new Error('vendor/peerjs.min.js is missing'));
-      document.head.appendChild(s);
-    });
-  }
-  function wrapConn(c) {
-    const l = makeLink(o => c.send(o), () => {
-      try {
-        c.close();
-      } catch (e) { /* */ }
-    }, 'Friend', () => (c.dataChannel ? c.dataChannel.bufferedAmount | 0 : 0));
-    c.on('open', () => opened(l));
-    c.on('data', d => onData(l, d));
-    c.on('close', () => closed(l));
-    c.on('error', () => closed(l));
-    return l;
-  }
-  const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
-  NT.room_host = async function (name) {
+  /* ---------- the sessions: room codes (online) and LAN codes, over the transport's links ---------- */
+  const sink = { link: makeLink, opened, closed, data: onData };
+  function begin(host, mode, name) {
     reset();
-    NT.isHost = true;
-    NT.team = 0;
-    NT.mode = 'room';
-    NT.name = (name || 'Host').slice(0, 18);
-    await loadPeer();
-    for (let tries = 0; tries < 4; tries++) {
-      // (lobby randomness, not sim)
-      let code = '';
-      for (let i = 0; i < 4; i++) code += ALPHA[Math.floor(Math.random() * ALPHA.length)];
-      try {
-        let np = null;
-        try {
-          peer = await withTimeout(new Promise((res, rej) => {
-            const p = np = new window.Peer(PREFIX + code, { config: NET_CFG, debug: 0 });
-            p.on('open', () => res(p));
-            p.on('error', e => {
-              if (e && e.type === 'unavailable-id') {
-                p.destroy();
-                rej(new Error('taken'));
-              } else rej(e);
-            });
-          }), 9000, 'The matchmaking server did not answer (room codes need the internet; LAN codes do not).');
-        } catch (e) {
-          if (np) {
-            try {
-              np.destroy();
-            } catch (e2) { /* */ }
-            // (R11: a timed-out Peer must not keep the room)
-          }
-          throw e;
-        }
-        peer.on('connection', c => wrapConn(c));
-        peer.on('disconnected', () => {
-          try {
-            peer.reconnect();
-          } catch (e) { /* */ }
-        });
-        NT.code = code; return code;
-      } catch (e) {
-        if (e.message !== 'taken') throw e;
-      }
-    }
-    throw new Error('No free room code, try again.');
+    NT.isHost = host;
+    if (host) NT.team = 0;
+    NT.mode = mode;
+    NT.name = (name || (host ? 'Host' : 'Friend')).slice(0, 18);
+  }
+  NT.room_host = async function (name) {
+    begin(true, 'room', name);
+    NT.code = await SS.rtc.room_host(sink);
+    return NT.code;
   };
   NT.room_join = async function (code, name) {
-    reset();
-    NT.isHost = false;
-    NT.mode = 'room';
-    NT.name = (name || 'Friend').slice(0, 18);
-    code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
-    if (code.length !== 4) throw new Error('Room codes have 4 characters.');
-    await loadPeer();
-    let np = null;
-    try {
-      peer = await withTimeout(new Promise((res, rej) => {
-        const p = np = new window.Peer({ config: NET_CFG, debug: 0 });
-        p.on('open', () => res(p));
-        p.on('error', rej);
-      }),
-        9000, 'The matchmaking server did not answer (room codes need the internet; LAN codes do not).');
-    } catch (e) {
-      if (np) {
-        try {
-          np.destroy();
-        } catch (e2) { /* */ }
-      }
-      throw e;
-    }
-    await withTimeout(new Promise((res, rej) => {
-      const c = peer.connect(PREFIX + code, { reliable: true, serialization: 'json' });
-      wrapConn(c); c.on('open', () => res());
-      peer.on('error', e => rej(new Error(e && e.type === 'peer-unavailable' ? 'No room with that code.' : String(e && e.message || e))));
-    }), 15000, 'Could not reach that room.');
+    begin(false, 'room', name);
+    await SS.rtc.room_join(sink, code);
   };
-
-  /* ---------- transport 2: LAN copy / paste codes (no server; the host makes one offer per guest) ---------- */
-  function gathered(p) {
-    return new Promise(res => {
-      if (p.iceGatheringState === 'complete') return res();
-      const f = () => {
-        if (p.iceGatheringState === 'complete') {
-          p.removeEventListener('icegatheringstatechange', f);
-          res();
-        }
-      };
-      p.addEventListener('icegatheringstatechange', f);
-      setTimeout(res, 4000);                              // LAN host candidates arrive at once; never hang the UI
-    });
-  }
-  function wireRtc(pc, ch) {
-    const l = makeLink(o => ch.send(JSON.stringify(o)), () => {
-      try {
-        pc.close();
-      } catch (e) { /* */ }
-    }, 'LAN friend', () => ch.bufferedAmount | 0);
-    ch.onopen = () => opened(l); ch.onclose = () => closed(l); ch.onmessage = e => onData(l, e.data);
-    // a vanished peer: the data channel itself only notices after the SCTP timeout (~30 s)
-    let t = null;
-    pc.addEventListener('connectionstatechange', () => {
-      const cs = pc.connectionState;
-      if (cs === 'failed' || cs === 'closed') closed(l);
-      else if (cs === 'disconnected') {
-        clearTimeout(t);
-        t = setTimeout(() => {
-          if (pc.connectionState !== 'connected') closed(l);
-        }, 4000);
-      }
-    });
-    return l;
-  }
+  // LAN: the host makes one offer code per guest (a second call keeps the open session) and accepts its answer code
   NT.host = async function (settings, name) {
-    if (!NT.isHost || NT.mode !== 'lan') {
-      reset();
-      NT.isHost = true;
-      NT.team = 0;
-      NT.mode = 'lan';
-      NT.name = (name || 'Host').slice(0, 18);
-    }
+    if (!NT.isHost || NT.mode !== 'lan') begin(true, 'lan', name);
     if (settings) NT.settings = settings;
-    const pc = new RTCPeerConnection(LAN_CFG);
-    wireRtc(pc, pc.createDataChannel('ss', { ordered: true }));
-    pendingRtc = pc;
-    await pc.setLocalDescription(await pc.createOffer());
-    await gathered(pc);
-    return enc({ sdp: pc.localDescription.sdp, type: 'offer' });
+    return SS.rtc.lan_offer(sink);
   };
-  NT.accept = async function (answer) {
-    if (!pendingRtc) throw new Error('host first');
-    const pc = pendingRtc;
-    pendingRtc = null;
-    await pc.setRemoteDescription(dec(answer));
-  };
+  NT.accept = answer => SS.rtc.lan_accept(answer);
   NT.join = async function (offer, name) {
-    reset();
-    NT.isHost = false;
-    NT.mode = 'lan';
-    NT.name = (name || 'Friend').slice(0, 18);
-    const pc = new RTCPeerConnection(LAN_CFG);
-    pc.ondatachannel = e => wireRtc(pc, e.channel);
-    await pc.setRemoteDescription(dec(offer));
-    await pc.setLocalDescription(await pc.createAnswer());
-    await gathered(pc);
-    return enc({ sdp: pc.localDescription.sdp, type: 'answer' });
+    begin(false, 'lan', name);
+    return SS.rtc.lan_answer(sink, offer);
   };
 
   /* ---------- the match: seats, inputs, hashes, the CPU takeover ---------- */
@@ -526,7 +372,7 @@
     return a || null;
   };
   NT.pending = () => inbox.size;
-  // the CPU takeover: the host fixes the step and tells everybody; main.js applies it before step k
+  // the CPU takeover: the host fixes the step and tells everybody; session.js applies it before step k
   // (k >= one past the last input of that seat the host relayed: a guest may already have played those steps)
   NT.on('leave', ({ team, lastK }) => {
     if (!NT.isHost || !NT.started || team < 0 || !NT.stepNow) return;
@@ -539,7 +385,7 @@
    * background tab: rAF stopped, so the lockstep waits for ever; its link still answers pings, so link silence is no
    * test) the HOST decides the take-over: it queues {team, k = its own current step} and sends the 'ctl' message; every
    * peer applies it at step k (ctl_due), exactly like a left friend. Returns the guest's name once when it fires, else
-   * ''. Called by main.js every frame it is waiting. */
+   * ''. Called by session.js every frame it is waiting. */
   let stallT = { team: -1, k: -1, t: 0 };
   NT.stall_ms = 15000;                                    // (a test may lower it)
   NT.stalled = (team, k, now) => {
@@ -612,13 +458,13 @@
 
   /* ---------- P103: authoritative resync (the host is the truth) ----------
    * A guest whose hash differs from the host's asks for the host's state: {t:'rsq', m}. The host captures
-   * SS.sim.snapshot at ITS current step k (NT.provide() -> {k, snap}, set by main.js), packs it (netsnap: binary +
-   * deflate) and sends a header {t:'rss', id, k, z, raw, n, seats, ctl} and n chunks {t:'rsc', id, i, d: base64}. The
-   * guest unpacks, fires 'resync' {k, snap}; main.js restores the state at the next frame boundary and calls
-   * NT.resync_applied(k, info): the inputs of the steps >= k that the guest had already played / received come back
-   * from `done`, own inputs are replayed (never re-sampled, never re-sent), the hash history after k is dropped and the
-   * guest verifies against the next host hash ('resynced' event). A failed verification retries (3 tries, then ONE
-   * 'resync_failed' event until the player asks again with NT.resync_request('manual')). The host never pulls state
+   * SS.sim.snapshot at ITS current step k (NT.provide() -> {k, snap}, set by platform/session.js), packs it (netsnap:
+   * binary + deflate) and sends a header {t:'rss', id, k, z, raw, n, seats, ctl} and n chunks {t:'rsc', id, i, d:
+   * base64}. The guest unpacks, fires 'resync' {k, snap}; session.js restores the state at the next frame boundary and
+   * calls NT.resync_applied(k, info): the inputs of the steps >= k that the guest had already played / received come
+   * back from `done`, own inputs are replayed (never re-sampled, never re-sent), the hash history after k is dropped
+   * and the guest verifies against the next host hash ('resynced' event). A failed verification retries (3 tries, then
+   * ONE 'resync_failed' event until the player asks again with NT.resync_request('manual')). The host never pulls state
    * from a guest. The guest re-requests after RS_TIMEOUT ms without a complete snapshot. */
   const CHUNK = 12000, RS_TRIES = 3, RS_GAP = 2500;
   NT.rs_timeout = 30000;                                          // (a test lowers it)
@@ -627,7 +473,7 @@
   }
   let rs = rs_make();
   NT.resyncState = () => rs.state;
-  NT.provide = null;                                               // main.js: () => ({ k, snap }) the host's snapshot at its current step
+  NT.provide = null;                                               // session.js: () => ({ k, snap }) the host's snapshot now
   function guestDesync(k) {
     if (rs.state === 'failed') return;                              // already told the player; only the button restarts it
     if (rs.state === 'ok') {
@@ -752,7 +598,7 @@
       fire('resync', { k: g.k, snap, seats: g.seats, ctl: g.ctl, fields: g.fields, bytes: bytes.length, raw: g.raw, ms: rs.ms });
     }).catch(e => { console.error('resync unpack failed', e); });
   }
-  /* main.js: the snapshot of step k is restored. Re-arm the lockstep from k. */
+  /* session.js: the snapshot of step k is restored. Re-arm the lockstep from k. */
   NT.resync_applied = function (k, info) {
     if (info) {
       if (info.seats && info.seats.length) NT.seats = info.seats.slice();
@@ -763,11 +609,12 @@
       if (key[0] === 'L' ? +key.slice(1) >= k : kk <= k) hashes.delete(key);
     }
     for (const [j, a] of done)
-      if (j >= k) { inbox.set(j, a); }
-    for (const [j, a] of done)
-      if (j >= k && mine.has(j)) replay.add(j);
+      if (j >= k) {
+        inbox.set(j, a);
+        if (mine.has(j)) replay.add(j);
+      }
     for (const j of [...done.keys()])
-      if (j >= k) { done.delete(j); }
+      if (j >= k) done.delete(j);
     for (const j of [...inbox.keys()])
       if (j < k) inbox.delete(j);
     outbox = []; outK0 = -1;
@@ -843,11 +690,6 @@
     NT.send({ t: 'bye' });
     for (const l of links) l.close();
     if (hostLink) hostLink.close();
-    if (pendingRtc) {
-      try {
-        pendingRtc.close();
-      } catch (e) { /* */ }
-    }
     reset();
   };
   /* R10: a second Host / Join click (reset) must not leave the old links alive: each one is marked closed (no 'leave' /
@@ -857,16 +699,11 @@
     const all = links.slice();
     if (hostLink) all.push(hostLink);
     for (const l of all) {
-      if (l.open) { sendTo(l, { t: 'bye' }); }
+      if (l.open) sendTo(l, { t: 'bye' });
       l.open = false;
       try {
         l.close();
-      } catch (e) { /* */ }
-    }
-    if (pendingRtc) {
-      try {
-        pendingRtc.close();
-      } catch (e) { /* */ }
+      } catch (e) { /* closed */ }
     }
   }
   function reset() {
@@ -879,13 +716,7 @@
     matchId = 0;
     links = [];
     hostLink = null;
-    pendingRtc = null;
-    if (peer) {
-      try {
-        peer.destroy();
-      } catch (e) { /* */ }
-      peer = null;
-    }
+    if (SS.rtc) SS.rtc.close();
     NT.clearQueues(); stats = { sent: 0, recv: 0, desync: 0, hashOk: 0, resync: 0 };
   }
   // leaving the page says goodbye (the others turn this seat into a CPU team at once)

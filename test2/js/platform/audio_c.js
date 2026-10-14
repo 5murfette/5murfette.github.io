@@ -17,13 +17,6 @@
   if (!AU || !AU.synth) return;
   const { tone, noise, S2 } = AU.synth;
   const rnd = (a, b) => a + Math.random() * (b - a);
-  const last = {};
-  const gate = (k, ms) => {
-    const n = performance.now();
-    if (last[k] != null && n - last[k] < ms) return false;
-    last[k] = n;
-    return true;
-  };
   // wet squelch: a bandpass sweep over noise plus a short falling "blup"
   const squelch = (v, f0, f1, d) => {
     noise(0.16, 'bandpass', f0, 4, 0.3 * v, f1, 1, d || 0);
@@ -192,47 +185,39 @@
       noise(0.1, 'lowpass', 600, 0.9, 0.3, 160);
     }
   };
-  const prev = AU.extra;
-  AU.extra = function (S, e) {
-    if (prev) prev(S, e);
-    switch (e.type) {
-      case 'egg_open': S2('egg_open', 0.9, 1, FX.egg_open); break;
-      case 'egg_hatch': S2('egg_hatch', 0.9, 1, FX.egg_hatch); break;
-      case 'egg_break': S2('egg_break', 0.9, 1, FX.egg_break); break;
-      case 'hugger_leap': S2('hugger_leap', 0.8, 1, FX.hugger_leap); break;
-      case 'hugger_attach': S2('hugger_attach', 0.9, 1, FX.hugger_attach); break;
-      case 'hugger_die':
-        if (gate('hdie', 90)) S2('hugger_die', 0.8, 1, FX.hugger_die);
-        break;
-      case 'hugger_detach': S2('hugger_detach', 0.85, 1, FX.hugger_detach); break;
-      case 'parasite_pulse': S2('parasite_pulse', 0.9, 1, FX.parasite_pulse); break;
-      case 'chest_burst': S2('chest_burst', 1, 1, FX.chest_burst); break;
-      case 'embryo_lost': S2('embryo_lost', 0.8, 1, FX.embryo_lost); break;
-      case 'cure': S2('crate_pickup', 0.8, 1.25, FX.cure); break;
-      case 'alien_born': S2('alien_born', 1, 1, FX.alien_born); break;
-      case 'alien_hiss': S2('alien_hiss', 0.8, 1, FX.alien_hiss); break;
-      case 'alien_sleep': S2('alien_sleep', 0.5, 1, FX.alien_sleep); break;
-      case 'alien_wake': S2('alien_wake', 0.9, 1, FX.alien_wake); break;
-      case 'alien_strike': S2('alien_strike', 0.9, 1, FX.alien_strike); break;
-      case 'alien_wrap': S2('alien_wrap', 0.7, 1, FX.alien_wrap); break;
-      case 'alien_bite': S2('alien_bite', 1, 1, FX.alien_bite); break;
-      case 'alien_eat': S2('alien_eat', 0.7, 1, FX.alien_eat); break;
-      case 'alien_hurt':
-        if (gate('ahurt', 120)) S2('alien_hurt', 0.8, 1, FX.alien_hurt);
-        break;
-      case 'alien_burst': S2('alien_burst', 1, 1, FX.alien_burst); break;
-      case 'acid_land':
-        if (gate('aland', 80)) S2('acid_sizzle', 0.5, 1, FX.acid_sizzle);
-        break;
-      case 'acid_hit': S2('acid_hit', 0.8, 1, FX.acid_hit); break;
-      case 'treeacid': S2('acid_tree', 0.9, 1, FX.acid_tree); break;
-      case 'steelcut':
-        if (e.acid) S2('acid_steel', 0.8, 1, FX.acid_steel);
-        break;
-      case 'cratehit': S2('crate_hit', 0.9, 1, FX.crate_hit); break;
-      case 'cratedrop':
-        if (e.v > 3) S2('crate_drop', Math.min(0.9, 0.3 + e.v * 0.04), 1, FX.crate_drop);
-        break;
-    }
-  };
+  AU.rows([
+    ['egg_open', 'egg_open', 0.9, 1, FX.egg_open],
+    ['egg_hatch', 'egg_hatch', 0.9, 1, FX.egg_hatch],
+    ['egg_break', 'egg_break', 0.9, 1, FX.egg_break],
+    ['hugger_leap', 'hugger_leap', 0.8, 1, FX.hugger_leap],
+    ['hugger_attach', 'hugger_attach', 0.9, 1, FX.hugger_attach],
+    ['hugger_detach', 'hugger_detach', 0.85, 1, FX.hugger_detach],
+    ['parasite_pulse', 'parasite_pulse', 0.9, 1, FX.parasite_pulse],
+    ['chest_burst', 'chest_burst', 1, 1, FX.chest_burst],
+    ['embryo_lost', 'embryo_lost', 0.8, 1, FX.embryo_lost],
+    ['cure', 'crate_pickup', 0.8, 1.25, FX.cure],
+    ['alien_born', 'alien_born', 1, 1, FX.alien_born],
+    ['alien_hiss', 'alien_hiss', 0.8, 1, FX.alien_hiss],
+    ['alien_sleep', 'alien_sleep', 0.5, 1, FX.alien_sleep],
+    ['alien_wake', 'alien_wake', 0.9, 1, FX.alien_wake],
+    ['alien_strike', 'alien_strike', 0.9, 1, FX.alien_strike],
+    ['alien_wrap', 'alien_wrap', 0.7, 1, FX.alien_wrap],
+    ['alien_bite', 'alien_bite', 1, 1, FX.alien_bite],
+    ['alien_eat', 'alien_eat', 0.7, 1, FX.alien_eat],
+    ['alien_burst', 'alien_burst', 1, 1, FX.alien_burst],
+    ['acid_hit', 'acid_hit', 0.8, 1, FX.acid_hit],
+    ['treeacid', 'acid_tree', 0.9, 1, FX.acid_tree],
+    ['cratehit', 'crate_hit', 0.9, 1, FX.crate_hit],
+    ['hugger_die', 'hugger_die', 0.8, 1, FX.hugger_die, 90],
+    ['alien_hurt', 'alien_hurt', 0.8, 1, FX.alien_hurt, 120],
+    ['acid_land', 'acid_sizzle', 0.5, 1, FX.acid_sizzle, 80]
+  ]);
+  // acid cutting steel sizzles (a blast cutting it: audio.js metal_cut)
+  AU.on('steelcut', (S, e) => {
+    if (e.acid) S2('acid_steel', 0.8, 1, FX.acid_steel);
+  });
+  // a crate landing hard thumps, louder the faster
+  AU.on('cratedrop', (S, e) => {
+    if (e.v > 3) S2('crate_drop', Math.min(0.9, 0.3 + e.v * 0.04), 1, FX.crate_drop);
+  });
 })(window.SS = window.SS || {});

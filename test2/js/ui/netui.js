@@ -3,7 +3,7 @@
  *   "Start match" (the host's menu setup; friends take teams 2-4 in join order, free teams are CPU).
  *   Join a friend: your name + the room code -> wait for the host to start.
  *   LAN / offline (no internet, no server): copy / paste WebRTC codes (host: one code per friend).
- * The match itself starts in main.js (SS.ui.netStart / SS.net 'start'). */
+ * The match itself starts in platform/session.js (SS.ui.netStart / SS.net 'start'). */
 (function (SS) {
   'use strict';
   const NU = SS.netui = {};
@@ -103,7 +103,7 @@
   const CHAT_KEEP = 40, CHAT_FADE = 8000;
   let chatEl = null, logEl = null, inEl = null, btnEl = null, lines = [], chatOpen = false, fadeT = 0;
   const hex = rgb => '#' + ('000000' + (rgb >>> 0).toString(16)).slice(-6);
-  NU.canAct = null;                                                    // main.js: () => true while the player controls a worm right now
+  NU.canAct = null;                                                    // session.js: () => true while the player controls a worm now
   function chatInit() {
     if (chatEl) return;
     if (!document.getElementById('nuchat-css')) {

@@ -100,7 +100,6 @@
     return { lo, hi, mean: sum / n };
   }
   DR.populate = function (S, taken) {
-    S.derelict = null;
     const w = W();
     if (S.biome !== 'volcanic' || w.under || w.dry) return;
     const seed = (Math.imul(S.settings.seed | 0, 7001) + 4099) >>> 0, rg = M.rng_make(seed || 1);

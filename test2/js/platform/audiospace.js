@@ -3,9 +3,10 @@
  * Pure geometry + mixing rules; the WebAudio / HTMLAudio nodes live in audio.js (AU.play(id, vol, rate, jit, pos, opt),
  * AU.bed()).
  *
- * LISTENER. The ears are at the camera focus (the point the player looks at, view.camT: usually the active worm), the
- * orientation (left / right) is the camera's. A zoomed-out camera therefore does not make a blast next to the worm
- * quiet. SOURCE MODEL eval(p, opt) -> { gain, fc, pan, delay, wet, muffle }:
+ * LISTENER. The ears are at the camera focus (the point the player looks at: usually the active worm), the
+ * orientation (left / right) is the camera's: the view fills them (render/view.js V.ears) and the frame hands them in
+ * (AU.frame, frame(S, dt, ears)). A zoomed-out camera therefore does not make a blast next to the worm quiet. SOURCE
+ * MODEL eval(p, opt) -> { gain, fc, pan, delay, wet, muffle }:
  *   - distance attenuation: inverse law past a reference distance, gain = 1 / (1 + roll (d - ref) / ref), per class
  *     (loud blasts carry far, footsteps stay local); the same shape as the WebAudio PannerNode 'inverse' model (MDN),
  *     floored so nothing vanishes in the map.
@@ -20,9 +21,10 @@
  *   - water: a listener under the surface hears everything through 600 Hz low-pass; an underwater source heard from air
  *   is muffled to 1.1 kHz.
  *   - pan from the camera's right vector, d / pan law (3 + 0.6 d).
+ *   - vacuum (the End of the World): only what reaches the suit through the rock under the boots or the hands.
  * HTMLAudio (file://) cannot filter or pan: AU.play uses gain (and a muffle volume cut) only; delay by setTimeout.
- * AMBIENCE frame(S): wind / whirlwind / rain / snow / ash / lava / surf / birds / crickets / cave / fire levels from
- * the camera focus (10 Hz). */
+ * AMBIENCE frame(S, dt, ears): wind / whirlwind / rain / snow / ash / lava / surf / birds / crickets / cave / fire
+ * levels from the camera focus (10 Hz). */
 (function (SS) {
   'use strict';
   const AU = SS.audio;
@@ -42,25 +44,23 @@
     const S = L.S;
     return S && SS.sim && SS.sim.surface_at && SS.world.has_sea() ? SS.sim.surface_at(S, x, z) : -1e9;
   }
-  function updateListener() {
-    const V = SS.view, cam = V && V.camera && V.camera(), st = V && V.state;
-    if (!cam || !st || !st.camT) {
+  // the listener from the ears the view filled (AU.ears_make: focus f, camera position c, right vector r; ok)
+  function updateListener(ears) {
+    if (!ears || !ears.ok) {
       L.ok = false;
       return;
     }
-    const e = cam.matrixWorld.elements;
-    L.fx = st.camT.x;
-    L.fy = st.camT.y;
-    L.fz = st.camT.z;
-    L.rx = e[0];
-    L.ry = e[1];
-    L.rz = e[2];
-    const W = SS.world, p = cam.position;
-    L.uw = !!(L.S && !W.under && (p.y < surf(p.x, p.z) - 0.05 || L.fy < surf(L.fx, L.fz) - 0.05));
+    L.fx = ears.fx;
+    L.fy = ears.fy;
+    L.fz = ears.fz;
+    L.rx = ears.rx;
+    L.ry = ears.ry;
+    L.rz = ears.rz;
+    L.uw = !!(L.S && !SS.world.under && (ears.cy < surf(ears.cx, ears.cz) - 0.05 || L.fy < surf(L.fx, L.fz) - 0.05));
     L.ok = true;
   }
-  SP.listener = () => {
-    updateListener();
+  SP.listener = ears => {
+    updateListener(ears);
     return L;
   };
 
@@ -93,19 +93,33 @@
     return Math.min(40, W.solid_len(p.x, p.y + 0.4, p.z, L.fx, L.fy, L.fz));
   }
 
+  /* sound in vacuum: the suit's own sounds close by (footsteps, the gun's mechanism through the hands), a low thump
+   * through the piece of rock under the boots, silence from another piece (a faint radio crackle for a loud one) */
+  function vacuum(out, p, d, o) {
+    const E = SS.eow, S = L.S;
+    if (!E || !S || !S.eow) return out;
+    const bl = E.body_of(S, L.fx, L.fy, L.fz), bs = E.body_of(S, p.x, p.y, p.z), loud = o.cls === 'loud';
+    out.delay = 0;
+    out.wet = 0.02;
+    if (d < 2.6) {
+      out.gain *= 0.7;
+      out.fc = 900;
+    } else if (bl >= 0 && bl === bs) {
+      out.gain *= (loud ? 1.0 : 0.45) / (1 + d / 28);
+      out.fc = loud ? 320 : 600;
+    } else out.gain *= loud ? 0.012 : 0.0;
+    out.pan = 0;
+    out.muffle = clamp(1 - out.fc / 20000, 0, 1);
+    return out;
+  }
   SP.eval = function (p, o) {
-    updateListener();
     const out = { gain: 1, fc: 20000, pan: 0, delay: 0, wet: 0.06, muffle: 0, d: 0, occ: 0 };
     if (!L.ok || !p || !(p.x === p.x)) return out;
     o = o || {};
     const c = CLS[o.cls] || CLS.norm, dx = p.x - L.fx, dy = p.y - L.fy, dz = p.z - L.fz, d = Math.hypot(dx, dy, dz);
     out.d = d;
-    // P68d: vacuum
-    if (SS.world.eow && SS.eowAudio) {
-      out.gain = Math.max(c.min, 1 / (1 + c.roll * Math.max(0, d - c.ref) / c.ref));
-      return SS.eowAudio.eval(out, p, d, o, L);
-    }
     out.gain = Math.max(c.min, 1 / (1 + c.roll * Math.max(0, d - c.ref) / c.ref));
+    if (SS.world.eow) return vacuum(out, p, d, o);
     out.fc = clamp(20000 * Math.exp(-d / c.air), 1800, 20000);
     out.pan = clamp((dx * L.rx + dy * L.ry + dz * L.rz) / (3 + 0.6 * d), -0.85, 0.85);
     if (o.cls === 'loud' && o.delay !== false && d > 18) out.delay = Math.min(0.9, d / 343);
@@ -256,6 +270,13 @@
       birds: 0, crickets: 0, cave: 0, fire: 0, firePan: 0, hush: 0, muffle: 0, enc: 0
     };
   let nextAmb = 0;
+  /* a new world (the sim's reset event): the enclosure cached for the last map's cells, the footstep tracks of its
+   * worms and the blast hush go */
+  SP.reset = function () {
+    encCache.clear();
+    track.clear();
+    A.hush = 0;
+  };
   /* a loud blast hushes birds and crickets for a few seconds (animals fall silent after a bang) */
   SP.hush = k => { A.hush = Math.max(A.hush, clamp(k, 0, 1)); };
   const panOf = (x, y, z) => clamp(
@@ -264,14 +285,14 @@
     0.85
   );
 
-  SP.frame = function (S, dt) {
+  SP.frame = function (S, dt, ears) {
     T += dt; L.S = S;
+    updateListener(ears);
     A.hush *= Math.exp(-dt / 5);
     if (T < nextAmb) return;
     nextAmb = T + 0.1;
-    updateListener();
     if (!L.ok) return;
-    const W = SS.world, we = S.weather || {}, wd = S.wind, under = !!W.under, st = SS.view.state;
+    const W = SS.world, we = S.weather || {}, wd = S.wind, under = !!W.under;
     const wmean = wd && wd.mean ? Math.hypot(wd.mean.x, wd.mean.z) : 0;
     A.enc = SP.enclosure(L.fx, L.fy - 1, L.fz);
     const sheltered = under ? 1 : A.enc * 0.8;                               // under a roof / in a pocket the open-air beds fade
@@ -352,7 +373,7 @@
     A.surf = sv; A.surfPan = sp;
     // wildlife: birds by day in fair weather, crickets at night; not in caves / deserts' heat / on lava or snow; hushed
     // by blasts
-    const tod = st.tod || 'day',
+    const tod = under ? 'day' : SS.sim.time_of_day(S),
       fair = (we.rain || 0) < 0.15 && (we.snow || 0) < 0.15 && (we.ash || 0) < 0.15 && (we.kind !== 'storm') && wmean < 9;
     const bio = S.biome,
       bday = bio === 'temperate'

@@ -393,7 +393,7 @@
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
     // the version of the sim rules: bump it when they change (net.js adds a hash of the arsenal / biome tables); peers
     // of other builds refuse each other
-    BUILD: 'p114-r5-m',
+    BUILD: 'p114-r6-m',
     // first: the team that starts (0..3 or 'random' = PoC; the menu default)
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,
       collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off',
@@ -1099,20 +1099,23 @@
     }
     return out.join('\n');
   };
-  // the text form back: numbers for int / mask rows and numeric words of any rows, true / false for bool rows, lists
-  // for ctl and names, words for the rest; unknown keys and malformed lines are skipped
+  /* one setting's value from its text (a settings file line, a URL parameter) by its row r: the lists ctl and names
+   * split at ','; an int for int / mask rows (0 when it is no number); false for 0 / off / false on bool rows, true for
+   * any other word (an empty ?fort is on); the number for a numeric word of an any row; the word itself otherwise */
+  SS.CFG.setting_value = function (r, v) {
+    if (r[0] === 'ctl' || r[0] === 'names') return v.split(',');
+    if (r[1] === 'int' || r[1] === 'mask') return parseInt(v, 10) | 0;
+    if (r[1] === 'bool') return v !== '0' && v !== 'off' && v !== 'false';
+    if (r[1] === 'any' && v !== '' && String(+v) === v) return +v;
+    return v;
+  };
+  // the text form back (setting_value per line); unknown keys and malformed lines are skipped
   SS.CFG.settings_parse = function (text) {
     const st = {}, rows = {};
     for (const r of SS.CFG.SETTING_SCHEMA) rows[r[0]] = r;
     for (const line of String(text).split('\n')) {
       const i = line.indexOf('='), k = i > 0 ? line.slice(0, i).trim() : '', r = rows[k];
-      if (!r) continue;
-      const v = line.slice(i + 1).trim();
-      if (k === 'ctl' || k === 'names') st[k] = v.split(',');
-      else if (r[1] === 'int' || r[1] === 'mask') st[k] = +v | 0;
-      else if (r[1] === 'bool') st[k] = v === 'true';
-      else if (r[1] === 'any' && v !== '' && String(+v) === v) st[k] = +v;
-      else st[k] = v;
+      if (r) st[k] = SS.CFG.setting_value(r, line.slice(i + 1).trim());
     }
     return st;
   };

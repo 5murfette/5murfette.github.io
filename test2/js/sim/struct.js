@@ -256,7 +256,6 @@
   }
 
   ST.populate = function (S, taken) {
-    S.structs = [];
     if (!K || K.OFF || W().under) return;                                  // U: no gaps to bridge underground
     const w = W(), look = { temperate: 0, alpine: 1, canyon: 2, desert: 3, volcanic: 4 }[S.biome] || 0;
     let spans = findSpans(S, taken || []);

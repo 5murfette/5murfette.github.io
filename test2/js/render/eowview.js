@@ -1672,30 +1672,6 @@
     arrowEl.lastChild.textContent = `${dist.toFixed(0)} m`;
   }
 
-  /* ---------- sound in vacuum (platform/audiospace.js hook): only what reaches the suit through the rock or the hands
-   * ---------- */
-  SS.eowAudio = {
-    eval(out, p, d, o, L) {
-      const E = SS.eow, S = L && L.S;
-      if (!E || !S || !S.eow) return out;
-      const bl = E.body_of(S, L.fx, L.fy, L.fz), bs = E.body_of(S, p.x, p.y, p.z), loud = o && o.cls === 'loud';
-      out.delay = 0; out.wet = 0.02;
-      // the suit: footsteps, the gun's mechanism through the hands
-      if (d < 2.6) {
-        out.gain *= 0.7;
-        out.fc = 900;
-      }
-      // through the rock under the boots: a low thump
-      else if (bl >= 0 && bl === bs) {
-        out.gain *= (loud ? 1.0 : 0.45) / (1 + d / 28);
-        out.fc = loud ? 320 : 600;
-      }
-      else out.gain *= loud ? 0.012 : 0.0;                                                 // another piece: silence (a faint radio crackle)
-      out.pan = 0; out.muffle = Math.min(1, Math.max(0, 1 - out.fc / 20000));
-      return out;
-    }
-  };
-
   /* the look */
   const LOOK = {
     sunDir: [0.5, 0.45, 0.7],

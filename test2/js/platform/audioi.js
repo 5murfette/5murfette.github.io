@@ -21,7 +21,7 @@
   'use strict';
   const AU = SS.audio;
   if (!AU || !AU.synth) return;
-  const { tone, noise } = AU.synth, rnd = (a, b) => a + Math.random() * (b - a);
+  const { tone, noise } = AU.synth;
   const VOICE = {
     snore: ['worm_snore', 2.5],
     yawn: ['worm_yawn', 1.5],

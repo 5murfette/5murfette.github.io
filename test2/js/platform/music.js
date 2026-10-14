@@ -111,10 +111,8 @@
   /* ---------- state ---------- */
   let vol = 0.6, gesture = false, last = 0, intensity = 0, duck = 1, hold_g = 1, sting_until = 0, sting_el = null;
   let decks = [], was_over = false, forced = null, forced_i = -1, failed = {};
-  try {
-    const v = localStorage.getItem(KEY);
-    if (v != null && v !== '') vol = clamp(parseFloat(v) || 0, 0, 1);
-  } catch (e) { /* private mode */ }
+  const saved = SS.store.get(KEY, '');
+  if (saved !== '') vol = clamp(parseFloat(saved) || 0, 0, 1);
   try {
     const q = new URLSearchParams(location.search);
     if (q.has('music')) forced = q.get('music');
@@ -123,9 +121,7 @@
   Object.defineProperty(MU, 'volume', { get: () => vol });
   MU.set_volume = function (v) {
     vol = clamp(+v || 0, 0, 1);
-    try {
-      localStorage.setItem(KEY, String(vol));
-    } catch (e) { /* */ }
+    SS.store.set(KEY, vol);
   };
   const gestured = () => (SS.amedia ? SS.amedia.gestured : gesture);
   const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;

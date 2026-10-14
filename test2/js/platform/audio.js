@@ -4,26 +4,24 @@
  * The AudioContext starts on the first key / pointer gesture (browser rule; headless tests stay silent). Thunder for
  * weather lightning stays in render/weather.js. Mute: the button / F2 (remembered). Not ported on purpose: the holy
  * grenade's choir (LEGAL.md: a recognisable cue), the car alarm and piano (no such props here).
- * API: unlock(), onEvent(S, e), frame(S), setMuted(m), muted. Math.random is fine here: presentation only. */
+ * API: unlock(), onEvent(S, e), frame(S, ears), ears_make(), setMuted(m), muted. Math.random is fine here: presentation
+ * only. */
 (function (SS) {
   'use strict';
   const AU = SS.audio = {};
   const TAU = Math.PI * 2, clamp = (v, a, b) => (v < a ? a : v > b ? b : v), rand = Math.random;
-  const AM = SS.amedia || null;
+  const AM = SS.amedia || null, MUTE_KEY = 'burrowBrawl3d.muted';
   let meter = null,
     ctx = null,
     master = null,
     verbIn = null,
-    muted = false,
+    muted = SS.store.get(MUTE_KEY, '0') === '1',
     amb = null,
     charge = null,
     lastDrill = 0,
     lastOuch = 0,
     lastBounce = 0;
   const B = {};
-  try {
-    muted = localStorage.getItem('burrowBrawl3d.muted') === '1';
-  } catch (e) { /* private mode */ }
   function onePoleLP(a, k) {
     let y = 0;
     for (let i = 0; i < a.length; i++) {
@@ -388,12 +386,16 @@
     g.connect(out(pan, wet));
     s.start();
   }
-  // stereo pan / distance gain of a world point for the current camera
+  /* the listener (C: struct Ears { u8 ok; vec3 f, c, r; }): the camera focus f (the point the player looks at), the
+   * camera position c and its right vector r; the view fills it every frame (render/view.js V.ears) and AU.frame
+   * takes it. ok false: no camera yet (every sound is heard centred, at full gain). */
+  AU.ears_make = () => ({ ok: false, fx: 0, fy: 0, fz: 0, cx: 0, cy: 0, cz: 0, rx: 1, ry: 0, rz: 0 });
+  let ears = AU.ears_make();
+  // stereo pan / distance gain of a world point for the listener of the last frame
   function where(p) {
-    const cam = SS.view && SS.view.camera && SS.view.camera();
-    if (!cam || !p) return { pan: 0, k: 1 };
-    const e = cam.matrixWorld.elements, dx = p.x - cam.position.x, dy = p.y - cam.position.y, dz = p.z - cam.position.z;
-    const right = dx * e[0] + dy * e[1] + dz * e[2], dist = Math.hypot(dx, dy, dz);
+    if (!ears.ok || !p) return { pan: 0, k: 1 };
+    const dx = p.x - ears.cx, dy = p.y - ears.cy, dz = p.z - ears.cz;
+    const right = dx * ears.rx + dy * ears.ry + dz * ears.rz, dist = Math.hypot(dx, dy, dz);
     return { pan: clamp(right / Math.max(4, dist), -0.9, 0.9), k: clamp(30 / (dist + 10), 0.25, 1.4) };
   }
   const SFX = {
@@ -913,188 +915,226 @@
     moai: 0
   };
   const QUIET = { land: 1, bodyhit: 1, fuse: 1, minearm: 1, pickup: 1, jump: 1, switch: 1, rope_hook: 1 };
+  /* ---------- the event -> sound table ----------
+   * The rows of a sim event type: [type, id, vol, rate, fallback, gate]: the sample (a recorded file,
+   * assets/sfx/manifest.js), its volume and playback rate, the synthesised fallback(e) that plays when there is no
+   * recording, and an optional gate (at most one play per gate ms). A weapon's own entry (type:weapon, 'fire:mortar')
+   * answers that weapon's event instead of the type's. What a row cannot say is code (AU.on): a choice by the event's
+   * fields, a voice line, the music's duck. audioa.js, audio_b.js and audio_c.js add their rows and code at load.
+   * C: a static SoundRow table by event id (one FMOD / Wwise event each); the code a switch over the special types. */
+  const ROWS = {}, CODE = {}, gateAt = {};
+  AU.rows = function (list) {
+    for (const r of list) (ROWS[r[0]] = ROWS[r[0]] || []).push({ id: r[1], vol: r[2], rate: r[3], fb: r[4] || null, gate: r[5] || 0 });
+  };
+  AU.on = (type, fn) => { (CODE[type] = CODE[type] || []).push(fn); };
+  // (tools) the keys that have rows (a type or type:weapon), and the rows of one
+  AU.row_keys = () => Object.keys(ROWS);
+  AU.rows_of = key => ROWS[key] || [];
+  // the rows, then the code, of the event's weapon entry or else its type
+  AU.dispatch = function (S, e) {
+    const own = e.weapon ? e.type + ':' + e.weapon : '', key = own && (ROWS[own] || CODE[own]) ? own : e.type;
+    const rows = ROWS[key], code = CODE[key];
+    if (rows)
+      for (const r of rows) {
+        if (r.gate) {
+          const g = key + '/' + r.id, now = performance.now();
+          if (now - (gateAt[g] || -1e9) < r.gate) continue;
+          gateAt[g] = now;
+        }
+        if (!AU.play(r.id, r.vol, r.rate) && r.fb) r.fb(e);
+      }
+    if (code)
+      for (const f of code) f(S, e);
+  };
   AU.onEvent = function (S, e) {
     curS = S;
+    if (e.type === SS.CFG.EV.RESET && AU.space) AU.space.reset();
     if (!ctx && !(AM && AM.gestured)) return;
     const wp = e.worm && e.worm.pos;
     curPos = e.x != null && e.y != null && e.z != null ? { x: e.x, y: e.y, z: e.z } : wp ? { x: wp.x, y: wp.y, z: wp.z } : null;
     curOpt = { cls: LOUD[e.type] ? 'loud' : QUIET[e.type] ? 'quiet' : 'norm' };
     try {
-      onEvent2(S, e);
+      AU.dispatch(S, e);
     } finally {
       curPos = null;
       curOpt = null;
     }
   };
-  function onEvent2(S, e) {
-    switch (e.type) {
-      // a charge under the water: its own sound is the 'waterblast' event (no second, dry boom)
-      case 'explode': {
-        const R = 44 * Math.cbrt(e.W || 1);
-        if (e.wet != null && e.wet > 0.25) break;
-        if (SS.music) {
-          const dk = SS.music.duck_gain(R), dl = AU.space ? AU.space.eval(e, { cls: 'loud' }).delay : 0;
-          if (dl > 0.05) setTimeout(() => SS.music.duck(dk), dl * 1000);
-          else SS.music.duck(dk);
-        }
-        if (AU.space) AU.space.hush(R / 50);
-        S2(R > 60 ? 'explosion_large' : R > 30 ? 'explosion_medium' : 'explosion_small', clamp(R / 60, 0.4, 1), 1, () => SFX.boom(R, e));
-        // P66a: HE = a sharp crack (the shock front: a short airburst sample pitched up) on top of the low boom; FUEL =
-        // a soft 'whoomp' of the ignition (a low, slowed fire_ignite), the boom a little quieter
-        if (!e.boom) S2('explosion_air', clamp(R / 60, 0.25, 0.7), 1.6);
-        else S2('fire_ignite', clamp(0.5 + R / 80, 0.5, 1), 0.6);
-        // a gasp from the worm on turn when a blast goes off close to it
-        const a = S.active;
-        if (a && !a.dead && Math.hypot(a.pos.x - e.x, a.pos.y - e.y, a.pos.z - e.z) < 7) AU.voice('worm_flinch', a, 0.7, 1.5);
-        break;
-      }
-      case 'waterblast':
-        if (SS.world.has_sea()) S2('explosion_water', 1, 1, () => SFX.boomWater(44 * Math.cbrt(e.W || 1)));
-        break;
-      case 'fire':
-        if (AU.ext && AU.ext(S, e)) break;
-        S2(ROCKETS[e.weapon] ? 'launch_rocket' : 'launch_throw', 0.9, 1, () => SFX.launch(ROCKETS[e.weapon] ? 'rocket' : 'thrown'));
-        if (rand() < 0.35) AU.voice('worm_attack', S.active, 0.8);
-        break;
-      case 'use':
-        if (e.weapon === 'boulder') S2('launch_boulder', 1, 1, () => SFX.launch('boulder'));
-        else if (e.weapon === 'skip') {
-          S2('ui_click', 0.6, 1, () => SFX.click());
-          AU.voice('worm_skip', S.active, 0.8);
-        }
-        break;
-      case 'bounce': {
-        const k = clamp((e.speed || 3) / 10, 0.1, 1), cls = AU.space && e.mat != null ? AU.space.matClass(e.mat) : 'metal';
-        S2(AU.space ? AU.space.bounceId(cls) : 'bounce_metal', k, 1, () => S2('bounce_metal', k, 1, () => SFX.bounce(k)));
-        break;
-      }
-      // (no sea, no splash: the sim's splash in a world without one is something leaving the world)
-      case 'splash':
-        if (SS.world.has_sea())
-          S2(e.size > 0.9 ? 'splash_big' : 'splash_small', Math.min(1, e.size || 0.6), 1, () => SFX.splash(Math.min(1.5, e.size || 0.6)));
-        break;
-      // (the synth only when there is no recording, not when the voice is merely throttled)
-      case 'hurt':
-        if (!AU.voice(hurtLine(e), e.worm, 1, 0.35) && !AU.has(hurtLine(e))) SFX.ouch();
-        break;
-      case 'jump': S2('worm_jump_whoosh', 0.6, 1, () => SFX.jump()); AU.voice('worm_jump', S.active, 0.7, 0.4); break;
-      case 'salto': AU.voice('worm_salto', e.worm || S.active, 0.9, 0.3); break;
-      case 'dizzy': AU.voice('worm_dizzy', e.worm, 0.9, 0.5); break;
-      case 'drown':
-        AU.voice('worm_drown', e.worm, 1, 0.2);
-        if (SS.world.has_sea()) S2('splash_big', 0.8, 1, null);
-        break;
-      case 'wash': AU.voice('worm_wash', e.worm, 0.9); S2('wave_wash', 0.9, 1, null); break;
-      case 'switch': AU.voice('worm_select', e.worm, 0.9, 0.2); break;
-      case 'rope_fire': S2('rope_fire', 0.7, 1, () => SFX.thwip()); break;
-      case 'rope_hook': S2('rope_hook', 0.8, 1, () => SFX.clink()); break;
-      case 'rope_release':
-        if ((e.speed || 0) > 4) S2('rope_release', 0.6, 1, () => SFX.whoosh(Math.min(1, e.speed / 25)));
-        break;
-      case 'rope_knock': S2('body_hit', 0.6, 1, () => SFX.thud(0.6)); break;
-      case 'chute_open': S2('chute_open', 0.8, 1, () => SFX.whoosh(0.8)); break;
-      // P86: the jetpack (through the suit: muffled by audiospace unless it is the listener's own)
-      case 'eowjet':
-        if (e.phase === 0) S2('eow_jet', 0.8, 1, () => SFX.whoosh(0.9), { x: e.x, y: e.y, z: e.z });
-        else S2('eow_jet_hiss', 0.3, 1, () => SFX.whoosh(0.25), { x: e.x, y: e.y, z: e.z });
-        break;
-      case 'eowjetmode': S2('ui_click', 0.5, e.on ? 1 : 0.8, () => SFX.click()); break;
-      case 'chute_cut': S2('chute_cut', 0.5, 1, () => SFX.whoosh(0.4)); break;
-      case 'zip_fire': S2('zip_fire', 0.7, 1, () => SFX.thwip()); break;
-      case 'zip_hook': S2('zip_hook', 0.8, 1, () => SFX.clink()); break;
-      case 'zip_leave': S2('zip_leave', 0.5, 1, () => SFX.whoosh(0.4)); break;
-      case 'zap': S2('electric_zap', 0.9, 1, () => SFX.zap()); break;
-      case 'hole': S2('blackhole_open', 1, 1, () => SFX.hole()); break;
-      case 'teleport': S2('teleport_beam', 0.9, 1, () => SFX.teleport()); AU.voice('worm_teleport', e.worm, 0.8, 0.2); break;
-      case 'plane': S2('airstrike_plane', 1, 1, () => SFX.plane()); break;
-      case 'baa': S2('sheep_baa', 0.9, 1, () => SFX.baa()); break;
-      case 'swing':
-        if (e.hit) S2('bat_hit', 1, 1, () => SFX.bat());
-        else S2('swing_whoosh', 0.8, 1, () => SFX.whoosh(0.8));
-        break;
-      case 'shot':
-        if (e.from && !(e.weapon === 'handgun' && AU.ext && AU.ext(S, e)))
-          S2(e.weapon === 'sniper' ? 'sniper_shot' : 'shotgun_shot', 1, 1, () => SFX.shotgun());
-        break;
-      case 'sparks':
-        if (e.mode === 'drill') S2('drill_loop', 0.7, 1, () => SFX.drill());
-        else S2('torch_loop', 0.7, 1, () => SFX.torch());
-        break;
-      case 'girder': S2('girder_place', 1, 1, () => SFX.clank()); break;
-      case 'pickup': S2('crate_pickup', 0.9, 1, () => SFX.pickup()); AU.voice('worm_pickup', S.active, 0.9, 0.2); break;
-      case 'lablong': S2('fanfare_win', 0.55, 1.3, () => SFX.fanfare()); break;                    // P50 Lab: long shot
-      case 'labperk': S2('crate_pickup', 0.9, 0.85, () => SFX.pickup()); break;                     // P50 Lab: a perk taken
-      // P50 Lab: a streak step
-      case 'labstreak':
-        if (e.streak > 0) S2('turn_start', 0.8, 1.35, () => SFX.chirp());
-        break;
-      case 'fuse': S2('fuse_tick', 0.6, 1, () => SFX.fuse()); break;
-      case 'minearm': S2('mine_beep', 0.8, 1, () => SFX.beep()); break;
-      case 'propbreak': S2(e.kind === 'barrel' ? 'metal_crunch' : 'wood_break', 0.8, 1, () => SFX.wood(0.7)); break;
-      case 'collapse': S2('rock_collapse', Math.min(1, (e.pieces || 1) / 4), 1, () => SFX.crack(Math.min(1, (e.pieces || 1) / 4))); break;
-      case 'land':
-        if ((e.speed || 0) > 5) {
-          const k = Math.min(1, e.speed / 12),
-            cls = AU.space && e.mat != null ? AU.space.matClass(e.mat) : 'soil',
-            lid = AU.space ? AU.space.landId(cls) : 'worm_land_thud';
-          S2(lid, k, 1, () => S2('worm_land_thud', k, 1, () => SFX.thud(k)));
-          if (e.hard) {
-            if (cls === 'soil' || cls === 'ash') S2('worm_land_hard_thud', k, 1, null);
-            AU.voice('worm_land_hard', e.worm || (S.worms && S.worms.find(w => w.id === e.wormId)), 1, 0.3);
-          }
-        }
-        break;
-      case 'bodyhit': S2('body_hit', 0.4, 1, () => SFX.crunch(0.15)); break;
-      case 'gameover':
-        S2('fanfare_win', 1, 1, () => SFX.fanfare());
-        {
-          const w = S.worms.find(o => !o.dead);
-          if (w) AU.voice('worm_victory', w, 1, 0);
-        }
-        break;
-      case 'turn': S2('turn_start', 0.7, 1, () => SFX.chirp()); AU.voice('worm_turn_start', e.worm || S.active, 0.85, 0); break;
-      case 'foam': S2('foam_grow', 0.8, 1, () => SFX.whoosh(0.7)); break;
-      case 'blow': S2('bellows_blow', 0.8, 1, () => SFX.whoosh(0.7)); break;
-      case 'spring': S2('spring_launch', 1, 1, () => SFX.bounce(1)); AU.voice('worm_fall_scream', e.worm, 1, 0); break;
-      case 'scramble': S2('scrambler_buzz', 0.8, 1, () => SFX.click()); break;
-      case 'shatter': S2('ice_shatter', 0.8, 1, () => SFX.crunch(0.4)); break;
-      // (acid: audio_c.js plays acid_steel instead)
-      case 'steelcut':
-        if (!e.acid) S2('metal_cut', 0.8, 1, () => SFX.metal(0.8));
-        break;
-      case 'airburst': S2('explosion_air', 0.9, 1, () => SFX.boom(20, e)); break;
-      case 'gib': S2('gib_splat', 1, 1, () => SFX.splat()); break;
-      case 'dying':
-        if (!AU.voice('worm_dying', e.worm, 1, 0) && !AU.has('worm_dying')) SFX.ouch();
-        break;
-      case 'lavaplop': S2('lava_plop', 0.8, 1, null); break;
-      case 'steam': S2('steam_hiss', Math.min(1, e.power || 0.5), 1, null); break;
-      // P89: the life jacket's CO2 cartridge hisses as the vest inflates (existing samples)
-      case 'jacket': S2('steam_hiss', 0.5, 1.3, null); S2('splash_small', 0.5, 1, null); break;
-      // P89: the HUD toggle
-      case 'gear':
-        if (!e.used) S2('ui_click', 0.5, e.on ? 1.15 : 0.85, null);
-        break;
-      case 'icebreak': S2('ice_crack', 0.9, 1, () => SFX.crunch(0.4)); break;
-      case 'bridgefall': S2('bridge_fall', 1, 1, () => SFX.crack(1)); break;
-      case 'treebreak': case 'treeshatter': case 'treesplinter': S2('tree_crack', 0.9, 1, () => SFX.wood(0.9)); break;
-      // a minigun round in the wood: a short knock, at most every 70 ms
-      case 'treechip':
-        if (performance.now() - chipAt > 70) {
-          chipAt = performance.now();
-          SFX.wood(0.25);
-        }
-        break;
-      case 'treeburnoff': S2('fire_ignite', 0.5, 0.8, null); break;
-      case 'holy': S2('holy_orb_burst', 1, 1, null); break;
-      case 'lightning': S2('lightning_crack', 1, 1, null); break;
-      case 'moai': S2('moai_whoosh', 1, 1, () => SFX.whoosh(1)); break;
-      case 'lavabreach': S2('lava_breach', 1, 1, null); break;
-      case 'oilfire': case 'propfire': case 'grassfire': case 'treefire': S2('fire_ignite', 0.7, 1, null); break;
-      default: if (AU.ext) AU.ext(S, e);                                   // P37-W3 events (platform/audioa.js)
+  // a worm's voice line (its team's bank: the line, its volume, the minimum gap in s): the event's worm, or the
+  // worm on turn
+  const says = (id, vol, gap) => (S, e) => AU.voice(id, e.worm, vol, gap);
+  const saysActive = (id, vol, gap) => S => AU.voice(id, S.active, vol, gap);
+  AU.rows([
+    ['jump', 'worm_jump_whoosh', 0.6, 1, () => SFX.jump()],
+    ['wash', 'wave_wash', 0.9, 1],
+    ['rope_fire', 'rope_fire', 0.7, 1, () => SFX.thwip()],
+    ['rope_hook', 'rope_hook', 0.8, 1, () => SFX.clink()],
+    ['rope_knock', 'body_hit', 0.6, 1, () => SFX.thud(0.6)],
+    ['chute_open', 'chute_open', 0.8, 1, () => SFX.whoosh(0.8)],
+    ['chute_cut', 'chute_cut', 0.5, 1, () => SFX.whoosh(0.4)],
+    ['zip_fire', 'zip_fire', 0.7, 1, () => SFX.thwip()],
+    ['zip_hook', 'zip_hook', 0.8, 1, () => SFX.clink()],
+    ['zip_leave', 'zip_leave', 0.5, 1, () => SFX.whoosh(0.4)],
+    ['zap', 'electric_zap', 0.9, 1, () => SFX.zap()],
+    ['hole', 'blackhole_open', 1, 1, () => SFX.hole()],
+    ['teleport', 'teleport_beam', 0.9, 1, () => SFX.teleport()],
+    ['plane', 'airstrike_plane', 1, 1, () => SFX.plane()],
+    ['baa', 'sheep_baa', 0.9, 1, () => SFX.baa()],
+    ['use:boulder', 'launch_boulder', 1, 1, () => SFX.launch('boulder')],
+    ['use:skip', 'ui_click', 0.6, 1, () => SFX.click()],
+    ['girder', 'girder_place', 1, 1, () => SFX.clank()],
+    ['pickup', 'crate_pickup', 0.9, 1, () => SFX.pickup()],
+    // the Lab: a long shot, a perk taken
+    ['lablong', 'fanfare_win', 0.55, 1.3, () => SFX.fanfare()],
+    ['labperk', 'crate_pickup', 0.9, 0.85, () => SFX.pickup()],
+    ['fuse', 'fuse_tick', 0.6, 1, () => SFX.fuse()],
+    ['minearm', 'mine_beep', 0.8, 1, () => SFX.beep()],
+    ['bodyhit', 'body_hit', 0.4, 1, () => SFX.crunch(0.15)],
+    ['gameover', 'fanfare_win', 1, 1, () => SFX.fanfare()],
+    ['turn', 'turn_start', 0.7, 1, () => SFX.chirp()],
+    ['foam', 'foam_grow', 0.8, 1, () => SFX.whoosh(0.7)],
+    ['blow', 'bellows_blow', 0.8, 1, () => SFX.whoosh(0.7)],
+    ['spring', 'spring_launch', 1, 1, () => SFX.bounce(1)],
+    ['scramble', 'scrambler_buzz', 0.8, 1, () => SFX.click()],
+    ['shatter', 'ice_shatter', 0.8, 1, () => SFX.crunch(0.4)],
+    ['airburst', 'explosion_air', 0.9, 1, e => SFX.boom(20, e)],
+    ['gib', 'gib_splat', 1, 1, () => SFX.splat()],
+    ['lavaplop', 'lava_plop', 0.8, 1],
+    // the life jacket's CO2 cartridge hisses as the vest inflates
+    ['jacket', 'steam_hiss', 0.5, 1.3],
+    ['jacket', 'splash_small', 0.5, 1],
+    ['icebreak', 'ice_crack', 0.9, 1, () => SFX.crunch(0.4)],
+    ['bridgefall', 'bridge_fall', 1, 1, () => SFX.crack(1)],
+    ['treebreak', 'tree_crack', 0.9, 1, () => SFX.wood(0.9)],
+    ['treeshatter', 'tree_crack', 0.9, 1, () => SFX.wood(0.9)],
+    ['treesplinter', 'tree_crack', 0.9, 1, () => SFX.wood(0.9)],
+    ['treeburnoff', 'fire_ignite', 0.5, 0.8],
+    ['holy', 'holy_orb_burst', 1, 1],
+    ['lightning', 'lightning_crack', 1, 1],
+    ['moai', 'moai_whoosh', 1, 1, () => SFX.whoosh(1)],
+    ['lavabreach', 'lava_breach', 1, 1],
+    ['oilfire', 'fire_ignite', 0.7, 1],
+    ['propfire', 'fire_ignite', 0.7, 1],
+    ['grassfire', 'fire_ignite', 0.7, 1],
+    ['treefire', 'fire_ignite', 0.7, 1]
+  ]);
+  // a blast: its size picks the sample; the music ducks when the sound arrives; birds and crickets hush; the high
+  // explosive gets the crack of its shock front on top of the boom, a fuel blast the soft whoomp of its ignition; the
+  // worm on turn gasps when it goes off close to it (a charge under the water plays its own 'waterblast' instead)
+  AU.on('explode', (S, e) => {
+    const R = 44 * Math.cbrt(e.W || 1);
+    if (e.wet != null && e.wet > 0.25) return;
+    if (SS.music) {
+      const dk = SS.music.duck_gain(R), dl = AU.space ? AU.space.eval(e, { cls: 'loud' }).delay : 0;
+      if (dl > 0.05) setTimeout(() => SS.music.duck(dk), dl * 1000);
+      else SS.music.duck(dk);
     }
-    if (AU.extra) AU.extra(S, e);
-  }
+    if (AU.space) AU.space.hush(R / 50);
+    S2(R > 60 ? 'explosion_large' : R > 30 ? 'explosion_medium' : 'explosion_small', clamp(R / 60, 0.4, 1), 1, () => SFX.boom(R, e));
+    if (!e.boom) S2('explosion_air', clamp(R / 60, 0.25, 0.7), 1.6);
+    else S2('fire_ignite', clamp(0.5 + R / 80, 0.5, 1), 0.6);
+    const a = S.active;
+    if (a && !a.dead && Math.hypot(a.pos.x - e.x, a.pos.y - e.y, a.pos.z - e.z) < 7) AU.voice('worm_flinch', a, 0.7, 1.5);
+  });
+  // (no sea, no splash: the sim's splash in a world without one is something leaving the world)
+  AU.on('waterblast', (S, e) => {
+    if (SS.world.has_sea()) S2('explosion_water', 1, 1, () => SFX.boomWater(44 * Math.cbrt(e.W || 1)));
+  });
+  AU.on('splash', (S, e) => {
+    if (SS.world.has_sea())
+      S2(e.size > 0.9 ? 'splash_big' : 'splash_small', Math.min(1, e.size || 0.6), 1, () => SFX.splash(Math.min(1.5, e.size || 0.6)));
+  });
+  // a launched shell: a rocket's or a throw's (a weapon with its own entry, 'fire:mortar', plays that instead)
+  AU.on('fire', (S, e) => {
+    S2(ROCKETS[e.weapon] ? 'launch_rocket' : 'launch_throw', 0.9, 1, () => SFX.launch(ROCKETS[e.weapon] ? 'rocket' : 'thrown'));
+    if (rand() < 0.35) AU.voice('worm_attack', S.active, 0.8);
+  });
+  // a hitscan shot from the muzzle (the sniper's end-of-flight event has no from)
+  AU.on('shot', (S, e) => {
+    if (e.from) S2(e.weapon === 'sniper' ? 'sniper_shot' : 'shotgun_shot', 1, 1, () => SFX.shotgun());
+  });
+  AU.on('use:skip', saysActive('worm_skip', 0.8));
+  AU.on('bounce', (S, e) => {
+    const k = clamp((e.speed || 3) / 10, 0.1, 1), cls = AU.space && e.mat != null ? AU.space.matClass(e.mat) : 'metal';
+    S2(AU.space ? AU.space.bounceId(cls) : 'bounce_metal', k, 1, () => S2('bounce_metal', k, 1, () => SFX.bounce(k)));
+  });
+  // (the synth only when there is no recording, not when the voice is merely throttled)
+  AU.on('hurt', (S, e) => {
+    if (!AU.voice(hurtLine(e), e.worm, 1, 0.35) && !AU.has(hurtLine(e))) SFX.ouch();
+  });
+  AU.on('dying', (S, e) => {
+    if (!AU.voice('worm_dying', e.worm, 1, 0) && !AU.has('worm_dying')) SFX.ouch();
+  });
+  AU.on('jump', saysActive('worm_jump', 0.7, 0.4));
+  AU.on('salto', (S, e) => AU.voice('worm_salto', e.worm || S.active, 0.9, 0.3));
+  AU.on('dizzy', says('worm_dizzy', 0.9, 0.5));
+  AU.on('drown', (S, e) => {
+    AU.voice('worm_drown', e.worm, 1, 0.2);
+    if (SS.world.has_sea()) S2('splash_big', 0.8, 1, null);
+  });
+  AU.on('wash', says('worm_wash', 0.9));
+  AU.on('switch', says('worm_select', 0.9, 0.2));
+  AU.on('teleport', says('worm_teleport', 0.8, 0.2));
+  AU.on('pickup', saysActive('worm_pickup', 0.9, 0.2));
+  AU.on('turn', (S, e) => AU.voice('worm_turn_start', e.worm || S.active, 0.85, 0));
+  AU.on('spring', says('worm_fall_scream', 1, 0));
+  AU.on('gameover', S => {
+    const w = S.worms.find(o => !o.dead);
+    if (w) AU.voice('worm_victory', w, 1, 0);
+  });
+  AU.on('rope_release', (S, e) => {
+    if ((e.speed || 0) > 4) S2('rope_release', 0.6, 1, () => SFX.whoosh(Math.min(1, e.speed / 25)));
+  });
+  // the jetpack (through the suit: muffled by audiospace unless it is the listener's own)
+  AU.on('eowjet', (S, e) => {
+    if (e.phase === 0) S2('eow_jet', 0.8, 1, () => SFX.whoosh(0.9), { x: e.x, y: e.y, z: e.z });
+    else S2('eow_jet_hiss', 0.3, 1, () => SFX.whoosh(0.25), { x: e.x, y: e.y, z: e.z });
+  });
+  AU.on('eowjetmode', (S, e) => S2('ui_click', 0.5, e.on ? 1 : 0.8, () => SFX.click()));
+  AU.on('swing', (S, e) => {
+    if (e.hit) S2('bat_hit', 1, 1, () => SFX.bat());
+    else S2('swing_whoosh', 0.8, 1, () => SFX.whoosh(0.8));
+  });
+  AU.on('sparks', (S, e) => {
+    if (e.mode === 'drill') S2('drill_loop', 0.7, 1, () => SFX.drill());
+    else S2('torch_loop', 0.7, 1, () => SFX.torch());
+  });
+  // the Lab: a streak step
+  AU.on('labstreak', (S, e) => {
+    if (e.streak > 0) S2('turn_start', 0.8, 1.35, () => SFX.chirp());
+  });
+  AU.on('propbreak', (S, e) => S2(e.kind === 'barrel' ? 'metal_crunch' : 'wood_break', 0.8, 1, () => SFX.wood(0.7)));
+  AU.on('collapse', (S, e) => {
+    const k = Math.min(1, (e.pieces || 1) / 4);
+    S2('rock_collapse', k, 1, () => SFX.crack(k));
+  });
+  AU.on('land', (S, e) => {
+    if (!((e.speed || 0) > 5)) return;
+    const k = Math.min(1, e.speed / 12),
+      cls = AU.space && e.mat != null ? AU.space.matClass(e.mat) : 'soil',
+      lid = AU.space ? AU.space.landId(cls) : 'worm_land_thud';
+    S2(lid, k, 1, () => S2('worm_land_thud', k, 1, () => SFX.thud(k)));
+    if (e.hard) {
+      if (cls === 'soil' || cls === 'ash') S2('worm_land_hard_thud', k, 1, null);
+      AU.voice('worm_land_hard', e.worm || (S.worms && S.worms.find(w => w.id === e.wormId)), 1, 0.3);
+    }
+  });
+  // (acid cutting steel: audio_c.js plays acid_steel)
+  AU.on('steelcut', (S, e) => {
+    if (!e.acid) S2('metal_cut', 0.8, 1, () => SFX.metal(0.8));
+  });
+  AU.on('steam', (S, e) => S2('steam_hiss', Math.min(1, e.power || 0.5), 1, null));
+  // the HUD's rescue gear toggle
+  AU.on('gear', (S, e) => {
+    if (!e.used) S2('ui_click', 0.5, e.on ? 1.15 : 0.85, null);
+  });
+  // a minigun round in the wood: a short knock, at most every 70 ms
+  AU.on('treechip', () => {
+    if (performance.now() - chipAt > 70) {
+      chipAt = performance.now();
+      SFX.wood(0.25);
+    }
+  });
   ;
   /* looping ambient beds (P65j: spatial). http(s): the decoded buffer loops through gain -> low-pass -> pan on the
    * master bus (pan = where the source
@@ -1209,8 +1249,9 @@
   };
   let wasCharging = false, lastFrameMs = 0;
   const screamed = new WeakSet();   // (audio state stays off the sim objects)
-  AU.frame = function (S) {
+  AU.frame = function (S, e) {
     curS = S;
+    if (e) ears = e;
     if (!rqHooked && SS.reactq) {
       rqHooked = true;
       SS.reactq.listen(AU.reactSpeak);
@@ -1233,8 +1274,8 @@
     lastFrameMs = nowMs;
     const SPc = AU.space;
     if (SPc) {
-      SPc.frame(S, fdt);
-      if (S.phase === 'play' || S.phase === 'turn' || S.worms) SPc.steps(S, fdt);
+      SPc.frame(S, fdt, ears);
+      SPc.steps(S, fdt);
     }
     if (!amb) return;
     const t = ctx.currentTime;
@@ -1265,9 +1306,7 @@
   AU.setMuted = function (m) {
     muted = !!m;
     if (master) master.gain.value = muted ? 0 : 0.6;
-    try {
-      localStorage.setItem('burrowBrawl3d.muted', muted ? '1' : '0');
-    } catch (e) { /* */ }
+    SS.store.set(MUTE_KEY, muted ? '1' : '0');
   };
   Object.defineProperty(AU, 'muted', { get: () => muted });
 })(window.SS = window.SS || {});

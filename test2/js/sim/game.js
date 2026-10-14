@@ -27,6 +27,13 @@
     return i === 1 && K.SKILLS.indexOf(st.cpu) >= 0 ? 'cpu' : 'human';
   }
   G.is_cpu = (S, team) => !!(S.teams && S.teams[team] && S.teams[team].ctl === 'cpu');
+  // a seat changes hands during a match ('cpu': its player left, the CPU plays its worms from its next decision on);
+  // the team, or null when there is no such team
+  G.set_ctl = function (S, team, ctl) {
+    const t = S.teams ? S.teams[team] : null;
+    if (t) t.ctl = ctl === 'cpu' ? 'cpu' : 'human';
+    return t || null;
+  };
 
   G.setup = function (S) {
     const st = S.settings, n = M.clamp(st.teams | 0 || 2, 2, 4);

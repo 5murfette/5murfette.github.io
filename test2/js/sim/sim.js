@@ -90,6 +90,8 @@
   };
 
   /* Resumable reset (drives the loading progress bar): world generation, then subsystems, then actors. */
+  // the hashed mixed rows (first, volcanoes, mineFuse): a number or a word
+  const MIXED_KEYS = C.SETTING_SCHEMA.filter(r => r[1] === 'any' && (r[3] & C.SF.HASH) !== 0).map(r => r[0]);
   // the settings a game runs with: the defaults under the given ones, the seed as an i32 (every seed mix is Math.imul /
   // u32 wrap-around, identical in C; ?seed= and net settings are unbounded), the Lab mask limited to the defined flags
   // (whatever path the settings came by: URL, menu, a host's start message), space never sliced and without forts
@@ -97,6 +99,12 @@
     const st = Object.assign({}, C.SETTINGS, given);
     if (typeof st.seed !== 'number' || st.seed !== (st.seed | 0)) st.seed = st.seed | 0;
     st.labFlags = (st.labFlags | 0) & C.LAB.ALL;
+    // a mixed row given as a numeric word (the menu's volcano buttons, a URL) is the number: every reader and the
+    // hash see one form whatever the source
+    for (const k of MIXED_KEYS) {
+      const v = st[k];
+      if (typeof v === 'string' && v !== '' && String(+v) === v) st[k] = +v;
+    }
     // (space: floating chunks with their own layout)
     if (st.biome === 'eow') {
       st.dim = '3d';

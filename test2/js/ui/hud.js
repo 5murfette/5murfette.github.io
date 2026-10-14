@@ -32,19 +32,10 @@
    * the choice is kept
    * in this browser */
   const DETAIL_KEY = 'burrowBrawl3d.hudDetail';
-  let detailOpen = false, drawS = null;
-  try {
-    detailOpen = localStorage.getItem(DETAIL_KEY) === '1';
-  } catch (e) {
-    detailOpen = false;
-  }
+  let detailOpen = SS.store.get(DETAIL_KEY, '0') === '1', drawS = null;
   U.toggleDetail = function (on) {
     detailOpen = on == null ? !detailOpen : !!on;
-    try {
-      localStorage.setItem(DETAIL_KEY, detailOpen ? '1' : '0');
-    } catch (e) {
-      /* private mode */
-    }
+    SS.store.set(DETAIL_KEY, detailOpen ? '1' : '0');
     const b = $('hudtog');
     if (b) {
       b.setAttribute('aria-expanded', detailOpen ? 'true' : 'false');

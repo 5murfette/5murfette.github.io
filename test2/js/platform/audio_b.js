@@ -1,6 +1,6 @@
 /* platform/audio_b.js — P37 W4 sounds of the new weapons, skills and the force field: procedural WebAudio built on the
- * primitives platform/audio.js exports (AU.synth: tone, noise, S2), driven only by sim events. Every sound first asks
- * for a recorded sample by id (assets/sfx/manifest.js, ids below, the same S2 path as the rest) and falls back to the
+ * primitives platform/audio.js exports (AU.synth: tone, noise), driven only by sim events (rows of audio.js's event
+ * table). Every sound first asks for a recorded sample by id (assets/sfx/manifest.js, ids below) and falls back to the
  * synthesised version, so recordings can replace them one by one:
  *   dog_start dog_bark dog_hop dog_boom punch_swing punch_hit sentry_plant sentry_lock sentry_shot sentry_down
  *   claymore_plant claymore_arm claymore_blast ff_plant ff_ripple ff_bounce ff_contain ff_break ff_release grav_grab
@@ -10,7 +10,7 @@
   'use strict';
   const AU = SS.audio;
   if (!AU || !AU.synth) return;
-  const { tone, noise, S2 } = AU.synth;
+  const { tone, noise } = AU.synth;
   const rnd = (a, b) => a + Math.random() * (b - a);
   let lastShot = 0;
   const FX = {
@@ -112,35 +112,31 @@
       tone('sine', 70, 45, 0.4, 0.25);
     }
   };
-  const prev = AU.extra;
-  AU.extra = function (S, e) {
-    if (prev) prev(S, e);
-    switch (e.type) {
-      case 'dogstart': S2('dog_start', 0.8, 1, FX.dog_start); break;
-      case 'dogbark': S2('dog_bark', 0.8, 1, FX.dog_bark); break;
-      case 'doghop': S2('dog_hop', 0.6, 1, FX.dog_hop); break;
-      case 'dogboom': S2('dog_boom', 0.7, 1, FX.dog_boom); break;
-      case 'punch': S2('punch_swing', 0.8, 1, FX.punch_swing); break;
-      case 'punchhit': S2('punch_hit', 1, 1, FX.punch_hit); break;
-      case 'sentryplant': S2('sentry_plant', 0.8, 1, FX.sentry_plant); break;
-      case 'sentrydetect': S2('sentry_lock', 0.8, 1, FX.sentry_lock); break;
-      case 'sgshot': S2('sentry_shot', 0.5, 1, FX.sentry_shot); break;
-      case 'sentrydown': S2('sentry_down', 0.9, 1, FX.sentry_down); break;
-      case 'claymoreplant': S2('claymore_plant', 0.7, 1, FX.claymore_plant); break;
-      case 'claymorearm': S2('claymore_arm', 0.7, 1, FX.claymore_arm); break;
-      case 'claymoreblast': S2('claymore_blast', 1, 1, FX.claymore_blast); break;
-      case 'ffplant': S2('ff_plant', 0.8, 1, FX.ff_plant); break;
-      case 'ffripple': S2('ff_ripple', 0.5, 1, FX.ff_ripple); break;
-      case 'ffbounce': S2('ff_bounce', 0.9, 1, FX.ff_bounce); break;
-      case 'ffcontain': S2('ff_contain', 0.9, 1, FX.ff_contain); break;
-      case 'ffbreak': S2('ff_break', 0.9, 1, FX.ff_break); break;
-      case 'ffrelease': S2('ff_release', 1, 1, FX.ff_release); break;
-      case 'grab': S2('grav_grab', 0.7, 1, FX.grav_grab); break;
-      case 'gravthrow': S2('grav_throw', 0.8, 1, FX.grav_throw); break;
-      case 'skillget': S2('skill_get', 0.8, 1, FX.skill_get); break;
-      case 'skillend': S2('skill_end', 0.6, 1, FX.skill_end); break;
-      case 'overload': S2('overload', 0.9, 1, FX.overload); break;
-      case 'dig': S2('torch_ignite', 0.8, 1, FX.torch_ignite); break;
-    }
-  };
+  AU.rows([
+    ['dogstart', 'dog_start', 0.8, 1, FX.dog_start],
+    ['dogbark', 'dog_bark', 0.8, 1, FX.dog_bark],
+    ['doghop', 'dog_hop', 0.6, 1, FX.dog_hop],
+    ['dogboom', 'dog_boom', 0.7, 1, FX.dog_boom],
+    ['punch', 'punch_swing', 0.8, 1, FX.punch_swing],
+    ['punchhit', 'punch_hit', 1, 1, FX.punch_hit],
+    ['sentryplant', 'sentry_plant', 0.8, 1, FX.sentry_plant],
+    ['sentrydetect', 'sentry_lock', 0.8, 1, FX.sentry_lock],
+    ['sgshot', 'sentry_shot', 0.5, 1, FX.sentry_shot],
+    ['sentrydown', 'sentry_down', 0.9, 1, FX.sentry_down],
+    ['claymoreplant', 'claymore_plant', 0.7, 1, FX.claymore_plant],
+    ['claymorearm', 'claymore_arm', 0.7, 1, FX.claymore_arm],
+    ['claymoreblast', 'claymore_blast', 1, 1, FX.claymore_blast],
+    ['ffplant', 'ff_plant', 0.8, 1, FX.ff_plant],
+    ['ffripple', 'ff_ripple', 0.5, 1, FX.ff_ripple],
+    ['ffbounce', 'ff_bounce', 0.9, 1, FX.ff_bounce],
+    ['ffcontain', 'ff_contain', 0.9, 1, FX.ff_contain],
+    ['ffbreak', 'ff_break', 0.9, 1, FX.ff_break],
+    ['ffrelease', 'ff_release', 1, 1, FX.ff_release],
+    ['grab', 'grav_grab', 0.7, 1, FX.grav_grab],
+    ['gravthrow', 'grav_throw', 0.8, 1, FX.grav_throw],
+    ['skillget', 'skill_get', 0.8, 1, FX.skill_get],
+    ['skillend', 'skill_end', 0.6, 1, FX.skill_end],
+    ['overload', 'overload', 0.9, 1, FX.overload],
+    ['dig', 'torch_ignite', 0.8, 1, FX.torch_ignite]
+  ]);
 })(window.SS = window.SS || {});

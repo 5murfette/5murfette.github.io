@@ -775,6 +775,7 @@
       for (const id of [...flames.keys()]) freeFlames(id);
       rebuild(S);
       lastBoom = S.lastExplosion;
+      lastTreeVer = S.treeVer | 0;
     }
     // T3: a blast near a tree may have uncovered / torn its roots: rebuild the wood (root segments now in air dropped).
     // Keyed on the explosion record itself (S.lastBoom also moves on every shot fired / projectile removed)

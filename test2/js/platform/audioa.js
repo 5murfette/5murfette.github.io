@@ -1,7 +1,6 @@
 /* platform/audioa.js — P37-W3: the sounds of weapons A. Each id below can be replaced by a recorded file (assets/sfx,
  * docs/SOUND_PROMPTS.md "P37 weapons A"); without one the synthesised version (WebAudio, from SS.audio.synth) plays.
- * Driven only by sim events; presentation only. ext(S, e) returns true when it handled the event (audio.js asks first
- * for 'fire' of the mortar and 'shot' of the handgun, and passes every unknown event type here). */
+ * Driven only by sim events (rows and code of audio.js's event table); presentation only. */
 (function (SS) {
   'use strict';
   const AU = SS.audio;
@@ -86,84 +85,61 @@
     },
     gasp() { Y.noise(0.35, 'bandpass', 900, 1.2, 0.2, 500); }
   };
-  AU.ext = function (S0, e) {
-    switch (e.type) {
-      case 'fire':
-        if (e.weapon === 'mortar') {
-          smp('mortar_fire', 1, 1, S.mortar);
-          return true;
-        }
-        if (e.weapon === 'boomerang') {
-          smp('boomerang_throw', 0.9, 1, S.whoosh);
-          return true;
-        }
-        if (e.weapon === 'acid' || e.weapon === 'gas') return false;
-        return false;
-      case 'shot':
-        if (e.weapon === 'handgun') {
-          smp('handgun_shot', 1, 1, S.hand);
-          return true;
-        }
-        return false;
-      case 'streamstart':
-        if (e.weapon === 'minigun') smp('minigun_spinup', 0.9, 1, S.spinup);
-        else smp('flame_ignite', 0.9, 1, S.ignite);
-        break;
-      case 'streamend':
-        if (e.weapon === 'minigun') smp('minigun_spindown', 0.8, 1, S.spindown);
-        break;
-      case 'flamejet':
-        if (gate('flame', 70)) smp('flame_loop', 0.55, 1, S.flame);
-        break;
-      case 'mgfire':
-        if (gate('mg', 55)) smp('minigun_burst', 0.8, 1, S.mg);
-        if (gate('mgc', 70)) S.clink();
-        break;
-      case 'mgimpact':
-        if (gate('mgi', 90)) Y.noise(0.04, 'bandpass', 2400, 2, 0.12);
-        break;
-      case 'mortarburst': smp('mortar_burst', 0.8, 1, S.pop); break;
-      case 'acidburst': smp('acid_burst', 0.9, 1, S.fizz); break;
-      case 'acideat':
-        if (gate('acid', 220)) smp('acid_hiss', 0.5, 1, S.fizz);
-        break;
-      case 'gasburst': smp('gas_release', 0.9, 1, S.hiss); break;
-      case 'infect': smp('worm_gasp', 0.7, 1, S.gasp); break;
-      case 'cough':
-        if (!AU.voice('worm_cough', e.worm, 0.9, 0.5) && !AU.has('worm_cough')) S.cough();
-        break;
-      case 'ouch':
-        if (e.acid && !AU.voice('worm_ouch', e.worm, 1, 0.25) && !AU.has('worm_ouch')) {
-          Y.voice(310 + rand() * 90, 0.2, [9, 15], [[650, 4], [1150, 5]], 0.24, 0, 210);
-          Y.noise(0.15, 'highpass', 3500, 0.5, 0.1);
-        }
-        break;
-      case 'boomthrow': smp('boomerang_whirr', 0.8, 1, S.whoosh); break;
-      // P93: the pitch follows the speed
-      case 'boomwhoosh':
-        if (gate('bw', 120)) smp('boomerang_whirr', 0.35, 0.75 + e.speed / 40, S.whoosh);
-        break;
-      // (a blast follows: the thwack is for a worm hit head-on)
-      case 'boomhit':
-        if (e.wormId >= 0) smp('boomerang_hit', 1, 1, S.thwack);
-        break;
-      case 'boombounce': smp('boomerang_bounce', 0.7, 1, S.clack); break;
-      case 'boomcatch': smp('boomerang_catch', 0.8, 1, S.pop); break;
-      case 'ravenrelease': smp('raven_caw', 0.9, 1, S.caw); break;
-      case 'ravencrash':
-        smp('raven_crash', 1, 1, () => {
-          S.thud();
-          S.caw();
-        });
-        break;
-      case 'ravenbump': S.thud(); break;
-      case 'letterdrop':
-        if (gate('letter', 120)) smp('letter_flutter', 0.5, 1, S.flutter);
-        break;
-      case 'stick': smp('flame_ignite', 0.5, 1.3, S.ignite); break;
-      default: return false;
+  // the weapons' own launch / shot / stream entries replace the type's (audio.js AU.dispatch)
+  AU.rows([
+    ['fire:mortar', 'mortar_fire', 1, 1, S.mortar],
+    ['fire:boomerang', 'boomerang_throw', 0.9, 1, S.whoosh],
+    ['shot:handgun', 'handgun_shot', 1, 1, S.hand],
+    ['streamstart', 'flame_ignite', 0.9, 1, S.ignite],
+    ['streamstart:minigun', 'minigun_spinup', 0.9, 1, S.spinup],
+    ['streamend:minigun', 'minigun_spindown', 0.8, 1, S.spindown],
+    ['flamejet', 'flame_loop', 0.55, 1, S.flame, 70],
+    ['mgfire', 'minigun_burst', 0.8, 1, S.mg, 55],
+    ['mortarburst', 'mortar_burst', 0.8, 1, S.pop],
+    ['acidburst', 'acid_burst', 0.9, 1, S.fizz],
+    ['acideat', 'acid_hiss', 0.5, 1, S.fizz, 220],
+    ['gasburst', 'gas_release', 0.9, 1, S.hiss],
+    ['infect', 'worm_gasp', 0.7, 1, S.gasp],
+    ['boomthrow', 'boomerang_whirr', 0.8, 1, S.whoosh],
+    ['boombounce', 'boomerang_bounce', 0.7, 1, S.clack],
+    ['boomcatch', 'boomerang_catch', 0.8, 1, S.pop],
+    ['ravenrelease', 'raven_caw', 0.9, 1, S.caw],
+    [
+      'ravencrash',
+      'raven_crash',
+      1,
+      1,
+      () => {
+        S.thud();
+        S.caw();
+      }
+    ],
+    ['letterdrop', 'letter_flutter', 0.5, 1, S.flutter, 120],
+    ['stick', 'flame_ignite', 0.5, 1.3, S.ignite]
+  ]);
+  AU.on('mgfire', () => {
+    if (gate('mgc', 70)) S.clink();
+  });
+  AU.on('mgimpact', () => {
+    if (gate('mgi', 90)) Y.noise(0.04, 'bandpass', 2400, 2, 0.12);
+  });
+  AU.on('cough', (S0, e) => {
+    if (!AU.voice('worm_cough', e.worm, 0.9, 0.5) && !AU.has('worm_cough')) S.cough();
+  });
+  AU.on('ouch', (S0, e) => {
+    if (e.acid && !AU.voice('worm_ouch', e.worm, 1, 0.25) && !AU.has('worm_ouch')) {
+      Y.voice(310 + rand() * 90, 0.2, [9, 15], [[650, 4], [1150, 5]], 0.24, 0, 210);
+      Y.noise(0.15, 'highpass', 3500, 0.5, 0.1);
     }
-    return true;
-  };
+  });
+  // the boomerang's whirr: the pitch follows the speed
+  AU.on('boomwhoosh', (S0, e) => {
+    if (gate('bw', 120)) smp('boomerang_whirr', 0.35, 0.75 + e.speed / 40, S.whoosh);
+  });
+  // (a blast follows: the thwack is for a worm hit head-on)
+  AU.on('boomhit', (S0, e) => {
+    if (e.wormId >= 0) smp('boomerang_hit', 1, 1, S.thwack);
+  });
+  AU.on('ravenbump', () => S.thud());
   AU.clinkA = S.clink;
 })(window.SS = window.SS || {});

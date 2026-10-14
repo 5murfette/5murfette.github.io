@@ -30,6 +30,8 @@
   I.mfirePressed = false;
   I.kbLock = null;
   I.mouseFireOk = null;
+  // main.js sets pick(S, x, y) = the point { s, y } on the section under the client point (render/view.js pickPlane)
+  I.pick = null;
   /* P9: weapon hotkeys from the PoC (sim/arsenal.js `key`), on key codes; poc5's own keys that clashed moved:
    * help F1 / ?, slice view `, recentre Home, end turn = Skip Go (K), new map = the menu, lobby = the menu button */
   // (P37: the letters ran out. Merge of W2-W4 keys: '=' is only the + of the +/- weapon parameters, '\\' only worm
@@ -291,8 +293,8 @@
     // mouse aim: from the worm's centre (the shots leave along the aim from there) through the cursor on the section
     inp.aimset = 0; inp.aimv = 0; inp.face = 0;
     if (inp.up || inp.down) I.kbLock = { x: I.mx, y: I.my };
-    if (I.aimReq && S && S.active && S.phase === 'play' && !(S.charging && !I.mfire) && SS.view && SS.view.pickPlane) {
-      const c = SS.view.pickPlane(S, I.mx, I.my), a = S.active;
+    if (I.aimReq && S && S.active && S.phase === SS.CFG.PHASE.PLAY && !(S.charging && !I.mfire) && I.pick) {
+      const c = I.pick(S, I.mx, I.my), a = S.active;
       if (c) {
         const ds = c.s - SS.plane.to_plane(S, a.pos).s, dy = c.y - a.pos.y;
         if (Math.hypot(ds, dy) >= 0.39) {                                      // PoC: not within 6 px of the worm

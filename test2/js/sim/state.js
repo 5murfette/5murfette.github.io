@@ -257,7 +257,7 @@
     }
   }
   // the modules with their own state: gadgets, force fields, weather (wind, whirlwinds, respawns), skills, the End of
-  // the World (jetpacks, drifting crates), the Lab (only with a Lab flag on)
+  // the World (jetpacks, drifting crates), the Lab (only with a Lab flag on), the trees (on maps that have them)
   function hash_modules(S) {
     if (SS.gadgets && S.dogs) SS.gadgets.hash(S, mix);
     if (SS.ffield && S.ffields) SS.ffield.hash(S, mix);
@@ -265,6 +265,7 @@
     if (SS.skills && S.skRng) SS.skills.hash(S, mix);
     if (S.eow) SS.eow.hash(S, mix);
     if (SS.lab && S.lab) SS.lab.hash(S, mix);
+    if (SS.trees && S.trees.length) SS.trees.hash(S, mix);
   }
   // the fluids and the ice, so a divergence there shows before it moves a worm (a sum per field: ~40k cells each), and
   // the alien life (eggs, face huggers, the parasite, aliens, acid)
@@ -408,7 +409,10 @@
     Object.assign(S, {
       // lists and id counters
       worms: [], bodies: [], trees: [], proj: [], pending: [], planeBodies: [], flames: [], fx: [], frags: [], spat: [], log: [],
-      bunkers: [],
+      bunkers: [], structs: [],
+      // what stands on the map besides: the derelict ship and the ruined town (volcanic maps), the trees' shape version
+      // (their populates fill them only on the maps that have them: a rematch on another map must not keep them)
+      derelict: null, town: null, treeVer: 0,
       bodyId: 0, nextBodyId: 1, fragId: 0, spatId: 0, structId: 0, projN: 0, crateId: 0,
       // (a rematch starts from the same CPU memory and log throttle as a fresh game)
       fragRng: null, spatRng: null, spatAcc: 0, spatTick: 0, aiPlan: null, aiRng: null, aiMem: null, _treeLogT: null,

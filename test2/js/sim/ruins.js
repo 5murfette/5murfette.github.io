@@ -356,7 +356,6 @@
   }
 
   RU.populate = function (S, taken) {
-    S.town = null;
     const w = W();
     if (S.biome !== 'volcanic' || w.under || w.dry) return;
     seedK = (Math.imul(S.settings.seed | 0, 40503) + 12345) >>> 0;

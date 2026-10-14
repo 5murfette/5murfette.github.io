@@ -323,12 +323,7 @@
   };
 
   MN.load = function () {
-    let s = {};
-    try {
-      s = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
-    } catch (e) {
-      s = {};
-    }
+    const s = SS.store.get_json(KEY, {});
     // P9: the PoC match defaults (2 teams of 3, 100 HP, 45 s turns, sudden death, team 1 human, others CPU)
     const d = Object.assign(
       {},
@@ -353,11 +348,7 @@
       names: C.TEAMS.map(t => t.name)
     });
   };
-  MN.save = function (s) {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(s));
-    } catch (e) { /* private mode */ }
-  };
+  MN.save = s => SS.store.set_json(KEY, s);
 
   function el(tag, cls, html) {
     const e = document.createElement(tag);

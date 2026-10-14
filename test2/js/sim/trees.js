@@ -38,7 +38,8 @@
  *   struct Leaf { vec3 c; f32 r, f; i32 s; };
  *   struct Tree { i32 id; u8 sp, alive; vec3 root; f32 h, crown, dry, burn, heat, thr, char; Seg seg[]; Leaf leaf[]; };
  * API: populate(S, taken), blast(S, c, W), heat_burst(S, c, r), napalm(S, c, r), chip(S, t, i, p), wood_hit(S, x, y,
- *   z), tick(S, dt), fire_at(S, x, y, z), on_edit(S, box), plane_sections(S), strike(S, t) (lightning hook), stats(S).
+ *   z), tick(S, dt), fire_at(S, x, y, z), on_edit(S, box), plane_sections(S), strike(S, t) (lightning hook), stats(S),
+ *   hash(S, mix).
  */
 (function (SS) {
   'use strict';
@@ -351,7 +352,7 @@
     const u = M.sat(((p.x - g.a.x) * ax + (p.y - g.a.y) * ay + (p.z - g.a.z) * az) / (L * L)), u0 = u - gap / L, u1 = u + gap / L;
     const at = f => v(g.a.x + ax * f, g.a.y + ay * f, g.a.z + az * f), rad = f => g.r0 + (g.r1 - g.r0) * f, pc = at(u);
     SS.sim.emit(S, EV.TREESPLINTER, { tree: t.id, x: pc.x, y: pc.y, z: pc.z, r: rad(u), len: L * (M.min(1, u1) - M.max(0, u0)), why });
-    S.treeVer = (S.treeVer | 0) + 1;
+    S.treeVer++;
     if (u0 > 0.02) {
       const j = seg(t, g.p, g.a, at(u0), g.r0, rad(u0), g.kind);
       t.seg[j].cut = 1;
@@ -870,7 +871,7 @@
         l.f = 0;
         l.s = -1;
       }
-    S.treeVer = (S.treeVer | 0) + 1;
+    S.treeVer++;
     SS.sim.emit(S, EV.TREEBURNOFF, { tree: t.id, x: t.x, y: t.y + t.h * 0.6, z: t.z, limbs: limbs ? 1 : 0 });
   }
   /* flame intensity at a worm's centre: next to a burning trunk or inside a burning crown */
@@ -898,6 +899,22 @@
         const g = t.seg[i];
         if (g.on && g.r0 >= K.SOLID_R) P.pb_rod(S, PB, g.a, g.b, (g.r0 + g.r1) / 2, 0, -1, t.id, i, -1);
       }
+    }
+  };
+  /* the trees for sim.hash (the desync check): their count and shape version, then per tree whether it stands, its
+   * fire and char, the segments still on and the leaf cover left */
+  TR.hash = function (S, mix) {
+    mix(S.trees.length);
+    mix(S.treeVer);
+    for (const t of S.trees) {
+      let on = 0, lf = 0;
+      for (const g of t.seg) on += g.on;
+      for (const l of t.leaf) lf += l.s >= 0 ? l.f : 0;
+      mix(t.alive);
+      mix(t.burn);
+      mix(t.char);
+      mix(on);
+      mix(lf);
     }
   };
   TR.stats = function (S) {
