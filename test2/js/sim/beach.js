@@ -128,7 +128,7 @@
     const sd = E.seed;
     B.rocks = []; B.pebbles = []; B.points = [];
     const gnd = (x, z) => hgt[M.clamp(Math.round(z / H), 0, W.NZ - 1) * W.NX + M.clamp(Math.round(x / H), 0, W.NX - 1)];
-    const free = (x, z, pad) => !(F.fort && SS.fort.keep_out(x, z, pad, pad));
+    const free = (x, z, pad) => !(F.fort && SS.fort.keep_out(F.fort, x, z, pad, pad));
     const inside = (x, z) => !(x < 4 || z < 4 || x > W.SX - 4 || z > W.SZ - 4);
     // the coast radius along a bearing (bisection on the signed edge)
     const coastR = a => {
@@ -246,7 +246,7 @@
       for (let da = -0.3; da <= 0.31; da += 0.06) {
         const a = ap + da, rr = coastR(a) - du, x = W.MX + M.cos(a) * rr, z = W.MZ + M.sin(a) * rr, y0 = gnd(x, z);
         if (y0 < SEA + 0.8 || y0 > SEA + 5.0) continue;
-        if (F.fort && SS.fort.keep_out(x, z, 8, 8)) continue;
+        if (F.fort && SS.fort.keep_out(F.fort, x, z, 8, 8)) continue;
         let dev = 0, rock = 0;
         for (let k = -4; k <= 4; k++)
           for (let i = -4; i <= 4; i++) {
@@ -265,7 +265,10 @@
         const x = best.x + M.cos(an) * rd, z = best.z + M.sin(an) * rd;
         const y0 = gnd(x, z);
         if (
-          !(x > 6 && z > 6 && x < W.SX - 6 && z < W.SZ - 6) || y0 < SEA + 0.8 || y0 > SEA + 6.0 || (F.fort && SS.fort.keep_out(x, z, 4, 4))
+          !(x > 6 && z > 6 && x < W.SX - 6 && z < W.SZ - 6)
+          || y0 < SEA + 0.8
+          || y0 > SEA + 6.0
+          || (F.fort && SS.fort.keep_out(F.fort, x, z, 4, 4))
         ) continue;
         let bad = false;
         for (let q = 0; q < 8 && !bad; q++) {

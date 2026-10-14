@@ -644,26 +644,15 @@
     world.under = false;
     world.dry = false;
     world.SEA = -1;
-    world.far = null;
+    world.farKind = C.FAR.NONE;
+    world.farLevel = 0;
     world.circ = null;
     world.frz = null;
     world.biome = 'eow';
     world.d.fill(-3); world.mat.fill(0); world.heat.fill(0);
     const pl = plan(settings, world.SX);
-    world.features = {
-      biome: 'eow',
-      volcano: null,
-      volcanoes: [],
-      canals: [],
-      lavaInit: null,
-      pockets: [],
-      vents: [],
-      spires: [],
-      bridges: [],
-      iceShelf: false,
-      lavaPresent: false,
-      eow: pl
-    };
+    world.features = SS.worldgen.features_make('eow', 1, 0);
+    world.features.eow = pl;
     pl.nubs = [];
     pl.pockets = [];
     own = new Uint8Array(world.N);

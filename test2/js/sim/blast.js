@@ -17,7 +17,7 @@
  * Other subsystems react through optional hooks (feature-detected, so this module works alone):
  *   SS.bodies.blast(S, c, W), SS.veg.blast(S, c, W), SS.veg.ignite(S, c, r), SS.water.blast(S, c, W), SS.lava.blast(S,
  *   c, W), SS.scatter.blast(S, c, W) — props: shatter crates, set off barrels / mines, ignite.
- *   SS.collapse_hook(S, box) — called with the edited lattice box when settings.collapse is on.
+ *   SS.sim.after_edit(S, box) — the edited lattice box (or the cracks' load box): collapse and the bridges' check.
  * C port: plain functions over (GameState*, World*); the per-material Zcrit table is a static array. */
 (function (SS) {
   'use strict';
@@ -255,8 +255,7 @@
     if (SS.spatter) SS.spatter.blast(S, c, Wkg);             // LV4: loosen landed clots (before lava.blast throws new ones)
     if (SS.lava && SS.lava.blast) SS.lava.blast(S, c, Wkg);
     const ckBox = SS.cracks && S.crk ? SS.cracks.blast(S, c, Wc, cr) : null;    // P66b: new cracks, the load check (CRACKS flag)
-    if (S.settings.collapse && SS.collapse_hook && (cr.removed > 0 || ckBox)) SS.collapse_hook(S, ckBox || cr.box);
-    if (SS.struct && SS.struct.on_edit && cr.removed > 0) SS.struct.on_edit(S);    // an abutment undermined (or collapsed away)
+    if (cr.removed > 0 || ckBox) SS.sim.after_edit(S, ckBox || cr.box);
     return ev;
   };
 })(window.SS = window.SS || {});

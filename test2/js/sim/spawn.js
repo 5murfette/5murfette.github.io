@@ -30,7 +30,7 @@
   }
   SP.near_lava = nearLava;
   /* ---------- dry worlds (Step D, C.DRY): play area, hot sand ----------
-   * No wall (D4): beyond the lattice the ground is the analytic far dunes (world.js W.sample -> W.far), so a worm
+   * No wall (D4): beyond the lattice the ground is the analytic far dunes (world.js W.sample -> W.far_at), so a worm
    * blasted out lands there, burns on the hot sand and has to walk back; beyond FAR_R it is lost in the desert. */
   const DRY = C.DRY;
   SP.arena_r = (x, z) => M.len2(x - DRY.CX, z - DRY.CZ);

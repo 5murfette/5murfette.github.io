@@ -33,9 +33,9 @@
  *   struct Site { f32 x, z, y, phi, r; }; bool fort_on(const Settings*); void fort_layout(World*, Features*, ...); void
  *   fort_shape(World*, f32 *hgt, ...); i8 fort_team_at(f32 x, f32 z, f32 y); void fort_populate(Game*, Taken*). Every
  * loop is over fixed arrays. API: on(settings), is(), of(), layout(W, F, st, biome, seed), shape(W, hgt, F, seed, lz),
- *      under_plan(W, F), cell(f, x, z, out), team_at(x, z, y), spot_ok(x, z, y, team), seat(team), keep_out(x, z,
- *      gapPad, sitePad), span_ok(xa, za, xb, zb), undercut_col(x, z), undercut(f, gd, y), trapped(x, z, y), populate(S,
- *      taken). */
+ *      under_plan(W, F), cell(f, x, z, out), team_at(x, z, y), spot_ok(x, z, y, team), seat(team), keep_out(f, x, z,
+ *      gapPad, sitePad), span_ok(f, xa, za, xb, zb), undercut_col(f, x, z), undercut(f, gd, y), trapped(x, z, y),
+ *      populate(S, taken). */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, B = C.BUNKER;
@@ -127,8 +127,8 @@
   FT.cell = (f, x, z, o) => cell(f, x, z, o || cellOut);
 
   /* the team owning ground at (x, z[, y]): -1 in a channel / a pit. Surface maps: the cell outside the channel's
-   * middle; caves: the hall's cell outside the pits */
-  function teamAt(f, x, z, y) {
+   * middle (o receives that cell); caves: the hall's cell outside the pits (o untouched) */
+  function teamAt(f, x, z, y, o) {
     if (f.under) {
       for (let q = 0; q < f.pits.length; q++) {
         const p = f.pits[q];
@@ -144,16 +144,16 @@
       }
       return bi;
     }
-    cell(f, x, z, cellOut);
-    return cellOut.gd > f.hw * 0.5 ? cellOut.team : -1;
+    cell(f, x, z, o);
+    return o.gd > f.hw * 0.5 ? o.team : -1;
   }
   FT.team_at = (x, z, y) => {
     const f = FT.of();
-    return f ? teamAt(f, x, z, y) : -1;
+    return f ? teamAt(f, x, z, y, cellOut) : -1;
   };
-  /* where a spire / an overhang ledge may not stand: within gp m of a channel, or within sp m of a bunker site */
-  FT.keep_out = (x, z, gp, sp) => {
-    const f = FT.of();
+  /* where a spire / an overhang ledge may not stand on fort f (the map being generated: worldgen's or the preview's
+   * features, not the loaded world's): within gp m of a channel, or within sp m of a bunker site */
+  FT.keep_out = (f, x, z, gp, sp) => {
     if (!f || f.under) return false;
     cell(f, x, z, cellOut);
     if (cellOut.gd < f.hw + gp) return true;
@@ -165,10 +165,9 @@
   };
   /* desert chasm walls lean out at the top (a worm climbs any slope that does not overhang: step-up 0.64 m per tick):
    * the solid starts
-   * UNDER_K m farther from the channel at the floor than at 12 m up. undercut_col(x, z): the column's channel distance
-   * (99 = none); undercut(f, gd, y): the signed limit (+ = solid allowed) to min() into the density */
-  FT.undercut_col = (x, z) => {
-    const f = FT.of();
+   * UNDER_K m farther from the channel at the floor than at 12 m up. undercut_col(f, x, z): the column's channel
+   * distance (99 = none); undercut(f, gd, y): the signed limit (+ = solid allowed) to min() into the density */
+  FT.undercut_col = (f, x, z) => {
     if (!f || f.kind !== 'chasm') return 99;
     cell(f, x, z, cellOut); return cellOut.gd < f.hw + 3.5 ? cellOut.gd : 99;
   };
@@ -191,11 +190,11 @@
     cell(f, x, z, cellOut);
     return cellOut.gd < f.hw + f.lean + 0.5 && y < f.floor + 4;
   };
-  /* a rock bridge a -> b may stand: both ends on one fort and the span clear of every bunker site */
-  FT.span_ok = (xa, za, xb, zb) => {
-    const f = FT.of();
+  /* a rock bridge a -> b may stand on fort f (as keep_out): both ends on one fort and the span clear of every bunker
+   * site */
+  FT.span_ok = (f, xa, za, xb, zb) => {
     if (!f) return true;
-    if (teamAt(f, xa, za, 0) !== teamAt(f, xb, zb, 0)) return false;
+    if (teamAt(f, xa, za, 0, cellOut) !== teamAt(f, xb, zb, 0, cellOut)) return false;
     for (let q = 0; q <= 12; q++) {
       const x = xa + (xb - xa) * q / 12, z = za + (zb - za) * q / 12;
       cell(f, x, z, cellOut);
@@ -211,8 +210,8 @@
   FT.spot_ok = (x, z, y, team) => {
     const f = FT.of();
     if (!f) return true;
-    if (teamAt(f, x, z, y) !== team) return false;
-    // (teamAt left the cell in cellOut: not on a channel's floor or bank)
+    if (teamAt(f, x, z, y, cellOut) !== team) return false;
+    // (surface maps: not on a channel's floor or bank; cellOut = the cell teamAt measured)
     if (!f.under && cellOut.gd < f.hw + 1.5 + (f.kind === 'chasm' ? f.lean : 0)) return false;
     for (let t = 0; t < f.sites.length; t++) {
       const s = f.sites[t];

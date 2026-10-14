@@ -6,9 +6,9 @@
  * decayed by DAMP and by bottom friction FRICTION / h (shallow run-up dies fast), clamped >= 0 and scaled so a cell
  * never ships more than it holds. Velocity comes from the mean through-flux / depth.
  * Bed = the ground seen from below (first air gap above bedrock): bridges and overhangs do not dry the sea under
- * them. Edited columns are refreshed through W.listeners (a crater next to the sea floods, re-baked rubble displaces
- * water). The outer RING cells relax toward a reservoir at SEA plus a swell entering from the upwind edges (a plane
- * wave, SWELL_A / SWELL_L / SWELL_DIR, phase from S.time) and absorb waves leaving the map.
+ * them. Edited columns are refreshed through its edit rect (W.listen; a crater next to the sea floods, re-baked rubble
+ * displaces water). The outer RING cells relax toward a reservoir at SEA plus a swell entering from the upwind edges (a
+ * plane wave, SWELL_A / SWELL_L / SWELL_DIR, phase from S.time) and absorb waves leaving the map.
  * Blasts (blast.js hook): a cavity A deep (BLAST_A_UNDER / BLAST_A_SURF x W^1/3, under water / at the surface) of
  * radius R = BLAST_R W^1/3; its volume is thrown onto a rim out to BLAST_RIM R that leaves outward at BLAST_OUT sqrt(g
  * A): the blast drives the water away as one ring wave, which loses height as it spreads, runs up beaches and reflects
@@ -35,20 +35,11 @@
   const W = () => SS.world;
   const DRY = -99;
   let PERM = null;                            // material id -> permeable ground (groundwater seeps through)
-  let dirty = null;                           // union of edited lattice columns since the last bed refresh
+  const dirty = SS.world.rect_make();                           // union of edited lattice columns since the last bed refresh
 
   // the pending edit rect is sim state outside S: sim.snapshot / restore carry it (bit-identical replays)
-  WA.dirty_get = () => (dirty ? { i0: dirty.i0, k0: dirty.k0, i1: dirty.i1, k1: dirty.k1 } : null);
-  WA.dirty_set = d => { dirty = d ? { i0: d.i0, k0: d.k0, i1: d.i1, k1: d.k1 } : null; };
-  function onMark(i0, k0, i1, k1) {
-    if (!dirty) dirty = { i0, k0, i1, k1 };
-    else {
-      dirty.i0 = M.min(dirty.i0, i0);
-      dirty.k0 = M.min(dirty.k0, k0);
-      dirty.i1 = M.max(dirty.i1, i1);
-      dirty.k1 = M.max(dirty.k1, k1);
-    }
-  }
+  WA.dirty_get = () => W().rect_get(dirty);
+  WA.dirty_set = d => W().rect_put(dirty, d);
   /* ground under column (i, k) seen from below: the first solid->air transition above bedrock */
   function bedOf(w, i, k) {
     const NX = w.NX, NY = w.NY, D = w.d;
@@ -138,8 +129,8 @@
 
   WA.init = function (S) {
     const w = W(), NX = w.NX, NZ = w.NZ, N = NX * NZ, SEA = w.SEA;
-    if (w.listeners.indexOf(onMark) < 0) w.listeners.push(onMark);
-    dirty = null;
+    w.listen(dirty);
+    dirty.set = 0;
     if (!PERM) {
       PERM = new Uint8Array(256);
       for (const m of K.SEEP_MATS) PERM[C.MAT[m]] = 1;
@@ -150,7 +141,9 @@
         side: new Int8Array(N),
         acc: 0, t: 0, ver: 1, pend: [], swellA: K.SWELL_A, swellL: K.SWELL_L, swellDir: K.SWELL_DIR,
         sea: new Uint8Array(N), seep: new Uint8Array(N), seepList: new Int32Array(N), stack: new Int32Array(N), nSeep: 0,
-        seepLeft: 0, seepVol: 0, seepDirty: true, seepVer: 0 };
+        seepLeft: 0, seepVol: 0, seepDirty: true, seepVer: 0, bedVer: 0, bed: null, vol0: 0, nTeams: 0, rc: null,
+        // the swell's targets (weather.js sets them from the wind; null = none yet), and whether it has snapped to them
+        swellDirT: null, swellAT: 0, swellSnap: 0 };
     for (let k = 0; k < NZ; k++)
       for (let i = 0; i < NX; i++) st.b[k * NX + i] = bedOf(w, i, k);
     // the sea: every column connected to the map edge below SEA starts full (inland pits start dry)
@@ -173,8 +166,8 @@
   // SEA − bed)); rebuilt when the swell heading / length / on-off or the bed changes
   function ringCache(st, w) {
     let r = st.rc;
-    const key = st.swellDir + ':' + st.swellL + ':' + (st.swellA > 0) + ':' + (st.bedVer || 0);
-    if (r && r.key === key) return r;
+    const on = st.swellA > 0 ? 1 : 0;
+    if (r && r.dir === st.swellDir && r.L === st.swellL && r.on === on && r.bedVer === st.bedVer) return r;
     const NX = st.NX, NZ = st.NZ, list = [];
     for (let k = 0; k < NZ; k++)
       for (let i = 0; i < NX; i++)
@@ -182,7 +175,10 @@
     const n = list.length;
     r =
       st.rc = {
-        key,
+        dir: st.swellDir,
+        L: st.swellL,
+        on,
+        bedVer: st.bedVer,
         n,
         c: Int32Array.from(list),
         a: new Float64Array(n),
@@ -209,7 +205,7 @@
       k0 = M.max(0, dirty.k0 - 1),
       i1 = M.min(NX - 1, dirty.i1 + 1),
       k1 = M.min(NZ - 1, dirty.k1 + 1);
-    dirty = null;
+    dirty.set = 0;
     for (let k = k0; k <= k1; k++)
       for (let i = i0; i <= i1; i++) {
         const c = k * NX + i, nb = bedOf(w, i, k), surf = st.b[c] + st.h[c];
@@ -217,13 +213,13 @@
         st.h[c] = st.h[c] > 0 ? M.max(0, surf - nb) : 0;
         st.b[c] = nb;
       }
-    st.seepDirty = true; st.bedVer = (st.bedVer || 0) + 1;
+    st.seepDirty = true; st.bedVer = st.bedVer + 1;
   }
 
   function sub(S, st) {
     const w = W(), NX = st.NX, NZ = st.NZ, DT = K.DT, dx = w.H, area = dx * dx, kf = DT * C.G * dx;
     const h = st.h, fL = st.fL, fR = st.fR, fB = st.fB, fF = st.fF;
-    if (dirty) refreshBeds(st, w);
+    if (dirty.set) refreshBeds(st, w);
     // effective bed: open lava lies on the ground under the water and displaces it
     let b = st.b;
     const lv = S.lava;
@@ -326,7 +322,7 @@
     // P87: the swell follows the wind's heading / strength by RAMPS (deterministic, per step): a new turn's wind used
     // to snap the boundary wave train to a new phase and amplitude. A heading change fades the train out (~25 s),
     // swaps, fades back in.
-    if (st.swellDirT !== undefined) {
+    if (st.swellDirT != null) {
       const rate = K.SWELL_A * dt / 25;
       if (Math.abs(st.swellDirT - st.swellDir) > 1e-6) {
         st.swellA = M.max(0, st.swellA - rate);
@@ -360,7 +356,9 @@
     for (let c = 0; c < st.N; c++)
       if (st.h[c] > 0.01) st.h[c] += dh;
     for (const wm of onIce) wm.pos.y += dh;
-    st.bedVer = (st.bedVer || 0) + 1; st.ver++;
+    // the sea mask and the seep cells follow the new level (columns now under the sea join it, pits below it seep)
+    st.seepDirty = true;
+    st.bedVer = st.bedVer + 1; st.ver++;
     SS.sim.emit(S, EV.SEARISE, { sea: w.SEA, dh });
   };
   /* turn change: this turn's share of the round's groundwater (SEEP / teams); an unreleased rest carries (max 2) */

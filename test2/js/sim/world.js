@@ -8,7 +8,7 @@
  *
  * World flags (ONE meaning each; worldgen.G.begin, dim2d.crop and eow.gen_begin set them per map):
  *   W.dry       the 3D desert's DISC rules, nothing else: the hot-sand play circle (S.playR, C.DRY), the lattice disc
- *               LAT_R with the analytic far dunes beyond it (W.far / W.circ / W.frz), the sudden-death shrink,
+ *               LAT_R with the analytic far dunes beyond it (W.farKind / W.circ / W.frz), the sudden-death shrink,
  *               struct.js off, the hot-sand HUD. dim2d.crop clears it: the 2D desert is a finite slab with none of
  *               those rules. It does NOT mean "no sea" (the 2D desert has no sea and is not dry).
  *   W.under     an underground map; W.eow the End of the World; W.flat a 2D slab (dim2d).
@@ -87,11 +87,42 @@
 
   /* ---------- meshing chunks (render rebuilds a chunk when its version changes) ---------- */
   W.dirtyBox = null;                     // union of edited lattice boxes since the renderer last consumed it
-  W.listeners = [];                      // sim modules told about every edit: fn(i0, k0, i1, k1) (lattice columns)
+  /* a sim module's pending edit rect (the water's beds, the grass cover, the weather's cover): the union of the lattice
+   * columns marked since the module last caught up. C: struct Rect { u8 set; i32 i0, k0, i1, k1; }. W.listen(r): every
+   * W.mark (not quiet) grows r; rect_get / rect_put copy it for sim.snapshot / restore (null = clear) */
+  W.rects = [];
+  W.rect_make = () => ({ set: 0, i0: 0, k0: 0, i1: 0, k1: 0 });
+  W.rect_grow = function (r, i0, k0, i1, k1) {
+    if (!r.set) {
+      r.set = 1;
+      r.i0 = i0;
+      r.k0 = k0;
+      r.i1 = i1;
+      r.k1 = k1;
+      return;
+    }
+    r.i0 = M.min(r.i0, i0);
+    r.k0 = M.min(r.k0, k0);
+    r.i1 = M.max(r.i1, i1);
+    r.k1 = M.max(r.k1, k1);
+  };
+  W.rect_get = r => (r.set ? { i0: r.i0, k0: r.k0, i1: r.i1, k1: r.k1 } : null);
+  W.rect_put = function (r, d) {
+    r.set = d ? 1 : 0;
+    if (d) {
+      r.i0 = d.i0;
+      r.k0 = d.k0;
+      r.i1 = d.i1;
+      r.k1 = d.k1;
+    }
+  };
+  W.listen = r => {
+    if (W.rects.indexOf(r) < 0) W.rects.push(r);
+  };
 
   /* Record an edit of lattice box [i0..i1]x[j0..j1]x[k0..k1]: bump versions, refresh column tops. */
-  // quiet: renderers only (versions, dirty box, tops), the sim listeners are not told (sim.restore: their pending
-  // edit rects come back from the snapshot instead of a whole-lattice refresh that perturbs the water)
+  // quiet: renderers only (versions, dirty box, tops), the sim modules' edit rects do not grow (sim.restore: their
+  // pending edit rects come back from the snapshot instead of a whole-lattice refresh that perturbs the water)
   W.mark = function (i0, j0, k0, i1, j1, k1, quiet) {
     i0 = M.max(0, i0); j0 = M.max(0, j0); k0 = M.max(0, k0);
     i1 = M.min(NX - 1, i1); j1 = M.min(NY - 1, j1); k1 = M.min(NZ - 1, k1);
@@ -123,15 +154,15 @@
     }
     W.update_tops(i0, k0, i1, k1);
     if (!quiet)
-      for (let q = 0; q < W.listeners.length; q++) W.listeners[q](i0, k0, i1, k1);
+      for (let q = 0; q < W.rects.length; q++) W.rect_grow(W.rects[q], i0, k0, i1, k1);
   };
   W.mark_all = function (quiet) { W.mark(0, 0, 0, NX - 1, NY - 1, NZ - 1, quiet); };
 
   /* D6 frozen ring (dry worlds): the lattice columns farther than r from (cx, cz) keep their generated state for good.
    * Every edit path ends in W.mark, which puts those columns back (blast.js / carve also skip them, so the counts of
-   * removed material stay right). Only the disc r is destructible; beyond the disc C.DRY.LAT_R the ground is W.far,
-   * which these columns match (worldgen's radial border band), so the crater wall always ends inside the disc.
-   * C: int32 slot per column (-1 = editable) + a compact copy of d / mat / heat for the frozen columns. */
+   * removed material stay right). Only the disc r is destructible; beyond the disc C.DRY.LAT_R the ground is the far
+   * dunes (W.far_at), which these columns match (worldgen's radial border band), so the crater wall always ends inside
+   * the disc. C: int32 slot per column (-1 = editable) + a compact copy of d / mat / heat for the frozen columns. */
   W.frz = null;
   W.freeze_beyond = function (cx, cz, r) {
     const slot = new Int32Array(NX * NZ).fill(-1);
@@ -190,12 +221,14 @@
   };
 
   /* ---------- sampling ---------- */
-  /* Beyond the lattice: air (-3), or on a dry world (D4) the analytic far dunes W.far(x, z) (set by worldgen; the
-   * lattice's outer band equals it on the border, so the field continues across it): worms, bodies and blasts out
-   * there stand, roll and walk on the same ground the render draws. */
-  W.far = null;
+  /* Beyond the lattice (W.farKind, C.FAR): NONE air (-3); DUNES on a dry world (D4) the analytic far dunes
+   * (worldgen.far_height: the lattice's outer band equals it on the border, so the field continues across it);
+   * LEVEL ground at W.farLevel (a cave world's rock, 1e4; a 2D desert slab's plain at its sea level). Worms, bodies
+   * and blasts out there stand, roll and walk on the same ground the render draws. */
+  W.farKind = C.FAR.NONE; W.farLevel = 0;
+  W.far_at = (x, z) => (W.farKind === C.FAR.DUNES ? SS.worldgen.far_height(x, z) : W.farLevel);
   /* D6: on a dry world the lattice part is a disc (W.circ = { x, z, r }: C.DRY.LAT_R about the map centre, set by
-   * worldgen); beyond it W.far is the ground. Wet worlds: the lattice square. */
+   * worldgen); beyond it W.far_at is the ground. Wet worlds: the lattice square. */
   W.circ = null;
   /* the round play area the views draw (no square anywhere): the dry world's lattice disc (W.circ), else the circle
    * W.RIM about the map centre; null on a 2D slab and in the End of the World. Fills out { x, z, r } */
@@ -218,8 +251,8 @@
   W.outside = outside;
   W.sample = function (x, y, z) {
     if (outside(x, z)) {
-      if (!W.far) return -3;
-      const d = W.far(x, z) - y;
+      if (!W.farKind) return -3;
+      const d = W.far_at(x, z) - y;
       return d > 3 ? 3 : d < -3 ? -3 : d;
     }
     if (y <= 0) return W.eow ? -3 : 3;                              // (P68c: no floor in space)
@@ -258,7 +291,7 @@
   };
   /* material of the most solid of the 8 lattice points around (x,y,z); AIR if none is solid */
   W.mat_at = function (x, y, z) {
-    if (W.far && outside(x, z)) return W.sample(x, y, z) > 0 ? MAT.SAND : MAT.AIR;   // dry: the far dunes are sand
+    if (W.farKind && outside(x, z)) return W.sample(x, y, z) > 0 ? MAT.SAND : MAT.AIR;   // dry: the far dunes are sand
     const i = M.max(0, M.min(NX - 2, Math.floor(x / H))),
       j = M.max(0, M.min(NY - 2, Math.floor(y / H))),
       k = M.max(0, M.min(NZ - 2, Math.floor(z / H)));
@@ -304,7 +337,7 @@
 
   /* Highest solid surface at (x,z) (fine walk downward from the coarse column top). */
   W.topHeight = function (x, z) {
-    if (W.far && outside(x, z)) return M.max(0, W.far(x, z));
+    if (W.farKind && outside(x, z)) return M.max(0, W.far_at(x, z));
     const i = M.max(0, M.min(NX - 1, Math.round(x / H))), k = M.max(0, M.min(NZ - 1, Math.round(z / H)));
     let y0 = 0;
     for (let dk = -1; dk <= 1; dk++)
@@ -318,7 +351,7 @@
   };
   /* coarse column top (bilinear over lattice columns) — cheap, for sky exposure / water beds */
   W.top_at = function (x, z) {
-    if (W.far && outside(x, z)) return M.max(0, W.far(x, z));
+    if (W.farKind && outside(x, z)) return M.max(0, W.far_at(x, z));
     const fx = M.max(0, M.min(NX - 1.001, x / H)), fz = M.max(0, M.min(NZ - 1.001, z / H));
     const i = Math.floor(fx), k = Math.floor(fz), u = fx - i, v = fz - k, T = W.top;
     const a = T[k * NX + i], b = T[k * NX + i + 1], c = T[(k + 1) * NX + i], d = T[(k + 1) * NX + i + 1];
@@ -344,6 +377,14 @@
 
   /* ---------- editing primitives ---------- */
   /* Plain spherical cut (material-agnostic). Blast craters use SS.blast (material-aware). */
+  /* the lattice box of the box x0..x1, y0..y1, z0..z1 (m), grown by pad points on every side and clamped to the
+   * lattice: out = { i0, i1, j0, j1, k0, k1 } */
+  W.box_of = function (x0, y0, z0, x1, y1, z1, pad, out) {
+    out.i0 = M.max(0, Math.floor(x0 / H) - pad); out.i1 = M.min(NX - 1, Math.ceil(x1 / H) + pad);
+    out.j0 = M.max(0, Math.floor(y0 / H) - pad); out.j1 = M.min(NY - 1, Math.ceil(y1 / H) + pad);
+    out.k0 = M.max(0, Math.floor(z0 / H) - pad); out.k1 = M.min(NZ - 1, Math.ceil(z1 / H) + pad);
+    return out;
+  };
   W.carve = function (cx, cy, cz, R) {
     const i0 = M.max(0, Math.floor((cx - R - 1) / H)), i1 = M.min(NX - 1, Math.ceil((cx + R + 1) / H));
     const j0 = M.max(1, Math.floor((cy - R - 1) / H)), j1 = M.min(NY - 1, Math.ceil((cy + R + 1) / H));
@@ -383,15 +424,7 @@
   /* Generation (delegates to sim/worldgen.js). Resumable: gen_begin + gen_step until it returns 1. */
   /* map side in metres from the settings: mapSize 'normal' | 'large' ('auto' = the biome's default, C.MAP.DEFAULT);
    * dry worlds (desert, D6 circle constants) and underground maps are always 'normal'. */
-  W.size_of = function (settings) {
-    const sh = SS.worldgen.shape_of(settings);
-    const under = !!(settings.under && settings.under !== '0' && settings.under !== 'off') || sh === 'caverns';
-    const B = C.BIOMES.find(b => b.id === settings.biome);
-    if (under || (B && B.dry)) return C.MAP.SIDE.normal;
-    let k = settings.mapSize;
-    if (!C.MAP.SIDE[k]) k = C.MAP.DEFAULT[settings.biome] || 'normal';
-    return C.MAP.SIDE[k];
-  };
+  W.size_of = settings => C.map_side(settings);       // the side of the map these settings make (config.js)
   W.gen_begin = function (settings) {
     const sx = W.size_of(settings);
     W.flat = false; W.kz = -1; W.sepk = 1;
@@ -419,5 +452,4 @@
   };
 
   SS.world = W;
-  window.WORLD = W; // legacy alias
 })(window.SS = window.SS || {});

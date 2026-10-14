@@ -253,6 +253,9 @@
       NONE: 0, ARSENAL_B: 1, GADGET: 2, FIELD: 3, LAUNCH: 4, BOULDER: 5, OWN_FLIGHT: 6, DROP: 7, MINE: 8, DEVICE: 9, TELEPORT: 10,
       GIRDER: 11, STRIKE: 12, THUNDER: 13, MOAI: 14, SNIPER: 15, SHOTGUN: 16, BAT: 17, DIG: 18, BELLOWS: 19, SCRAMBLER: 20, SKIP: 21
     },
+    /* the ground beyond the lattice (World .farKind, world.js W.far_at): none (air), a flat level (World .farLevel: a
+     * cave world's rock, a 2D desert slab's plain), the analytic far dunes of a dry world */
+    FAR: { NONE: 0, LEVEL: 1, DUNES: 2 },
     MAT, MATS,
 
     /* Map types. Each one is a generator in sim/worldgen.js plus a look preset in render. */
@@ -390,7 +393,7 @@
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
     // the version of the sim rules: bump it when they change (net.js adds a hash of the arsenal / biome tables); peers
     // of other builds refuse each other
-    BUILD: 'p114-r4-m',
+    BUILD: 'p114-r5-m',
     // first: the team that starts (0..3 or 'random' = PoC; the menu default)
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,
       collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off',
@@ -417,7 +420,7 @@
      * projectile leaves the game, a worm is lost and a body removed. */
     DRY: { SEA: -1, CX: 48, CZ: 48, PLAY_R: 34, SPAWN_R: 30, HOT_DPS: 0.2, FAR_R: 300,
       // a circular world: the lattice is used only inside the disc LAT_R (beyond it the
-      // analytic far dunes: sim W.far, render far grid, cap far strip); terrain edits only reach lattice columns
+      // analytic far dunes: sim W.far_at, render far grid, cap far strip); terrain edits only reach lattice columns
       // within EDIT_R (the ring EDIT_R..LAT_R keeps its generated state, so the crater wall ends inside the disc)
       LAT_R: 46, EDIT_R: 45 },
     /* Casing shrapnel of grenade / bazooka blasts (Step X2, sim/shrapnel.js): a ~0.6 g steel fragment at ~800 m/s,
@@ -792,10 +795,28 @@
     return !p || p.indexOf(kind) >= 0;
   };
   SS.CFG.weather_for = (biome, kind) => SS.CFG.weather_ok(biome, kind) ? kind : ((SS.CFG.WEATHER_MAP[biome] || {})[kind] || 'cloudy');
+  /* the map's terrain shape (settings.shape; 'random' picks one by the seed, anything else is islands) and its side in
+   * m
+   * (settings.mapSize, or the biome's default size; cave and dry worlds are always normal) */
+  SS.CFG.MAP_SHAPES = ['islands', 'hills', 'caverns', 'canyon'];
+  SS.CFG.shape_of = function (st) {
+    const S = SS.CFG.MAP_SHAPES, s = st.shape;
+    if (S.indexOf(s) >= 0) return s;
+    if (s === 'random') return S[(Math.imul(st.seed | 0, 2246822519) >>> 9) % S.length];
+    return 'islands';
+  };
+  SS.CFG.map_side = function (st) {
+    const C = SS.CFG, under = !!(st.under && st.under !== '0' && st.under !== 'off') || C.shape_of(st) === 'caverns';
+    const B = C.BIOMES.find(b => b.id === st.biome);
+    if (under || (B && B.dry)) return C.MAP.SIDE.normal;
+    let k = st.mapSize;
+    if (!C.MAP.SIDE[k]) k = C.MAP.DEFAULT[st.biome] || 'normal';
+    return C.MAP.SIDE[k];
+  };
   SS.CFG.density_count = (st, key, base) => {
     const lv = SS.CFG.density_level(st, key);
     if (base <= 0) return base;
-    const sc = SS.world && SS.world.size_of ? SS.world.size_of(st) / 96 : 1;      // content grows with the map's AREA
+    const sc = SS.CFG.map_side(st) / 96;                                         // content grows with the map's AREA
     if (sc !== 1) base = Math.round(base * sc * sc);
     // a slice has a line of ground, not an area
     if (st && st.dim === '2d') base = M.max(1, Math.round(base * SS.CFG.DIM2.COUNT_K));

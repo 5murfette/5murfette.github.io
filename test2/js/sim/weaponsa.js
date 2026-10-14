@@ -164,13 +164,7 @@
     const wa = S.wa, b = wa && wa.ebox;
     if (!b) return;
     wa.ebox = null;
-    const w = W(), H = w.H;
-    const box = { i0: M.max(0, Math.floor(b.x0 / H) - 1), i1: M.min(w.NX - 1, Math.ceil(b.x1 / H) + 1),
-      j0: M.max(0, Math.floor(b.y0 / H) - 1), j1: M.min(w.NY - 1, Math.ceil(b.y1 / H) + 1),
-      k0: M.max(0, Math.floor(b.z0 / H) - 1), k1: M.min(w.NZ - 1, Math.ceil(b.z1 / H) + 1) };
-    S.sectionDirty = true;
-    if (S.settings.collapse && SS.collapse_hook) SS.collapse_hook(S, box);
-    if (SS.struct && SS.struct.on_edit) SS.struct.on_edit(S);
+    sim().after_edit(S, W().box_of(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1, 1, {}));
   }
   WA.mark_edit = mark_edit; WA.flush_edit = flush_edit;
   const wv = { x: 0, y: 0, z: 0 };

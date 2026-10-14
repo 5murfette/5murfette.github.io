@@ -32,19 +32,10 @@
   const VG = SS.veg = {};
   const W = () => SS.world;
   const ZERO = { x: 0, y: 0, z: 0 };
-  let dirty = null;
+  const dirty = SS.world.rect_make();
   // the pending edit rect is sim state outside S: sim.snapshot / restore carry it (bit-identical replays)
-  VG.dirty_get = () => (dirty ? { i0: dirty.i0, k0: dirty.k0, i1: dirty.i1, k1: dirty.k1 } : null);
-  VG.dirty_set = d => { dirty = d ? { i0: d.i0, k0: d.k0, i1: d.i1, k1: d.k1 } : null; };
-  function onMark(i0, k0, i1, k1) {
-    if (!dirty) dirty = { i0, k0, i1, k1 };
-    else {
-      dirty.i0 = M.min(dirty.i0, i0);
-      dirty.k0 = M.min(dirty.k0, k0);
-      dirty.i1 = M.max(dirty.i1, i1);
-      dirty.k1 = M.max(dirty.k1, k1);
-    }
-  }
+  VG.dirty_get = () => W().rect_get(dirty);
+  VG.dirty_set = d => W().rect_put(dirty, d);
   const fdry = d => M.smoothstep(K.DRY0, K.DRY1, d);
 
   /* the organic-top table (config MATS[].veg). grass_ok(m): can the top of material m carry a grass cover (veg 2: soil,
@@ -85,8 +76,8 @@
 
   VG.init = function (S) {
     const w = W(), n = w.NX, N = n * w.NZ;
-    if (w.listeners.indexOf(onMark) < 0) w.listeners.push(onMark);
-    dirty = null;
+    w.listen(dirty);
+    dirty.set = 0;
     const st = S.veg = { n, surf: new Uint8Array(N * 4), fuel: new Float32Array(N), burnT: new Float32Array(N), burnI: new Float32Array(N),
       heat: new Float32Array(N), thr: new Float32Array(N), top0: new Float32Array(N), act: new Int32Array(N), nxt: new Int32Array(N),
       nAct: 0, acc: 0, tick: 0, surfVer: 1, logT: -9, stats: { ignited: 0, burnt: 0 } };
@@ -243,7 +234,7 @@
   /* edited columns: dug or buried ground has no grass */
   function refresh(S, st, w) {
     const n = st.n, i0 = M.max(0, dirty.i0), k0 = M.max(0, dirty.k0), i1 = M.min(n - 1, dirty.i1), k1 = M.min(w.NZ - 1, dirty.k1);
-    dirty = null;
+    dirty.set = 0;
     if (SS.trees) SS.trees.on_edit(S, i0, k0, i1, k1);
     let ch = false;
     for (let k = k0; k <= k1; k++)
@@ -385,7 +376,7 @@
   VG.step = function (S, dt) {
     const st = S.veg;
     if (!st) return;
-    if (dirty) refresh(S, st, W());
+    if (dirty.set) refresh(S, st, W());
     st.acc += dt;
     while (st.acc >= C.FIRE_TICK - 1e-9) {
       st.acc -= C.FIRE_TICK;

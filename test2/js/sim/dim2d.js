@@ -52,7 +52,7 @@
       }
       return bk;
     }
-    const v = F.volcano;
+    const v = F.volcanoes[0];
     if (v) return M.clamp(Math.round(v.z / H), lo, hi);
     return Math.round(W.MZ / H);
   }
@@ -81,7 +81,6 @@
       if (once(o) && typeof o.z === 'number') o.z += dz;
     };
     for (const v of F.volcanoes || []) sz(v);
-    sz(F.volcano);
     for (const c of F.canals || [])
       for (const q of c.pts || [])
         if (once(q)) q[2] += dz;
@@ -108,7 +107,6 @@
     const hz = C.DIM2.SZ * 0.5, dz = z => Math.abs(z - MZ);
     F.vents = (F.vents || []).filter(v => dz(v.z) <= hz);
     F.volcanoes = (F.volcanoes || []).filter(v => dz(v.z) <= v.Rc + 4.5);
-    F.volcano = F.volcanoes[0] || null;
     F.pockets = (F.pockets || []).filter(p => dz(p.z) <= M.max(p.rx, p.rz) + 3);
     F.spires = (F.spires || []).filter(q => dz(q[1]) <= q[2] + 5);
     F.bridges = (F.bridges || []).filter(b => MZ >= M.min(b[0][2], b[1][2]) - b[2] - 3 && MZ <= M.max(b[0][2], b[1][2]) + b[2] + 3);
@@ -143,12 +141,13 @@
     // P72: the slice cuts 3D arches / bridges / lips whose support was sideways: nothing may float in the section
     if (SS.collapse) SS.collapse.remove_floating_all(W);
     // a finite slab: no endless dunes, no frozen ring (the desert's hot-sand rules are 3D). Beyond its ends: the sea of
-    // a wet map, the rock of a cave world (its W.far stays), or on a dry map the flat plain the backdrop draws at the
-    // generation's sea level (real ground: what falls off an end cliff lands on it, it never meets a phantom sea)
+    // a wet map, the rock of a cave world (its far ground stays), or on a dry map the flat plain the backdrop draws at
+    // the generation's sea level (real ground: what falls off an end cliff lands on it, it never meets a phantom sea)
     W.dry = false;
     if (!W.under) {
       const floor = W.SEA;
-      W.far = W.sea_exists(floor) ? null : () => floor;
+      W.farKind = W.sea_exists(floor) ? C.FAR.NONE : C.FAR.LEVEL;
+      W.farLevel = floor;
     }
     W.circ = null;
     W.frz = null;
@@ -161,9 +160,9 @@
    * behind the slice. */
   D.finish = function (W, settings) {
     const F = W.features;
-    if (!F || F.biome !== 'volcanic' || W.under || !F.volcano) return;
+    if (!F || F.biome !== 'volcanic' || W.under || !F.volcanoes.length) return;
     const r = M.rng_make(((Math.imul(settings.seed | 0, 0x9e3779b1) ^ 0x51ed270b) >>> 0) || 1), R = () => M.rng_next(r);
-    const v = F.volcano, n = 2 + M.rng_int(r, 2);
+    const v = F.volcanoes[0], n = 2 + M.rng_int(r, 2);
     for (let q = 0, t = 0; q < n && t < 40; t++) {
       const side = R() < 0.5 ? -1 : 1, d = v.Rc + 3 + R() * M.max(1, v.Rb * 0.5 - v.Rc - 3), x = v.x + side * d;
       if (x < 4 || x > W.SX - 4) continue;

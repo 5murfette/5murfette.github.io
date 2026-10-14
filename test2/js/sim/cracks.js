@@ -728,7 +728,7 @@
 
   /* load check passes around lattice box `box` (grown in place by what was probed): returns the voxels broken. The
    * pieces that came
-   * loose are detached by the caller's collapse_hook (blast.js) afterwards: a broken voxel is an open crack,
+   * loose are detached by the caller's collapse.after_edit (blast.js) afterwards: a broken voxel is an open crack,
    * collapse.js find_floating sees what it cut off. */
   CR.settle = function (S, c, box) {
     const W = SS.world,

@@ -304,7 +304,7 @@
       clearBox(box);
       box = null;
     }
-    const v = S.lava && S.lava.vent, F = SS.world.features || {}, vo = F.volcano;
+    const v = S.lava && S.lava.vent, F = SS.world.features || {}, vo = (F.volcanoes || [])[0];
     const vs = (S.lava && S.lava.vents) || [];
     for (let q = 0; q < 3; q++) {
       const o = vs[q];

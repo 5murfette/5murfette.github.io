@@ -335,13 +335,14 @@
     return { pieces, rubble };
   };
 
-  /* blast.js hook (settings.collapse): after a crater, cut out every component around the edited box that lost its
+  /* after a terrain edit (sim.after_edit, settings.collapse): cut out every component around the edited box that lost
+   * its
    * support and hand the pieces to the rigid-body solver (they fall, tumble and re-bake where they come to rest).
    * Small leftovers (< 22 voxels) become 'rubble' (FX only). The new pieces get the same blast kick as other bodies.
    * Trees on a piece that breaks away are not handled here (P118a): the cut is a terrain edit like any other (W.mark),
    * so the one central support check (trees.js on_edit, from the veg dirty rect) drops every tree whose footing is
    * gone. */
-  SS.collapse_hook = function (S, box) {
+  K.after_edit = function (S, box) {
     if (!SS.bodies) return null;
     const W = SS.world, comps = K.find_floating(W, box);
     if (!comps.length) return null;

@@ -143,7 +143,7 @@
         nv[p] = Math.round(255 * W.noveg_at(x, y, z));
       }
       const i = M.max(0, M.min(NX - 1, Math.round(x / H))), k = M.max(0, M.min(NZ - 1, Math.round(z / H))), c = k * NX + i;
-      const out = W.far && W.outside(x, z);                          // dry worlds (D4): the far dunes beyond the lattice
+      const out = !!W.farKind && W.outside(x, z);                          // dry worlds (D4): the far dunes beyond the lattice
       const top = face[p] !== F.DOWN && (out || y > W.top[c] - 0.6);  // the column's topmost surface (grass, lava live there)
       let k0 = base[p];
       veg[p * 4] = veg[p * 4 + 1] = veg[p * 4 + 2] = veg[p * 4 + 3] = 0;

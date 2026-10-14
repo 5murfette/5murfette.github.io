@@ -33,7 +33,6 @@
   const BEACH_W = 4;           // m: dry beach width before the backshore rises
   const BEACH_R = 6;           // m: the backshore slope grows from BEACH_S to BACK_S over this run
   const BACK_S = 0.9;          // backshore slope cap (42°, the old falloff's slope; a cliff coast is steeper)
-  let coastHead = 0;           // falloff() side output: the coast line's offset from the mean radius (m; + = headland)
   /* LS1: the height h lowered toward the coast line (where the sea meets the land). Real island coasts: CLIFFS on the
    * headlands (wave energy converges there and cuts the land back), BEACHES in the bays (sediment collects there).
    * cliff: h drops at CLIFF_S to just under the sea ON the line and keeps dropping beyond (to the 3 m sea floor):
@@ -45,7 +44,7 @@
    * blend by cliffiness c (headland offset, angular noise, per-biome bias cb). The old rule (h − k0·distance beyond a
    * radius) let 25 m hills run 26 m past the edge: the islands filled the lattice square and met its border. */
   function coast(h, x, z, base, wob, cb) {
-    const e = falloff(x, z, base, wob, true), d = e + M.max(0, h - W.SEA + 0.4) / CLIFF_S, u = -e;
+    const edge = coastEdge(x, z, base, wob), e = M.len2(x - W.MX, z - W.MZ) - edge, d = e + M.max(0, h - W.SEA + 0.4) / CLIFF_S, u = -e;
     let P;
     if (u <= 0) P = W.SEA + BEACH_S * u - 0.02 * u * u;
     else {
@@ -57,12 +56,14 @@
     const hc = d <= 0 ? h : h - d * CLIFF_S;
     const hb = M.min(h, P);
     const a = M.atan2(z - W.MZ, x - W.MX);
-    let c = 0.5 + cb + coastHead / 5 + 1.8 * (M.noise2(M.cos(a) * 2.6 + 1.7, M.sin(a) * 2.6 - 4.2, seed + 131) - 0.5);
+    let c = 0.5 + cb + (edge - base) / 5 + 1.8 * (M.noise2(M.cos(a) * 2.6 + 1.7, M.sin(a) * 2.6 - 4.2, seed + 131) - 0.5);
     c = M.clamp(c, 0, 1); c = c * c * (3 - 2 * c);
     return hb + (hc - hb) * c;
   }
-  function falloff(x, z, base, wob, signed) {
-    const dx = x - W.MX, dz = z - W.MZ, r = M.len2(dx, dz), a = M.atan2(dz, dx), I = F.isl;
+  // the coast line's distance from the map centre on the bearing of (x, z): the mean radius base, wobbled by wob, with
+  // the island's lobes; edge - base > 0 is a headland
+  function coastEdge(x, z, base, wob) {
+    const dx = x - W.MX, dz = z - W.MZ, a = M.atan2(dz, dx), I = F.isl;
     let edge = base + wob * (M.noise2(M.cos(a) * 1.8 + 7.3, M.sin(a) * 1.8 + 3.1, seed + 99) - 0.5) * 2;
     if (I) {
       let lobes = 0;
@@ -71,7 +72,11 @@
       if (edge > ISL_MAX - 5) edge = ISL_MAX - 5 * M.exp(-(edge - (ISL_MAX - 5)) / 5);
       edge = M.max(edge, 0.6 * base);
     }
-    coastHead = edge - base;
+    return edge;
+  }
+  // (x, z)'s distance outside the coast line (signed: negative inland)
+  function falloff(x, z, base, wob, signed) {
+    const r = M.len2(x - W.MX, z - W.MZ), edge = coastEdge(x, z, base, wob);
     return signed ? r - edge : M.max(0, r - edge);
   }
 
@@ -83,14 +88,17 @@
   const MESA_R0 = C.DRY.PLAY_R, MESA_W = 6;
   const BORDER_BAND = 3;       // m: dry worlds, outer band of the disc LAT_R that returns to the raw dune function (stage 0)
   const BORDER_SOLID = 4;      // m: dry worlds, no caves this close to the disc's edge (the far ground beyond it is solid)
-  let desertSand = 0;
+  const DSAND = { sand: 0 };            // desertH's second output when a caller does not need it
   // the generation frame's map centre (W.MX, W.MZ at G.begin): dim2d.crop later moves W.MZ, the dune field keeps its
   // own frame
   let GCX = 48, GCZ = 48;
   const DUNE_LAM = 32;         // m: crest spacing of the transverse dunes (D7)
   const DUNE_H = 0.13;         // dune height / crest spacing at mod 1 (real transverse dunes ~1/8-1/20; the steep end, for relief)
   const DUNE_LEE = 0.6;        // slip-face slope at the brink (tan 31°; sand's angle of repose is ~32-34°)
-  function desertH(x, z, lod, nomesa) {
+  // the warp of the dune crests (two weak fbm layers, widened by sc far out)
+  const duneWarp = (px, pz, sc) => 0.35 * fbm2(px / (45 * sc), pz / (45 * sc), 2, 2) + 0.8 * fbm2(px / (120 * sc), pz / (120 * sc), 5, 2);
+  /* the desert's ground height at (x, z); out.sand = the sand depth over the bedrock there */
+  function desertH(x, z, lod, nomesa, out) {
     const L = lod || 0, sc = 1 + 3.2 * L;
     const bed = 3.4 + 3 * fbm2(x / 30, z / 30, 1, 3);
     const u = x * F.ca + z * F.sa;
@@ -104,8 +112,9 @@
     // the rest) rises with t²(2 − t) (flat trough, steepest ~2/3 up, ~5-9°) to a sharp brink; the slip face falls
     // 1 − 1.5q + 0.5q³ (concave toe) to the next trough. Far out (lod) everything widens by sc (gentler draa).
     const lam = DUNE_LAM * sc, ew = 0.5 * sc;
-    const wf = (px, pz) => 0.35 * fbm2(px / (45 * sc), pz / (45 * sc), 2, 2) + 0.8 * fbm2(px / (120 * sc), pz / (120 * sc), 5, 2);
-    const w0 = wf(x, z), gx = F.ca / lam + (wf(x + ew, z) - w0) / ew, gz = F.sa / lam + (wf(x, z + ew) - w0) / ew;
+    const w0 = duneWarp(x, z, sc),
+      gx = F.ca / lam + (duneWarp(x + ew, z, sc) - w0) / ew,
+      gz = F.sa / lam + (duneWarp(x, z + ew, sc) - w0) / ew;
     const lamL = 1 / M.clamp(M.len2(gx, gz), 0.6 / lam, 1.6 / lam);          // local crest spacing (m)
     const ph = u / lam + w0, pf = ph - Math.floor(ph);
     const mod = 0.5 + 0.6 * fbm2(x / 35, z / 35, 3, 2);                              // crest height along the crest (0.5..1.1)
@@ -133,7 +142,7 @@
         sand = M.max(0, 0.6 - (mh - sandTop) * 0.3);
       }
     }
-    desertSand = sand;
+    out.sand = sand;
     return h;
   }
 
@@ -163,8 +172,8 @@
       return coast(h, x, z, 40 * W.SC, 4, 0.25);        // sandstone sea cliffs
     },
     desert(x, z, col) {
-      const h = desertH(x, z);
-      extra[col] = desertSand;
+      const h = desertH(x, z, 0, false, DSAND);
+      extra[col] = DSAND.sand;
       return W.dry ? h : coast(h, x, z, 40, 5, -0.1);          // dry (Step D): dunes run to the border and beyond
     },
     beach(x, z) {
@@ -248,7 +257,6 @@
       v.rim = v.Hv * M.pow(1 - v.Rc / v.Rb, v.ex) + 1.2 + v.base;                                     // rim/floor/lake are true heights
       v.floor = v.rim - M.min(5.2, v.Rc * 0.95); v.lake = v.floor + 1.9;
     }
-    F.volcano = F.volcanoes[0] || null;                       // (compat: the first / biggest one)
   }
   const nearVolcano = (x, z, pad) => F.volcanoes && F.volcanoes.some(v => M.len2(x - v.x, z - v.z) < v.Rc + pad);
   function gradH(i, k) {
@@ -351,7 +359,7 @@
           if (ro < o.Rc + 2.5) lavaZone[col] = 1;
         }
         if (dd > 30) continue;
-        const v = pv[cp[col]] || F.volcano, r = M.len2(x - v.x, z - v.z);
+        const v = pv[cp[col]] || F.volcanoes[0], r = M.len2(x - v.x, z - v.z);
         const w = cw[col], lv = cl[col], bottom = lv - CANAL.DEPTH, crest = lv + CANAL.FREE;
         const cIn = w + 0.1, cOut = cIn + CANAL.CREST, in0 = 0.45 * w;
         const prof = dd <= in0
@@ -424,7 +432,7 @@
       if (nearVolcano(x, z, 7)) continue;
       // P116: no granite tor on a hut's pad
       if (F.beach && F.beach.huts && F.beach.huts.some(hh => M.len2(hh.x - x, hh.z - z) < spec.r1 + 7)) continue;
-      if (F.fort && SS.fort.keep_out(x, z, 6, 6)) continue;                 // P68b: no spire in a channel or on a bunker pad
+      if (F.fort && SS.fort.keep_out(F.fort, x, z, 6, 6)) continue;                 // P68b: no spire in a channel or on a bunker pad
       if (canalD && canalD[Math.round(z / H) * NX + Math.round(x / H)] < 7) continue;     // keep canals free (lava under a spire)
       if (sp.some(s => M.len2(s[0] - x, s[1] - z) < 12)) continue;
       sp.push([x, z, RR(spec.r0, spec.r1), M.min(34, h + RR(spec.h0, spec.h1))]);
@@ -434,7 +442,8 @@
       for (let b = a + 1; b < sp.length && br.length < nBr; b++) {
         const L = M.len2(sp[a][0] - sp[b][0], sp[a][1] - sp[b][1]);
         if (L < 14 || L > 30 || R() < 0.35) continue;
-        if (F.fort && !SS.fort.span_ok(sp[a][0], sp[a][1], sp[b][0], sp[b][1])) continue;   // P68b: no rock bridge from fort to fort
+        // P68b: no rock bridge from fort to fort
+        if (F.fort && !SS.fort.span_ok(F.fort, sp[a][0], sp[a][1], sp[b][0], sp[b][1])) continue;
         if (canalD) {                                     // no bridge over a canal: the lava layer sees only the top surface
           let over = false;
           for (let q = 0; q <= 12 && !over; q++) {
@@ -474,8 +483,9 @@
       for (let i = 0; i < NX; i++) {
         const x = i * H, col = k * NX + i, h = hgt[col], r = M.len2(x - W.MX, z - W.MZ);
         const near = sp.filter(s => M.len2(x - s[0], z - s[1]) < s[2] + 5);
-        const uc = F.fort ? SS.fort.undercut_col(x, z) : 99;                // P68b: a chasm's walls lean out (nothing climbs them)
-        const noBand = !!F.fort && SS.fort.keep_out(x, z, 8, 8);               // P68b: no overhang ledge over a channel or a bunker pad
+        const uc = F.fort ? SS.fort.undercut_col(F.fort, x, z) : 99;                // P68b: a chasm's walls lean out (nothing climbs them)
+        // P68b: no overhang ledge over a channel or a bunker pad
+        const noBand = !!F.fort && SS.fort.keep_out(F.fort, x, z, 8, 8);
         const noCave = !!F.fort && (F.fort.line || noBand);                    // ... nor a cave shell under one (2D fort maps: solid forts)
         const edge = i === 0 || k === 0 || i === NX - 1 || k === NZ - 1;
         // D4/D6: the cut at the disc's edge matches the solid far ground
@@ -611,12 +621,11 @@
   }
 
   /* ---------- U: underground maps ----------
-   * The lattice is solid rock (and so is everything beyond it: W.far = UNDER_FAR) holding a connected cave system:
+   * The lattice is solid rock (and so is everything beyond it: C.FAR.LEVEL at 1e4) holding a connected cave system:
    * UNDER.N chambers (flat-floored ellipsoids, rx / rz 4-7.5 m, ry 2.6-4 m) on three levels, joined by tunnels along a
    * minimum spanning tree + a few extra loops (wiggly sphere-swept polylines, radius 1.4-2.1 m; slopes up to ~0.6, the
    * steepest links become shafts for the rope), side niches, and fbm wobble on every wall. Carved feature by feature
    * inside each feature's box (min of signed distances). Biome flavour = materials (underMaterials). */
-  const UNDER_FAR = () => 1e4;
   let UF = null;                                          // { ch: [...], tu: [[p0, p1, r]...], ni: [...] }
   function underPlan(biome) {
     const SY = W.SY, ch = [], tu = [], ni = [];
@@ -778,10 +787,17 @@
    * after generation no lava voxel is within the wall distance of air. The vein tapers (0.45 -> 0.28 m) and stops
    * POCKET_ROOF m under the ground. */
   const POCKET_WALL = 0.9, POCKET_ROOF = 1.5;
+  // a magma pocket's wall thickness at a point (it varies, so the pockets do not look turned)
+  const pocketWall = (X, Y, Z) => POCKET_WALL * (0.8 + 0.5 * M.noise3(X / 2.3, Y / 2.3, Z / 2.3, seed + 79));
+  // cave air a pocket's wall may plug (U: never the cave system)
+  const caveAir = (o, i, j, k) => !W.under && W.d[o] <= 0 && j * H < hgt[k * NX + i] - 0.6;
+  let pocketMask = null, pocketLava = null;   // lattice scratch of stampPockets (cleared after each attempt)
   function stampPockets(n) {
-    const D = W.d, Mt = W.mat, SXY = NX * NY, RW = Math.ceil(POCKET_WALL * 1.3 / H);
-    const wallAt = (X, Y, Z) => POCKET_WALL * (0.8 + 0.5 * M.noise3(X / 2.3, Y / 2.3, Z / 2.3, seed + 79));
-    const caveAir = (o, i, j, k) => !W.under && D[o] <= 0 && j * H < hgt[k * NX + i] - 0.6;   // U: never plug the cave system
+    const D = W.d, Mt = W.mat, SXY = NX * NY, RW = Math.ceil(POCKET_WALL * 1.3 / H), wallAt = pocketWall;
+    if (!pocketMask || pocketMask.length !== NX * NY * NZ) {
+      pocketMask = new Uint8Array(NX * NY * NZ);
+      pocketLava = new Uint8Array(NX * NY * NZ);
+    }
     for (let p = 0, tries = 0; p < n && tries < 400; tries++) {
       const x = RR(W.MX - 34 * W.SC, W.MX + 34 * W.SC),
         z = RR(W.MZ - 34 * W.SC, W.MZ + 34 * W.SC),
@@ -813,7 +829,7 @@
       const j0 = M.max(3, Math.floor((cy - ry - 1.5) / H)), j1 = M.min(NY - 2 - RW, Math.ceil((top + 1) / H));
       // 1. candidate lava voxels: inside the pocket / vein shape, rock or cave air, a full roof above
       // (membership: a lattice mask, the list keeps the scan order)
-      const cand = [], candMask = new Uint8Array(NX * NY * NZ);
+      const cand = [], candMask = pocketMask;
       for (let k = k0; k <= k1; k++)
         for (let j = j0; j <= j1; j++)
           for (let i = i0; i <= i1; i++) {
@@ -849,8 +865,9 @@
             }
         if (okW) lava.push(o);
       }
+      for (const o of cand) candMask[o] = 0;
       if (lava.length < 40) continue;
-      const isLava = new Uint8Array(NX * NY * NZ);
+      const isLava = pocketLava;
       for (let q = 0; q < lava.length; q++) isLava[lava[q]] = 1;
       // 3. the wall: plug cave air (density ~ wall distance left, a smooth new cave surface), basalt, chilled margin
       for (const o of lava) {
@@ -867,6 +884,7 @@
               Mt[q] = MAT.CRUST;                     // glassy chilled margin + baked contact zone (dark on the cut face)
             }
       }
+      for (let q = 0; q < lava.length; q++) isLava[lava[q]] = 0;
       for (const o of lava) {
         Mt[o] = MAT.LAVA;
         W.heat[o] = 250;
@@ -881,18 +899,23 @@
    * (r ~1 m, a slight wander) from 3 m up to just under the crater floor, in a basalt wall ~1.2 m thick with a glassy
    * chilled margin; so the section through the volcano shows magma rising in a rock channel, and a blast that opens
    * it breaches a walled lava body (lava.js breach) instead of a free column of the 2.5D layer */
+  // the axis of volcano v's conduit (vi: its index) at height y: it wanders a little with height; out = { x, z }
+  function conduitAxis(v, vi, y, out) {
+    out.x = v.x + (M.noise2(y * 0.11, 3.1 + vi, seed + 91) - 0.5) * 1.2;
+    out.z = v.z + (M.noise2(y * 0.11, 7.7 + vi, seed + 92) - 0.5) * 1.2;
+    return out;
+  }
+  const CAX = { x: 0, z: 0 };
   function stampConduit(v, vi) {
     const D = W.d, Mt = W.mat, c0 = Math.round(v.z / H) * NX + Math.round(v.x / H);
     const yTop = hgt[c0] - 1.0, R0 = M.max(0.7, v.Rc * 0.18), WALL = 1.2, MARGIN = 0.45, ext = R0 + WALL + 1;
     const i0 = M.max(2, Math.floor((v.x - ext - 1) / H)), i1 = M.min(NX - 3, Math.ceil((v.x + ext + 1) / H));
     const k0 = M.max(M.max(2, kLo), Math.floor((v.z - ext - 1) / H)), k1 = M.min(M.min(NZ - 3, kHi), Math.ceil((v.z + ext + 1) / H));
     let n = 0;
-    const axis = y => [
-      v.x + (M.noise2(y * 0.11, 3.1 + vi, seed + 91) - 0.5) * 1.2,
-      v.z + (M.noise2(y * 0.11, 7.7 + vi, seed + 92) - 0.5) * 1.2
-    ];
     for (let j = Math.ceil(3 / H); j * H <= yTop; j++) {
-      const y = j * H, [cx, cz] = axis(y);
+      const y = j * H;
+      conduitAxis(v, vi, y, CAX);
+      const cx = CAX.x, cz = CAX.z;
       const R = R0 * (0.85 + 0.3 * M.noise2(y * 0.3, 1.3 + vi, seed + 93)) + M.max(0, 6 - y) * 0.12;    // a little wider at the root
       for (let k = k0; k <= k1; k++)
         for (let i = i0; i <= i1; i++) {
@@ -914,7 +937,8 @@
     const branches = [];
     for (let b = 0, nb = 1 + M.rng_int(rng, 3), tries = 0; b < nb && tries < 30; tries++) {
       const yb = RR(4, M.max(5, yTop * 0.65)), a = R() * M.TAU, L = RR(4, M.min(10, v.Rb * 0.32)), dy = RR(-1.5, 2.5);
-      const [bx, bz] = axis(yb), ex = bx + M.cos(a) * L, ez = bz + M.sin(a) * L, ey = yb + dy;
+      conduitAxis(v, vi, yb, CAX);
+      const bx = CAX.x, bz = CAX.z, ex = bx + M.cos(a) * L, ez = bz + M.sin(a) * L, ey = yb + dy;
       const rx = RR(1.6, 2.8), ry = RR(1.1, 1.8), rz = RR(1.6, 2.8);
       const ground = hgt[clamp(Math.round(ez / H), 0, NZ - 1) * NX + clamp(Math.round(ex / H), 0, NX - 1)];
       if (ey + ry > ground - 1.6 - WALL || ey - ry < 2.5) continue;
@@ -952,20 +976,21 @@
   }
   /* fumaroles / thermal vents (P25): gas vents on the cone flanks (2-4 per volcano, between the crater and halfway
    * down) and on the plains (1-3): render/vents.js draws a sulphur-stained mouth and a steam plume */
+  // a fumarole at (x, z) unless the ground there is under the sea, lava or a canal; true when it was placed
+  function addVent(x, z) {
+    const c = clamp(Math.round(z / H), 0, NZ - 1) * NX + clamp(Math.round(x / H), 0, NX - 1), h = hgt[c];
+    if (h < SEA + 1.2 || lavaZone[c] || (canalD && canalD[c] < 3)) return false;
+    F.vents.push({ x, y: h, z, kind: 'fumarole' });
+    return true;
+  }
   function placeFumaroles() {
-    const add = (x, z) => {
-      const c = clamp(Math.round(z / H), 0, NZ - 1) * NX + clamp(Math.round(x / H), 0, NX - 1), h = hgt[c];
-      if (h < SEA + 1.2 || lavaZone[c] || (canalD && canalD[c] < 3)) return false;
-      F.vents.push({ x, y: h, z, kind: 'fumarole' });
-      return true;
-    };
     for (const v of F.volcanoes)
       for (let q = 0, n = 2 + M.rng_int(rng, 3), t = 0; q < n && t < 40; t++) {
         const a = R() * M.TAU, r = RR(v.Rc + 3, v.Rb * 0.5);
-        if (add(v.x + M.cos(a) * r, v.z + M.sin(a) * r)) q++;
+        if (addVent(v.x + M.cos(a) * r, v.z + M.sin(a) * r)) q++;
       }
     for (let q = 0, n = Math.round((1 + M.rng_int(rng, 3)) * W.SC * W.SC), t = 0; q < n && t < 60 * W.SC; t++)
-      if (add(RR(W.MX - 32 * W.SC, W.MX + 32 * W.SC), RR(W.MZ - 32 * W.SC, W.MZ + 32 * W.SC))) q++;
+      if (addVent(RR(W.MX - 32 * W.SC, W.MX + 32 * W.SC), RR(W.MZ - 32 * W.SC, W.MZ + 32 * W.SC))) q++;
   }
   function stampIceShelf() {
     // distance-to-land on the column grid (two-pass chamfer), ice where the sea is shallow near shore
@@ -1084,23 +1109,24 @@
   }
   /* the border nodes (materials() skips them): islands get a bedrock rim; on dry worlds (D4) the dunes continue past
    * the border, so each border node copies its inner neighbour (z edges first, then x edges, so corners get one too) */
+  // the material of border node o (inner neighbour oi, row j): bedrock on islands; a dry world's dunes run on
+  function edgeMat(o, oi, j) {
+    if (W.d[o] > 0) W.mat[o] = !W.dry ? MAT.BEDROCK : W.mat[oi] || (j * H < 1 ? MAT.BEDROCK : MAT.SAND);
+  }
   function materialEdges() {
     const D = W.d, Mt = W.mat, SXY = NX * NY;
-    const set = (o, oi, j) => {
-      if (D[o] > 0) Mt[o] = !W.dry ? MAT.BEDROCK : Mt[oi] || (j * H < 1 ? MAT.BEDROCK : MAT.SAND);
-    };
     for (let i = 1; i < NX - 1; i++)
       for (let j = 0; j < NY; j++)
         for (const k of [0, NZ - 1]) {
           if (k < kLo || k > kHi) continue;
           const o = (k * NY + j) * NX + i;
-          set(o, k ? o - SXY : o + SXY, j);
+          edgeMat(o, k ? o - SXY : o + SXY, j);
         }
     for (let k = kLo; k <= kHi; k++)
       for (let j = 0; j < NY; j++)
         for (const i of [0, NX - 1]) {
           const o = (k * NY + j) * NX + i;
-          set(o, i ? o - 1 : o + 1, j);
+          edgeMat(o, i ? o - 1 : o + 1, j);
         }
     if (!W.dry)
       for (let i = 0; i < NX; i++)
@@ -1257,7 +1283,7 @@
 
   /* Analytic ground height outside the lattice of a dry world (Step D): the same dunes as the lattice (no mesas this
    * far out; equal to the lattice's raw outer band on the border, D4; without edits). The render's far grid and
-   * curtain, projectiles and the sim's ground beyond the border (W.far -> W.sample, D4) use it.
+   * curtain, projectiles and the sim's ground beyond the border (W.far_at -> W.sample, D4) use it.
    * Valid for the last generated world; -1e9 when it is not a desert. Also valid for the 2D desert slab
    * (dim2d.crop clears W.dry; the slab has no far ground, so only the render reads it there: the backdrop behind the
    * slab, scenery). In a slab the world frame is the cropped one (z = W.MZ is the slice row, the generation frame's
@@ -1266,7 +1292,7 @@
   const farZ = z => (W.flat ? z - W.MZ + GCZ : z);
   const farH = (x, z, nomesa) => {
     const zg = farZ(z), lod = sat((M.len2(x - GCX, zg - GCZ) - 90) / 130);   // 0 within 90 m of the centre (the lattice and its seam)
-    return desertH(x, zg, lod, nomesa);
+    return desertH(x, zg, lod, nomesa, DSAND);
   };
   G.far_on = farOn;
   G.far_height = (x, z) => (farOn() ? farH(x, z, false) : -1e9);
@@ -1285,24 +1311,23 @@
       return out;
     }
     const zg = farZ(z), lod = sat((M.len2(x - GCX, zg - GCZ) - 90) / 130);
-    out[0] = desertH(x, zg, lod); out[1] = desertSand;
+    out[0] = desertH(x, zg, lod, false, DSAND); out[1] = DSAND.sand;
     return out;
   };
   G.SAND_EXTRA = 0.45; G.ROCK_DV = 10;   // (RULES.desert constants, shared with the far cut face)
 
+  /* the features record of a generated world (W.features; C: struct Features), every field with its default: the dune
+   * axis (ca, sa), the volcanoes (the first is the biggest: the main one), lava canals and the initial lava, magma
+   * pockets, vents, rock spires and bridges, the sea ice shelf, the island's shape, the fort layout, the beach and its
+   * village, the cave plan, whether lava is present, the End of the World plan */
+  G.features_make = (biome, ca, sa) => ({ biome, ca, sa, volcanoes: [], canals: [], lavaInit: null, pockets: [], vents: [], spires: [],
+    bridges: [], iceShelf: false, isl: null, fort: null, beach: null, caves: null, lavaPresent: false, eow: null });
   /* Resumable job so the platform layer can show a progress bar (C: WorldgenJob; worldgen_step()). */
   /* PoC "Terrain shape" (setup option). islands = the poc5 island (default); caverns = the underground map; hills = the
    * land rolls out almost to the round edge of the play area (W.RIM: a thin sea ring stays for the far ocean, the land
    * is round, never the lattice square); canyon = a winding gorge cut
    * across the land down below sea level (struct.js then spans it with a footbridge: PoC "Canyon and bridge").
    * 'random' picks one by seed. Own RNG (the layout stream is untouched). */
-  const SHAPES = ['islands', 'hills', 'caverns', 'canyon'];
-  G.shape_of = function (settings) {
-    const s = settings.shape;
-    if (SHAPES.indexOf(s) >= 0) return s;
-    if (s === 'random') return SHAPES[(Math.imul(settings.seed | 0, 2246822519) >>> 9) % SHAPES.length];
-    return 'islands';
-  };
   function applyShape(shape) {
     const r = M.rng_make(((Math.imul(seed, 31) + 7) >>> 0) || 1);
     if (shape === 'hills') {
@@ -1349,12 +1374,14 @@
     GCX = W.MX;
     GCZ = W.MZ;
     const biome = SPEC[settings.biome] ? settings.biome : 'temperate';
-    G.shape = G.shape_of(settings);                                    // PoC "Terrain shape": islands | hills | caverns | canyon
+    G.shape = C.shape_of(settings);                                    // PoC "Terrain shape": islands | hills | caverns | canyon
     // U: underground map (caves)
     W.under = !!(settings.under && settings.under !== '0' && settings.under !== 'off') || G.shape === 'caverns';
     W.dry = !W.under && !!(C.BIOMES.find(b => b.id === biome) || {}).dry;  // Step D: no sea, dunes to the horizon
     W.SEA = W.under ? -1 : W.dry ? C.DRY.SEA : W.SEA_WET; SEA = W.SEA;
-    W.far = W.under ? UNDER_FAR : W.dry ? G.far_height : null;        // D4: the ground beyond the lattice (world.js W.sample); U: rock
+    // D4: the ground beyond the lattice (world.js W.sample); U: rock
+    W.farKind = W.under ? C.FAR.LEVEL : W.dry ? C.FAR.DUNES : C.FAR.NONE;
+    W.farLevel = W.under ? 1e4 : 0;
     W.circ = W.dry ? { x: C.DRY.CX, z: C.DRY.CZ, r: C.DRY.LAT_R } : null;   // D6: ... beyond the disc LAT_R
     W.frz = null;                                                      // (frozen ring: set when generation ends)
     seed = (settings.seed | 0) * 131 + C.BIOMES.findIndex(b => b.id === biome) * 7;
@@ -1365,20 +1392,7 @@
     canalD = null;
     extra = new Float32Array(NC);
     const ang = R() * M.TAU;
-    F = {
-      biome,
-      ca: M.cos(ang),
-      sa: M.sin(ang),
-      volcano: null,
-      volcanoes: [],
-      canals: [],
-      lavaInit: null,
-      pockets: [],
-      vents: [],
-      spires: [],
-      bridges: [],
-      iceShelf: false
-    };
+    F = G.features_make(biome, M.cos(ang), M.sin(ang));
     { // LS1: the island's shape (own rng: amplitudes of the k = 1..4 harmonics, phases; the volcano island varies less)
       const ir = M.rng_make((seed * 977 + 5) >>> 0 || 1), A = [0.1, 0.13, 0.08, 0.05];
       F.isl = {

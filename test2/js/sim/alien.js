@@ -1401,18 +1401,8 @@
           a.depth += step;
           a.y -= step;
           a.r = M.fast_min(0.7, a.r + 0.004);
-          const rem = w.carve(a.x, a.y, a.z, a.r);
-          if (rem > 0 && S.settings.collapse && SS.collapse_hook) {
-            const H = w.H, r = a.r + 1;
-            SS.collapse_hook(S, {
-              i0: Math.floor((a.x - r) / H),
-              j0: Math.floor((a.y - r) / H),
-              k0: Math.floor((a.z - r) / H),
-              i1: Math.ceil((a.x + r) / H),
-              j1: Math.ceil((a.y + r) / H),
-              k1: Math.ceil((a.z + r) / H)
-            });
-          }
+          const r = a.r + 1;
+          if (w.carve(a.x, a.y, a.z, a.r) > 0) SS.sim.after_edit(S, w.box_of(a.x - r, a.y - r, a.z - r, a.x + r, a.y + r, a.z + r, 0, {}));
         }
       }
     }

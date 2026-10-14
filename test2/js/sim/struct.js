@@ -53,7 +53,7 @@
       if (w.sample(x, y + h, z) > 0) return null;
     return { x, y, z };
   }
-  function scoreSpan(A, B, avoid) {
+  function scoreSpan(S, A, B, avoid) {
     const w = W(), L = M.len2(B.x - A.x, B.z - A.z);
     if (L < K.SPAN_MIN || L > K.SPAN_MAX || Math.abs(A.y - B.y) > K.DY_MAX) return -1;
     const h = M.clamp(L / 10, K.DEPTH_MIN, K.DEPTH_MAX);
@@ -73,14 +73,13 @@
         for (let yy = y - 0.2; yy <= y + h + 0.4; yy += 0.45)
           if (w.sample(x + vx, yy, z + vz) > 0) return -1;
       }
-      if (SS.sim.surface_at(S_ref, x, z) > g + 0.2 || (SS.lava && S_ref.lava && SS.lava.depth_at(S_ref, x, z) > 0.05)) wet++;
+      if (SS.sim.surface_at(S, x, z) > g + 0.2 || (SS.lava && S.lava && SS.lava.depth_at(S, x, z) > 0.05)) wet++;
     }
     if (n < 4 || low < 0.6 * n) return -1;
     for (const p of avoid)
       if (segd(p, { x: A.x, y: p.y, z: A.z }, { x: B.x, y: p.y, z: B.z }) < 3) return -1;
     return (gap / n) * M.min(L, 16) * (1 + 0.5 * wet / n);
   }
-  let S_ref = null;
   function findSpans(S, taken) {
     const w = W(), pts = [], out = [];
     const cx = w.dry ? C.DRY.CX : w.MX, cz = w.dry ? C.DRY.CZ : w.MZ;
@@ -95,7 +94,7 @@
     const cand = [];
     for (let i = 0; i < pts.length; i++)
       for (let j = i + 1; j < pts.length; j++) {
-        const s = scoreSpan(pts[i], pts[j], taken);
+        const s = scoreSpan(S, pts[i], pts[j], taken);
         if (s > 0) cand.push({ A: pts[i], B: pts[j], s, n: cand.length });
       }
     cand.sort((a, b) => b.s - a.s || a.A.x - b.A.x || a.A.z - b.A.z || a.n - b.n);   // total order (n: insertion; C qsort is not stable)
@@ -259,7 +258,6 @@
   ST.populate = function (S, taken) {
     S.structs = [];
     if (!K || K.OFF || W().under) return;                                  // U: no gaps to bridge underground
-    S_ref = S;
     const w = W(), look = { temperate: 0, alpine: 1, canyon: 2, desert: 3, volcanic: 4 }[S.biome] || 0;
     let spans = findSpans(S, taken || []);
     // P72
@@ -275,7 +273,6 @@
         taken.push({ x: c.B.x, y: c.B.y, z: c.B.z });
       }
     }
-    S_ref = null;
   };
 
   /* ---------- stability and release ---------- */

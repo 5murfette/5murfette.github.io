@@ -90,18 +90,11 @@
     return h;
   }
   WP.ground_below = groundBelow;
-  WP.edited = (S, x, y, z, R) => edited(S, x, y, z, R);
-  // after a non-blast edit (black hole, drill, foam): cut out what lost its support (settings.collapse), struct check
+  // after a non-blast edit within R m of (x, y, z) (black hole, drill, foam, the force field's release): sim.after_edit
   function edited(S, x, y, z, R) {
-    const w = W(),
-      H = w.H,
-      box = { i0: M.max(0, Math.floor((x - R) / H) - 1), i1: M.min(w.NX - 1, Math.ceil((x + R) / H) + 1),
-        j0: M.max(0, Math.floor((y - R) / H) - 1), j1: M.min(w.NY - 1, Math.ceil((y + R) / H) + 1),
-        k0: M.max(0, Math.floor((z - R) / H) - 1), k1: M.min(w.NZ - 1, Math.ceil((z + R) / H) + 1) };
-    S.sectionDirty = true;
-    if (S.settings.collapse && SS.collapse_hook) SS.collapse_hook(S, box);
-    if (SS.struct && SS.struct.on_edit) SS.struct.on_edit(S);
+    sim().after_edit(S, W().box_of(x - R, y - R, z - R, x + R, y + R, z + R, 1, {}));
   }
+  WP.edited = edited;
 
   /* ---------- using a weapon ---------- */
   // ammo, the team's last weapon, the attack phase and the retreat window (PoC used())

@@ -435,7 +435,7 @@
     if (r[0] > r[1]) r = [0, 0];                    // D6: the line misses the lattice (a worm out in the far dunes)
     // dry worlds: SEC_FAR beyond the lattice and always around the rotation centre (the worm) too (D6: it used to
     // be the lattice ± 24 m only: a negative length when the line missed the lattice -> RangeError -> freeze)
-    if (W.far) {
+    if (W.farKind) {
       r[0] = M.min(r[0], 0) - SEC_FAR; r[1] = M.max(r[1], 0) + SEC_FAR;
       // ... and out to every living worm near the plane (a worm blasted far out on the hot sand stays on the drawn
       // section, D6), never beyond FAR_R

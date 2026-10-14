@@ -673,19 +673,7 @@
         bz1 = M.max(bz1, h.z);
       }
     }
-    if (pits) {
-      S.sectionDirty = true;
-      const H = w.H;
-      if (S.settings.collapse && SS.collapse_hook)
-        SS.collapse_hook(S, {
-          i0: M.max(0, Math.floor(bx0 / H) - 1),
-          i1: M.min(w.NX - 1, Math.ceil(bx1 / H) + 1),
-          j0: M.max(0, Math.floor(by0 / H) - 1),
-          j1: M.min(w.NY - 1, Math.ceil(by1 / H) + 1),
-          k0: M.max(0, Math.floor(bz0 / H) - 1),
-          k1: M.min(w.NZ - 1, Math.ceil(bz1 / H) + 1)
-        });
-    }
+    if (pits) sim().after_edit(S, w.box_of(bx0, by0, bz0, bx1, by1, bz1, 1, {}));
     for (let id = 0; id < 16; id++) {                                             // (worm ids in id order, as the old object keys iterated)
       if (!push[id]) continue;
       const m = S.worms.find(q => q.id === id);

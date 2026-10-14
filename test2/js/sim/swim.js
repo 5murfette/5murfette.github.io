@@ -2,7 +2,7 @@
  * (step, water_damage), climbs out onto land or drowns (drown: it sinks for 2.2 s, sink_step); ensure_control gives the
  * active worm back its control after a swim or a fall.
  * State: w.swim (the swim record), w.drowning, w.swimOuts.
- * API: start, step, water_damage, drown, sink_step, ensure_control.
+ * API: start, step, water_damage, drown, sink_step, ensure_control, shore_top, WET_D.
  * Determinism: no RNG. */
 (function (SS) {
   'use strict';
@@ -25,20 +25,24 @@
    * Land (dry ground, or sea ice) within SWIM_R m and at most SWIM_CLIMB m above the water: it swims there and climbs
    * out (the active worm along the section only). No land in reach after SWIM_FLOAT_T s, too long swimming
    * (SWIM_MAX_T) or 0 HP: it drowns (the PoC sink, now resting on the bottom). Its turn ends as it falls in. */
-  function landAt(S, x, z, surf) {
-    const w = W, i = Math.round(x / w.H), k = Math.round(z / w.H), WD = C.WORM_DYN;
+  SW.WET_D = 0.004;                    // m of water over a column: deeper, it is water (no landing there)
+  /* the top of a column a swimmer can climb out onto (dry ground or sea ice) at most climb m above the water surface
+   * surf, or -1e9 (also used by the life jacket's paddle, lifejacket.js). held: the worm put down there (feet at
+   * t + 0.02) must also be held by the ground under its feet, as body3D tests a resting worm (y - foot - 0.06 solid):
+   * a bank's edge it would slide off back into the water is no landing */
+  SW.shore_top = function (S, x, z, surf, climb, held) {
+    const w = W, i = Math.round(x / w.H), k = Math.round(z / w.H);
     if (i < 1 || k < 1 || i >= w.NX - 1 || k >= w.NZ - 1) return -1e9;
     if (SS.ice && S.ice) {
       const it = SS.ice.top_at(S, x, z);
       if (it > -1e8) return it;
     }
-    if (SS.water && S.water && SS.water.depth(S, x, z) > 0.004) return -1e9;
+    if (SS.water && S.water && SS.water.depth(S, x, z) > SW.WET_D) return -1e9;
     if (SS.lava && S.lava && SS.lava.depth_at(S, x, z) > 0.01) return -1e9;
-    // a worm put down there (feet at t + 0.02) must be held by the ground under its feet, as body3D tests a resting
-    // worm (y - foot - 0.06 solid): a bank's edge it would slide off back into the water is no landing
     const t = w.top[k * w.NX + i];
-    return t >= surf - 0.4 && t <= surf + WD.SWIM_CLIMB && w.sample(x, t - 0.04, z) > 0 ? t : -1e9;
-  }
+    return t >= surf - 0.4 && t <= surf + climb && (!held || w.sample(x, t - 0.04, z) > 0) ? t : -1e9;
+  };
+  const landAt = (S, x, z, surf) => SW.shore_top(S, x, z, surf, C.WORM_DYN.SWIM_CLIMB, true);
   /* the turn-start guarantee. The worm that gets the turn must be able to act. The rotation skips swimmers, but a
    * whole team in the water
    * (or a lone survivor) still hands the turn to one; and a stale swim state on dry ground (the water went away under a

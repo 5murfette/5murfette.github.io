@@ -49,25 +49,15 @@
     PADDLE: 1.6, FLOAT_Y: 0.1, BOB_A: 0.025, BOB_W: 2.1, LOOK: 6, LINE_R: 150, UP_RATE: 2.5, DOWN_RATE: 3
   };
   const W = () => SS.world, sim = () => SS.sim;
-  const WETD = 0.004;                                  // = sim.js landAt: a column deeper than this is water
+  const WETD = SS.swim.WET_D;                          // a column deeper than this is water (swim.js)
   const tmpv = { x: 0, y: 0, z: 0 };
   const DX = [1, -1, 0, 0, 1, 1, -1, -1], DZ = [0, 0, 1, -1, 1, -1, 1, -1];
   let par = null, seen = null, queue = null, gen = 0;   // scratch of the search (not game state: rebuilt on every call)
 
   const wetAt = (S, x, z) => !!(SS.water && S.water) && SS.water.depth(S, x, z) > WETD;
   const lavaAt = (S, x, z) => !!(SS.lava && S.lava) && SS.lava.depth_at(S, x, z) > 0.01;
-  /* a column a swimmer can climb out onto (sim.js landAt with the jacket's climb height): its ground height, or -1e9 */
-  function land(S, x, z, surf) {
-    const w = W(), i = Math.round(x / w.H), k = Math.round(z / w.H);
-    if (i < 1 || k < 1 || i >= w.NX - 1 || k >= w.NZ - 1) return -1e9;
-    if (SS.ice && S.ice) {
-      const it = SS.ice.top_at(S, x, z);
-      if (it > -1e8) return it;
-    }
-    if (wetAt(S, x, z) || lavaAt(S, x, z)) return -1e9;
-    const t = w.top[k * w.NX + i];
-    return t >= surf - 0.4 && t <= surf + K.CLIMB ? t : -1e9;
-  }
+  // a column the jacket worm can paddle out onto (swim.shore_top with the jacket's climb height): its top, or -1e9
+  const land = (S, x, z, surf) => SS.swim.shore_top(S, x, z, surf, K.CLIMB, false);
   function isSea(S, x, z) {
     const st = S.water, w = W();
     if (!st || !st.sea) return true;

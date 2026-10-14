@@ -175,6 +175,14 @@
     if (ffx) SS.ffield.contain_post(S, c, Wfull, wp, ffx);
     return ev;
   };
+  /* after any terrain edit (a crater, a black hole, the drill, foam, the gel, claymore pellets, acid): the section is
+   * redrawn, what lost its support in the edited lattice box breaks off (settings.collapse) and the bridges check their
+   * abutments */
+  sim.after_edit = function (S, box) {
+    S.sectionDirty = true;
+    if (S.settings.collapse) SS.collapse.after_edit(S, box);
+    if (SS.struct && SS.struct.on_edit) SS.struct.on_edit(S);
+  };
   /* schedule a delayed explosion (chain reactions: barrels, mines) */
   sim.schedule = function (S, delay, c, Wkg, kind, src, dmg) {
     sim.pool_push(S.pending, C.LIMITS.PENDING, { t: S.time + delay, c: M.v3_copy(c), W: Wkg, kind, src, dmg });

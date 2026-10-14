@@ -475,23 +475,14 @@
 
   /* ---------- precipitation and surface state (5c) ---------- */
   const P = C.PRECIP;
-  let dirty = null;                                     // edited lattice columns since the last cover update
+  const dirty = SS.world.rect_make();                                     // edited lattice columns since the last cover update
   // the pending edit rect is sim state outside S: sim.snapshot / restore carry it (bit-identical replays)
-  WE.dirty_get = () => (dirty ? { i0: dirty.i0, k0: dirty.k0, i1: dirty.i1, k1: dirty.k1 } : null);
-  WE.dirty_set = d => { dirty = d ? { i0: d.i0, k0: d.k0, i1: d.i1, k1: d.k1 } : null; };
-  function onMark(i0, k0, i1, k1) {
-    if (!dirty) dirty = { i0, k0, i1, k1 };
-    else {
-      dirty.i0 = M.min(dirty.i0, i0);
-      dirty.k0 = M.min(dirty.k0, k0);
-      dirty.i1 = M.max(dirty.i1, i1);
-      dirty.k1 = M.max(dirty.k1, k1);
-    }
-  }
+  WE.dirty_get = () => W().rect_get(dirty);
+  WE.dirty_set = d => W().rect_put(dirty, d);
   function initCover(S) {
     const wd = W(), we = S.weather, N = wd.NX * wd.NZ;
-    if (wd.listeners.indexOf(onMark) < 0) wd.listeners.push(onMark);
-    dirty = null;
+    wd.listen(dirty);
+    dirty.set = 0;
     we.snowD = new Float32Array(N); we.ashD = new Float32Array(N); we.top0 = new Float32Array(wd.top);
     we.tick = 0; we.coverVer = 1; we.wet = M.min(1, we.rain > 0 ? 0.5 + 0.5 * we.rain : 0);
     const s0 = P.SNOW_INIT * we.snow, a0 = P.ASH_INIT * we.ash;
@@ -515,7 +506,7 @@
       for (const t of S.trees) { t.thr = t.thr0 * (1 + P.TREE_WET * we.wet); }
     const snow = we.snowD, ash = we.ashD, top0 = we.top0, top = wd.top;
     // edits: columns whose top moved are bare (crater floor, fresh spoil)
-    if (dirty) {
+    if (dirty.set) {
       for (let k = M.max(0, dirty.k0); k <= M.min(wd.NZ - 1, dirty.k1); k++)
         for (let i = M.max(0, dirty.i0); i <= M.min(NX - 1, dirty.i1); i++) {
           const c = k * NX + i;
@@ -525,7 +516,7 @@
           }
           top0[c] = top[c];
         }
-      dirty = null;
+      dirty.set = 0;
     }
     const ds = we.snow * P.SNOW_RATE * T, da = we.ash * P.ASH_RATE * T, melt = we.snow < 0.02 && we.rain < 0.02 ? P.SNOW_MELT * T : 0;
     const vg = S.veg, wa = S.water, lv = S.lava;

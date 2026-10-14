@@ -40,7 +40,7 @@
     };
     // P25: one vent + crater lake per volcano (st.vents; st.vent / st.lake = the first one, kept for older readers)
     st.vents = [];
-    for (const v of F.volcanoes || (F.volcano ? [F.volcano] : [])) {
+    for (const v of F.volcanoes || []) {
       const vent = [], lake = [], R = v.Rc + 1;
       for (let k = M.max(0, Math.floor((v.z - R) / H)); k <= M.min(NZ - 1, Math.ceil((v.z + R) / H)); k++)
         for (let i = M.max(0, Math.floor((v.x - R) / H)); i <= M.min(NX - 1, Math.ceil((v.x + R) / H)); i++) {
