@@ -57,7 +57,7 @@
       const o = S.worms[i];
       if (o.dead) continue;
       const pos = o === a && shift ? P.to_world(S, ap.s - f * shift, a.pos.y) : o.pos;
-      const e = SS.blast.worm_effect(c, Wkg, pos, dmg), dm = M.min(o.hp, Math.round(e.dmg));
+      const dm = SS.blast.hp_loss(c, Wkg, pos, o.hp, dmg);
       if (o.team === me) v -= (o === a ? 2.2 : K.OWN_K) * dm + (dm >= o.hp ? 60 : 0);
       else v += dm + (dm >= o.hp ? K.KILL : 0);
     }
@@ -168,7 +168,7 @@
       for (let i = 0; i < S.worms.length; i++) {
         const o = S.worms[i];
         if (o.dead) continue;
-        const e = SS.blast.worm_effect(c, pj.W, o.pos, pj.dmg), dm = M.min(o.hp, Math.round(e.dmg));
+        const dm = SS.blast.hp_loss(c, pj.W, o.pos, o.hp, pj.dmg);
         if (o.team === a.team) v -= K.OWN_K * dm + (dm >= o.hp ? 60 : 0);
         else v += dm + (dm >= o.hp ? K.KILL : 0);
       }
@@ -336,48 +336,39 @@
   };
 
   /* ---------- firing ---------- */
-  const DROPS = { dynamite: 1, mine: 1, spring: 1, sheep: 1 };
+  // fire a candidate of ours (true when b was one of ours): drops are set down at the feet, the bat and the drill take
+  // the planned angle with the difficulty's noise, the napalm strike its point with it, teleport and girder go to the
+  // planned spot
   AC.fire = function (S, pl, a, b, d, gauss) {
     const k = b.special;
-    const mark = () => {
-      pl.phase = 'done';
-      pl.fired = { wpn: k, v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) };
-      S.weapon = k;
-      a.facing = b.facing;
-    };
-    if (DROPS[k]) {
-      mark();
-      S.aim = 0.1;
-      SS.weapons.use(S, 0);
-      return true;
+    switch (k) {
+      case 'dynamite':
+      case 'mine':
+      case 'spring':
+      case 'sheep':
+        S.aim = 0.1;
+        break;
+      case 'bat':
+        S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5);
+        break;
+      case 'drill':
+        S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.3, -0.5, 1.0);
+        break;
+      case 'napalm':
+        S.tgt = { s: b.ts + gauss(S) * d.noiseA * 25, y: b.ty };
+        S.strikeDir = b.facing;
+        break;
+      case 'teleport':
+      case 'girder':
+        S.tgt = { s: b.ts, y: b.ty };
+        if (k === 'girder') S.plateAng = 0;
+        break;
+      default:
+        return false;
     }
-    if (k === 'bat') {
-      mark();
-      S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5);
-      SS.weapons.use(S, 0);
-      return true;
-    }
-    if (k === 'drill') {
-      mark();
-      S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.3, -0.5, 1.0);
-      SS.weapons.use(S, 0);
-      return true;
-    }
-    if (k === 'napalm') {
-      mark();
-      S.tgt = { s: b.ts + gauss(S) * d.noiseA * 25, y: b.ty };
-      S.strikeDir = b.facing;
-      SS.weapons.use(S, 0);
-      return true;
-    }
-    if (k === 'teleport' || k === 'girder') {
-      mark();
-      S.tgt = { s: b.ts, y: b.ty };
-      if (k === 'girder') S.plateAng = 0;
-      SS.weapons.use(S, 0);
-      return true;
-    }
-    return false;
+    SS.ai.commit(S, pl, a, b, k);
+    SS.weapons.use(S, 0);
+    return true;
   };
 
   /* ---------- retreat window: set the sheep off next to its foe ---------- */

@@ -1,7 +1,7 @@
 /* sim/balance.js — P38 A2: the BALANCE TABLE. One row per weapon / tool of C.ARSENAL plus one per tool-crate delivery.
  * The table is the source of truth for: starting ammo per team (cross-checked against C.ARSENAL[k].ammo by
  * tools/dev/gen/baltest.cjs), the supply-crate weight of every weapon (SS.balance.crate_pick: the weighted draw that
- * replaced the uniform one in weapons.js), the tool-crate weights (skills.js reads B.TOOLS), the crate economy (B.ECON)
+ * replaced the uniform one in crates.js), the tool-crate weights (skills.js reads B.TOOLS), the crate economy (B.ECON)
  * and the derived value / rarity band of each row. docs/BALANCE.md is generated from it (node tools/dev/balance.cjs),
  * with the measurements of tools/dev/balanceharness.cjs (docs/balance_shots.json, docs/balance_matches.json).
  *
@@ -48,7 +48,8 @@
     super:    { lo: 85, hi: 1e9, ammoMax: 1, w: 3 }
   };
   B.ORDER = ['common', 'uncommon', 'rare', 'super'];
-  /* crate economy (weapons.js WP.CRATE reads these). P84: crateRound = the default chance of ONE crate in a round (all
+  /* crate economy (crates.js K holds the same numbers). P84: crateRound = the default chance of ONE crate in a round
+   * (all
    * crate levels at 5, C.CRATES: P_LEVEL x level);
    * healthShare = the health share of a Crate Overload's mix; the per-turn chances (0.3, tool 0.12 / 0.22 / 0.4) are
    * gone */
@@ -246,6 +247,6 @@
   };
   // (the cumulative table is built once, at load: C.CRATE_POOL and the rows are static)
   build();
-  /* (P38 R7: no apply(): skills.js KS.POOL and weapons.js CR hold these numbers themselves; tools/dev/gen/r7test.cjs
+  /* (P38 R7: no apply(): config.js C.SKILL.POOL and crates.js K hold these numbers themselves; tools/dev/gen/r7test.cjs
    * checks that they equal B.TOOLS / B.ECON) */
 })(window.SS = window.SS || {});

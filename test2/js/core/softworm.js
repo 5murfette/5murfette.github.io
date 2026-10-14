@@ -375,7 +375,7 @@
   /* ---------- the step ---------- */
   // CG: the node closest to the surface this pass (gap = distance - radius) and its surface normal   // CN: sum of the
   // contact normals of this sub-step
-  const G2 = { x: 0, y: 0 }, CN = { x: 0, y: 0 }, CG = { gap: 9, nx: 0, ny: 1 };
+  const CN = { x: 0, y: 0 }, CG = { gap: 9, nx: 0, ny: 1 };
   /* terrain contact for one node (position p, radius r): pushes it out, applies friction; returns the penetration (>0)
    * or 0 */
   function contact(sw, i, env, mu, vrx, vry, h) {

@@ -16,7 +16,7 @@
  *   bounces, wet; f32 hitW; };
  *   struct Rel { f32 t; vec3 pos; f32 W; };   S.ffields[MAX], S.free3d[MAX], S.ffRel[4].
  * API: init(S), use(S, a), step(S, dt), blast(S, c, W, dmg), turn_start(S), busy(S), hash(S, mix),
- *   proj_hit(S, p, wpPrev, wp, def) (stepProjectiles: a plane shell reached the dome -> bool consumed),
+ *   proj_hit(S, p, wpPrev, wp, def) (flight.js FL.step: a plane shell reached the dome -> bool consumed),
  *   contain_pre(S, c, Wkg, wp) -> ctx | null, contain_post(S, c, Wkg, wp, ctx) (sim.explode), inside(S, p) -> field |
  *   null. */
 (function (SS) {
@@ -27,10 +27,7 @@
   const W = () => SS.world;
   const sim = () => SS.sim;
   const WPN = () => SS.weapons;
-  const K = C.TOOLB = C.TOOLB || {};
-  K.FIELD = { R: 4.2, HP: 90, LEAK: 0.4, CONTAIN_K: 1.6, CAP: 8, TURNS: 8, MAX: 3, UP: 0.4, MIN_REL: 0.25, REL_K: 1.6, REL_DELAY: 0.22,
-    MAX_FREE: 24,
-    CRACK_BLOBS: 5, CRACK_R: 1.2, CRACK_V: 7, ROCK_R: 6, SPEED_MIN: 6, V_KEEP: 0.85, INSPECT_T: 4 };
+  const K = C.TOOLB;                  // the constants (config.js: TOOLB.FIELD)
   const rng = S => M.rng_next(S.ffRng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
 
@@ -254,7 +251,7 @@
   FF.contain_post = function (S, c, Wkg, wp, ctx) {
     const KF = K.FIELD, f = ctx.f, cc = centre(f);
     S.ffCtx = 0;
-    const dmgBase = wp.dmg != null ? wp.dmg : 50 * M.pow(Wkg, 0.28);
+    const dmgBase = SS.blast.poc_dmg(Wkg, wp.dmg);
     // everything inside takes the contained wave: damage on top of the leak, flung about the dome
     for (const o of S.worms) {
       if (o.dead || M.v3_dist(o.pos, cc) >= f.R) continue;
@@ -276,14 +273,14 @@
     sim().emit(S, EV.FFCONTAIN, { fid: f.id, x: c.x, y: c.y, z: c.z, W: Wkg });
     sim().emit(S, EV.FFRIPPLE, { fid: f.id, x: c.x, y: c.y, z: c.z, amp: 2 });
     // the generator takes the full charge
-    const R = 2.83 * M.cbrt(Wkg), fk = SS.blast.poc_factor(M.v3_dist(f.pos, c), R), dP = dmgBase;
-    if (fk > 0) f.hp -= dP * fk;
+    const fk = SS.blast.poc_factor(M.v3_dist(f.pos, c), SS.blast.poc_R(Wkg));
+    if (fk > 0) f.hp -= dmgBase * fk;
     if (f.hp <= 0) drop(S, f, true);
   };
   // blasts outside (WP.blast): hurt the generator; a contained blast is handled by contain_post
   FF.blast = function (S, c, Wkg, dmg) {
     if (!S.ffields.length) return;
-    const R = 2.83 * M.cbrt(Wkg), dP = dmg != null ? dmg : 50 * M.pow(Wkg, 0.28);
+    const R = SS.blast.poc_R(Wkg), dP = SS.blast.poc_dmg(Wkg, dmg);
     for (const f of S.ffields.slice()) {
       if (f.state !== 0 || f.id === S.ffCtx) continue;
       const k = SS.blast.poc_factor(M.v3_dist(f.pos, c), R);
@@ -379,17 +376,8 @@
   FF.step = function (S, dt) {
     for (const f of S.ffields) {
       if (f.state === 0) {
-        // the generator sits on the ground (falls when it is undermined)
-        // P68g: along the field
-        if (S.eow) {
-          if (!SS.eow.dev_fall(S, f, dt)) f.hp = 0;
-        }
-        else if (W().sample(f.pos.x, f.pos.y - 0.07, f.pos.z) <= 0) {
-          f.vy -= C.G * dt;
-          f.pos.y += f.vy * dt;
-          if (f.pos.y < 0.3) f.hp = 0;
-        }
-        else f.vy = 0;
+        // the generator sits on the ground and falls when it is undermined (devices.fall)
+        if (!SS.devices.fall(S, f, dt, !S.eow && W().sample(f.pos.x, f.pos.y - 0.07, f.pos.z) > 0)) f.hp = 0;
         if (f.hp <= 0) drop(S, f, true);
         // shorts out in the water
         else if (f.pos.y < sim().surface_at(S, f.pos.x, f.pos.z) - 0.1) {

@@ -13,36 +13,56 @@
  *     pocket magnet radius x 2, torch / drill run time x 2 (twice the tunnel);
  *   - NOT changed (no range): air strike / napalm / thunder / moai / teleport (click anywhere on the section), the
  *     rope (W2), blast radii, mine / spring trigger radii, the sheep's walk speed.
- * C.RANGE = { K: 2, VK: sqrt(2) } is the single knob (set K = 1 for the original ranges: C.RANGE.apply() is run once
- * at load; tests that pin the original numbers use C.RANGE.orig).
- * The new weapons are written with their BASE numbers; the same factors are applied to them (flame speed, minigun and
- * handgun reach, ...), so "base" below x 2 = what plays.
+ * config.js C.RANGE = { K: 2, VK: sqrt(2) } is the single knob (K 1 = the original ranges); every number it scales is
+ * written as base x K or base x VK where it is defined (here and in sim/arsenal.js), so the tables hold what plays.
  * Keys: all letters are taken (hotkeys + A D W S Q E F V M), so the new weapons use the numpad: N1..N8 (Numpad1..8). */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, A = C.ARSENAL;
   if (!A || C.ARSENAL_A_DONE) return;
   C.ARSENAL_A_DONE = true;
-  const VK = M.sqrt ? M.sqrt(2) : Math.sqrt(2), kV = C.SCALE.kV, kT = C.SCALE.kT, kL = C.SCALE.kL;
+  const RK = C.RANGE.K, VK = C.RANGE.VK, kL = C.SCALE.kL;
   const Wr = R => M.pow(R / 44, 3);
-  // (K: reach factor, VK: launch speed factor, orig: filled below with the numbers before the factors)
-  C.RANGE = { K: 2, VK, orig: {} };
 
   /* ---------- projectile models of the new weapons ---------- */
   Object.assign(C.PROJ, {
     // sticky gel droplet (flamethrower): bursts into a burning patch (1-3 s) on terrain / props, sticks to a worm
-    flamedrop: { boom: C.BOOM.FUEL, dmg: 2, impact: 1, arm: 0.03, W: 0, windK: 1.3, drag: 0.55, r: 0.04, wa: 1, flamedrop: 1, fire: 1 },
+    flamedrop: {
+      boom: C.BOOM.FUEL,
+      dmg: 2,
+      impact: 1,
+      arm: 0.03,
+      W: 0,
+      windK: 1.3,
+      drag: 0.55,
+      r: 0.04,
+      wa: 1,
+      burst: C.BURST.GEL,
+      fire: 1
+    },
     // acid flask: bursts on contact into acid drops that eat the ground and burn worms
-    acid: { dmg: 8, impact: 1, arm: 0.05, W: Wr(14), windK: 0.3, r: 0.1, wa: 1, acid: 1 },
+    acid: { dmg: 8, impact: 1, arm: 0.05, W: Wr(14), windK: 0.3, r: 0.1, wa: 1, burst: C.BURST.ACID, hitDs: C.DS.PROJ_ACID },
     // gas canister: bounces like a grenade, the fuse (+ / -) opens it; the cloud infects
-    gas: { dmg: 0, bouncy: 1, rest: 0.35, fric: 0.85, fuse: 3, fuseSet: 1, W: 0, windK: 0, r: 0.1, wa: 1, gas: 1 },
+    gas: {
+      dmg: 0,
+      bouncy: 1,
+      rest: 0.35,
+      fric: 0.85,
+      fuse: 3,
+      fuseSet: 1,
+      W: 0,
+      windK: 0,
+      r: 0.1,
+      wa: 1,
+      burst: C.BURST.GAS,
+      hitDs: C.DS.PROJ_GAS
+    },
     // mortar shell: ballistic, bursts burstH m above the ground into bomblets
     mortar: { dmg: 22, impact: 1, arm: 0.25, W: Wr(26), windK: 0.5, r: 0.07, wa: 1, mortar: 1, metal: 1 },
     bomblet: { dmg: 14, impact: 1, arm: 0.1, W: Wr(20), windK: 0.3, r: 0.045, wa: 1, metal: 1 }
   });
   // the timed throwables get the +/- fuse; dynamite and the holy grenade join them (their old fixed fuses = the
   // defaults)
-  C.PROJ.holy.fuseSet = 1; C.PROJ.dynamite.fuseSet = 1;
   C.FUSE_DEFAULT = { grenade: 3, cluster: 3, banana: 3, holy: 3, dynamite: 5, gas: 3 };
   C.FUSE_KEYS = ['grenade', 'cluster', 'banana', 'holy', 'dynamite', 'gas'];      // (a fixed order for the hash: P84)
   C.PARAM = {
@@ -113,7 +133,7 @@
       DUR: 2.0,
       RATE: 38,
       SPIN: 0.45,
-      RANGE: 26,
+      RANGE: 26 * RK,
       SPREAD: 0.035,
       DMG: 2,
       PUSH: 5 * kL,
@@ -125,7 +145,7 @@
       BODY_W: Wr(10)
     },
     // Handgun: HITSCAN, 2 shots, explosive rounds (a small blast at the first thing hit)
-    HANDGUN: { RANGE: 9, SHOTS: 2, DMG: 15, W: Wr(15), BLAST_DMG: 16, MUZZLE: 0.6 },
+    HANDGUN: { RANGE: 9 * RK, SHOTS: 2, DMG: 15, W: Wr(15), BLAST_DMG: 16, MUZZLE: 0.6 },
     // Boomerang (P93): thrown at vmax (17, x VK) m/s x power along the aim; a harmonic orbit (period T s) about a
     // centre KL x speed / om from the throw point at KAP rad to the lifting side of the aim; the wings carry GK of
     // gravity, DRAG 1/s bleeds it, the centre sinks SINK m over the flight so the return pass is lower; after T x END s
@@ -189,6 +209,9 @@
     flamethrower: {
       name: 'Flamethrower',
       kind: 'stream',
+      use: C.USE.ARSENAL_B,
+      needsAir: 1,
+      cpuRetreat: 1,
       ammo: 3,
       key: 'N1',
       code: 'Numpad1',
@@ -200,10 +223,13 @@
     acid: {
       name: 'Acid Bomb',
       kind: 'charge',
+      use: C.USE.LAUNCH,
+      needsAir: 1,
+      cpuRetreat: 1,
       ammo: 1,
       key: 'N2',
       code: 'Numpad2',
-      vmax: 20,
+      vmax: 20 * VK,
       payload: 1,
       crate: 1,
       wa: 1,
@@ -212,10 +238,13 @@
     gas: {
       name: 'Gas Bomb',
       kind: 'charge',
+      use: C.USE.LAUNCH,
+      needsAir: 1,
+      cpuRetreat: 1,
       ammo: 2,
       key: 'N3',
       code: 'Numpad3',
-      vmax: 20,
+      vmax: 20 * VK,
       payload: 1,
       crate: 1,
       wa: 1,
@@ -224,11 +253,12 @@
     mortar: {
       name: 'Mortar',
       kind: 'charge',
+      use: C.USE.LAUNCH,
       fixed: 1,
       ammo: 3,
       key: 'N4',
       code: 'Numpad4',
-      vmax: 20,
+      vmax: 20 * VK,
       payload: 1,
       crate: 1,
       wa: 1,
@@ -237,6 +267,8 @@
     minigun: {
       name: 'Minigun',
       kind: 'stream',
+      use: C.USE.ARSENAL_B,
+      bullet: 1,
       ammo: 0,
       key: 'N5',
       code: 'Numpad5',
@@ -248,6 +280,8 @@
     handgun: {
       name: 'Handgun',
       kind: 'hitscan',
+      use: C.USE.ARSENAL_B,
+      bullet: 1,
       ammo: 4,
       key: 'N6',
       code: 'Numpad6',
@@ -259,10 +293,12 @@
     boomerang: {
       name: 'Boomerang',
       kind: 'charge',
+      use: C.USE.OWN_FLIGHT,
+      needsAir: 1,
       ammo: 3,
       key: 'N7',
       code: 'Numpad7',
-      vmax: 17,
+      vmax: 17 * VK,
       crate: 1,
       wa: 1,
       info: 'Curls out on the aim and back LOWER, past you, into caves; a small blast on contact punches a worm along its flight'
@@ -270,6 +306,8 @@
     raven: {
       name: 'Mail Raven',
       kind: 'target',
+      use: C.USE.ARSENAL_B,
+      needsAir: 1,
       twostep: 1,
       ammo: 1,
       key: 'N8',
@@ -298,43 +336,5 @@
    * Used wherever an event / struct names a weapon by number (hurt's arg) instead of by string. Checked by
    * tools/dev/gen/r7test.cjs. */
   C.WEAPON_KEYS = C.ARSENAL_ORDER.concat(['clusterlet', 'bananalet', 'missile', 'flame', 'fuel', 'flamedrop', 'bomblet']);
-  for (const k of ['holy', 'dynamite']) { C.WEAPONS[k].fuseSet = 1; }
 
-  /* The range upgrade as DATA (P38 R7: no apply(), no flag, no in-place scaling; the numbers below are the final ones =
-   * the base number x K / x VK, written out).
-   * Applied here as plain assignments (this file extends the tables of arsenal.js); C.RANGE.orig keeps the numbers
-   * before the factor for tests and docs. A native port takes the final tables from `node
-   * tools/dev/gen/bakeweapons.cjs` (docs/weapondefs.json), which tools/dev/gen/r7test.cjs keeps current. */
-  const RK = C.RANGE.K, VKf = C.RANGE.VK, o = C.RANGE.orig = {}, AR = C.ARMS;
-  // charged shells: launch speed x VK (range x 2); the merged views C.WEAPONS copy vmax, so both get the value
-  for (
-    const k of [
-      'bazooka', 'grenade', 'cluster', 'homing', 'banana', 'holy', 'boulder', 'blackhole', 'foam', 'gravgun', 'acid', 'gas', 'mortar',
-      'boomerang'
-    ]
-  ) {
-    o[k] = A[k].vmax;
-    A[k].vmax = o[k] * VKf;
-    C.WEAPONS[k].vmax = A[k].vmax;
-  }
-  // (the turn rate too: the turning circle stays the same size relative to the speed)
-  {
-    const h = C.PROJ.homing.homing;
-    o.homing_v = h.vmax;
-    h.vmax = h.vmax * VKf;
-    h.accel = h.accel * VKf;
-    h.turn = h.turn * VKf;
-  }
-  // dropped items are NOT scaled (a drop is set down at the worm's feet; x sqrt 2 tossed dynamite ~4 m down a slope:
-  // lead's merge fix, replaytest)
-  o.shotgun = AR.SHOTGUN.RANGE; AR.SHOTGUN.RANGE = o.shotgun * RK;
-  o.sniper = [AR.SNIPER.RANGE, AR.SNIPER.LIFE]; AR.SNIPER.RANGE = o.sniper[0] * RK; AR.SNIPER.LIFE = o.sniper[1] * RK;
-  o.bat = AR.BAT.REACH; AR.BAT.REACH = o.bat * RK;
-  o.bellows = AR.BELLOWS.RANGE; AR.BELLOWS.RANGE = o.bellows * RK;
-  o.girder = AR.GIRDER.REACH; AR.GIRDER.REACH = o.girder * RK;
-  o.scrambler = AR.SCRAMBLER.R; AR.SCRAMBLER.R = o.scrambler * RK;
-  o.magnet = AR.MAGNET.R; AR.MAGNET.R = o.magnet * RK;
-  o.dig = [AR.DIG.TORCH_T, AR.DIG.DRILL_T]; AR.DIG.TORCH_T = o.dig[0] * RK; AR.DIG.DRILL_T = o.dig[1] * RK;
-  o.minigun = AR.MINIGUN.RANGE; AR.MINIGUN.RANGE = o.minigun * RK;
-  o.handgun = AR.HANDGUN.RANGE; AR.HANDGUN.RANGE = o.handgun * RK;
 })(window.SS = window.SS || {});

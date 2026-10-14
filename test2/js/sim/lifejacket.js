@@ -327,7 +327,7 @@
   };
   /* one fixed step of a jacket swim (called from swimStep after it zeroed the velocity) */
   JK.step = function (S, w, dt) {
-    const sw = w.swim, wd = W();
+    const sw = w.swim;
     if (w.hp <= 0) {
       lose(S, w);
       return;

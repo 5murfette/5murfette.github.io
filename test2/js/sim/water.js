@@ -221,7 +221,7 @@
   }
 
   function sub(S, st) {
-    const w = W(), NX = st.NX, NZ = st.NZ, N = st.N, DT = K.DT, dx = w.H, area = dx * dx, kf = DT * C.G * dx;
+    const w = W(), NX = st.NX, NZ = st.NZ, DT = K.DT, dx = w.H, area = dx * dx, kf = DT * C.G * dx;
     const h = st.h, fL = st.fL, fR = st.fR, fB = st.fB, fF = st.fF;
     if (dirty) refreshBeds(st, w);
     // effective bed: open lava lies on the ground under the water and displaces it

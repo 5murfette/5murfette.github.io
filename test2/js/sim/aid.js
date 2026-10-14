@@ -13,7 +13,7 @@
  * null. C layout: i16 dist[NCOL * FL]; i32 queue[NCOL * FL]; f32 floor[NCOL * FL]; u8 nfl[NCOL]; u32 stamp[NCOL]. */
 (function (SS) {
   'use strict';
-  const C = SS.CFG, M = SS.math;
+  const M = SS.math;
   const ND = SS.nav = {};
   const K = ND.K = { STEP: 2, FL: 6, CLEAR: 1.4, UP: 1.6, DOWN: 3.5, LEG_MAX: 16, WALK_UP: 1.2, WALK_DOWN: 3.0, MAX_NODES: 90000, DIG: 1 };
   let ncx = 0, ncz = 0, ncol = 0, fl = null, nfl = null, stamp = null, dist = null, queue = null, tick = 0, sizeVer = -1;

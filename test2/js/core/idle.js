@@ -392,8 +392,7 @@
     }
     // phone and hands
     const ph = { x: I.ex + 0.34, y: I.ey - 0.08, z: 0.2 };
-    let hx = I.cx - 0.12, hy = I.cy - 0.18, hz = 0.12, hand1 = 0;
-    const grab = sstep(2.7, 3.0, t) * (1 - sstep(3.0, 3.6, t));
+    let hx = I.cx - 0.12, hy = I.cy - 0.18, hz = 0.12;
     const raise = sstep(3.1, 3.6, t) * (1 - sstep(TE, TE + 0.7, t));
     hx = lerp(hx, ph.x - 0.02, raise); hy = lerp(hy, ph.y - 0.1, raise); hz = lerp(hz, ph.z + 0.03, raise);
     const handOn = win(t, 2.6, 3.0, dur - 0.6, dur - 0.2);
@@ -585,7 +584,7 @@
   function p_watch(st, t, o, I) {
     const dur = st.dur;
     o.yaw = 0.5 * sstep(0.3, 0.9, t) * (1 - sstep(dur - 0.8, dur - 0.1, t));
-    const wh = win(t, 0.6, 0.9, 3.4, 3.7), beat = frac(t * 2.0), tap = wh * (0.5 + 0.5 * sin(TAU * t * 2.0));
+    const wh = win(t, 0.6, 0.9, 3.4, 3.7), tap = wh * (0.5 + 0.5 * sin(TAU * t * 2.0));
     o.sy = 1 - 0.03 * tap; o.oy = 0.01 * tap; o.ox = 0.015 * sin(TAU * t * 1.0) * wh;
     o.lookW = 1; o.look = HEAD_NAT + 0.18 * sin(TAU * t * 1.5) * wh + 0.35 * win(t, 3.7, 4.0, 4.2, 4.5);
     o.wob = 0.1 * sin(TAU * t * 1.5) * wh;
@@ -743,7 +742,6 @@
   /* ---------- SUN: slips on sunglasses and sunbathes, head back, hands behind the head ---------- */
   function p_sun(st, t, o, I) {
     const dur = st.dur,
-      on = sstep(0.9, 1.5, t) * (1 - sstep(dur - 1.9, dur - 1.3, t)),
       chill = sstep(1.6, 2.6, t) * (1 - sstep(dur - 1.9, dur - 1.2, t));
     o.yaw = 0.55 * sstep(0.2, 1.0, t) * (1 - sstep(dur - 0.9, dur - 0.1, t));
     o.sx = 1 + 0.04 * chill; o.sy = 1 - 0.05 * chill + 0.01 * sin(t * 1.1) * chill; o.ox = 0.02 * sin(t * 0.8) * chill;

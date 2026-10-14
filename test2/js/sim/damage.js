@@ -73,7 +73,7 @@
     flags = flags | 0; src = src | 0; arg = arg === undefined ? -1 : arg;
     const sf = C.DS_FLAGS[src], quiet = (flags & HF.QUIET) !== 0, dot = (flags & HF.DOT) !== 0 || (sf & DSF.DOT) !== 0;
     // the tinfoil hat grounds lightning
-    if (S.lightning && w.skills && w.skills.tinfoil) dmg = M.max(1, Math.round(dmg * ((C.SKILL && C.SKILL.TINFOIL_K) || 0.1)));
+    if (S.lightning && w.skills && w.skills.tinfoil) dmg = M.max(1, Math.round(dmg * C.SKILL.TINFOIL_K));
     w.hp -= dmg; w.cause = C.DS_CAUSE[src];
     // dir: where the hit pushed (blood sprays that way)
     sim.emit(S, EV.HURT, { wormId: w.id, amount: dmg, src, arg, dir: S.hitDir || null, dot });

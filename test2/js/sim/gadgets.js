@@ -27,7 +27,7 @@
  * Keys that go through use(): dog, punch, sentry, claymore, gravgun (the force field is sim/ffield.js). */
 (function (SS) {
   'use strict';
-  const C = SS.CFG, M = SS.math, P = SS.plane, MAT = C.MAT;
+  const C = SS.CFG, M = SS.math, P = SS.plane;
   const PHASE = C.PHASE;
   const EV = C.EV;
   const GD = SS.gadgets = {};
@@ -35,25 +35,7 @@
   const sim = () => SS.sim;
   const WPN = () => SS.weapons;
 
-  /* ---------- constants ---------- */
-  const K = C.TOOLB = C.TOOLB || {};
-  K.DOG = { SPEED: 5.2, ACC: 14, R: 0.36, TIMER: 8, REACH: 1.05, HOP_MAX: 0.95, STEP_UP: 0.28, DMG: 55, W: 1.5, BARK0: 1.2, BARK1: 3.0,
-    MAX: 4,
-    // P84: released with a short aimed throw (THROW_V m/s along the aim angle: ~2 m flat, ~5 m at 45 degrees; the power
-    // input scales it 0.6..1) and ARMED only after it has walked ARM_DIST m AND ARM_T s have passed: nothing touches it
-    // off before (a worm underfoot, the thrower himself). Unarmed it walks straight ahead on the aim side, armed it
-    // steers to the nearest foe, so a thrower standing on an enemy sees it run away, turn and come back.
-    THROW_V: 7.5, ARM_DIST: 2.5, ARM_T: 0.8 };
-  K.PUNCH = { REACH: 1.8, DY: 1.3, DT: 0.9, VY: 11, HIT_T: 0.16, DMG: 30, V_OUT: 20, V_UP: 12, SPIN: 14 };
-  K.SENTRY = { AMMO: 100, HP: 60, RANGE: 14, SPIN: 1.7, BEAM_Y: 0.5, BURST: 6, ROUND_T: 0.09, SPREAD: 0.03, DMG: 4, ROUND_RANGE: 30,
-    PUSH: 0.6,
-    TURNS: 12, COOL: 0.6, TURN: 12, ER0: 0.05, ER1: 0.2, KNOCK_F: 0.15, FALL_T: 0.5, MAX: 6, ALIGN: 0.08 };
-  K.CLAY = { ARM: 10, LASER: 3, PELLETS: 140, CONE: 0.9, RANGE: 9, DMG: 5, PUSH: 0.3, HP: 30, TURNS: 12, REACH: 1.8, W_CORE: 0.1, MAX: 8 };
-  K.GRAV = {
-    CRATE_LOCK: 1.5, CRATE_DMG_K: 0.9, CRATE_DMG_MAX: 22, CRATE_DMG_MIN_V: 4, RANGE: 9, HOLD: 1.6, FOLLOW: 14, PULL_V: 30, MASS_MAX: 60,
-    MINE_FUSE: 3, AIM_COS: 0.35
-  };
-  GD.KEYS = { dog: 1, punch: 1, sentry: 1, claymore: 1, gravgun: 1 };
+  const K = C.TOOLB;                  // the constants (config.js)
 
   const rng = S => M.rng_next(S.gdRng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
@@ -127,9 +109,6 @@
       return;
     }
     const h = GD.ray(S, o, d, SK.ROUND_RANGE, { skip: -1, team: -1 });
-    const end = h
-      ? { x: h.x, y: h.y, z: h.z }
-      : { x: o.x + d.x * SK.ROUND_RANGE, y: o.y + d.y * SK.ROUND_RANGE, z: o.z + d.z * SK.ROUND_RANGE };
     sim().emit(S, EV.SGSHOT, { x: o.x, y: o.y, z: o.z, dx: d.x, dy: d.y, dz: d.z, len: h ? h.t : SK.ROUND_RANGE, hit: h ? 1 : 0 });
     if (!h) return;
     if (h.worm) {
@@ -468,30 +447,13 @@
   };
   function stepSentry(S, s, dt) {
     const KS = K.SENTRY, w = W();
-    // gravity: settles onto the ground (and into the water: shorts out)
-    // P68g: along the field
-    if (S.eow) {
-      if (!SS.eow.dev_fall(S, s, dt)) {
-        S.sentries.splice(S.sentries.indexOf(s), 1);
-        return;
-      }
+    // it settles onto the ground (devices.fall; into the water: it shorts out)
+    const held = !S.eow && supported(S, s.pos.x, s.pos.y, s.pos.z);
+    if (!SS.devices.fall(S, s, dt, held)) {
+      S.sentries.splice(S.sentries.indexOf(s), 1);
+      return;
     }
-    else if (!supported(S, s.pos.x, s.pos.y, s.pos.z)) {
-      s.vy -= C.G * dt;
-      s.pos.y += s.vy * dt;
-      if (s.pos.y < 0.3) {
-        S.sentries.splice(S.sentries.indexOf(s), 1);
-        return;
-      }
-    }
-    else {
-      s.vy = 0;
-      let l = 0;
-      while (w.sample(s.pos.x, s.pos.y - 0.02, s.pos.z) > 0 && l < 0.5) {
-        s.pos.y += 0.02;
-        l += 0.02;
-      }
-    }
+    if (held) SS.devices.lift(s, 0.02, 0.02, 0.5);
     if (inWater(S, { x: s.pos.x, y: s.pos.y + 0.2, z: s.pos.z }) && s.state !== 2) {
       s.state = 2;
       sim().emit(S, EV.STEAM, { x: s.pos.x, y: s.pos.y, z: s.pos.z, power: 0.4 });
@@ -755,23 +717,24 @@
       ok = !!(t && t.alive && t.seg[c.seg] && t.seg[c.seg].on);
     }
     else ok = supported(S, c.pos.x, c.pos.y - 0.1, c.pos.z);
-    // P68g: along the field
+    // space: it falls along the field, and once at rest it lies on the surface it came down on
     if (!ok && S.eow) {
-      if (!SS.eow.dev_fall(S, c, dt)) {
+      if (!SS.devices.fall(S, c, dt, false)) {
         S.claymores.splice(S.claymores.indexOf(c), 1);
         return;
       }
+      if (!(c.gv > 0)) c.attach = 0;
     }
-    // P86: lies on its surface: up = the pull's opposite, the blast runs along it
+    // in space it lies on its surface: up = the pull's opposite, the blast runs along it
     if (S.eow && c.attach === 0) SS.eow.clay_frame(S, c);
-    else if (!ok) {
-      c.vy -= C.G * dt; c.pos.y += c.vy * dt;
+    else if (!ok && !S.eow) {
+      const kept = SS.devices.drop(c, dt);
       if (supported(S, c.pos.x, c.pos.y - 0.1, c.pos.z)) {
         c.attach = 0;
         c.vy = 0;
         c.nrm = { x: 0, y: 1, z: 0 };
       }
-      if (c.pos.y < 0.3) {
+      if (!kept) {
         S.claymores.splice(S.claymores.indexOf(c), 1);
         return;
       }
@@ -1005,7 +968,7 @@
   };
   // blasts (WP.blast -> here): hurt / knock over sentries, set off claymores and dogs. Same pressure factor as devices
   GD.blast = function (S, c, Wkg, dmg) {
-    const BL = SS.blast, R = 2.83 * M.cbrt(Wkg), dP = dmg != null ? dmg : 50 * M.pow(Wkg, 0.28);
+    const BL = SS.blast, R = BL.poc_R(Wkg), dP = BL.poc_dmg(Wkg, dmg);
     for (const s of S.sentries.slice()) {
       const d = M.v3_dist({ x: s.pos.x, y: s.pos.y + 0.3, z: s.pos.z }, c), f = BL.poc_factor(d, R);
       if (f <= 0) continue;
@@ -1083,9 +1046,12 @@
     ) cands.push({ special: 'sentry', v: 20, aim: 0, facing });
     if (can('claymore') && onSec && dist < 7 && dist > 2.5) cands.push({ special: 'claymore', v: 34, aim: 0, facing });
   };
+  // carry a gadget candidate out through the real weapon code (it selects the gadget itself: also usable without a
+  // plan)
   GD.ai_fire = function (S, a, b) {
-    S.weapon = b.special; a.facing = b.facing; S.aim = b.aim || 0;
-    if (b.special === 'claymore') S.aim = -0.2;
+    S.weapon = b.special;
+    a.facing = b.facing;
+    S.aim = b.special === 'claymore' ? -0.2 : b.aim || 0;
     SS.weapons.use(S, 0);
   };
 })(window.SS = window.SS || {});

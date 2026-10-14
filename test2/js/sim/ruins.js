@@ -68,7 +68,6 @@
     w.mark(i0, j0, k0, i1, j1, k1);
   }
   /* an irregular blob (ellipsoid + 3D noise): solid union with the terrain */
-  const ob = { s: 0, mat: 0, air: 0 };
   function blob(cx, cy, cz, ax, ay, az, mat) {
     const mn = M.fast_min(ax, M.fast_min(ay, az)), R = M.fast_max(ax, M.fast_max(ay, az)) + 0.6;
     stamp(cx - R, cy - R, cz - R, cx + R, cy + R, cz + R, (x, y, z, o) => {

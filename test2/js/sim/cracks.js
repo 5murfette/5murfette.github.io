@@ -108,7 +108,6 @@
     if (k < bk0) bk0 = k;
     if (k > bk1) bk1 = k;
   };
-  const pt = { x: 0, y: 0, z: 0 };
 
   /* one sheet: start (sx, sy, sz) in the wall, propagation u, length L (m), tangent t, normal nn. Dedupes the voxels it
    * touches (max per sheet),

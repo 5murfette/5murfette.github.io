@@ -9,7 +9,7 @@
  *                    (bisection on Z, cached per material). Soft topsoil blows out wider than the rock under it;
  *                    bedrock never fails.
  *   worms            the PoC's damage and knock-back (worm_effect): dmg = dmgPoC fk, with fk the PoC pressure factor
- *                    of the distance to the body (1 - 0.65 sqrt(d / Rk) inside Rk = 2.83 W^(1/3), beyond it a tail
+ *                    of the distance to the body (1 - 0.65 sqrt(d / Rk) inside Rk = POC_R W^(1/3), beyond it a tail
  *                    from 0.35 down to 0 at 2.1 Rk, cut by the solid on the line); knock-back dv = (dmgPoC fk 6.5 + 50
  *                    fk) px/s x 0.0643 m/px x opts.push, away from the blast + 0.45 up. The reported overpressure is
  *                    weighed by shield = 0.25 + 0.75 exp(-L / SHIELD_L), L = metres of solid on the centre→target line.
@@ -58,6 +58,10 @@
   }
   BL.ZCRIT = ZCRIT;
   BL.crater_radius = (m, Wkg) => ZCRIT[m] * M.cbrt(Wkg);
+  // the PoC hole radius of a charge Wkg: poc_factor's R and the reach of the direct blast zone
+  BL.poc_R = (Wkg) => B.POC_R * M.cbrt(Wkg);
+  // the PoC damage of a blast: the weapon's own (dmg) or, for a bare charge, POC_DMG W^POC_DMG_E
+  BL.poc_dmg = (Wkg, dmg) => dmg != null ? dmg : B.POC_DMG * M.pow(Wkg, B.POC_DMG_E);
   // PoC pressureFactor (L2799): 1 at the centre, 0.35 at the hole's edge R, 0 beyond 2.1 R
   BL.poc_factor = function (d, R) {
     if (R <= 0 || d >= R * 2.1) return 0;
@@ -128,22 +132,21 @@
 
   /* ---------- effect on worms ---------- */
   // dmgPoC: the weapon's PoC damage (explode(x, y, R, dmg)); the worm takes round(dmgPoC x pressureFactor x cover) and
-  // is thrown with (dmgPoC f 6.5 + 50 f) px/s, as in the PoC (P24.1: before, every charge did ~70 x f(W)^2 from the
-  // overpressure, so a dying worm's or a grave's small pop hurt like a bazooka)
-  BL.worm_effect = function (c, Wkg, pos, dmgPoC) {   // pure: { dmg, dv, dir[3], dP, shield }
+  // is thrown with (dmgPoC f 6.5 + 50 f) px/s, as in the PoC. dP (the free-air overpressure at the body) and shield
+  // (the share of the wave that gets through the solid on the line) are reported for diagnostics.
+  BL.worm_effect = function (c, Wkg, pos, dmgPoC) {   // pure: { dmg, dv, dir[3], dP, shield, r }
     const w = W(), dx = pos.x - c.x, dy = pos.y - c.y, dz = pos.z - c.z, r = M.len3(dx, dy, dz);
     const re = M.max(0.25, r - 0.35);                // to the body surface (worm radius ~0.35 m)
     const L = w.solid_len(c.x, c.y, c.z, pos.x, pos.y, pos.z);
-    const shield = 0.25 + 0.75 * M.exp(-L / B.SHIELD_L);
-    const dP = BL.overpressure(re, Wkg), pe = dP * shield * B.REFLECT, f = pe / (pe + B.P_HALF);
+    const shield = 0.25 + 0.75 * M.exp(-L / B.SHIELD_L), dP = BL.overpressure(re, Wkg);
     // knock-back = the PoC's (explode L2845-2856, 1 px = 0.0643 m): f = pressureFactor(d, R) with d = dist - 0.6 worm
-    // radius and R the PoC crater radius (44 px x W^1/3), x its cover factor beyond R; dv = (dmg f 6.5 + 50 f) px/s
-    // with the PoC damage of a charge that size (~50 W^0.28); the direction is away from the blast + 0.45 up (a worm
-    // under a blast is pushed partly down). The worms' own gravity (C.G_WORM) makes the flights the PoC's.
-    const Rk = 2.83 * M.cbrt(Wkg), dk = M.max(0, r - 0.6 * C.WORM_R);
-    let fk = dk <= Rk ? 1 - 0.65 * Math.sqrt(dk / Rk) : dk < 2.1 * Rk ? 0.35 * (1 - Math.sqrt((dk - Rk) / (1.1 * Rk))) : 0;
+    // radius and R the PoC crater radius, x its cover factor beyond R; dv = (dmg f 6.5 + 50 f) px/s; the direction is
+    // away from the blast + 0.45 up (a worm under a blast is pushed partly down). The worms' own gravity (C.G_WORM)
+    // makes the flights the PoC's.
+    const Rk = BL.poc_R(Wkg), dk = M.max(0, r - 0.6 * C.WORM_R);
+    let fk = BL.poc_factor(dk, Rk);
     if (dk > Rk) fk *= M.max(0.12, M.exp(-L / 1.16));
-    const dmgP = dmgPoC != null ? dmgPoC : 50 * M.pow(Wkg, 0.28), dv = (dmgP * fk * 6.5 + 50 * fk) * 0.0643, dmg = dmgP * fk;
+    const dmgP = BL.poc_dmg(Wkg, dmgPoC), dv = (dmgP * fk * 6.5 + 50 * fk) * 0.0643, dmg = dmgP * fk;
     let ux = r > 1e-4 ? dx / r : 0, uy = r > 1e-4 ? dy / r : 1, uz = r > 1e-4 ? dz / r : 0;
     uy += 0.45;
     const ul = M.len3(ux, uy, uz);
@@ -152,6 +155,10 @@
     uz /= ul;
     return { dmg, dv, dir: [ux, uy, uz], dP, shield, r };
   };
+
+  /* the HP a blast at c (charge Wkg, PoC damage dmg) takes off a worm at pos with hp left: worm_effect's damage,
+   * rounded, at most the HP (what the CPU scores a shot by) */
+  BL.hp_loss = (c, Wkg, pos, hp, dmg) => M.min(hp, Math.round(BL.worm_effect(c, Wkg, pos, dmg).dmg));
 
   /* ---------- entry point ---------- */
   BL.explode = function (S, c, Wkg, opts) {

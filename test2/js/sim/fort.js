@@ -38,7 +38,7 @@
  *      taken). */
 (function (SS) {
   'use strict';
-  const C = SS.CFG, M = SS.math, MAT = C.MAT, B = C.BUNKER;
+  const C = SS.CFG, M = SS.math, B = C.BUNKER;
   const FT = SS.fort = {};
   const W = () => SS.world;
   const sat = M.sat, sm = M.smooth, clamp = M.clamp;

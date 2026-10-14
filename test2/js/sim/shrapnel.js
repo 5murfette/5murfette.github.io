@@ -18,7 +18,7 @@
  * shrapnel_step. */
 (function (SS) {
   'use strict';
-  const C = SS.CFG, M = SS.math, MAT = C.MAT;
+  const C = SS.CFG, M = SS.math;
   const EV = C.EV;
   const SH = SS.shrapnel = {};
   const K = C.SHRAPNEL;

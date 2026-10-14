@@ -1,7 +1,7 @@
 /* sim/raven.js — P37-W3: the boomerang and the mail raven (sub-module of sim/weaponsa.js; data: C.ARMS.BOOM / RAVEN).
  * Both fly in the section plane (s, y) like the other shells; portable, deterministic (S.wa.rng), state in S.wa.
  *
- * Boomerang (S.wa.boom[]): P93 flight = a harmonic orbit about an off-axis centre (see WA.boom_acc), lift GK, drag, a
+ * Boomerang (S.wa.boom[]): P93 flight = a harmonic orbit about an off-axis centre (see RV.boom_acc), lift GK, drag, a
  * sink; it leaves on the aim vector, curls round and comes back LOWER and past the thrower (never homing). Any contact
  * (terrain, prop / mine / barrel / bridge body, device, landed crate, a worm other than the thrower) blows it up with
  * its small blast (C.ARMS.BOOM W / DMG, the normal HE crater), and a worm hit head-on is punched along the
@@ -19,6 +19,7 @@
   const C = SS.CFG, M = SS.math, P = SS.plane, A = C.ARMS;
   const EV = C.EV;
   const WA = SS.weaponsA;
+  const RV = SS.raven = {};
   if (!WA) return;
   const sim = () => SS.sim, WPm = () => SS.weapons, W = () => SS.world;
   const rr = WA.rr;
@@ -30,9 +31,9 @@
   // (up for a throw to the right, mirrored with the facing). Thrown at V m/s along the aim it leaves on the aim vector,
   // curls over, and comes back along a reflected arc that, because the lift (GK of g is carried by the wings, the rest
   // pulls it down) and the drag bleed it, passes lower than the throw (about SINK m) and never homes in on the worm: it
-  // flies on past, round the corner into caves and under overhangs. WA.boom_acc is the one force law (the real flight
+  // flies on past, round the corner into caves and under overhangs. RV.boom_acc is the one force law (the real flight
   // and the CPU's forward run both call it).
-  WA.boom_make = function (K, s0, y0, vs, vy, face) {
+  RV.boom_make = function (K, s0, y0, vs, vy, face) {
     const sp = M.len2(vs, vy), om = 2 * Math.PI / K.T, th = M.atan2(vy, vs), L = K.KL * sp / om, ac = th + (face >= 0 ? 1 : -1) * K.KAP;
     return {
       s: s0,
@@ -47,7 +48,7 @@
       face: face >= 0 ? 1 : -1
     };
   };
-  WA.boom_acc = function (K, b, out) {
+  RV.boom_acc = function (K, b, out) {
     const om = 2 * Math.PI / K.T,
       f = M.smooth(M.clamp(b.age / (K.T * K.SINK_T), 0, 1)),
       cy = b.cy - b.sk * f,
@@ -56,10 +57,10 @@
     out.y = -om * om * (b.y - cy) - K.DRAG * b.vy - C.G * K.GK;
   };
   const bacc = { s: 0, y: 0 };
-  WA.mod_charge = function (S, key, a, ap, aim, speed) {
+  RV.charge = function (S, key, a, ap, aim, speed) {
     if (key !== 'boomerang') return false;
     const wa = S.wa, K = A.BOOM, face = a.facing >= 0 ? 1 : -1;
-    const b = WA.boom_make(K, ap.s + aim.s * 0.7, a.pos.y + aim.y * 0.7, aim.s * speed, aim.y * speed, face);
+    const b = RV.boom_make(K, ap.s + aim.s * 0.7, a.pos.y + aim.y * 0.7, aim.s * speed, aim.y * speed, face);
     b.id = ++wa.n;
     b.owner = a.id;
     b.rest = 0;
@@ -99,7 +100,7 @@
         continue;
       }
       if (!b.dead) {
-        WA.boom_acc(K, b, bacc);
+        RV.boom_acc(K, b, bacc);
         b.vs += bacc.s * dt; b.vy += bacc.y * dt;
         if (SS.weather) {                                              // light: the wind nudges it (in-plane part of the air velocity)
           const wp0 = P.to_world(S, b.s, b.y);
@@ -222,7 +223,7 @@
   };
 
   /* ---------- the mail raven ---------- */
-  WA.mod_use = function (S, key, a, ap, aim) {
+  RV.use = function (S, key, a, ap, aim) {
     if (key !== 'raven') return null;
     const K = A.RAVEN, wa = S.wa;
     if (!S.tgt) {
@@ -258,7 +259,7 @@
   }
   /* phase 0 (the flight to the target), one step: returns 0 flying, 1 enters the orbit (r.phase = 1), 2 smashed into
    * something
-   * too fast (the caller crashes it). A pure function of r and the terrain, so the CPU (WA.raven_probe) flies the same
+   * too fast (the caller crashes it). A pure function of r and the terrain, so the CPU (RV.probe) flies the same
    * path. */
   function fly0(S, r, dt) {
     const K = A.RAVEN;
@@ -305,7 +306,7 @@
   /* CPU (sim/aia.js): fly a raven released from the worm's hand along `aim` toward the target (ts, ty) without touching
    * the
    * state: { ok: reaches the orbit above the target, crash, t: flight time, cs, cy: the orbit centre } */
-  WA.raven_probe = function (S, a, ap, aimS, aimY, ts, ty) {
+  RV.probe = function (S, a, ap, aimS, aimY, ts, ty) {
     const K = A.RAVEN;
     let gy = WPm().ground_below(S, ts, W().SY - 0.5);
     if (gy < -1e8) gy = ty;
@@ -343,7 +344,6 @@
       const r = wa.ravens[i];
       r.age += dt;
       S.lastBoom = S.time;
-      const owner = S.worms[r.owner];
       const wp = P.to_world(S, r.s, r.y);
       if (r.age > K.LIFE || wp.x < -40 || wp.z < -40 || wp.x > w.SX + 40 || wp.z > w.SZ + 40 || r.y > w.SY + 30) {
         sim().emit(S, EV.RAVENEND, { x: wp.x, y: r.y, z: wp.z });
@@ -463,21 +463,14 @@
     }
   }
 
-  WA.mods.push({
-    init(S) {
-      S.wa.boom = [];
-      S.wa.ravens = [];
-      S.wa.letters = [];
-    },
-    step(S, dt) {
-      const wa = S.wa;
-      if (wa.boom.length) stepBoom(S, dt);
-      if (wa.ravens.length) stepRavens(S, dt);
-      if (wa.letters.length) stepLetters(S, dt);
-    },
-    busy(S) {
-      const wa = S.wa;
-      return !!(wa.boom.length || wa.ravens.length || wa.letters.length);
-    }
-  });
+  // per step (weaponsa.step): the boomerangs, ravens and letters in flight (S.wa.boom / ravens / letters, made by
+  // weaponsa.init)
+  RV.step = function (S, dt) {
+    const wa = S.wa;
+    if (wa.boom.length) stepBoom(S, dt);
+    if (wa.ravens.length) stepRavens(S, dt);
+    if (wa.letters.length) stepLetters(S, dt);
+  };
+  // the turn waits while any of them flies
+  RV.busy = S => !!(S.wa.boom.length || S.wa.ravens.length || S.wa.letters.length);
 })(window.SS = window.SS || {});

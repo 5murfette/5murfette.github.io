@@ -2,7 +2,7 @@
  *
  * A drop is an INPUT command: the platform fills the Input fields { dbk, dbp0, dbp1, dbs, dby, dbsky } for ONE step,
  * sim.step calls DB.apply(S, inp) at a fixed point (right after the input is sanitised) and the sim creates the object
- * through the same functions the game itself uses (SC.add, WP.crate_make, AL.spawn_*, GD.make_*, FF.make, sim.explode
+ * through the same functions the game itself uses (SC.add, SS.crates.make, AL.spawn_*, GD.make_*, FF.make, sim.explode
  * ...). The sim never reads the UI. A drop is only applied while S.debugOn is set (platform: local / CPU matches and
  * the studio; never an online match), so replays and the instant-replay snapshot stay bit-identical and a hostile peer
  * cannot spawn anything.
@@ -141,12 +141,12 @@
     switch (kind) {
       case KIND.CRATE_WEAPON: case KIND.CRATE_HEALTH: case KIND.CRATE_TOOL: {
         const tool = kind === KIND.CRATE_TOOL;
-        if (!SS.weapons.crate_room(S, tool)) return fail(S, kind, 'too many crates in the air');
+        if (!SS.crates.room(S, tool)) return fail(S, kind, 'too many crates in the air');
         p = air_at(S, s, y, sky, 6);
         if (!p) return fail(S, kind, 'no room there');
         const wk = C.CRATE_POOL[M.clamp(p0 | 0, 0, C.CRATE_POOL.length - 1)], tk = DB.TOOLS[M.clamp(p0 | 0, 0, DB.TOOLS.length - 1)];
         S.crates.push(
-          SS.weapons.crate_make(
+          SS.crates.make(
             S,
             tool ? 'tool' : kind === KIND.CRATE_HEALTH ? 'health' : 'weapon',
             kind === KIND.CRATE_WEAPON ? wk : null,

@@ -25,31 +25,7 @@
   const SK = SS.skills = {};
   const W = () => SS.world;
   const sim = () => SS.sim;
-  const KS = C.SKILL = Object.assign({ FASTWALK_K: 1.6, LOWGRAV_K: 0.45, TINFOIL_K: 0.1 }, C.SKILL || {});
-  KS.TURNS = { freerot: 2, laser: 4, fastwalk: 3, lowgrav: 3, tinfoil: 1 };
-  // delivery table: [tool, weight]; the overload is rare (= SS.balance.TOOLS, the balance table; r7test checks they
-  // agree: no load-time overwrite)
-  KS.POOL = [['freerot', 14], ['laser', 20], ['fastwalk', 18], ['lowgrav', 18], ['tinfoil', 15], ['overload', 7]];
-  KS.NAMES = {
-    freerot: 'Free Rotation',
-    laser: 'Laser Sight',
-    fastwalk: 'Fast Walk',
-    lowgrav: 'Low Gravity',
-    tinfoil: 'Tinfoil Hat',
-    overload: 'Crate Overload'
-  };
-  KS.INFO = {
-    freerot: 'Turn the view freely, ignoring the rotation lock',
-    laser: 'A dotted line shows the exact path of bullet weapons',
-    fastwalk: 'Walk much faster',
-    lowgrav: 'Low gravity: jump higher and further',
-    tinfoil: 'Lightning does only 10 % damage, for the rest of the game',
-    overload: 'Ten crates rain down all over the map'
-  };
-  KS.OVERLOAD_N = 10;
-  KS.OVERLOAD_TOOL = 0.25;      // share of the non-health overload crates that are tools
-  KS.LASER_KEYS = { shotgun: 1, sniper: 1, handgun: 1, minigun: 1, uzi: 1, mgun: 1 };
-  KS.LASER_RANGE = 600;
+  const KS = C.SKILL;
   const rng = S => M.rng_next(S.skRng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
 
@@ -59,7 +35,7 @@
   SK.has = (w, k) => !!(w && w.skills && w.skills[k] > 0);
   SK.walk_k = (S, w) => (SK.has(w, 'fastwalk') ? KS.FASTWALK_K : 1);
   SK.gravity_k = (S, w) => (SK.has(w, 'lowgrav') ? KS.LOWGRAV_K : 1);
-  SK.is_bullet = key => !!(KS.LASER_KEYS[key] || (C.ARSENAL[key] && C.ARSENAL[key].bullet));
+  SK.is_bullet = key => !!(C.ARSENAL[key] && C.ARSENAL[key].bullet);
 
   /* ---------- granting and counting down ---------- */
   SK.grant = function (S, w, tool) {
@@ -164,7 +140,7 @@
   /* a tool delivery (the plan said 'tool') */
   SK.drop_tool = function (S) {
     const tool = pick(S), WP = SS.weapons;
-    if (!WP.crate_room(S, true)) return;     // (the tool crates' own cap, the oldest landed one makes room)
+    if (!SS.crates.room(S, true)) return;     // (the tool crates' own cap, the oldest landed one makes room)
     // random spot in space, no parachute
     if (S.eow) {
       if (SS.eow.crate_add(S, 'tool', null, tool))
@@ -174,10 +150,10 @@
     for (let tries = 0; tries < 12; tries++) {
       const s = rr(S, -25, 25), gy = WP.ground_below(S, s, W().SY - 0.5), at = P.to_world(S, s, gy);
       if (gy < -1e8 || gy < sim().surface_at(S, at.x, at.z) + 0.3 || (W().dry && !sim().in_play(S, at.x, at.z))) continue;
-      S.crates.push(SS.weapons.crate_make(S, 'tool', null, tool, P.to_world(S, s, M.min(W().SY - 1, gy + 14))));
+      S.crates.push(SS.crates.make(S, 'tool', null, tool, P.to_world(S, s, M.min(W().SY - 1, gy + 14))));
       sim().emit(S, EV.BANNER, {
         title: 'Tool delivery',
-        sub: KS.NAMES[tool] === 'Crate Overload' ? 'Something big is coming' : 'It drifts with the wind'
+        sub: tool === 'overload' ? 'Something big is coming' : 'It drifts with the wind'
       });
       return;
     }
@@ -185,10 +161,10 @@
   /* crate overload: OVERLOAD_N crates of different kinds fall from random heights over the whole map (3D, not only the
    * section): health, weapon and tool crates, no two the same */
   SK.overload = function (S, a) {
-    const w = W(), n = KS.OVERLOAD_N, used = {}, kinds = [], B = SS.balance, WPN = SS.weapons;
+    const w = W(), n = KS.OVERLOAD_N, used = {}, kinds = [], B = SS.balance;
     // drawn like the normal supply: the health share, the rarity-weighted weapon draw (B.crate_pick) and some
     // tools; no two weapons / tools the same
-    const hs = WPN.CRATE.HEALTH;
+    const hs = SS.crates.K.HEALTH;
     for (let guard = 0; kinds.length < n && guard < 400; guard++) {
       const u = rng(S);
       if (u < hs) {
@@ -211,18 +187,18 @@
     // space: at random spots, drifting
     if (S.eow)
       for (const e of kinds) {
-        if (WPN.crate_room(S, e.kind === 'tool') && SS.eow.crate_add(S, e.kind, e.weapon || null, e.tool || null)) made++;
+        if (SS.crates.room(S, e.kind === 'tool') && SS.eow.crate_add(S, e.kind, e.weapon || null, e.tool || null)) made++;
       }
     else
       for (const e of kinds) {
         // (the caps; the oldest landed crate of the class makes room)
-        if (!WPN.crate_room(S, e.kind === 'tool')) continue;
+        if (!SS.crates.room(S, e.kind === 'tool')) continue;
         for (let tries = 0; tries < 20; tries++) {
           const x = rr(S, 6, w.SX - 6), zr = rr(S, 6, w.SZ - 6), z = w.flat ? w.MZ : zr, top = M.max(w.top_at(x, z), w.SEA);
           if (w.dry && !sim().in_play(S, x, z)) continue;
           if (top < sim().surface_at(S, x, z) + 0.2) continue;                                      // not over the sea
           const y = M.min(w.SY - 1, top + rr(S, 10, 24));
-          S.crates.push(SS.weapons.crate_make(S, e.kind, e.weapon || null, e.tool || null, { x, y, z })); made++;
+          S.crates.push(SS.crates.make(S, e.kind, e.weapon || null, e.tool || null, { x, y, z })); made++;
           break;
         }
       }
@@ -265,11 +241,9 @@
       v = A.V;
     }
     const step = sniper ? 0.4 : 0.3, h = step / v, w = W();
-    out.pts.push(...(() => {
-      const p = P.to_world(S, s, y);
-      return [p.x, p.y, p.z];
-    })());
-    let kind = 'end', n = 0, lastPush = 0;
+    const p0 = P.to_world(S, s, y);
+    out.pts.push(p0.x, p0.y, p0.z);
+    let kind = 'end', n = 0;
     for (let L = 0; L < KS.LASER_RANGE; L += step) {
       if (sniper) {
         vy -= C.G * A.G * h;
@@ -280,11 +254,7 @@
         y += vy * step;
       }
       const p = P.to_world(S, s, y);
-      if (
-        y < 0.2
-        || y > w.SY + 30
-        || (w.dry ? sim().arena_r(p.x, p.z) > C.DRY.FAR_R : (p.x < -50 || p.z < -50 || p.x > w.SX + 50 || p.z > w.SZ + 50))
-      ) break;
+      if (y > w.SY + 30 || SS.flight.out_of_field(S, p.x, p.z, y, KS.LASER_OOB)) break;
       if (P.solid2(S, s, y)) {
         kind = 'ground';
         break;
@@ -301,7 +271,7 @@
         kind = 'prop';
         break;
       }
-      if (sniper && ++n % 2 === 0) out.pts.push(p.x, p.y, p.z), lastPush = L;
+      if (sniper && ++n % 2 === 0) out.pts.push(p.x, p.y, p.z);
     }
     const e = P.to_world(S, s, y);
     out.pts.push(e.x, e.y, e.z);

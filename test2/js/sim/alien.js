@@ -1475,7 +1475,7 @@
         }
       }
       if (!bp) continue;
-      const e = SS.blast.worm_effect(c, Wkg, bp, dmg), dm = M.min(X.hp, Math.round(e.dmg));
+      const dm = SS.blast.hp_loss(c, Wkg, bp, X.hp, dmg);
       v += 0.6 * dm + (dm >= X.hp ? 40 : 0);
     }
     return v;

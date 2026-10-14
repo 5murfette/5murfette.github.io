@@ -16,7 +16,7 @@
   'use strict';
   const M = SS.math, C = SS.CFG, MAT = C.MAT;
   const BG = SS.beachgen = {};
-  const sat = M.sat, sm = M.smooth;
+  const sat = M.sat;
 
   BG.K = {
     FORESHORE: 0.07,       // slope of the foreshore (4 deg)
@@ -144,7 +144,6 @@
     // one rock at (x, z): big enough -> terrain + record, else a render-only pebble; wet: may be kept under the surface
     const put = (x, z, rad, sub, lowK) => {
       const asp = RR(0.86, 1.17), yaw = RR(0, M.PI), ryk = RR(0.72, 1.02), seed = sd + 13 * (nid++);
-      const g0 = gnd(x, z);
       if (rad >= SIM_MIN) {
         const o = dome(W, hgt, extra, {
           x,
@@ -228,7 +227,6 @@
       H = W.H,
       K = BG.K,
       r = B.rng,
-      R = () => M.rng_next(r),
       RR = (a, b) => a + (b - a) * M.rng_next(r);
     B.huts = [];
     const gnd = (x, z) => hgt[M.clamp(Math.round(z / H), 0, W.NZ - 1) * W.NX + M.clamp(Math.round(x / H), 0, W.NX - 1)];

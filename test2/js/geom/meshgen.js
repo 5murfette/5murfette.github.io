@@ -104,7 +104,7 @@
         xs += wv;
       }
     }
-    const SXY = NX * NY, R2 = WIDE_R * WIDE_R * 4;           // (lattice units: H = 0.5 m)
+    const R2 = WIDE_R * WIDE_R * 4;           // (lattice units: H = 0.5 m)
     let tot = 0;
     // (per-axis squares: the same sums as before)
     for (let q = 0; q < 4; q++) {

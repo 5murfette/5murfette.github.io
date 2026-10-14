@@ -4,15 +4,20 @@
  * 1026 px/s = 28 m/s, so every weapon keeps its PoC speed ratio), accelerations k_A = 9.81 / 520, effect zones by the
  * worm (k_L = 0.45 / 7 m per px, long ranges by their share of the map), times unchanged, blasts by cube-root scaling
  * W = (R / 44)^3 x 1 kg (grenade = 1 kg; the bazooka keeps poc5's 0.8 kg), HP numbers unchanged.
- * Fields: kind charge | drop | target | hitscan | melee | dig | utility | rope | skip; ammo per team (Infinity = no
- * limit); key (PoC hotkey, informational: the platform maps keys); proj (projectile model, below); retreat (s);
- * payload (may be dropped from the rope); crate (in the supply-crate pool).
- * Projectile model (p.type = weapon or sub-munition key, all in C.PROJ): impact (bursts on contact) | bouncy (rest =
- * restitution, fric = tangential retention per bounce, fuse s, fuseSet = F key sets it) ; W (kg TNT-eq), push (the
- * blast's shove on worms x push, 1 when absent), windK, drag
+ * Fields: kind charge | drop | target | hitscan | melee | dig | utility | rope | skip (how it is aimed: power, a
+ * click, ...); use C.USE (what using it does: weapons.use dispatches on it); ammo per team (Infinity = no limit); key
+ * (PoC hotkey, informational: the platform maps keys); proj (projectile model, below); retreat (s); payload (may be
+ * dropped from the rope); crate (in the supply-crate pool); bullet (fires rounds: the laser sight draws their path);
+ * needsSky (not under a rock ceiling), needsStorm (only in a thunderstorm), needsAir (not in space); cpuRetreat (the
+ * CPU walks away after using it: its charge, fire or gas goes off near the thrower); rocket (a rocket motor: dropped
+ * from the rope it still fires, + 8 % of its launch speed). Projectile model (p.type = weapon or sub-munition key, all
+ * in C.PROJ): impact (bursts on contact) | bouncy (rest = restitution, fric = tangential retention per bounce, fuse s,
+ * fuseSet = F key sets it) ; W (kg TNT-eq), push (the blast's shove on worms x push, 1 when absent), windK, drag
  * (1/s), arm (s before terrain contact counts), split {kind, n, jx, vy0, vy1} (m/s), fire (burning patches), metal
  * (magnets pull it), boom (P66a explosion class C.BOOM: HE detonation when absent / 0, FUEL = napalm and other fuel /
- * incendiary), special handlers: homing | sheep | hole | foam | napalm | flame.
+ * incendiary), hitDs (the damage source of a hit by the shell itself, C.DS; PROJ_HIT when absent), burst (C.BURST: what
+ * it does when it goes off; the blast when absent), flight handlers: homing | sheep | napalm (airburst) | foam (the
+ * ball's radii).
  * C layout: const WeaponDef ARSENAL[NWEAPONS]; const ProjDef PROJ[NPROJ]. */
 (function (SS) {
   'use strict';
@@ -21,6 +26,8 @@
   const kV = 28 / 1026, kT = 28 / 821, kA = 9.81 / 520, kL = 0.45 / 7;
   const Wr = R => M.pow(R / 44, 3);
   C.SCALE = { kV, kT, kA, kL };
+  // the range upgrade (config.js C.RANGE): launch speeds x VK, reaches x RK, written into the numbers below
+  const RK = C.RANGE.K, VK = C.RANGE.VK;
 
   /* projectile models (dmg: the PoC explode() damage, PROJ table L3258: HP at the centre x pressureFactor x cover) */
   C.PROJ = {
@@ -35,7 +42,7 @@
     banana: { dmg: 30, bouncy: 1, rest: 0.68, fric: 0.94, fuse: 3, fuseSet: 1, W: Wr(36), push: 0.35, windK: 0, r: 0.1,
       split: { kind: 'bananalet', n: 5, jx: 100 * kT, vy0: 160 * kT, vy1: 280 * kT } },
     bananalet: { dmg: 52, impact: 1, arm: 0.12, W: Wr(46), windK: 0, r: 0.07 },
-    holy: { dmg: 100, bouncy: 1, rest: 0.3, fric: 0.8, fuse: 3, W: Wr(110), windK: 0, metal: 1, r: 0.12, big: 1 },
+    holy: { dmg: 100, bouncy: 1, rest: 0.3, fric: 0.8, fuse: 3, fuseSet: 1, W: Wr(110), windK: 0, metal: 1, r: 0.12, big: 1 },
     // turn / lock: PoC 1.2 rad/s, 0.8-1.8 s, made 2.5 x as agile: poc5 speeds are lower relative to the map (P.4), so
     // PoC values loop 25 m wide
     homing: {
@@ -47,9 +54,9 @@
       metal: 1,
       r: 0.06,
       homing: {
-        turn: 3.0,
-        accel: 100 * kV,
-        vmax: 1100 * kV,
+        turn: 3.0 * VK,
+        accel: 100 * kV * VK,
+        vmax: 1100 * kV * VK,
         fuel: 4,
         gLock: 0.3,
         gFly: 0.08,
@@ -59,15 +66,16 @@
         lock1: 1.2
       }
     },
-    dynamite: { dmg: 75, bouncy: 1, rest: 0.12, fric: 0.6, fuse: 5, W: Wr(72), windK: 0, metal: 1, r: 0.1 },
+    dynamite: { dmg: 75, bouncy: 1, rest: 0.12, fric: 0.6, fuse: 5, fuseSet: 1, W: Wr(72), windK: 0, metal: 1, r: 0.1 },
     sheep: { dmg: 75, sheep: 1, fuse: 10, W: Wr(64), r: 0.3, walk: 85 * kT, hopVy: 215 * kT, hopVx: 95 * kT, hop0: 0.7, hop1: 1.5 },
-    blackhole: { dmg: 0, bouncy: 1, rest: 0.35, fric: 0.85, fuse: 2.5, W: 0, windK: 0, metal: 1, r: 0.1, hole: 1 },
-    foam: { dmg: 0, impact: 1, W: 0, windK: 0.6, r: 0.1, foam: { rx: 2.7, ry: 1.9, rz: 1.5 } },
+    blackhole: { dmg: 0, bouncy: 1, rest: 0.35, fric: 0.85, fuse: 2.5, W: 0, windK: 0, metal: 1, r: 0.1, burst: C.BURST.HOLE },
+    foam: { dmg: 0, impact: 1, W: 0, windK: 0.6, r: 0.1, burst: C.BURST.FOAM, foam: { rx: 2.7, ry: 1.9, rz: 1.5 } },
     missile: { dmg: 30, impact: 1, W: Wr(34), windK: 0.6, metal: 1, r: 0.06 },
-    napalm: { boom: C.BOOM.FUEL, dmg: 12, impact: 1, W: Wr(18), windK: 0.4, r: 0.07, napalm: { n: 9, v0: 30 * kT, v1: 120 * kT }, fire: 5 },
-    flame: { boom: C.BOOM.FUEL, dmg: 3, impact: 1, arm: 0.05, W: 0, windK: 2.6, drag: 2.6, r: 0.04, flame: 1, fire: 1 },
+    napalm: { boom: C.BOOM.FUEL, dmg: 12, impact: 1, W: Wr(18), windK: 0.4, r: 0.07, napalm: { n: 9, v0: 30 * kT, v1: 120 * kT }, fire: 5,
+      hitDs: C.DS.PROJ_NAPALM },
+    flame: { boom: C.BOOM.FUEL, dmg: 3, impact: 1, arm: 0.05, W: 0, windK: 2.6, drag: 2.6, r: 0.04, burst: C.BURST.FLAME, fire: 1 },
     // PoC napalm-crate fuel gobs (R9 dmg 6)
-    fuel: { boom: C.BOOM.FUEL, dmg: 6, impact: 1, arm: 0.12, W: 0, windK: 1.8, drag: 1.25, r: 0.03, flame: 1, fire: 1 }
+    fuel: { boom: C.BOOM.FUEL, dmg: 6, impact: 1, arm: 0.12, W: 0, windK: 1.8, drag: 1.25, r: 0.03, burst: C.BURST.FLAME, fire: 1 }
   };
   /* black hole, sheep, napalm, sniper, tools: constants of the special handlers */
   C.ARMS = {
@@ -89,16 +97,16 @@
     NAPALM: { PATCH_R: 0.55, LIFE0: 4, LIFE1: 7, SHELL_FIRE: 6, TREE_R: 0.35 },
     TESLA: { DELAY: 0.7, W: Wr(24), R1: 3.9, D1: 16, R2: 5.5, D2: 26, BOLT_D: 10, CHAIN_R: 3.9, CONDUCT_R: 1.4, PUSH_UP: 120 * kL },
     MOAI: { V0: 260 * kT, SMASH_V: 170 * kT, SMASH_N: 2, W: Wr(32), LIFE: 3.5, ALT: 14, KG: 900 },
-    SHOTGUN: { RANGE: 25, DMG: 25, PUSH: 240 * kL, PUSH_UP: 90 * kL, W: 0.012, SHOTS: 2 },
-    SNIPER: { V: 3600 * kV, G: 0.5, RANGE: 60, PEN: 0.45, DMG: 45, PUSH: 120 * kL, KEEP: 0.92, PEN_STEP: 7 / 0.45, LIFE: 1.2 },
-    BAT: { DELAY: 0.22, REACH: 1.2, DMG: 30, PUSH: 640 * kL, PUSH_UP: 60 * kL },
+    SHOTGUN: { RANGE: 25 * RK, DMG: 25, PUSH: 240 * kL, PUSH_UP: 90 * kL, W: 0.012, SHOTS: 2 },
+    SNIPER: { V: 3600 * kV, G: 0.5, RANGE: 60 * RK, PEN: 0.45, DMG: 45, PUSH: 120 * kL, KEEP: 0.92, PEN_STEP: 7 / 0.45, LIFE: 1.2 * RK },
+    BAT: { DELAY: 0.22, REACH: 1.2 * RK, DMG: 30, PUSH: 640 * kL, PUSH_UP: 60 * kL },
     // P37 W4: WARM s the worm puts on its welding mask and lights the torch before it cuts; COOL s the mask goes back
     // up
     DIG: {
       TORCH_V: 30 * kT,
-      TORCH_T: 3.2,
+      TORCH_T: 3.2 * RK,
       DRILL_V: 36 * kT,
-      DRILL_T: 2.6,
+      DRILL_T: 2.6 * RK,
       R: 0.62,
       TICK: 0.05,
       DMG: 15,
@@ -110,17 +118,17 @@
     // P37 W4: ANGLES / STEP = the old 22.5° steps (touch / tests); TURN rad/s = the held keys (free angle); T 1.1 (was
     // 0.6): both faces of the plate must lie on the linear part of its distance field (half thickness >= the 0.5 m
     // voxel), or the faces come out lumpy
-    GIRDER: { L: 5.9, T: 1.1, D: 1.5, REACH: 14, ANGLES: 8, TURN: 1.9, STEP: Math.PI / 8 },
+    GIRDER: { L: 5.9, T: 1.1, D: 1.5, REACH: 14 * RK, ANGLES: 8, TURN: 1.9, STEP: Math.PI / 8 },
     // PoC bellows: 460 (1 - d / R) + 60 px/s within 170 px (10.9 m); worms on kL, shells on kT
-    BELLOWS: { RANGE: 170 * kL, COS: 0.82, V0: 460 * kL, V1: 60 * kL, UP: 65 * kL, PV0: 460 * kT, PV1: 60 * kT, PUP: 65 * kT },
-    MAGNET: { R: 9.3, A: 650 * kA, TURNS: 4, MAX: 4, ARM: 1, KG_CAP: 180 },
+    BELLOWS: { RANGE: 170 * kL * RK, COS: 0.82, V0: 460 * kL, V1: 60 * kL, UP: 65 * kL, PV0: 460 * kT, PV1: 60 * kT, PUP: 65 * kT },
+    MAGNET: { R: 9.3 * RK, A: 650 * kA, TURNS: 4, MAX: 4, ARM: 1, KG_CAP: 180 },
     // user 2026-10-07: a buried trap for worms only; throws the worm high (V_UP 30 m/s under the worms' gravity 33.4:
     // ~13 m up): 20 HP for the sudden launch + at least 20 from the landing
     SPRING: { R: 1.2, V_UP: 30, V_SIDE: 3.5, DMG: 20, FALL_MIN: 20, TURNS: 8, CHARGES: 3, COOL: 1.2, ARM: 1.5 },
     // user 2026-10-07: traps / mines burrow: planters' team sees them; everyone sees the planting for PLANT_SEEN s; the
     // map's own mines are shown to all (+ red arrows on the top map) for MAP_MINES_SEEN s from the first turn
     TRAPS: { PLANT_SEEN: 2.5, MAP_MINES_SEEN: 12, DETECT_FUSE0: 0.4, DETECT_FUSE1: 0.9 },
-    SCRAMBLER: { R: 7.7, ADD: 2 },
+    SCRAMBLER: { R: 7.7 * RK, ADD: 2 },
     MINE: { ARM: 3 },
     DROP_TOSS: { GROUND_VS: 40 * kT, GROUND_VY: 60 * kT, AIR_VS: 115 * kT, AIR_VY: 45 * kT }
   };
@@ -130,31 +138,46 @@
     bazooka: {
       name: 'Bazooka',
       kind: 'charge',
+      use: C.USE.LAUNCH,
+      rocket: 1,
       ammo: Infinity,
       key: '1',
-      vmax: 28,
+      vmax: 28 * VK,
       payload: 1,
       info: 'Rocket: bursts on contact; the wind pushes it'
     },
     grenade: {
       name: 'Grenade',
       kind: 'charge',
+      use: C.USE.LAUNCH,
       ammo: Infinity,
       key: '2',
-      vmax: 28,
+      vmax: 28 * VK,
       payload: 1,
       info: 'Bounces, bursts when its fuse runs out (F: 1-5 s)'
     },
-    cluster: { name: 'Cluster', kind: 'charge', ammo: 3, key: '3', vmax: 28, payload: 1, crate: 1, info: 'Bursts into five bomblets' },
-    shotgun: { name: 'Shotgun', kind: 'hitscan', ammo: Infinity, key: '4', info: 'Two shots per turn' },
-    bat: { name: 'Baseball Bat', kind: 'melee', ammo: 2, key: 'Z', retreat: 3, info: 'Knocks a worm far away' },
+    cluster: {
+      name: 'Cluster',
+      kind: 'charge',
+      use: C.USE.LAUNCH,
+      ammo: 3,
+      key: '3',
+      vmax: 28 * VK,
+      payload: 1,
+      crate: 1,
+      info: 'Bursts into five bomblets'
+    },
+    shotgun: { name: 'Shotgun', kind: 'hitscan', use: C.USE.SHOTGUN, bullet: 1, ammo: Infinity, key: '4', info: 'Two shots per turn' },
+    bat: { name: 'Baseball Bat', kind: 'melee', use: C.USE.BAT, ammo: 2, key: 'Z', retreat: 3, info: 'Knocks a worm far away' },
     homing: {
       name: 'Homing',
       kind: 'charge',
+      use: C.USE.LAUNCH,
+      rocket: 1,
       target: 1,
       ammo: 1,
       key: '5',
-      vmax: 1050 * kV,
+      vmax: 1050 * kV * VK,
       payload: 1,
       crate: 1,
       info: 'Click a target, then fire: the missile steers to it'
@@ -162,6 +185,8 @@
     dynamite: {
       name: 'Dynamite',
       kind: 'drop',
+      use: C.USE.DROP,
+      cpuRetreat: 1,
       ammo: 2,
       key: '6',
       payload: 1,
@@ -171,9 +196,10 @@
     banana: {
       name: 'Banana',
       kind: 'charge',
+      use: C.USE.LAUNCH,
       ammo: 1,
       key: '7',
-      vmax: 28,
+      vmax: 28 * VK,
       payload: 1,
       crate: 1,
       info: 'Very bouncy; splits into five heavy bomblets'
@@ -181,6 +207,9 @@
     airstrike: {
       name: 'Air Strike',
       kind: 'target',
+      use: C.USE.STRIKE,
+      needsSky: 1,
+      needsAir: 1,
       ammo: 1,
       key: '8',
       retreat: 4,
@@ -191,9 +220,10 @@
     holy: {
       name: 'Holy Grenade',
       kind: 'charge',
+      use: C.USE.LAUNCH,
       ammo: 0,
       key: '9',
-      vmax: 775 * kT,
+      vmax: 775 * kT * VK,
       payload: 1,
       crate: 1,
       info: 'Adjustable fuse (3 s by default), the biggest blast'
@@ -201,6 +231,7 @@
     sheep: {
       name: 'Sheep',
       kind: 'drop',
+      use: C.USE.DROP,
       ammo: 2,
       key: '0',
       retreat: 10,
@@ -211,9 +242,10 @@
     boulder: {
       name: 'Boulder',
       kind: 'charge',
+      use: C.USE.BOULDER,
       ammo: 1,
       key: 'B',
-      vmax: 730 * kT,
+      vmax: 730 * kT * VK,
       payload: 1,
       crate: 1,
       info: 'A heavy rock that rolls and crushes'
@@ -221,9 +253,11 @@
     blackhole: {
       name: 'Black Hole',
       kind: 'charge',
+      use: C.USE.LAUNCH,
+      cpuRetreat: 1,
       ammo: 0,
       key: 'H',
-      vmax: 730 * kT,
+      vmax: 730 * kT * VK,
       payload: 1,
       crate: 1,
       info: 'Pulls everything in for 3 s, then bursts'
@@ -231,6 +265,10 @@
     tesla: {
       name: 'Thunder Strike',
       kind: 'target',
+      use: C.USE.THUNDER,
+      needsSky: 1,
+      needsStorm: 1,
+      needsAir: 1,
       ammo: 1,
       key: 'L',
       retreat: 4,
@@ -240,6 +278,10 @@
     napalm: {
       name: 'Napalm',
       kind: 'target',
+      use: C.USE.STRIKE,
+      needsSky: 1,
+      needsAir: 1,
+      cpuRetreat: 1,
       ammo: 1,
       key: 'N',
       retreat: 4,
@@ -247,10 +289,23 @@
       crate: 1,
       info: 'Fire bombs burst in the air and rain burning gel'
     },
-    moai: { name: 'Moai Drop', kind: 'target', ammo: 0, key: 'O', retreat: 4, crate: 1, info: 'A stone head falls from the sky' },
+    moai: {
+      name: 'Moai Drop',
+      kind: 'target',
+      use: C.USE.MOAI,
+      needsSky: 1,
+      needsAir: 1,
+      ammo: 0,
+      key: 'O',
+      retreat: 4,
+      crate: 1,
+      info: 'A stone head falls from the sky'
+    },
     mine: {
       name: 'Mine',
       kind: 'drop',
+      use: C.USE.MINE,
+      cpuRetreat: 1,
       ammo: 2,
       key: 'X',
       payload: 1,
@@ -260,6 +315,7 @@
     drill: {
       name: 'Torch / Drill',
       kind: 'dig',
+      use: C.USE.DIG,
       ammo: 2,
       key: 'Y',
       retreat: 4,
@@ -269,6 +325,7 @@
     rope: {
       name: 'Ninja Rope',
       kind: 'rope',
+      use: C.USE.NONE,
       ammo: Infinity,
       key: 'R',
       info:
@@ -279,6 +336,8 @@
     parachute: {
       name: 'Parachute',
       kind: 'chute',
+      use: C.USE.NONE,
+      needsAir: 1,
       ammo: 3,
       key: 'M',
       crate: 1,
@@ -287,15 +346,26 @@
     zipline: {
       name: 'Zipline',
       kind: 'zip',
+      use: C.USE.NONE,
       ammo: 2,
       key: 'N9',
       crate: 1,
       info: 'Crossbow: a line to the first surface, aim level or down; you slide down it (Enter drops off)'
     },
-    teleport: { name: 'Teleport', kind: 'target', ammo: 2, key: 'T', retreat: 3, crate: 1, info: 'Click a free spot on the section' },
+    teleport: {
+      name: 'Teleport',
+      kind: 'target',
+      use: C.USE.TELEPORT,
+      ammo: 2,
+      key: 'T',
+      retreat: 3,
+      crate: 1,
+      info: 'Click a free spot on the section'
+    },
     girder: {
       name: 'Girder Plate',
       kind: 'target',
+      use: C.USE.GIRDER,
       ammo: 3,
       key: 'G',
       retreat: 3,
@@ -305,6 +375,8 @@
     bellows: {
       name: 'Bellows',
       kind: 'utility',
+      use: C.USE.BELLOWS,
+      needsAir: 1,
       ammo: 3,
       key: '-',
       retreat: 3,
@@ -314,6 +386,8 @@
     sniper: {
       name: 'Sniper Rifle',
       kind: 'hitscan',
+      use: C.USE.SNIPER,
+      bullet: 1,
       ammo: 3,
       key: 'C',
       retreat: 4,
@@ -323,9 +397,10 @@
     foam: {
       name: 'Foam Mortar',
       kind: 'charge',
+      use: C.USE.LAUNCH,
       ammo: 3,
       key: 'P',
-      vmax: 730 * kT,
+      vmax: 730 * kT * VK,
       payload: 1,
       crate: 1,
       info: 'Builds a block of weak foam (floats on water)'
@@ -333,6 +408,8 @@
     magnet: {
       name: 'Pocket Magnet',
       kind: 'drop',
+      use: C.USE.DEVICE,
+      cpuRetreat: 1,
       ammo: 2,
       key: 'I',
       retreat: 3,
@@ -343,6 +420,8 @@
     spring: {
       name: 'Spring Mine',
       kind: 'drop',
+      use: C.USE.DEVICE,
+      cpuRetreat: 1,
       ammo: 2,
       key: 'J',
       retreat: 3,
@@ -353,6 +432,7 @@
     scrambler: {
       name: 'Fuse Scrambler',
       kind: 'utility',
+      use: C.USE.SCRAMBLER,
       ammo: 2,
       key: 'U',
       retreat: 3,
@@ -363,6 +443,7 @@
     dog: {
       name: 'Robo Dog',
       kind: 'drop',
+      use: C.USE.GADGET,
       ammo: 2,
       key: '`',
       retreat: 4,
@@ -373,6 +454,7 @@
     punch: {
       name: 'Knockout Punch',
       kind: 'melee',
+      use: C.USE.GADGET,
       ammo: 3,
       key: 'N0',
       retreat: 3,
@@ -383,6 +465,7 @@
     sentry: {
       name: 'Sentry Gun',
       kind: 'drop',
+      use: C.USE.GADGET,
       ammo: 1,
       key: ';',
       retreat: 3,
@@ -393,6 +476,7 @@
     claymore: {
       name: 'Claymore',
       kind: 'drop',
+      use: C.USE.GADGET,
       ammo: 2,
       key: "'",
       retreat: 3,
@@ -403,6 +487,7 @@
     ffield: {
       name: 'Force Field',
       kind: 'drop',
+      use: C.USE.FIELD,
       ammo: 1,
       key: '/',
       retreat: 3,
@@ -413,15 +498,16 @@
     gravgun: {
       name: 'Gravity Gun',
       kind: 'charge',
+      use: C.USE.GADGET,
       ammo: 5,
       key: 'N.',
-      vmax: 24,
+      vmax: 24 * VK,
       retreat: 3,
       crate: 1,
       vec: 1,
       info: 'Fire: grab the outlined mine / barrel / crate / rock; hold fire and release to throw it'
     },
-    skip: { name: 'Skip Go', kind: 'skip', ammo: Infinity, key: 'K', info: 'End the turn: select, then press fire' }
+    skip: { name: 'Skip Go', kind: 'skip', use: C.USE.SKIP, ammo: Infinity, key: 'K', info: 'End the turn: select, then press fire' }
   };
   C.ARSENAL_ORDER = Object.keys(A);
   C.CRATE_POOL = C.ARSENAL_ORDER.filter(k => A[k].crate);

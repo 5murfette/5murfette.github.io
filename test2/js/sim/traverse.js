@@ -73,6 +73,45 @@
   };
   const NSUB = 8;
   const mem = S => S.ropeMem;
+  /* one sub-step h of the rope pendulum after its gravity (rope_step and the CPU's swing plan, aib.js): a pump toward
+   * mv while the rope is taut (tangential, or up where the rope lies almost flat), the air friction, the speed cap
+   * vmax, the move, then back onto the rope's circle (anchor as, ay; length len) without the outward speed beyond lim
+   * (the reel-in speed, <= 0). v holds the speed { vs, vy }, p the place { s, y } (one struct may be both). */
+  T.pendulum = function (v, p, as, ay, len, mv, h, lim, vmax) {
+    let dx = p.s - as, dy = p.y - ay, L = M.nz(M.len2(dx, dy), 1);
+    if (mv && L > len - 0.35) {
+      let ts = -dy / L, ty = dx / L;
+      if (Math.abs(ts) > 0.12) {
+        if (ts * mv < 0) {
+          ts = -ts;
+          ty = -ty;
+        }
+      } else if (ty < 0) {
+        ts = -ts;
+        ty = -ty;
+      }
+      v.vs += ts * RP.PUMP_K * C.G_WORM * h; v.vy += ty * RP.PUMP_K * C.G_WORM * h;
+    }
+    const damp = M.exp(-RP.DAMP * h);
+    v.vs *= damp;
+    v.vy *= damp;
+    const sp = M.len2(v.vs, v.vy);
+    if (sp > vmax) {
+      v.vs *= vmax / sp;
+      v.vy *= vmax / sp;
+    }
+    p.s += v.vs * h; p.y += v.vy * h;
+    dx = p.s - as; dy = p.y - ay; L = M.len2(dx, dy);
+    if (L > len) {
+      p.s = as + dx / L * len; p.y = ay + dy / L * len;
+      const rv = (v.vs * dx + v.vy * dy) / L;
+      if (rv > lim) {
+        v.vs -= (rv - lim) * dx / L;
+        v.vy -= (rv - lim) * dy / L;
+      }
+    }
+  };
+  const RPOS = { s: 0, y: 0 };
   /* the rope struct (S.rope, null when none): C: struct Rope { f32 s, y, len; u8 hooked; Pin pins[50]; i32 npins; f32
    * fixed (length wound round pins), slack; } */
   T.rope_make = (s, y, len, hooked) => ({ s, y, len, hooked, pins: [], fixed: 0, slack: 0 });
@@ -221,49 +260,16 @@
       a.vs = rv * rs + ts * k;
       a.vy = rv * ry + ty * k;
     }
-    // the pendulum in NSUB sub-steps (the rope constraint bleeds energy O(dt) per step: 4 sub-steps keep a 20 s swing
-    // within ~1 %): gravity, the pump, the friction, the move, then back onto the rope circle without its outward speed
+    // the pendulum in NSUB sub-steps (the rope constraint bleeds energy O(dt) per step: 8 sub-steps keep a 20 s swing
+    // within ~1 %): gravity (in space the chunks' field), then T.pendulum
     const reelV = (r.len - len0) / dt, lim = M.min(0, reelV), h = dt / NSUB;
-    let ns = s, ny = y;
+    RPOS.s = s; RPOS.y = y;
     for (let k = 0; k < NSUB; k++) {
-      // P68c: the pendulum under the chunk fields
       if (S.eow) SS.eow.rope_g(S, a, h);
       else a.vy -= GW * h;
-      dx = ns - r.s; dy = ny - r.y; L = M.nz(M.len2(dx, dy), 1);
-      // pumping: a tangential push toward the pressed side while the rope is taut (an upward push when the rope lies
-      // almost horizontal and the tangent is vertical)
-      if (mv && L > r.len - 0.35) {
-        let ts = -dy / L, ty = dx / L;
-        if (Math.abs(ts) > 0.12) {
-          if (ts * mv < 0) {
-            ts = -ts;
-            ty = -ty;
-          }
-        } else if (ty < 0) {
-          ts = -ts;
-          ty = -ty;
-        }
-        a.vs += ts * RP.PUMP_K * C.G_WORM * h; a.vy += ty * RP.PUMP_K * C.G_WORM * h;
-      }
-      const damp = M.exp(-RP.DAMP * h);
-      a.vs *= damp;
-      a.vy *= damp;
-      const sp = M.len2(a.vs, a.vy);
-      if (sp > RP.VMAX) {
-        a.vs *= RP.VMAX / sp;
-        a.vy *= RP.VMAX / sp;
-      }
-      ns += a.vs * h; ny += a.vy * h;
-      dx = ns - r.s; dy = ny - r.y; L = M.len2(dx, dy);
-      if (L > r.len) {
-        ns = r.s + dx / L * r.len; ny = r.y + dy / L * r.len;
-        const rv = (a.vs * dx + a.vy * dy) / L;
-        if (rv > lim) {
-          a.vs -= (rv - lim) * dx / L;
-          a.vy -= (rv - lim) * dy / L;
-        }
-      }
+      T.pendulum(a, RPOS, r.s, r.y, r.len, mv, h, lim, RP.VMAX);
     }
+    const ns = RPOS.s, ny = RPOS.y;
     r.slack = M.len2(ns - r.s, ny - r.y) < r.len - 0.05 ? 1 : 0;
     knock(S, a, ns, ny);
     const base = P.overlap2(S, s, y);

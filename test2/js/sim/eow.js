@@ -46,7 +46,7 @@
     REBAKE_PEN: 0.12, REBAKE_SPECK: 22, REBAKE_RETRY: 240, NUB_R: 1.1, HULL_HL: 16, HULL_WY: 4.4, HULL_WZ: 5.4, HULL_T: 1.0
   };
   const TAU = M.TAU;
-  const lerp = M.lerp, clamp = M.clamp;
+  const clamp = M.clamp;
   // P86: the surface pull of a body of radius R relative to a big chunk (smaller = weaker)
   const mass_k = R => K.MASS_K0 + (1 - K.MASS_K0) * clamp((R - K.MASS_R0) / (K.MASS_R1 - K.MASS_R0), 0, 1);
   E.mass_k = mass_k;
@@ -937,7 +937,8 @@
     worm_acc(S, a, q.x, q.y, q.z, c, sn, o);
     a.vs += o.s * h; a.vy += o.y * h;
   };
-  // a rigid body (prop, crate, drifting piece): the field instead of -y; pieces of a broken chunk drift (PIECE_G)
+  // a rigid body (prop, a thrown crate, a drifting piece): the field instead of -y; pieces of a broken chunk drift
+  // (PIECE_G)
   E.body_g = function (S, b, dt) {
     field(S, b.pos.x, b.pos.y, b.pos.z, fg);
     const a = C.G * K.BODY_G * (b.kind === 'chunk' ? K.PIECE_G / K.BODY_G : 1) * dt;
@@ -1833,16 +1834,16 @@
     }
     return null;
   };
-  // the supply of one turn (hook in weapons.js turn_start; per-type rates of the crate settings when the rules branch
+  // the supply of one turn (hook in crates.js drop; per-type rates of the crate settings when the rules branch
   // provides them, else the old chance)
   E.crate_turn = function (S, first) {
     if (first || S.turnNo < 2 || !S.active) return;
     const WP = SS.weapons,
-      CR = WP.CRATE,
+      CR = SS.crates.K,
       R = S.armRng,
       rate = typeof WP.crate_chance === 'function' ? WP.crate_chance(S, 'weapon') : CR.CHANCE;
     if (M.rng_next(R) >= rate) return;
-    if (!WP.crate_room(S, false)) return;
+    if (!SS.crates.room(S, false)) return;
     const p = E.crate_spot(S);
     if (!p) return;
     const kind = M.rng_next(R) < CR.HEALTH ? 'health' : 'weapon',
@@ -1850,7 +1851,7 @@
         ? (SS.balance ? SS.balance.crate_pick(M.rng_next(R)) : C.CRATE_POOL[Math.floor(M.rng_next(R) * C.CRATE_POOL.length)])
         : null,
       weapon = w0 && E.no_air(w0) ? 'bazooka' : w0;
-    const c = WP.crate_make(S, kind, weapon, null, p);
+    const c = SS.crates.make(S, kind, weapon, null, p);
     E.crate_drift(S, c);
     S.crates.push(c);
     SS.sim.emit(S, EV.BANNER, { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
@@ -1858,14 +1859,14 @@
   // P84 x P86: the round's crate plan (skills.crate_plan) chose this turn and the kind; in space it appears at a random
   // spot and drifts
   E.crate_drop = function (S, kind) {
-    const WP = SS.weapons, R = S.armRng;
-    if (!WP.crate_room(S, false)) return;
+    const R = S.armRng;
+    if (!SS.crates.room(S, false)) return;
     const p = E.crate_spot(S);
     if (!p) return;
     const w0 = kind === 'weapon'
       ? (SS.balance ? SS.balance.crate_pick(M.rng_next(R)) : C.CRATE_POOL[Math.floor(M.rng_next(R) * C.CRATE_POOL.length)])
       : null;
-    const c = WP.crate_make(S, kind, w0 && E.no_air(w0) ? 'bazooka' : w0, null, p);
+    const c = SS.crates.make(S, kind, w0 && E.no_air(w0) ? 'bazooka' : w0, null, p);
     E.crate_drift(S, c);
     S.crates.push(c);
     SS.sim.emit(S, EV.BANNER, { title: 'Supply drop', sub: 'A crate drifts in from the dark' });
@@ -1874,7 +1875,7 @@
   E.crate_add = function (S, kind, weapon, tool) {
     const p = E.crate_spot(S);
     if (!p) return null;
-    const c = SS.weapons.crate_make(S, kind, weapon && E.no_air(weapon) ? 'bazooka' : weapon, tool, p);
+    const c = SS.crates.make(S, kind, weapon && E.no_air(weapon) ? 'bazooka' : weapon, tool, p);
     E.crate_drift(S, c);
     S.crates.push(c);
     return c;
@@ -1987,14 +1988,6 @@
   E.crate_loose = function (S, c) {
     const u = c.eUp || cn;
     return !cprobe(W(), c.pos.x - u.x * 0.4, c.pos.y - u.y * 0.4, c.pos.z - u.z * 0.4, 0.2);
-  };
-  // a crate thrown by the gravity gun (weapons.js flyCrate): the field instead of -y
-  E.crate_g = function (S, c, dt) {
-    field(S, c.pos.x, c.pos.y, c.pos.z, fg);
-    const a = C.G * K.BODY_G * dt;
-    c.vel.x += fg.x * a;
-    c.vel.y += fg.y * a;
-    c.vel.z += fg.z * a;
   };
   // after a thrown crate touched down: its up from the terrain's normal, placed along it
   E.crate_settle = function (S, c) {
@@ -2251,11 +2244,8 @@
 
   /* ================= vacuum rules (P68d) =================
    * No air: nothing that needs air works (see docs/notes/P68c.md "Arsenal in vacuum"). no_air(key) = the weapon is
-   * disabled in this world. */
-  const NO_AIR = {
-    airstrike: 1, napalm: 1, moai: 1, tesla: 1, parachute: 1, bellows: 1, flamethrower: 1, raven: 1, boomerang: 1, gas: 1, acid: 1
-  };
-  E.no_air = key => NO_AIR[key] === 1;
+   * disabled in this world (its def has needsAir). */
+  E.no_air = key => !!C.WEAPONS[key] && C.WEAPONS[key].needsAir === 1;
   // the index of the body (chunk / hull part / debris) whose surface is nearest to a point (-1: none within 14 m)
   function body_of(S, x, y, z) {
     const B = S.eow.bodies;
@@ -2273,7 +2263,7 @@
   // a blast in vacuum: no air shock wave. Only the near-field gas push (inside the crater radius) and, through the
   // rock, a jolt for a worm on the SAME piece
   E.blast_k = function (S, c, Wkg, w, e) {
-    const Rk = 2.83 * M.cbrt(Wkg);
+    const Rk = SS.blast.poc_R(Wkg);
     if (e.r <= Rk * 1.05) return;
     const k = body_of(S, c.x, c.y, c.z) === body_of(S, w.pos.x, w.pos.y, w.pos.z) ? 0.35 * (1 - M.smoothstep(Rk, 2.1 * Rk, e.r)) : 0;
     e.dv *= k; e.dmg *= k;
@@ -2354,7 +2344,6 @@
    * A placed object's "up" is the pull's opposite where it sits (d.eu, kept by dev_fall), never the world's y. frame()
    * gives the right-handed basis (e1, u, e2 = e1 x u): with u = (0, 1, 0) it is the old world basis (x, y, z), so on
    * flat ground nothing changes; the sentry's yaw / pitch, its beam and the claymore's blast are measured in it. */
-  const FR0 = { e1x: 1, e1y: 0, e1z: 0, ux: 0, uy: 1, uz: 0, e2x: 0, e2y: 0, e2z: 1 };
   E.frame = function (u, out) {
     const ux = u ? u.x : 0, uy = u ? u.y : 1, uz = u ? u.z : 0;
     let rx = 1, rz = 0;
@@ -2503,7 +2492,6 @@
       }
     return bi;
   }
-  const jt = { x: 0, y: 0, z: 0 };
   // one tick of a thrusting worm: steer toward the body, a speed that shrinks with the distance; false = done (it
   // touched, or the time is up)
   function jet_thrust(S, w, dt) {

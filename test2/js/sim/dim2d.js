@@ -117,7 +117,7 @@
 
   /* crop the finished square lattice to the slab (world.js gen_step calls it before the column tops are built) */
   D.crop = function (W) {
-    const H = W.H, NXo = W.NX, NYo = W.NY, NZo = W.NZ, SXY = NXo * NYo;
+    const H = W.H, NXo = W.NX, NYo = W.NY, SXY = NXo * NYo;
     const ko = pick_slice(W), z0 = ko * H;
     const d0 = W.d, m0 = W.mat, h0 = W.heat, F = W.features || {}, li0 = F.lavaInit;
     W.resize(W.SX, C.DIM2.SZ);

@@ -5,16 +5,16 @@
  * Pieces:
  *   use(S, power)         the active worm uses S.weapon (charge / drop / target / hitscan / melee / dig / utility /
  *   skip)
- *   launch(S, key, ...)    a projectile in the plane (generic flight in sim.js stepProjectiles; specials here)
+ *   launch(S, key, ...)    a projectile in the plane (generic flight in sim/flight.js FL.step; specials here)
  *   pre(S, p, dt)          per-projectile behaviour before the generic flight (homing steering, napalm airburst);
  *                          returns true when it moved the projectile itself (sheep)
  *   detonate(S, p, pos)    blast + specials (split, fire, black hole, foam, napalm)
  *   step(S, dt)            holes, planes (air strike / napalm), lightning, moai, dig (torch / drill), sniper bullets,
- *                          devices (magnet / spring), supply crates
- *   turn_start(S)          device lifetimes, supply drops; settled(S); blast(S, c, W) (devices / crates in a blast)
+ *                          then the devices (sim/devices.js) and the supply crates (sim/crates.js)
+ *   turn_start(S)          device lifetimes (devices.turn_start), the round's crate drop (crates.drop); settled(S);
+ *                          blast(S, c, W) (devices and crates in a blast)
  * C layout: struct Hole { vec3 c; f32 t, carveT; }; struct Strike { u8 kind; i8 dir; f32 s, y, tS, rel[5]; u8 k; };
- *   struct Device { u8 kind, team; vec3 pos; f32 ds, dy, cool; u8 turns, charges, hp; }; struct Crate { vec3 pos;
- *   u8 kind; u8 weapon; bool landed; }; struct Bullet { f32 s, y, vs, vy, dmg, pen, life; }; struct Dig { ... }. */
+ *   struct Bullet { f32 s, y, vs, vy, dmg, pen, life; }; struct Dig { ... }. */
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane, MAT = C.MAT, A = C.ARMS;
@@ -27,6 +27,7 @@
   const rng = S => M.rng_next(S.armRng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
   const def = key => C.WEAPONS[key] || {};
+  const USE = C.USE, BURST = C.BURST;
 
   WP.init = function (S) {
     Object.assign(S, { holes: [], strikes: [], devices: [], crates: [], bullets: [], zaps: [], moais: [], dig: null,
@@ -120,10 +121,10 @@
   }
   WP.used = used;
   // the Thunder Strike calls the storm's own lightning: only usable during a thunderstorm (user 2026-10-07)
-  WP.needs_storm = key => key === 'tesla';
-  // (P38 R1) the sky weapons (air strike, napalm, moai drop, thunder) need open sky: not in the cave maps (their "sky"
-  // is a rock ceiling 40 m up: the planes / the rock spawned inside it and the charge was wasted)
-  WP.needs_sky = key => key === 'airstrike' || key === 'napalm' || key === 'moai' || key === 'tesla';
+  WP.needs_storm = key => def(key).needsStorm === 1;
+  // the sky weapons (air strike, napalm, moai drop, thunder) need open sky: not in the cave maps (their "sky" is a rock
+  // ceiling 40 m up: the planes / the rock would spawn inside it)
+  WP.needs_sky = key => def(key).needsSky === 1;
   // P68d: no air in space; P107: nothing that needs a footing from a life jacket
   WP.can_use = (S, key) => (G().ammo(S, S.active.team, key) > 0 || (S.shots > 0 && key === S.weapon))
     && !(WP.needs_storm(key) && !(S.weather && S.weather.storm))
@@ -152,56 +153,66 @@
       aim.s = sw.s;
       aim.y = sw.y;
     }
-    // stream / hitscan / target weapons of P37-W3
-    if (d.wa && d.kind !== 'charge' && SS.weaponsA) return SS.weaponsA.use(S, key, a, ap, aim);
-    // P37 W4: dog, punch, sentry, claymore, gravity gun
-    if (SS.gadgets && SS.gadgets.KEYS[key]) return SS.gadgets.use(S, a, key, power);
-    if (key === 'ffield' && SS.ffield) return SS.ffield.use(S, a);
-    switch (d.kind) {
-      case 'charge': {
-        if (d.target && !S.tgt) {
-          sim().log(S, 'Click a target first.', 0xffb27a);
-          S.charging = false;
-          return false;
-        }
-        // PoC launch: speed x max(0.08, power)
-        const pw = M.clamp(power != null ? power : S.power, 0, 1), vmax = d.vmax || 28, speed = vmax * M.max(C.WORM_DYN.MIN_POWER, pw);
-        if (key === 'boulder') launchBoulder(S, a, ap, aim, speed);
-        else if (d.wa && SS.weaponsA && SS.weaponsA.charge(S, key, a, ap, aim, speed)) { /* its own flight (boomerang) */ }
-        else {
-          const p = WP.launch(S, key, ap.s + aim.s * 0.7, a.pos.y + aim.y * 0.7, aim.s * speed, aim.y * speed, a.id);
-          if (d.wa && SS.weaponsA) SS.weaponsA.launched(S, key, p);
-          // (PoC: the target is used up)
-          if (d.target && S.tgt) {
-            p.ts = S.tgt.s;
-            p.ty = S.tgt.y;
-            p.dist = M.len2(S.tgt.s - p.s, S.tgt.y - p.y);
-            p.v0 = speed;
-            S.tgt = null;
-          }
-        }
-        sim().emit(S, EV.FIRE, { weapon: key, pos: P.to_world(S, ap.s + aim.s * 0.7, a.pos.y + aim.y * 0.7), speed });
-        sim().log(
-          S,
-          `${d.name} fired at ${speed.toFixed(1)} m/s, ${Math.round(S.aim * 180 / Math.PI)}° elevation.`,
-          sim().team_rgb(S, a.team)
-        );
-        used(S, key); return true;
-      }
-      case 'drop': return drop(S, a, key, ap, d);
-      case 'target':
+    switch (d.use) {
+      case USE.ARSENAL_B: return SS.weaponsA.use(S, key, a, ap, aim);
+      case USE.GADGET: return SS.gadgets.use(S, a, key, power);
+      case USE.FIELD: return SS.ffield.use(S, a);
+      case USE.LAUNCH:
+      case USE.BOULDER:
+      case USE.OWN_FLIGHT:
+        return charge(S, a, key, d, ap, aim, power);
+      case USE.DROP:
+      case USE.MINE:
+      case USE.DEVICE:
+        return drop(S, a, key, ap, d);
+      case USE.TELEPORT:
+      case USE.GIRDER:
+      case USE.STRIKE:
+      case USE.THUNDER:
+      case USE.MOAI:
         if (!S.tgt) {
           sim().log(S, 'Click a point on the section.', 0xffb27a);
           return false;
         }
         return target(S, a, key, S.tgt.s, S.tgt.y, d);
-      case 'hitscan': return key === 'sniper' ? sniper(S, a, ap, aim) : shotgun(S, a, ap, aim);
-      case 'melee': return bat(S, a, ap, aim);
-      case 'dig': return dig(S, a, ap, aim);
-      case 'utility': return key === 'bellows' ? bellows(S, a, ap, aim) : scrambler(S, a, ap);
-      case 'skip': sim().log(S, `${a.name} skips the turn.`); sim().end_turn(S, 0.2); return true;
+      case USE.SNIPER: return sniper(S, a, ap, aim);
+      case USE.SHOTGUN: return shotgun(S, a, ap, aim);
+      case USE.BAT: return bat(S, a, ap, aim);
+      case USE.DIG: return dig(S, a, ap, aim);
+      case USE.BELLOWS: return bellows(S, a, ap, aim);
+      case USE.SCRAMBLER: return scrambler(S, a, ap);
+      case USE.SKIP:
+        sim().log(S, `${a.name} skips the turn.`);
+        sim().end_turn(S, 0.2);
+        return true;
     }
     return false;
+  }
+  /* a charged use: the held power sets the launch speed (PoC: vmax x max(0.08, power)); the boulder and the boomerang
+   * fly their own way, the rest is a shell (a homing one takes the clicked target, which is used up) */
+  function charge(S, a, key, d, ap, aim, power) {
+    if (d.target && !S.tgt) {
+      sim().log(S, 'Click a target first.', 0xffb27a);
+      S.charging = false;
+      return false;
+    }
+    const pw = M.clamp(power != null ? power : S.power, 0, 1), vmax = d.vmax || 28, speed = vmax * M.max(C.WORM_DYN.MIN_POWER, pw);
+    if (d.use === USE.BOULDER) launchBoulder(S, a, ap, aim, speed);
+    else if (d.use === USE.OWN_FLIGHT) SS.weaponsA.charge(S, key, a, ap, aim, speed);
+    else {
+      const p = WP.launch(S, key, ap.s + aim.s * 0.7, a.pos.y + aim.y * 0.7, aim.s * speed, aim.y * speed, a.id);
+      if (d.wa) SS.weaponsA.launched(S, key, p);
+      if (d.target && S.tgt) {
+        p.ts = S.tgt.s;
+        p.ty = S.tgt.y;
+        p.dist = M.len2(S.tgt.s - p.s, S.tgt.y - p.y);
+        p.v0 = speed;
+        S.tgt = null;
+      }
+    }
+    sim().emit(S, EV.FIRE, { weapon: key, pos: P.to_world(S, ap.s + aim.s * 0.7, a.pos.y + aim.y * 0.7), speed });
+    sim().log(S, `${d.name} fired at ${speed.toFixed(1)} m/s, ${Math.round(S.aim * 180 / Math.PI)}° elevation.`, sim().team_rgb(S, a.team));
+    used(S, key); return true;
   }
 
   /* ---------- projectiles ---------- */
@@ -231,51 +242,10 @@
     sim().pool_push(S.proj, C.LIMITS.PROJ, p);
     return p;
   };
-  /* The supply crate struct: C: struct Crate { i32 id; f32 t0; u8 kind (0 weapon, 1 health, 2 tool); u8 weapon, tool
-   * (ids, 255 none); vec3 pos; u8 landed, held;
-   * u8 thrown; i16 by (the worm that threw it, -1 none); f32 pickT (that worm may not pick it up before), spin; vec3
-   * vel (valid while thrown); } */
-  WP.crate_make = function (S, kind, weapon, tool, pos) {
-    const c = {
-      id: ++S.crateId,
-      t0: S.time,
-      kind,
-      tool,
-      weapon,
-      pos,
-      landed: false,
-      held: false,
-      thrown: 0,
-      by: -1,
-      pickT: 0,
-      spin: 0,
-      vel: null
-    };
-    // P86: in space a crate is free-floating (no parachute): velocity + local up
-    return S.eow ? SS.eow.crate_init(c) : c;
-  };
   // per projectile, before the generic flight: homing steering, napalm airburst, sheep walking
   WP.pre = function (S, p, dt) {
     const pd = C.PROJ[p.type] || {};
-    if (pd.homing && p.ts != null && !p.wet) {
-      const h = pd.homing, lock = M.clamp(p.dist / M.max(1, p.v0) * 0.5, h.lock0, h.lock1);
-      if (p.age < lock) {
-        p.gk = h.gLock;
-        p.wk = h.windLock;
-      }
-      else if (p.age < lock + h.fuel) {
-        const blend = M.min(1, (p.age - lock) / h.blend), want = M.atan2(p.ty - p.y, p.ts - p.s), cur = M.atan2(p.vy, p.vs);
-        const da = M.clamp(M.wrap_angle(want - cur), -h.turn * blend * dt, h.turn * blend * dt),
-          sp = M.min(h.vmax, M.len2(p.vs, p.vy) + h.accel * dt);
-        p.vs = M.cos(cur + da) * sp;
-        p.vy = M.sin(cur + da) * sp;
-        p.gk = h.gFly;
-        p.wk = 0;
-      } else {
-        p.gk = 1;
-        p.wk = 1;
-      }
-    }
+    if (pd.homing && p.ts != null && !p.wet) SS.flight.homing(p, pd.homing, p.age, p.s, p.y, p.ts, p.ty, p.dist, p.v0, dt);
     if (pd.wa && SS.weaponsA) {
       const r = SS.weaponsA.pre(S, p, dt, pd);
       if (r) return r;
@@ -290,20 +260,15 @@
   // the burst: blast + specials. pos = world point. Returns nothing; the caller removes p.
   WP.detonate = function (S, p, pos) {
     const pd = C.PROJ[p.type] || def(p.type), name = (def(p.type).name || p.type);
-    // flame droplets, acid, gas (mortar / bomblets: the generic blast below)
-    if (pd.wa && SS.weaponsA && SS.weaponsA.detonate(S, p, pos)) return;
-    if (pd.hole) {
-      spawnHole(S, pos);
-      return;
+    switch (pd.burst) {
+      case BURST.HOLE: spawnHole(S, pos); return;
+      case BURST.FOAM: growFoam(S, pos, p); return;
+      case BURST.FLAME: firePatch(S, pos, A.NAPALM.PATCH_R); return;
+      case BURST.GEL: SS.weaponsA.gel_burst(S, pos); return;
+      case BURST.ACID: SS.weaponsA.acid_burst(S, p, pos); return;
+      case BURST.GAS: SS.weaponsA.gas_burst(S, pos); return;
     }
-    if (pd.foam) {
-      growFoam(S, pos, p);
-      return;
-    }
-    if (pd.flame) {
-      firePatch(S, pos, A.NAPALM.PATCH_R);
-      return;
-    }
+    // the blast (mortar shells and bomblets included) and the extras of the model
     if (SS.lab) SS.lab.bank_set(S, p.bank);                                   // P42: the bank shot's hard bounces
     if (pd.W > 0) sim().explode(S, pos, { W: pd.W, dmg: pd.dmg, name, frag: pd.frag, boom: pd.boom, push: pd.push }, p.owner);
     if (SS.lab) SS.lab.bank_set(S, 0);
@@ -322,14 +287,24 @@
         WP.launch(S, sp.kind, ap.s, pos.y + 0.3, 0.65 * p.vs + rr(S, -1, 1) * sp.jx, 0.65 * p.vy + rr(S, sp.vy0, sp.vy1), -1);
     }
   };
-  WP.water = function (S, p, pd, wp, surf) {           // at water entry; returns 'keep' | 'gone' | 'burst'
-    if (pd.wa && SS.weaponsA) return SS.weaponsA.water(S, p, pd, wp, surf);
+  // at water entry: 'keep' (flies / sinks on), 'gone' (fizzles), 'burst' (goes off on the surface)
+  WP.water = function (S, p, pd, wp, surf) {
     if (pd.homing) return 'keep';                       // PoC: homing missiles fly through water
-    if (pd.foam) {
-      growFoam(S, { x: wp.x, y: surf - 0.2, z: wp.z }, p);
-      return 'gone';
+    switch (pd.burst) {
+      case BURST.GEL:
+        sim().emit(S, EV.STEAM, { x: wp.x, y: surf, z: wp.z, power: 0.15 });
+        return 'gone';
+      case BURST.ACID:
+        sim().emit(S, EV.SPLASH, { x: wp.x, y: surf, z: wp.z, size: 0.5 });
+        return 'gone';
+      case BURST.FOAM:
+        growFoam(S, { x: wp.x, y: surf - 0.2, z: wp.z }, p);
+        return 'gone';
+      case BURST.FLAME:
+        sim().emit(S, EV.STEAM, { x: wp.x, y: surf, z: wp.z, power: 0.4 });
+        return 'gone';
     }
-    if (pd.flame || pd.napalm) {
+    if (pd.napalm) {
       sim().emit(S, EV.STEAM, { x: wp.x, y: surf, z: wp.z, power: 0.4 });
       return 'gone';
     }
@@ -404,7 +379,7 @@
     const T = A.DROP_TOSS, f = a.facing, air = a.air || !!S.rope;
     const vs = f * (air ? T.AIR_VS : T.GROUND_VS) + 0.4 * (a.air ? a.vs : 0), vy = air ? T.AIR_VY * 0.3 + 0.15 * a.vy : T.GROUND_VY;
     const s0 = ap.s + f * 0.6, y0 = a.pos.y + 0.2;
-    if (key === 'mine') {
+    if (d.use === USE.MINE) {
       const b = SS.scatter.add(S, 'mine', P.to_world(S, s0, y0), 0);
       const v = pw(S, vs, vy);
       b.vel.x = v.x;
@@ -415,21 +390,13 @@
       b.team = a.team;
       b.planted = S.time;
       if (SS.weaponsA && S.wa) b.fuseSet = SS.weaponsA.ws(S, a.team).mineF;
-    } else if (key === 'magnet' || key === 'spring') {
+    } else if (d.use === USE.DEVICE) {
       // PoC: 4 per kind
       if (S.devices.filter(o => o.kind === key).length >= A.MAGNET.MAX) {
         sim().log(S, `Device limit: ${A.MAGNET.MAX} ${key === 'magnet' ? 'magnets' : 'spring traps'}.`, 0xffb27a);
         return false;
       }
-      const aim = sim().aim_dir(S);
-      let ds = aim.s, dy = M.max(0.25, aim.y);
-      const l = M.len2(ds, dy);
-      ds /= l;
-      dy /= l;
-      sim().pool_push(S.devices, C.LIMITS.DEVICES, { kind: key, team: a.team, s: s0, y: y0, vy: 0, pos: P.to_world(S, s0, y0),
-        theta: S.theta, O: { x: S.O.x, z: S.O.z }, ds, dy,
-        turns: key === 'magnet' ? A.MAGNET.TURNS : A.SPRING.TURNS, charges: A.SPRING.CHARGES, cool: 0, t: 0, hp: 35,
-        id: S.devices.length + S.turnNo * 16, planted: S.time, revealed: false });
+      sim().pool_push(S.devices, C.LIMITS.DEVICES, SS.devices.make(S, key, a.team, s0, y0));
     } else WP.launch(S, key, s0, y0, key === 'sheep' ? f * 1.9 : vs, key === 'sheep' ? 3.8 : vy, a.id);
     if (key === 'dynamite' || key === 'mine') sim().emit(S, EV.FUSE, { weapon: key, x: a.pos.x, y: a.pos.y, z: a.pos.z });
     sim().log(S, `${a.name} drops a ${d.name.toLowerCase()}.`, sim().team_rgb(S, a.team));
@@ -439,15 +406,16 @@
   /* ---------- rope payloads (PoC dropFromRope): the selected weapon leaves with the swing's velocity ---------- */
   WP.rope_drop = function (S) {
     const a = S.active, key = S.weapon, d = def(key), ap = P.to_plane(S, a.pos);
-    if (d.kind === 'drop') return drop(S, a, key, ap, d);
+    if (d.use === USE.DROP || d.use === USE.MINE || d.use === USE.DEVICE) return drop(S, a, key, ap, d);
     if (d.target && !S.tgt) {
       sim().log(S, 'Click a target first.', 0xffb27a);
       return false;
     }
     const sp = M.len2(a.vs, a.vy), ds = sp > 0.1 ? a.vs / sp : a.facing, dy = sp > 0.1 ? a.vy / sp : 0;
-    if (key === 'boulder') launchBoulder(S, a, ap, { s: ds, y: dy }, sp);
+    if (d.use === USE.BOULDER) launchBoulder(S, a, ap, { s: ds, y: dy }, sp);
     else {
-      const boost = key === 'bazooka' || key === 'homing' ? 0.08 * (d.vmax || 28) : 0;
+      // (a rocket still fires its motor: + 8 % of its launch speed along the swing)
+      const boost = d.rocket ? 0.08 * (d.vmax || 28) : 0;
       const p = WP.launch(S, key, ap.s, a.pos.y - 0.55, a.vs + ds * boost, a.vy + dy * boost, a.id);
       // (P38 R1: the mortar's burst height / the gas fuse also apply to a payload dropped from the rope)
       if (d.wa && SS.weaponsA) SS.weaponsA.launched(S, key, p);
@@ -511,91 +479,98 @@
     return !!(w.under && SS.fort && SS.fort.is() && t > 80);
   };
 
-  /* ---------- target kinds ---------- */
+  /* ---------- target kinds: used at the clicked point (s, y) of the section ---------- */
   function target(S, a, key, s, y, d) {
-    if (key === 'teleport') {
-      // (P38 R1: PoC 10 < x < W - 10: not outside the map / the play area, and not on the very edge; refused before the
-      // charge is spent)
-      const tw = P.to_world(S, s, y), EM = 10;     // m from every map border (PoC)
-      if (tw.x < EM || !W().zin(tw.z, EM) || tw.x > W().SX - EM || !sim().in_play(S, tw.x, tw.z)) {
-        sim().log(S, 'Out of bounds.', 0xffb27a);
-        return false;
-      }
-      if (P.overlap2(S, s, y) > 0 || y < sim().surface_at(S, P.to_world(S, s, y).x, P.to_world(S, s, y).z) + 0.5 || y > W().SY - 1) {
-        sim().log(S, 'No room there.', 0xffb27a);
-        return false;
-      }
-      {
-        const q = P.to_world(S, s, y);
-        if (!WP.open_air(q.x, y, q.z)) {
-          sim().log(S, 'No room there: sealed in rock.', 0xffb27a);
-          return false;
-        }
-      }
-      const from = { x: a.pos.x, y: a.pos.y, z: a.pos.z }, to = P.to_world(S, s, y);
-      a.pos.x = to.x;
-      a.pos.y = y;
-      a.pos.z = to.z;
-      a.vs = 0;
-      a.vy = 0;
-      a.air = true;
-      S.rope = null;
-      S.teleT = A.TELEPORT.BEAM;
-      WP.tele_hold(a, to.x, y, to.z);
-      sim().emit(S, EV.TELEPORT, { wormId: a.id, from, to: { x: to.x, y, z: to.z } });
-      used(S, key); return true;
-    }
-    if (key === 'girder') return girder(S, a, s, y);
-    if (key === 'airstrike' || key === 'napalm') {
-      const Pl = A.PLANE,
-        dir = S.strikeDir || 1,
-        gy = M.max(W().SEA, groundBelow(S, s, W().SY - 0.5)),
-        alt = M.min(W().SY - 1, highest(S, s, 20) + Pl.ALT);
-      // release points: missiles leave the plane at (DROP_VS, DROP_VY) and fall alt - gy; they land GAP apart around s
-      const h = M.max(1, alt - gy), v0 = -Pl.DROP_VY, tf = (-v0 + Math.sqrt(v0 * v0 + 2 * C.G * h)) / C.G, lead = Pl.DROP_VS * tf;
-      const rel = [];
-      for (let k = 0; k < Pl.N; k++) rel.push(s - dir * lead + (k - (Pl.N - 1) / 2) * Pl.GAP * dir);
-      // (P38 R1: capped under a rock top)
-      if (P.solid2(S, s, alt)) {
-        sim().log(S, 'No room for the plane there.', 0xffb27a);
-        return false;
-      }
-      sim().pool_push(S.strikes, C.LIMITS.STRIKES, {
-        kind: key,
-        dir,
-        s: s - dir * Pl.START,
-        y: alt,
-        tS: s,
-        rel,
-        k: 0,
-        burstY: key === 'napalm' ? (alt + gy) / 2 : null,
-        owner: a.id
-      });
-      sim().emit(S, EV.PLANE, { kind: key, dir, y: alt });
-      sim().log(S, `${d.name} called in from the ${dir > 0 ? 'left' : 'right'}.`, sim().team_rgb(S, a.team));
-      used(S, key); return true;
-    }
-    if (key === 'tesla') {
-      sim().pool_push(S.zaps, C.LIMITS.ZAPS, { t: S.time + A.TESLA.DELAY, s, owner: a.id });
-      sim().emit(S, EV.CHARGE, { x: P.to_world(S, s, y).x, y: W().SY, z: P.to_world(S, s, y).z });
-      used(S, key);
-      return true;
-    }
-    if (key === 'moai') {
-      const gy = M.max(W().SEA, groundBelow(S, s, W().SY - 0.5)), pos = P.to_world(S, s, M.min(W().SY - 1, gy + A.MOAI.ALT));
-      const m = A.MOAI.KG, pts = [];
-      for (let i = 0; i < 6; i++) pts.push(0, -1.1 + i * 0.44, 0, 0.55 - Math.abs(i - 2.5) * 0.04);
-      const b = SS.bodies.add_shape(S, 'moai', pos, m, { x: m * 0.8, y: m * 0.25, z: m * 0.8 }, pts, MAT.ROCK);
-      b.vel.y = -A.MOAI.V0;
-      b.w.y = rr(S, -1.5, 1.5) * 0.3;
-      b.e = 0.03;
-      b.mu = 0.95;
-      b.moai = true;
-      sim().pool_push(S.moais, C.LIMITS.MOAIS, { body: b.id, smash: 0, t0: S.time, v: A.MOAI.V0, owner: a.id });
-      sim().emit(S, EV.MOAI, { body: b.id });
-      used(S, key); return true;
+    switch (d.use) {
+      case USE.TELEPORT: return teleport(S, a, key, s, y);
+      case USE.GIRDER: return girder(S, a, s, y);
+      case USE.STRIKE: return strike(S, a, key, s, d);
+      case USE.THUNDER: return thunder(S, a, key, s, y);
+      case USE.MOAI: return moai(S, a, key, s);
     }
     return false;
+  }
+  // the worm beams to the point: not off the map or out of play (PoC: 10 m from every border), not into the sea, a body
+  // or a sealed rock pocket; refused before the charge is spent
+  function teleport(S, a, key, s, y) {
+    const to = P.to_world(S, s, y), EM = 10;
+    if (to.x < EM || !W().zin(to.z, EM) || to.x > W().SX - EM || !sim().in_play(S, to.x, to.z)) {
+      sim().log(S, 'Out of bounds.', 0xffb27a);
+      return false;
+    }
+    if (P.overlap2(S, s, y) > 0 || y < sim().surface_at(S, to.x, to.z) + 0.5 || y > W().SY - 1) {
+      sim().log(S, 'No room there.', 0xffb27a);
+      return false;
+    }
+    if (!WP.open_air(to.x, y, to.z)) {
+      sim().log(S, 'No room there: sealed in rock.', 0xffb27a);
+      return false;
+    }
+    const from = { x: a.pos.x, y: a.pos.y, z: a.pos.z };
+    a.pos.x = to.x;
+    a.pos.y = y;
+    a.pos.z = to.z;
+    a.vs = 0;
+    a.vy = 0;
+    a.air = true;
+    S.rope = null;
+    S.teleT = A.TELEPORT.BEAM;
+    WP.tele_hold(a, to.x, y, to.z);
+    sim().emit(S, EV.TELEPORT, { wormId: a.id, from, to: { x: to.x, y, z: to.z } });
+    used(S, key); return true;
+  }
+  // the air strike / napalm planes come in from the strike side and release over the point
+  function strike(S, a, key, s, d) {
+    const Pl = A.PLANE,
+      dir = S.strikeDir || 1,
+      gy = M.max(W().SEA, groundBelow(S, s, W().SY - 0.5)),
+      alt = M.min(W().SY - 1, highest(S, s, 20) + Pl.ALT);
+    // release points: missiles leave the plane at (DROP_VS, DROP_VY) and fall alt - gy; they land GAP apart around s
+    const h = M.max(1, alt - gy), v0 = -Pl.DROP_VY, tf = (-v0 + Math.sqrt(v0 * v0 + 2 * C.G * h)) / C.G, lead = Pl.DROP_VS * tf;
+    const rel = [];
+    for (let k = 0; k < Pl.N; k++) rel.push(s - dir * lead + (k - (Pl.N - 1) / 2) * Pl.GAP * dir);
+    // (P38 R1: capped under a rock top)
+    if (P.solid2(S, s, alt)) {
+      sim().log(S, 'No room for the plane there.', 0xffb27a);
+      return false;
+    }
+    sim().pool_push(S.strikes, C.LIMITS.STRIKES, {
+      kind: key,
+      dir,
+      s: s - dir * Pl.START,
+      y: alt,
+      tS: s,
+      rel,
+      k: 0,
+      burstY: key === 'napalm' ? (alt + gy) / 2 : null,
+      owner: a.id
+    });
+    sim().emit(S, EV.PLANE, { kind: key, dir, y: alt });
+    sim().log(S, `${d.name} called in from the ${dir > 0 ? 'left' : 'right'}.`, sim().team_rgb(S, a.team));
+    used(S, key); return true;
+  }
+  // the Thunder Strike: the storm's lightning hits the point after A.TESLA.DELAY s (weapons.step: zaps)
+  function thunder(S, a, key, s, y) {
+    const p = P.to_world(S, s, y);
+    sim().pool_push(S.zaps, C.LIMITS.ZAPS, { t: S.time + A.TESLA.DELAY, s, owner: a.id });
+    sim().emit(S, EV.CHARGE, { x: p.x, y: W().SY, z: p.z });
+    used(S, key);
+    return true;
+  }
+  // the moai drop: a 900 kg stone head falls from the sky onto the point (weapons.step: moais)
+  function moai(S, a, key, s) {
+    const gy = M.max(W().SEA, groundBelow(S, s, W().SY - 0.5)), pos = P.to_world(S, s, M.min(W().SY - 1, gy + A.MOAI.ALT));
+    const m = A.MOAI.KG, pts = [];
+    for (let i = 0; i < 6; i++) pts.push(0, -1.1 + i * 0.44, 0, 0.55 - Math.abs(i - 2.5) * 0.04);
+    const b = SS.bodies.add_shape(S, 'moai', pos, m, { x: m * 0.8, y: m * 0.25, z: m * 0.8 }, pts, MAT.ROCK);
+    b.vel.y = -A.MOAI.V0;
+    b.w.y = rr(S, -1.5, 1.5) * 0.3;
+    b.e = 0.03;
+    b.mu = 0.95;
+    b.moai = true;
+    sim().pool_push(S.moais, C.LIMITS.MOAIS, { body: b.id, smash: 0, t0: S.time, v: A.MOAI.V0, owner: a.id });
+    sim().emit(S, EV.MOAI, { body: b.id });
+    used(S, key); return true;
   }
   /* girder plate (P37 W4): a steel plate GIRDER.L x T in the plane at the free angle S.plateAng (rad), D deep each side
    * of the plane */
@@ -686,7 +661,7 @@
           break;
         }
       if (hit) break;
-      if (devHit(S, wp, 25)) {
+      if (SS.devices.hit(S, wp, 25)) {
         hit = { wp };
         break;
       }
@@ -760,7 +735,7 @@
             break;
           }
         if (done) break;
-        if (devHit(S, wp, 45)) {
+        if (SS.devices.hit(S, wp, 45)) {
           done = true;
           break;
         }
@@ -1313,142 +1288,8 @@
     }
   }
 
-  /* ---------- devices: pocket magnet, spring mine ---------- */
-  function devHit(S, wp, dmg) {
-    for (const d of S.devices)
-      if (M.v3_dist(d.pos, wp) < 0.4) {
-        d.hp -= dmg;
-        return true;
-      }
-    return false;
-  }
-  const METAL = p => !!(C.PROJ[p.type] || {}).metal;
-  function stepDevices(S, dt) {
-    const w = W();
-    for (let i = S.devices.length - 1; i >= 0; i--) {
-      const d = S.devices[i];
-      if (d.hp <= 0) {
-        S.devices.splice(i, 1);
-        sim().emit(S, EV.DEVBREAK, { x: d.pos.x, y: d.pos.y, z: d.pos.z, kind: d.kind });
-        continue;
-      }
-      // falls to the ground below (in its own plane: devices keep the plane they were dropped in)
-      const below = S.eow
-        ? !(d.gv > 0)
-        : w.sample(d.pos.x, d.pos.y - 0.18, d.pos.z) > 0 || (SS.struct && SS.struct.floor_at(S, d.pos.x, d.pos.y, d.pos.z) > d.pos.y - 0.2);
-      if (S.eow) {
-        if (!SS.eow.dev_fall(S, d, dt)) {
-          S.devices.splice(i, 1);
-          continue;
-        }
-      } else if (!below) {
-        d.vy -= C.G * dt;
-        d.pos.y += d.vy * dt;
-        if (d.pos.y < 0.3 || d.pos.y < sim().surface_at(S, d.pos.x, d.pos.z) - 0.5) {
-          S.devices.splice(i, 1);
-          continue;
-        }
-      }
-      else {
-        d.vy = 0;
-        while (w.sample(d.pos.x, d.pos.y - 0.1, d.pos.z) > 0 && d.pos.y < w.SY) d.pos.y += 0.05;
-      }
-      d.t += dt; d.cool = M.max(0, d.cool - dt);
-      if (d.kind === 'magnet' && d.t > A.MAGNET.ARM && below) {
-        const K = A.MAGNET, dp = P.to_plane(S, d.pos);
-        for (const p of S.proj)
-          if (METAL(p)) {
-            const ds = dp.s - p.s, dy = d.pos.y - p.y, r = M.len2(ds, dy);
-            if (r > 0.8 && r < K.R && Math.abs(dp.t) < C.HALF + 1) {
-              const a = K.A * (1 - r / K.R) * dt;
-              p.vs += ds / r * a;
-              p.vy += dy / r * a;
-            }
-          }
-        for (const b of S.bodies)
-          if (b.prop === 'mine' || b.prop === 'barrel' || b.prop === 'girder') {
-            const r = M.v3_dist(b.pos, d.pos);
-            if (r > 0.8 && r < K.R)
-              SS.bodies.nudge(
-                S,
-                b,
-                { x: d.pos.x - b.pos.x, y: d.pos.y - b.pos.y, z: d.pos.z - b.pos.z },
-                M.min(b.mass, K.KG_CAP) * K.A * (1 - r / K.R) * dt
-              );
-          }
-      }
-      // the spring trap (user 2026-10-07): buried, for WORMS only (no props, shells or branches); a worm stepping on
-      // it is thrown high: 20 HP for the jolt, and its landing hurts at least 20 (w.springFall, sim.js landings)
-      if (d.kind === 'spring' && d.cool <= 0 && d.charges > 0 && d.t > A.SPRING.ARM && below) {
-        const K = A.SPRING, side = { x: M.cos(d.theta) * Math.sign(d.ds || 1), z: M.sin(d.theta) * Math.sign(d.ds || 1) };
-        let fired = false;
-        // (P38 R1: the trap is the planting TEAM's: it knows where it lies (info: "only your team sees", "an enemy
-        // worm"), so the planter and its teammates walk over it safely; before it threw its own worm the moment the 1.5
-        // s arming passed)
-        for (const o of S.worms)
-          if (!o.dead && o.hp > 0 && o.team !== d.team && M.v3_dist(o.pos, d.pos) < K.R + C.WORM_R && o.pos.y - d.pos.y < 1.2) {
-            sim().hurt(S, o, K.DMG, C.DS.SPRING);
-            o.springFall = true; o.pos.y += 0.1;
-            if (sim().ctl(S, o)) {
-              const pd = P.dir(S);
-              o.vs = (side.x * pd.x + side.z * pd.z) * K.V_SIDE;
-              o.vy = K.V_UP;
-              o.air = true;
-              S.rope = null;
-            }
-            else {
-              o.rest = false;
-              o.vel.x = side.x * K.V_SIDE;
-              o.vel.y = K.V_UP;
-              o.vel.z = side.z * K.V_SIDE;
-            }
-            fired = true; d.revealed = true;
-            sim().log(S, `${o.name} steps on a spring trap!`, 0xffb27a);
-          }
-        if (fired) {
-          d.charges--;
-          d.cool = K.COOL;
-          S.lastBoom = S.time;
-          sim().emit(S, EV.SPRING, { x: d.pos.x, y: d.pos.y, z: d.pos.z });
-          if (d.charges <= 0) S.devices.splice(i, 1);
-        }
-      }
-    }
-  }
-
-  /* ---------- supply crates (PoC dropCrate / collectCrate): parachute, wind drift, health or a weapon ---------- */
-  // MAX: P38 R1 cap on S.crates (landed crates were never removed: 80 after a long chaos match)
-  const CR = { HEALTH: 0.45, HP: 30, FALL: 55 * C.SCALE.kT, DRIFT: 0.35, PICK: 1.1, HOLD: 4, W: M.pow(34 / 44, 3), MAX: 24, MAX_TOOL: 10 };
-  WP.CRATE = CR;
-  /* P38 R3: room for one more crate of a class: weapon + health crates share CR.MAX, tool crates have their own
-   * CR.MAX_TOOL (they
-   * used to crowd the weapon crates out). When the class is full the OLDEST landed crate of it is removed (propbreak)
-   * instead of refusing, so unreachable crates never stop the supply for good. false: full of crates still in the air /
-   * held / thrown. */
-  WP.crate_room = function (S, tool) {
-    const cap = tool ? CR.MAX_TOOL : CR.MAX;
-    let n = 0, old = -1;
-    for (let i = 0; i < S.crates.length; i++) {
-      const c = S.crates[i];
-      if ((c.kind === 'tool') !== !!tool) continue;
-      n++;
-      if (c.landed && !c.held && !c.thrown && (old < 0 || c.t0 < S.crates[old].t0)) old = i;
-    }
-    if (n < cap) return true;
-    if (old < 0) return false;
-    const k = S.crates[old];
-    S.crates.splice(old, 1);
-    sim().emit(S, EV.PROPBREAK, { x: k.pos.x, y: k.pos.y, z: k.pos.z, kind: 'crate', why: 'expired' });
-    return true;
-  };
   WP.turn_start = function (S, first) {
-    for (let i = S.devices.length - 1; i >= 0; i--) {
-      const d = S.devices[i];
-      if (--d.turns <= 0) {
-        S.devices.splice(i, 1);
-        sim().emit(S, EV.DEVBREAK, { x: d.pos.x, y: d.pos.y, z: d.pos.z, kind: d.kind, expired: 1 });
-      }
-    }
+    SS.devices.turn_start(S);
     S.shots = 0; S.tgt = null; S.dig = null;
     if (SS.weaponsA) SS.weaponsA.turn_start(S);
     if (SS.gadgets) SS.gadgets.turn_start(S);
@@ -1462,181 +1303,16 @@
       SS.weather.wind_at(S, a.pos.x, a.pos.y + 6, a.pos.z, wv);
       S.strikeDir = wv.x * d.x + wv.z * d.z >= 0 ? 1 : -1;
     }
-    if ((drop !== 'weapon' && drop !== 'health') || !S.active || W().under) return;
-    // P86 x P84: the planned crate appears at random in space and drifts (no parachute)
-    if (S.eow) {
-      SS.eow.crate_drop(S, drop);
-      return;
-    }
-    // (P38 R3: full -> the oldest landed crate goes; only crates still in the air refuse)
-    if (!WP.crate_room(S, false)) return;
-    // a crate falls onto the new turn's section, somewhere it can be reached (± 25 m along it)
-    for (let tries = 0; tries < 12; tries++) {
-      const s = rr(S, -25, 25), gy = groundBelow(S, s, W().SY - 0.5), at = P.to_world(S, s, gy);
-      // (P68g: not over a hot vein)
-      if (
-        gy < -1e8
-        || gy < sim().surface_at(S, at.x, at.z) + 0.3
-        || (W().dry && !sim().in_play(S, at.x, at.z))
-        || (S.eow && SS.eow.hot_near(S, at.x, gy, at.z))
-      ) continue;
-      // (P68d: no crate of a weapon that needs air)   // P38 A2: weighted by rarity band (sim/balance.js)
-      const kind = drop,
-        w0 = kind === 'weapon'
-          ? (SS.balance ? SS.balance.crate_pick(rng(S)) : C.CRATE_POOL[Math.floor(rng(S) * C.CRATE_POOL.length)])
-          : null,
-        weapon = S.eow && w0 && SS.eow.no_air(w0) ? 'bazooka' : w0;
-      S.crates.push(WP.crate_make(S, kind, weapon, null, P.to_world(S, s, M.min(W().SY - 1, gy + 14))));
-      sim().emit(S, EV.BANNER, { title: 'Supply drop', sub: 'It drifts with the wind' });
-      return;
-    }
+    if ((drop === 'weapon' || drop === 'health') && S.active && !W().under) SS.crates.drop(S, drop);
   };
-  /* P38-A4: a crate thrown with the gravity gun flies ballistically (c.vel, c.thrown), tumbling; it hurts the worm it
-   * hits
-   * (CRATE_DMG_K HP per m/s, at most CRATE_DMG_MAX, nothing under CRATE_DMG_MIN_V) and stops dead on it, then lands on
-   * the ground where whoever's turn it is picks it up (not the thrower for CRATE_LOCK s). Returns false when it fell
-   * into the sea / out. */
-  function flyCrate(S, c, dt) {
-    const w = W(), KG = (C.TOOLB && C.TOOLB.GRAV) || { CRATE_DMG_K: 0.9, CRATE_DMG_MAX: 22, CRATE_DMG_MIN_V: 4 };
-    // P86: the field in space
-    if (S.eow) SS.eow.crate_g(S, c, dt);
-    else c.vel.y -= C.G * dt;
-    const n = M.max(1, Math.ceil(M.len3(c.vel.x, c.vel.y, c.vel.z) * dt / 0.15)), h = dt / n;
-    for (let q = 0; q < n; q++) {
-      const nx = c.pos.x + c.vel.x * h, ny = c.pos.y + c.vel.y * h, nz = c.pos.z + c.vel.z * h, sp = M.len3(c.vel.x, c.vel.y, c.vel.z);
-      for (const o of S.worms) {
-        if (o.dead || o.drowning || o.id === c.by && S.time < c.pickT - 1.0) continue;
-        if (M.len3(o.pos.x - nx, o.pos.y - ny, o.pos.z - nz) < C.WORM_R + 0.35 && sp > KG.CRATE_DMG_MIN_V) {
-          const dmg = M.min(KG.CRATE_DMG_MAX, Math.round(KG.CRATE_DMG_K * sp));
-          S.hitDir = { x: c.vel.x / sp, y: 0.25, z: c.vel.z / sp };
-          sim().hurt(S, o, dmg, C.DS.FLY_SUPPLY_CRATE, C.HF.DOT);
-          sim().emit(S, EV.CRATEHIT, { x: nx, y: ny, z: nz, wormId: o.id, dmg });
-          c.vel.x *= 0.15;
-          c.vel.y = Math.abs(c.vel.y) * 0.1;
-          c.vel.z *= 0.15;
-          c.by = -1;
-          break;
-        }
-      }
-      if (w.sample(nx, ny - 0.3, nz) > 0 || w.sample(nx, ny, nz) > 0) {                          // lands
-        if (c.vel.y < -1) sim().emit(S, EV.CRATEDROP, { x: c.pos.x, y: c.pos.y, z: c.pos.z, v: -c.vel.y });
-        c.landed = true;
-        c.thrown = 0;
-        c.vel = null;
-        c.pos.y = M.max(c.pos.y, 0);
-        if (S.eow) SS.eow.crate_settle(S, c);
-        else
-          for (let k = 0; k < 40 && w.sample(c.pos.x, c.pos.y - 0.3, c.pos.z) > 0; k++) c.pos.y += 0.05;
-        return true;
-      }
-      c.pos.x = nx; c.pos.y = ny; c.pos.z = nz;
-      if (S.eow) {
-        if (SS.eow.crate_out(S, c)) return false;
-      } else if (c.pos.y < sim().surface_at(S, c.pos.x, c.pos.z) || c.pos.y < 0.3) {
-        sim().emit(S, EV.SPLASH, { x: c.pos.x, y: c.pos.y, z: c.pos.z, size: 0.8 });
-        return false;
-      }
-    }
-    return true;
-  }
-  const wv = { x: 0, y: 0, z: 0 };
-  function stepCrates(S, dt) {
-    const w = W(), a = S.active;
-    for (let i = S.crates.length - 1; i >= 0; i--) {
-      const c = S.crates[i];
-      if (c.held) continue;                                                                      // P38-A4: in the gravity gun's beam
-      if (c.thrown && !c.landed) {
-        if (!flyCrate(S, c, dt)) S.crates.splice(i, 1);
-        continue;
-      }
-      if (!c.landed) {
-        if (SS.weather) SS.weather.wind_at(S, c.pos.x, c.pos.y, c.pos.z, wv);
-        else { wv.x = wv.z = 0; }
-        // P86: free-floating, caught by the field, lands on any side (no parachute, no wind)
-        if (S.eow) {
-          if (!SS.eow.crate_step(S, c, dt)) S.crates.splice(i, 1);
-          continue;
-        }
-        c.pos.x += wv.x * CR.DRIFT * dt; c.pos.z += wv.z * CR.DRIFT * dt; c.pos.y -= CR.FALL * dt;
-        if (w.sample(c.pos.x, c.pos.y - 0.35, c.pos.z) > 0) {
-          c.landed = true;
-          while (w.sample(c.pos.x, c.pos.y - 0.3, c.pos.z) > 0) c.pos.y += 0.05;
-        }
-        if (c.pos.y < sim().surface_at(S, c.pos.x, c.pos.z) || c.pos.y < 0.3) {
-          S.crates.splice(i, 1);
-          sim().emit(S, EV.SPLASH, { x: c.pos.x, y: c.pos.y, z: c.pos.z, size: 0.8 });
-          continue;
-        }
-        // ground blasted away (P68d: along the field)
-      } else if (S.eow ? SS.eow.crate_loose(S, c) : w.sample(c.pos.x, c.pos.y - 0.4, c.pos.z) <= 0) c.landed = false;
-      // (PoC: not while it still hangs on its chute)
-      if (
-        c.landed
-        && a
-        && !a.dead
-        && sim().ctl(S, a)
-        && M.v3_dist(a.pos, c.pos) < CR.PICK * (SS.lab ? SS.lab.pick_k(S, a) : 1)
-        && !(c.by === a.id && S.time < (c.pickT || 0))
-      ) {
-        S.crates.splice(i, 1);
-        if (c.kind === 'tool' && SS.skills) SS.skills.pickup(S, a, c);
-        else if (c.kind === 'health') {
-          a.hp += CR.HP;
-          if (SS.weaponsA && a.gas) SS.weaponsA.cure(S, a);
-          if (SS.alien && a.embryo) SS.alien.cure(S, a);
-          sim().emit(S, EV.PICKUP, { wormId: a.id, kind: 'health', amount: CR.HP });
-          sim().log(S, `${a.name} picks up +${CR.HP} HP.`, 0x79d98b);
-        }
-        else {
-          const t = S.teams[a.team];
-          if (t.ammo[c.weapon] !== Infinity) t.ammo[c.weapon] = (t.ammo[c.weapon] || 0) + 1;
-          sim().emit(S, EV.PICKUP, { wormId: a.id, kind: 'weapon', weapon: c.weapon });
-          sim().log(S, `${a.name} finds a ${C.ARSENAL[c.weapon].name}.`, 0xffb02e);
-        }
-      }
-    }
-  }
-  /* PoC: an impact shell meeting a parachuting supply crate bursts on it; an air-strike missile turns it into a
-   * "napalm crate" (a small blast + 26 burning fuel gobs: PoC napalmCrate) */
-  WP.crate_hit = function (S, p, wp) {
-    if (!S.crates.length || p.type !== 'missile') return false;
-    for (let i = 0; i < S.crates.length; i++) {
-      const c = S.crates[i];
-      if (c.landed || M.v3_dist(c.pos, wp) > 0.75) continue;
-      if (p.type === 'missile') {
-        S.crates.splice(i, 1);
-        // PoC (.., 16, 10)
-        sim().explode(S, c.pos, { W: M.pow(16 / 44, 3), dmg: 10, name: 'a napalm crate', boom: C.BOOM.FUEL }, p.owner);
-        const cp = P.to_plane(S, c.pos);
-        for (let k = 0; k < 26; k++) {
-          const a = rr(S, 0, Math.PI * 2), v = rr(S, 1.5, 7);
-          WP.launch(S, 'fuel', cp.s, c.pos.y, M.cos(a) * v, M.sin(a) * v * 0.6 + 1.5, -1);
-        }
-        sim().emit(S, EV.BANNER, { title: 'Napalm crate!', sub: 'The missile lit the supply drop' });
-        return true;
-      }
-      return false;            // P24.7 (PoC L3380): only air-strike missiles meet a falling crate; other shells pass by
-    }
-    return false;
-  };
-  // blasts reach devices and crates (sim.explode calls this)
-  // PoC explode(): every object within the pressure range 2.1 R (R = 44 px W^1/3 = 2.83 m W^1/3): a gadget loses
-  // dmg x pressureFactor HP, a crate is removed (a weapon crate goes off 0.12 s later: R34 dmg 30)
+  // blasts reach devices and crates (sim.explode calls this). PoC explode(): every object within the pressure range
+  // 2.1 R (R = blast.poc_R): a gadget loses dmg x pressureFactor HP, a crate is removed (crates.blast)
   WP.blast = function (S, c, Wkg, dmg) {
-    const R = 2.83 * M.cbrt(Wkg), dP = dmg != null ? dmg : 50 * M.pow(Wkg, 0.28);
-    for (const d of S.devices) {
-      const f = SS.blast.poc_factor(M.v3_dist(d.pos, c), R);
-      if (f > 0) d.hp -= dP * f;
-    }
+    const R = SS.blast.poc_R(Wkg);
+    SS.devices.blast(S, c, R, SS.blast.poc_dmg(Wkg, dmg));
     if (SS.gadgets) SS.gadgets.blast(S, c, Wkg, dmg);
     if (SS.ffield) SS.ffield.blast(S, c, Wkg, dmg);
-    for (let i = S.crates.length - 1; i >= 0; i--) {
-      const k = S.crates[i];
-      if (M.v3_dist(k.pos, c) > 2.1 * R) continue;
-      S.crates.splice(i, 1);
-      if (k.kind === 'weapon') sim().schedule(S, 0.12, k.pos, CR.W, 'crate', null, 30);
-      else sim().emit(S, EV.PROPBREAK, { x: k.pos.x, y: k.pos.y, z: k.pos.z, kind: 'crate', why: 'blast' });
-    }
+    SS.crates.blast(S, c, R);
   };
 
   WP.tele_hold = function (w, x, y, z) {
@@ -1684,8 +1360,8 @@
     if (S.strikes.length) stepStrikes(S, dt);
     if (S.zaps.length) stepZaps(S);
     if (S.moais.length) stepMoais(S, dt);
-    if (S.devices.length) stepDevices(S, dt);
-    if (S.crates.length) stepCrates(S, dt);
+    if (S.devices.length) SS.devices.step(S, dt);
+    if (S.crates.length) SS.crates.step(S, dt);
     if (SS.weaponsA) SS.weaponsA.step(S, dt);
     if (SS.gadgets) SS.gadgets.step(S, dt);
     if (SS.ffield) SS.ffield.step(S, dt);
@@ -1701,9 +1377,8 @@
     || (SS.gadgets && SS.gadgets.busy(S))
     || (SS.ffield && SS.ffield.busy(S))
   );
-  // a falling crate holds the turn's end only in its first HOLD s: a long drop (over the sea, a strong drift) kept the
-  // turn open to the 16 s settle cap (the lockstep test's second turn); later it just keeps falling into the next turn
-  WP.settled = S => !WP.busy(S) && !S.crates.some(c => !c.landed && S.time - (c.t0 == null ? -99 : c.t0) < CR.HOLD);
+  // the weapons are done and no fresh supply crate is still falling (crates.falling)
+  WP.settled = S => !WP.busy(S) && !SS.crates.falling(S);
   WP.stats = S => ({
     holes: S.holes.length,
     strikes: S.strikes.length,

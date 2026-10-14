@@ -168,7 +168,7 @@
       st.ver++;
       return;
     }
-    const dF = (K.T_FREEZE - T) * hrs / 24, a2 = K.A_GROW * K.A_GROW;
+    const dF = (K.T_FREEZE - T) * hrs / 24;
     for (let c = 0; c < st.N; c++) {
       if (h[c] <= 0) continue;
       // the water went (drained / dry)

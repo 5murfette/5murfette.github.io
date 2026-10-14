@@ -265,9 +265,13 @@
     }
     SS.bodies.remove(S, b);
     if (b.prop === 'barrel') {
+      // (the ground it stood on is read before the blast carves its crater: a drum on soil sits 3 m above the floor of
+      // its own crater afterwards and would count as a high-air burst)
+      const ground = W.top_at(c.x, c.z);
       SS.sim.explode(S, c, { W: P.BARREL.W, dmg: P.BARREL.DMG, name: 'barrel', boom: C.BOOM.FUEL }, null);
       const top = W.top_at(c.x, c.z), sea = SS.sim.surface_at ? SS.sim.surface_at(S, c.x, c.z) : W.SEA;
-      if (top > sea && c.y - top < 3) {                       // oil only burns on land (and not after a high-air burst)
+      // the oil only burns on land (it pools in the crater), and not after a high-air burst
+      if (top > sea && c.y - ground < 3) {
         const f = { x: c.x, y: top, z: c.z, r: P.BARREL.OIL_R, t1: S.time + P.BARREL.OIL_T };
         SS.sim.pool_push(S.flames, C.LIMITS.FLAMES, f);
         SS.sim.emit(S, EV.OILFIRE, { x: f.x, y: f.y, z: f.z, r: f.r, dur: P.BARREL.OIL_T });
@@ -297,11 +301,11 @@
       }
       if (b.prop === 'car' && !b.wreck && kPa > P.CAR.KPA) arm(S, b, P.CAR.DELAY0 + rand(S) * (P.CAR.DELAY1 - P.CAR.DELAY0));
       if (b.prop === 'barrel' && kPa > P.BARREL.KPA) arm(S, b, P.BARREL.DELAY0 + rand(S) * (P.BARREL.DELAY1 - P.BARREL.DELAY0));
-      // mines (user 2026-10-08): only the DIRECT blast zone, the part that digs the hole (PoC crater radius 44 px x
-      // W^1/3 = 2.83 m W^1/3), sets a mine off (PoC fuse 0.15-0.4 s); beyond it the pressure wave only throws it
+      // mines (user 2026-10-08): only the DIRECT blast zone, the part that digs the hole (blast.poc_R), sets a mine
+      // off (PoC fuse 0.15-0.4 s); beyond it the pressure wave only throws it
       // (bodies.blast: impulse + spin), it bounces and tumbles and lies where it lands, still live
       if (b.prop === 'mine') {
-        const Rh = P.MINE.HOLE_R * M.cbrt(Wkg);
+        const Rh = SS.blast.poc_R(Wkg);
         if (!b.disarmed && d - b.rb < Rh) arm(S, b, P.MINE.CHAIN0 + rand(S) * (P.MINE.CHAIN1 - P.MINE.CHAIN0));
         // PoC explode() objects: v += (n + 0.4 up) x pressureFactor x 380 px/s (x 0.0643 m/px). The user wants the mine
         // to fly and bounce nicely (Worms): the full PoC speed under 9.81 (not rescaled to the PoC gravity) and a 0.6

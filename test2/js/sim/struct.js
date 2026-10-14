@@ -111,7 +111,7 @@
   /* ---------- building a Warren through-truss from A to B ---------- */
   function build(S, A, B, look) {
     const L = M.len2(B.x - A.x, B.z - A.z), ux = (B.x - A.x) / L, uz = (B.z - A.z) / L, vx = -uz, vz = ux;
-    const n = M.max(3, Math.round(L / K.PANEL)), p = L / n, h = M.clamp(L / 10, K.DEPTH_MIN, K.DEPTH_MAX), hw = K.WIDTH / 2;
+    const n = M.max(3, Math.round(L / K.PANEL)), h = M.clamp(L / 10, K.DEPTH_MIN, K.DEPTH_MAX), hw = K.WIDTH / 2;
     const ns = 2, hs = hw;
     const st = {
       id: S.structId = (S.structId || 0) + 1,

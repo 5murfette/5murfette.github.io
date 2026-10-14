@@ -598,7 +598,6 @@
   };
 
   /* ----- rope ----- */
-  const RP = () => C.TRAV.ROPE;
   function hookRay(S, s0, y0, aim, dir) {
     const ds = dir * M.cos(aim), dy = M.sin(aim);
     let s = s0 + ds * 0.4, y = y0 + dy * 0.4;
@@ -635,60 +634,31 @@
     pl.mv = { kind: 2, st: 'plan', why: 'rope', t0: S.time, tmax: 30, goal, cand: cands, ci: 0, best: null, lvMin: 0, s00: ap.s };
     pl.phase = 'move'; return true;
   }
-  const lz = { s: 0, y: 0, vy: 0, wet: false, t: 0 };
-  // simulate the swing of a candidate (the rope_step pendulum without bends) and the flight after each possible release
+  const lz = { s: 0, y: 0, vy: 0, wet: false, t: 0 }, SW = { s: 0, y: 0, vs: 0, vy: 0 };
+  // simulate the swing of a candidate (traverse.js's pendulum without bends, no speed cap) and the flight after each
+  // possible release
   function swingPlan(S, a, goal, c) {
-    const R = RP(),
-      ap = { s: c.s0 },
-      gk = sim().gravity_k ? sim().gravity_k(S, a) : 1,
+    const gk = sim().gravity_k ? sim().gravity_k(S, a) : 1,
       GW = C.G_WORM * gk,
       dt = 1 / 60,
       NS = 8,
       h = dt / NS;
-    let s = c.s0, y = c.y0, vs = 0, vy = 0;
+    const st = SW;
+    let s = c.s0, y = c.y0;
+    st.vs = 0; st.vy = 0;
     const base = P.overlap2(S, s, y);
     let best = null;
     for (let i = 0; i < K.SWING_T / dt; i++) {
-      const mv = Math.abs(vs) > 0.8 ? (vs > 0 ? 1 : -1) : c.dir;
-      let ns = s, ny = y;
+      const mv = Math.abs(st.vs) > 0.8 ? (st.vs > 0 ? 1 : -1) : c.dir;
+      st.s = s; st.y = y;
       for (let k = 0; k < NS; k++) {
-        vy -= GW * h;
-        let dx = ns - c.as, dy = ny - c.ay, L = M.nz(M.len2(dx, dy), 1);
-        if (mv && L > c.len - 0.35) {
-          let ts = -dy / L, ty = dx / L;
-          if (Math.abs(ts) > 0.12) {
-            if (ts * mv < 0) {
-              ts = -ts;
-              ty = -ty;
-            }
-          } else if (ty < 0) {
-            ts = -ts;
-            ty = -ty;
-          }
-          vs += ts * R.PUMP_K * C.G_WORM * h; vy += ty * R.PUMP_K * C.G_WORM * h;
-        }
-        const dm = M.exp(-R.DAMP * h);
-        vs *= dm;
-        vy *= dm;
-        ns += vs * h;
-        ny += vy * h;
-        dx = ns - c.as;
-        dy = ny - c.ay;
-        L = M.len2(dx, dy);
-        if (L > c.len) {
-          ns = c.as + dx / L * c.len;
-          ny = c.ay + dy / L * c.len;
-          const rv = (vs * dx + vy * dy) / L;
-          if (rv > 0) {
-            vs -= rv * dx / L;
-            vy -= rv * dy / L;
-          }
-        }
+        st.vy -= GW * h;
+        SS.traverse.pendulum(st, st, c.as, c.ay, c.len, mv, h, 0, Infinity);
       }
-      if (P.overlap2(S, ns, ny) > base + 5) return best;                      // it would scrape the ground / a wall: stop here
-      s = ns; y = ny;
-      if (i > 18 && i % 4 === 0 && vs * c.dir > 2) {
-        landing(S, a, s, y, vs, vy, lz);
+      if (P.overlap2(S, st.s, st.y) > base + 5) return best;                  // it would scrape the ground / a wall: stop here
+      s = st.s; y = st.y;
+      if (i > 18 && i % 4 === 0 && st.vs * c.dir > 2) {
+        landing(S, a, s, y, st.vs, st.vy, lz);
         const v = spotValue(S, goal, c.sBase, lz.s, lz.y, lz);
         if (!best || v > best.v) best = { v, tRel: i * dt };
       }
@@ -1020,7 +990,7 @@
     let v = 0;
     for (const o of S.worms) {
       if (o.dead) continue;
-      const e = SS.blast.worm_effect(c, Wkg, o.pos, dmg), dm = M.min(o.hp, Math.round(e.dmg));
+      const dm = SS.blast.hp_loss(c, Wkg, o.pos, o.hp, dmg);
       v += o.team === me ? -(o === S.active ? 2.2 : 1.6) * dm : dm + (dm >= o.hp ? 25 : 0);
     }
     return v;
@@ -1030,19 +1000,13 @@
   AB.fire = function (S, pl, a, b, d, gauss, inp) {
     const k = b.special;
     if (k === 'ffield') {
-      S.weapon = 'ffield';
-      a.facing = b.facing;
-      pl.phase = 'done';
-      pl.fired = { wpn: k, v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) };
+      SS.ai.commit(S, pl, a, b, k);
       WPm().use(S, 0);
       return true;
     }
     if (k === 'sniper') {
-      S.weapon = 'sniper';
-      a.facing = b.facing;
+      SS.ai.commit(S, pl, a, b, k);
       S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.3 * (hasSkill(a, 'laser') ? 0.5 : 1), -1.5, 1.5);
-      pl.phase = 'done';
-      pl.fired = { wpn: k, v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) };
       WPm().use(S, 0);
       return true;
     }
@@ -1071,9 +1035,8 @@
     const g = pl.grav;
     if (!g || S.time - g.t < 0.5) return false;
     const b = g.b;
-    a.facing = b.facing;
+    SS.ai.commit(S, pl, a, b, 'gravgun');
     S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5);
-    pl.phase = 'done'; pl.fired = { wpn: 'gravgun', v: b.v, target: SS.ai.foe_wid(pl.foes[b.fi]) };
     SS.sim.fire(S, M.clamp(b.pw + gauss(S) * d.noiseP * 0.5, 0.05, 1));
     return true;
   };

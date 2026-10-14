@@ -61,9 +61,32 @@
     // m: a worm 14 px wide = 0.9 m) x WALK_K. Everything that needs a worm's walking speed (sim, AI, render) asks
     // sim.walk_speed(S, w) (which adds the fast-walk skill), never C.WALK_POC.
     WALK_POC: 2.96, WALK_K: 0.7, WALK: 2.072,
-    /* tool-crate skills (worm.skills, turns left; tinfoil 1 = the rest of the game): speed / gravity / lightning
-     * factors */
-    SKILL: { FASTWALK_K: 1.6, LOWGRAV_K: 0.45, TINFOIL_K: 0.1 },
+    /* tool-crate skills (sim/skills.js; worm.skills = turns left, tinfoil 1 = the rest of the game): the speed /
+     * gravity / lightning factors, the turns each tool grants, the delivery draw [tool, weight] (the overload is rare;
+     * = the balance table's B.TOOLS, r7test checks they agree), the names and help lines, the overload's crate count
+     * and tool share, the laser sight's range and how far beyond the lattice its line may run (m) */
+    SKILL: {
+      FASTWALK_K: 1.6, LOWGRAV_K: 0.45, TINFOIL_K: 0.1,
+      TURNS: { freerot: 2, laser: 4, fastwalk: 3, lowgrav: 3, tinfoil: 1 },
+      POOL: [['freerot', 14], ['laser', 20], ['fastwalk', 18], ['lowgrav', 18], ['tinfoil', 15], ['overload', 7]],
+      NAMES: {
+        freerot: 'Free Rotation',
+        laser: 'Laser Sight',
+        fastwalk: 'Fast Walk',
+        lowgrav: 'Low Gravity',
+        tinfoil: 'Tinfoil Hat',
+        overload: 'Crate Overload'
+      },
+      INFO: {
+        freerot: 'Turn the view freely, ignoring the rotation lock',
+        laser: 'A dotted line shows the exact path of bullet weapons',
+        fastwalk: 'Walk much faster',
+        lowgrav: 'Low gravity: jump higher and further',
+        tinfoil: 'Lightning does only 10 % damage, for the rest of the game',
+        overload: 'Ten crates rain down all over the map'
+      },
+      OVERLOAD_N: 10, OVERLOAD_TOOL: 0.25, LASER_RANGE: 600, LASER_OOB: 50
+    },
     /* Worm dynamics = the PoC's exactly (the way worms jump), converted by LENGTH only (1 px =
      * 0.0643 m, times unchanged), so jumps, landings, skids and rope swings keep their PoC shapes AND timings. That
      * makes the worms' own gravity G_WORM = 520 px/s^2 = 33.44 m/s^2 (worm bodies only; projectiles, props, water and
@@ -171,27 +194,40 @@
       LEGACY_TOOL: { off: 0, low: 3, normal: 5, high: 9 }
     },
 
-    /* Weapons (C: enum WeaponId + const WeaponDef[]). W = TNT-equivalent charge (kg, game-scale). */
-    WEAPONS: {
-      grenade: { id: 0, name: 'Grenade', W: 1.0, fuse: 3, windK: 0.6, frag: true },     // frag: casing shrapnel (X2)
-      bazooka: { id: 1, name: 'Bazooka', W: 0.8, windK: 1.0, frag: true },
-      rope: { id: 2, name: 'Ninja rope' }
+    /* Weapons (C: enum WeaponId + const WeaponDef[]): the merged per-weapon views (projectile model + arsenal entry),
+     * built by sim/arsenal.js and sim/arsenala.js with WEAPON_ORDER / WEAPON_KEYS */
+    WEAPONS: {},
+    /* the range upgrade, the one knob of every reach (sim/arsenal.js, arsenala.js): ballistic range ~ v^2 / g, so the
+     * launch speeds of the charged shells are x VK and the reaches (hitscan range, bat, bellows, girder, scrambler,
+     * magnet, torch / drill run time, minigun, handgun) x K; K 1 = the PoC's ranges */
+    RANGE: { K: 2, VK: Math.sqrt(2) },
+    /* tool box B (sim/gadgets.js: dog, punch, sentry gun, claymore, gravity gun; sim/ffield.js: the force field).
+     * DOG: released with a short aimed throw (THROW_V m/s along the aim angle: ~2 m flat, ~5 m at 45 degrees; the power
+     * input scales it 0.6..1) and ARMED only after it has walked ARM_DIST m AND ARM_T s have passed: nothing touches it
+     * off before (a worm underfoot, the thrower himself). Unarmed it walks straight ahead on the aim side, armed it
+     * steers to the nearest foe, so a thrower standing on an enemy sees it run away, turn and come back. */
+    TOOLB: {
+      DOG: { SPEED: 5.2, ACC: 14, R: 0.36, TIMER: 8, REACH: 1.05, HOP_MAX: 0.95, STEP_UP: 0.28, DMG: 55, W: 1.5, BARK0: 1.2, BARK1: 3.0,
+        MAX: 4, THROW_V: 7.5, ARM_DIST: 2.5, ARM_T: 0.8 },
+      PUNCH: { REACH: 1.8, DY: 1.3, DT: 0.9, VY: 11, HIT_T: 0.16, DMG: 30, V_OUT: 20, V_UP: 12, SPIN: 14 },
+      SENTRY: { AMMO: 100, HP: 60, RANGE: 14, SPIN: 1.7, BEAM_Y: 0.5, BURST: 6, ROUND_T: 0.09, SPREAD: 0.03, DMG: 4, ROUND_RANGE: 30,
+        PUSH: 0.6, TURNS: 12, COOL: 0.6, TURN: 12, ER0: 0.05, ER1: 0.2, KNOCK_F: 0.15, FALL_T: 0.5, MAX: 6, ALIGN: 0.08 },
+      CLAY: { ARM: 10, LASER: 3, PELLETS: 140, CONE: 0.9, RANGE: 9, DMG: 5, PUSH: 0.3, HP: 30, TURNS: 12, REACH: 1.8, W_CORE: 0.1, MAX: 8 },
+      GRAV: { CRATE_LOCK: 1.5, CRATE_DMG_K: 0.9, CRATE_DMG_MAX: 22, CRATE_DMG_MIN_V: 4, RANGE: 9, HOLD: 1.6, FOLLOW: 14, PULL_V: 30,
+        MASS_MAX: 60, MINE_FUSE: 3, AIM_COS: 0.35 },
+      FIELD: { R: 4.2, HP: 90, LEAK: 0.4, CONTAIN_K: 1.6, CAP: 8, TURNS: 8, MAX: 3, UP: 0.4, MIN_REL: 0.25, REL_K: 1.6, REL_DELAY: 0.22,
+        MAX_FREE: 24, CRACK_BLOBS: 5, CRACK_R: 1.2, CRACK_V: 7, ROCK_R: 6, SPEED_MIN: 6, V_KEEP: 0.85, INSPECT_T: 4 }
     },
-    WEAPON_ORDER: ['grenade', 'bazooka', 'rope'],
 
     /* Blast physics (Kinney–Graham free-air overpressure/impulse, Hopkinson–Cranz cube-root scaling).
      * Far from the charge the energy flux falls with the inverse square of distance and the overpressure with its
      * square root (~1/R); worm damage goes with the square of the pressure ratio, i.e. ~1/R^2 far out. */
     BLAST: {
       P0: 101.325,          // ambient pressure (kPa)
-      DMG_MAX: 70,          // HP at zero distance
-      P_HALF: 180,          // reflected overpressure (kPa) where damage is 1/4 of DMG_MAX
-      REFLECT: 2.2,         // reflection factor on a body facing the wave
-      AREA_K: 0.92,         // worm frontal area * reflection (m^2) for knock-back
-      WORM_KG: 6,           // worm mass (kg) for knock-back
-      FRICTION_DV: 2.0,     // speed (m/s) eaten by ground friction / inertia before a worm is shoved
-      VMAX: 17,             // knock-back speed cap (m/s)
       SHIELD_L: 0.5,        // metres of rock that cut the wave to 1/e of its unshielded part
+      // the PoC damage model (worms, devices): the hole radius per W^(1/3) (44 px at 0.0643 m/px), the pressure
+      // factor's R; a bare charge (no weapon damage) does POC_DMG W^POC_DMG_E
+      POC_R: 2.83, POC_DMG: 50, POC_DMG_E: 0.28,
       LEAF_I: 20,           // impulse (Pa·s) where leaves start to strip (W 1: Z ~ 9 m; was 8 -> stripped within ~20 m)
       LEAF_SPAN: 80,        // ...and are fully stripped at LEAF_I + LEAF_SPAN (W 1: ~83 % at 2 m, 24 % at 5 m)
       FIRE_R: 1.25,         // fireball radius / W^(1/3) (m): ignites dry fuel
@@ -204,6 +240,19 @@
     // detonation: flash, shock wave, dust and soot, no fireball, almost no fire; FUEL = deflagration / incendiary
     // (napalm, fuel barrel, car tank, a molotov or thermobaric): rolling fireball, burning ground
     BOOM: { HE: 0, FUEL: 1 },
+    /* what a shell does when it goes off (ProjDef .burst; weapons.detonate dispatches on it): the blast (with the
+     * split / fire / holy extras of its model; absent = BLAST), a black hole, a foam ball, a burning patch, the
+     * flamethrower's sticky gel, an acid splash, a gas cloud (the last three: weaponsa.js) */
+    BURST: { BLAST: 0, HOLE: 1, FOAM: 2, FLAME: 3, GEL: 4, ACID: 5, GAS: 6 },
+    /* how a weapon is used (WeaponDef .use; weapons.use dispatches on it): through the module that owns it (arsenal B:
+     * weaponsa.js, a gadget: gadgets.js, the force field: ffield.js); a charged launch (the boulder and the boomerang
+     * fly their own way); set down at the feet (a fused shell, a mine, a device); at a clicked point (teleport, girder,
+     * air strike / napalm, thunder, moai); the hitscan, melee and tool uses; skip. NONE: not used through weapons.use
+     * (rope, parachute, zipline: traverse.js) */
+    USE: {
+      NONE: 0, ARSENAL_B: 1, GADGET: 2, FIELD: 3, LAUNCH: 4, BOULDER: 5, OWN_FLIGHT: 6, DROP: 7, MINE: 8, DEVICE: 9, TELEPORT: 10,
+      GIRDER: 11, STRIKE: 12, THUNDER: 13, MOAI: 14, SNIPER: 15, SHOTGUN: 16, BAT: 17, DIG: 18, BELLOWS: 19, SCRAMBLER: 20, SKIP: 21
+    },
     MAT, MATS,
 
     /* Map types. Each one is a generator in sim/worldgen.js plus a look preset in render. */
@@ -341,7 +390,7 @@
     MAP: { SIDE: { normal: 96, large: 128 }, DEFAULT: { volcanic: 'large' } },
     // the version of the sim rules: bump it when they change (net.js adds a hash of the arsenal / biome tables); peers
     // of other builds refuse each other
-    BUILD: 'p121-fix-m',
+    BUILD: 'p114-r4-m',
     // first: the team that starts (0..3 or 'random' = PoC; the menu default)
     SETTINGS: { mapSize: 'auto', first: 0, volcanoes: 'auto', biome: 'temperate', seed: 7,
       collapse: true, weather: 'auto', lava: 'auto', wind: 'auto', quality: 'auto', slice: 'thin', ghost: 0, ghostAuto: true, under: 'off',
@@ -602,7 +651,6 @@
         W: M.pow(40 / 44, 3),
         DMG: 42,
         LAVA_T: 0.5,
-        HOLE_R: 2.83,
         CHAIN0: 0.15,
         CHAIN1: 0.4,
         THROW: 380 * 0.0643,

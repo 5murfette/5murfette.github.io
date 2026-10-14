@@ -40,7 +40,6 @@
   const flags = S => (S.lab && S.settings ? ((S.settings.labFlags | 0) & B4) : 0);
   const on = (S, bit) => (flags(S) & bit) !== 0;
   const rnd = S => M.rng_next(S.lab.b4.rng);
-  const rr = (S, a, b) => a + (b - a) * rnd(S);
   const KIND = ['ground', 'tree', 'worm', 'steel', 'mine', 'barrel', 'metal', 'crate'];
   const KIND_TEXT = ['the ground', 'a tree', 'a worm', 'a steel girder', 'a mine', 'a fuel barrel', 'a metal prop', 'a supply crate'];
 
@@ -239,7 +238,7 @@
     return 0;
   };
   function arm(S) {
-    const L = S.lab.b4, wd = W(), O = S.O || { x: wd.MX, z: wd.MZ };
+    const wd = W(), O = S.O || { x: wd.MX, z: wd.MZ };
     const alive = [];
     for (const w of S.worms)
       if (!w.dead) alive.push(w);
@@ -320,7 +319,7 @@
     }
     if (kind === 7 && crate) {
       S.crates.splice(S.crates.indexOf(crate), 1); boom = false;
-      sim.explode(S, crate.pos, { W: WP.CRATE.W, dmg: 30, name: 'crate' }, null);
+      sim.explode(S, crate.pos, { W: SS.crates.K.W, dmg: SS.crates.K.DMG, name: 'crate' }, null);
     }
     if (boom) sim.explode(S, p, { W: C.LIGHTNING.W, dmg: 10, name: 'lightning' }, null);
     if (SS.veg && SS.veg.ignite_disc) SS.veg.ignite_disc(S, p.x, p.y, p.z, K.ZAP_IGN_R, I);
@@ -364,9 +363,10 @@
     const rc = K.RC[key];
     if (!rc) return 0;
     if (rc.imp != null) return rc.imp / K.WORM_KG;
+    // (the kick is the PoC launch speed's: the range upgrade's x VK makes shells fly farther, not kick harder)
     const d = C.ARSENAL[key] || {},
       pw = M.clamp(power != null ? power : S.power, 0, 1),
-      speed = (d.vmax || 28) * M.max(C.WORM_DYN.MIN_POWER, pw);
+      speed = (d.vmax || 28) / C.RANGE.VK * M.max(C.WORM_DYN.MIN_POWER, pw);
     return rc.m * rc.k * speed / K.WORM_KG;
   }
   /* metres the worm would slide back (the CPU asks before it fires) */
@@ -455,7 +455,7 @@
 
   /* ---------- SCAVENGE ---------- */
   function scavenge(S) {
-    const L = S.lab.b4, WP = SS.weapons;
+    const L = S.lab.b4;
     for (const w of S.worms) {
       if (!w.dead || (L.scav & (1 << w.id))) continue;
       if (w.gravePending) continue;
@@ -473,10 +473,10 @@
         const v = t.ammo[k];
         if (v !== Infinity && v > 0 && C.ARSENAL[k].crate) list.push(k);
       }
-      if (!list.length || !WP.crate_room(S, false)) continue;
+      if (!list.length || !SS.crates.room(S, false)) continue;
       const key = list[M.min(list.length - 1, Math.floor(rnd(S) * list.length))];
       t.ammo[key] -= 1;
-      const g = w.grave, c = WP.crate_make(S, 'weapon', key, null, { x: g.x, y: g.y + 0.55, z: g.z });
+      const g = w.grave, c = SS.crates.make(S, 'weapon', key, null, { x: g.x, y: g.y + 0.55, z: g.z });
       S.crates.push(c);
       SS.sim.emit(S, EV.LABSCAV, { wormId: w.id, weapon: key, x: g.x, y: g.y + 0.3, z: g.z });
       SS.sim.log(S, `${w.name}'s pack: a ${C.ARSENAL[key].name} lies by the grave.`, 0xffd890);

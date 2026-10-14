@@ -19,13 +19,12 @@
  * aim). */
 (function (SS) {
   'use strict';
-  const C = SS.CFG, M = SS.math, P = SS.plane, MAT = C.MAT, A = C.ARMS;
+  const C = SS.CFG, M = SS.math, P = SS.plane, A = C.ARMS;
   const EV = C.EV;
   const WA = SS.weaponsA = {};
   const W = () => SS.world;
   const sim = () => SS.sim;
   const WPm = () => SS.weapons;
-  WA.mods = [];                                            // sub-modules (raven.js): { init(S), step(S, dt), busy(S) }
   const HOLD = 2.5;                                        // s a fresh gas cloud / acid spot holds the turn
   const rng = S => M.rng_next(S.wa.rng);
   const rr = (S, a, b) => a + (b - a) * rng(S);
@@ -36,8 +35,6 @@
     S.wa = { rng: M.rng_make(((Math.imul(S.settings.seed | 0, 40503) + 0x37a1) >>> 0) || 1), stream: null, spots: [], acid: [], clouds: [],
       boom: [], ravens: [], letters: [],
       lastRound: null, ebox: null, n: 0 };
-    for (const m of WA.mods)
-      if (m.init) m.init(S);
   };
   const ens = S => {
     if (!S.wa) WA.init(S);
@@ -196,14 +193,11 @@
       return true;
     }
     if (key === 'handgun') return handgun(S, a, ap, aim);
-    if (WA.mod_use) {
-      const r = WA.mod_use(S, key, a, ap, aim);
-      if (r != null) return r;
-    }
-    return false;
+    const r = SS.raven.use(S, key, a, ap, aim);
+    return r != null ? r : false;
   };
-  // charge kinds with their own flight (boomerang): called from weapons.js use() before the generic launch
-  WA.charge = function (S, key, a, ap, aim, speed) { return WA.mod_charge ? WA.mod_charge(S, key, a, ap, aim, speed) : false; };
+  // charge kinds with their own flight (boomerang, raven.js): called from weapons.js use() before the generic launch
+  WA.charge = (S, key, a, ap, aim, speed) => SS.raven.charge(S, key, a, ap, aim, speed);
   // a generic projectile of a wa kind has just been launched (mortar: remember the burst height)
   WA.launched = function (S, key, p) {
     if (key === 'mortar') {
@@ -455,7 +449,7 @@
         }
         sim().emit(S, EV.MGIMPACT, { x: px, y: py, z: pz, nx, ny, nz, mat });
         if (strength < 1e8) {
-          const R = K.CHIP * M.clamp(M.sqrt ? M.sqrt(140 / strength) : Math.sqrt(140 / strength), 0.2, 1.25);
+          const R = K.CHIP * M.clamp(Math.sqrt(140 / strength), 0.2, 1.25);
           if (w.carve(x, y, z, R) > 0) mark_edit(S, x, y, z, R);
         }
         if (rng(S) < 0.3)
@@ -533,49 +527,26 @@
     if (!(w.stickT > S.time)) { sim().emit(S, EV.STICK, { wormId: w.id}); }
     w.stickT = M.max(w.stickT || 0, M.min(t, S.time + K.STICK1 + 1));
   }
-  WA.detonate = function (S, p, pos) {      // returns true when handled completely (no generic blast)
-    const pd = C.PROJ[p.type] || {};
-    if (pd.flamedrop) {
-      // sticks to what it hits: a worm (burns it 1-3 s), a prop (lights it), else the ground / a wall (a burning patch)
-      let tw = null, td = C.WORM_R + 0.4;
-      for (const w of S.worms) {
-        if (w.dead || w.drowning) continue;
-        const d = hyp3(w.pos, pos);
-        if (d < td) {
-          td = d;
-          tw = w;
-        }
+  // the flamethrower's gel drop goes off (weapons.detonate, C.BURST.GEL): it sticks to what it hits, a worm (burns it
+  // 1-3 s), a prop (lights it), else the ground / a wall (a burning patch)
+  WA.gel_burst = function (S, pos) {
+    let tw = null, td = C.WORM_R + 0.4;
+    for (const w of S.worms) {
+      if (w.dead || w.drowning) continue;
+      const d = hyp3(w.pos, pos);
+      if (d < td) {
+        td = d;
+        tw = w;
       }
-      if (tw) {
-        stickWorm(S, tw);
-        S.hitDir = null;
-        return true;
-      }
-      for (const b of S.bodies)
-        if (b.prop && b.burn < 0 && hyp3(b.pos, pos) < b.rb + 0.3 && SS.scatter && SS.scatter.ignite) SS.scatter.ignite(S, b);
-      gelPatch(S, pos);
-      return true;
     }
-    if (pd.acid) {
-      acidBurst(S, p, pos);
-      return true;
+    if (tw) {
+      stickWorm(S, tw);
+      S.hitDir = null;
+      return;
     }
-    if (pd.gas) {
-      gasBurst(S, pos);
-      return true;
-    }
-    return false;                              // mortar impact, bomblet: the generic blast
-  };
-  WA.water = function (S, p, pd, wp, surf) {
-    if (pd.flamedrop) {
-      sim().emit(S, EV.STEAM, { x: wp.x, y: surf, z: wp.z, power: 0.15 });
-      return 'gone';
-    }
-    if (pd.acid) {
-      sim().emit(S, EV.SPLASH, { x: wp.x, y: surf, z: wp.z, size: 0.5 });
-      return 'gone';
-    }
-    return pd.impact ? 'burst' : 'keep';
+    for (const b of S.bodies)
+      if (b.prop && b.burn < 0 && hyp3(b.pos, pos) < b.rb + 0.3 && SS.scatter && SS.scatter.ignite) SS.scatter.ignite(S, b);
+    gelPatch(S, pos);
   };
   // before the generic flight: the mortar's airburst
   WA.pre = function (S, p, dt, pd) {
@@ -593,7 +564,7 @@
     sim().emit(S, EV.AIRBURST, { x: wp.x, y: p.y, z: wp.z });
     sim().emit(S, EV.MORTARBURST, { x: wp.x, y: p.y, z: wp.z, H });
     // the fall time from the burst: bomblets leave with +-JY m/s; lateral speed so they land within SPREAD m
-    const tf = M.sqrt ? M.sqrt(2 * H / C.G) : Math.sqrt(2 * H / C.G), vl = K.SPREAD / M.max(0.35, tf);
+    const tf = Math.sqrt(2 * H / C.G), vl = K.SPREAD / M.max(0.35, tf);
     for (let i = 0; i < K.N; i++) {
       const u = (i + 0.5) / K.N * 2 - 1, f = 0.55 + 0.45 * rng(S);
       WPm().launch(S, 'bomblet', p.s, p.y, 0.3 * p.vs + u * vl * f * 1.15, 0.3 * p.vy + rr(S, K.JY0, K.JY1), p.owner);
@@ -602,6 +573,7 @@
   }
 
   /* ---------- acid ---------- */
+  WA.acid_burst = acidBurst;
   function acidBurst(S, p, pos) {
     const K = A.ACID, ap = P.to_plane(S, pos);
     sim().explode(S, pos, { W: K.BLAST_W, dmg: C.PROJ.acid.dmg, name: 'an acid bomb' }, p.owner);
@@ -844,6 +816,7 @@
     }
     return true;
   }
+  WA.gas_burst = gasBurst;
   function gasBurst(S, pos) {
     const K = A.GAS, wa = ens(S);
     if (wa.clouds.length >= K.CAP) wa.clouds.shift();
@@ -1021,8 +994,7 @@
         if (o.hopT > 0) o.hopT = 0;
     if (wa.clouds.length || S.tick % 8 === 0) stepGas(S, dt);
     stepStick(S, dt);
-    for (const m of WA.mods)
-      if (m.step) m.step(S, dt);
+    SS.raven.step(S, dt);
     if (wa.spots.length && S.tick % 12 === 0) flush_edit(S);
   };
   WA.busy = function (S) {
@@ -1035,9 +1007,7 @@
       if (sp.t < HOLD) return true;
     for (const c of wa.clouds)
       if (c.t < HOLD) return true;
-    for (const m of WA.mods)
-      if (m.busy && m.busy(S)) return true;
-    return false;
+    return SS.raven.busy(S);
   };
   WA.turn_start = function (S) {
     ens(S);

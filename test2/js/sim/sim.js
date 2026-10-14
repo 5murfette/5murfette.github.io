@@ -1,6 +1,6 @@
 /* sim/sim.js — the orchestration of a game: create, reset (begin_reset, reset_step), the fixed step (step) that drives
- * every subsystem in a fixed order, the event queue (emit, log, the pools), scheduled explosions (explode, schedule)
- * and the shells in flight (stepProjectiles; a later round moves them to their own flight module).
+ * every subsystem in a fixed order, the event queue (emit, log, the pools), scheduled explosions (explode, schedule);
+ * the shells in flight are sim/flight.js (FL.step).
  *
  * Contract (C-style):
  *   GameState* S = sim_create();
@@ -18,13 +18,10 @@
   const EV = C.EV;
   const M = SS.math;
   const P = SS.plane;
-  const MAT = C.MAT;
   const W = SS.world;
-  const DRY = C.DRY;
-  const DS = C.DS;
-  const lc = { sub: 0, heat: 0, surf: 0 };
   const ST = SS.state;
   const SP = SS.spawn;
+  const FL = SS.flight;
   const DM = SS.damage;
   const SW = SS.swim;
   const WM = SS.worm;
@@ -151,294 +148,7 @@
   /* fire the charged weapon (UI, AI, timer); every weapon goes through sim/weapons.js */
   sim.fire = function (S, power) { return SS.weapons.use(S, power); };
 
-  /* ---------- projectiles: confined to the attack plane until they explode ---------- */
-  // (the shooter's own worm is no target while the shell leaves it, 0.25 s)
-  const hitWorm = (S, pt, p) => WM.first_near(S, pt.x, pt.y, pt.z, C.WORM_R + 0.12, p.age < 0.25 ? p.owner : -1, WM.NEAR.ANY);
-  /* a thrown / bouncing shell (grenade, cluster, banana, holy, dynamite...) does not pass through a worm: it hits
-   * the soft body (a disc of WORM_R + the shell's radius about w.pos, in the plane, worms within WORM_R of it), bounces
-   * off with most of its speed absorbed (restitution 0.15, then x0.5) and drops next to it; a hit faster than 3 m/s
-   * into the body costs the worm 1 HP, once per shell and worm (p.hitW: bit mask of worm ids). Returns true on
-   * contact. */
-  function wormBounce(S, p, def, ns, ny) {
-    for (const w of S.worms) {
-      if (w.dead || w.drowning || w.swim || (w.id === p.owner && p.age < 0.25)) continue;
-      const q = P.to_plane(S, w.pos);
-      if (Math.abs(q.t) > C.WORM_R) continue;
-      const rr = C.WORM_R + (def.r || 0.06), ds = ns - q.s, dy = ny - w.pos.y, d2 = ds * ds + dy * dy;
-      if (d2 >= rr * rr) continue;
-      const d = Math.sqrt(d2), ux = d > 1e-4 ? ds / d : 0, uy = d > 1e-4 ? dy / d : 1, vn = p.vs * ux + p.vy * uy;
-      if (vn < 0) {
-        p.vs -= 1.15 * vn * ux;
-        p.vy -= 1.15 * vn * uy;
-        p.vs *= 0.5;
-        p.vy *= 0.5;
-        p.bounces++;
-        const bit = 1 << (w.id & 31);
-        if (-vn > 3 && !((p.hitW | 0) & bit)) {
-          p.hitW = (p.hitW | 0) | bit;
-          const dd = P.dir(S);
-          S.hitDir = { x: -ux * dd.x, y: -uy, z: -ux * dd.z };
-          DM.hurt(
-            S,
-            w,
-            1,
-            p.type === 'napalm' ? DS.PROJ_NAPALM : p.type === 'acid' ? DS.PROJ_ACID : p.type === 'gas' ? DS.PROJ_GAS : DS.PROJ_HIT,
-            0,
-            DM.weapon_name_id(p.type)
-          );
-        }
-      }
-      if (!P.solid2(S, q.s + ux * rr, w.pos.y + uy * rr)) {
-        p.s = q.s + ux * rr;
-        p.y = w.pos.y + uy * rr;
-      }
-      return true;
-    }
-    return false;
-  }
-  function removeProj(S, p) {
-    const i = S.proj.indexOf(p);
-    if (i >= 0) S.proj.splice(i, 1);
-    S.lastBoom = S.time;
-  }
   sim.surface_at = (S, x, z) => (SS.water && S.water ? SS.water.surface(S, x, z) : W.SEA);
-  const wv = { x: 0, y: 0, z: 0 }, eg = { s: 0, y: 0 };
-  function stepProjectiles(S, dt) {
-    const w = W;
-    const WP = SS.weapons;
-    for (const p of S.proj.slice()) {
-      if (S.proj.indexOf(p) < 0) continue;                      // (detonated by another one this step)
-      p.age += dt;
-      const def = C.PROJ[p.type] || C.WEAPONS[p.type];
-      // specials first (homing steering, napalm airburst, the walking sheep)
-      const pre = WP.pre(S, p, dt);
-      if (pre === 'gone') {
-        removeProj(S, p);
-        continue;
-      }
-      if (pre === true) continue;
-      const wp0 = P.to_world(S, p.s, p.y);
-      // left every gravity well
-      if (S.eow && SS.eow.proj_escape(S, p, dt)) {
-        removeProj(S, p);
-        continue;
-      }
-      // wind (PoC stepProj L3396: a push of wind x 230 px/s2 x the shell's wind factor; PoC wind 1 = a storm's max ~
-      // a 12 m/s gale here): in-plane component of the local air velocity only (the shot never leaves its plane); the
-      // bouncing shells take no wind (windK 0), as in the PoC; whirlwind updrafts still lift a little
-      const wk = (def.windK != null ? def.windK : 1) * (p.wk != null ? p.wk : 1);
-      if (SS.weather && !p.wet && wk > 0) {
-        SS.weather.wind_at(S, wp0.x, p.y, wp0.z, wv);
-        const d = P.dir(S), ws = wv.x * d.x + wv.z * d.z;
-        p.vs += ws / C.WIND_UNIT * C.WIND_ACC * wk * dt; p.vy += (wv.y - p.vy) * C.WIND_GAIN * wk * dt * 0.04;
-      }
-      if (def.drag) {
-        const dr = M.exp(-def.drag * dt);
-        p.vs *= dr;
-        p.vy *= dr;
-      }
-      const gk = p.gk != null ? p.gk : 1, imp = !!def.impact && !(def.arm && p.age < def.arm);
-      const ddx = M.cos(S.theta), ddz = M.sin(S.theta);               // (the plane direction for the field)
-      const n = M.max(1, Math.ceil(M.len2(p.vs, p.vy) * dt / 0.06)), h = dt / n;
-      let done = false;
-      for (let i = 0; i < n && !done; i++) {
-        if (p.wet) {
-          const dr = M.exp(-2.6 * h);
-          p.vs *= dr;
-          p.vy = p.vy * dr - C.G * 0.55 * h;
-        }
-        // the summed chunk fields
-        else if (S.eow) {
-          SS.eow.proj_acc(S, wp0.x, p.y, wp0.z, ddx, ddz, eg);
-          p.vs += eg.s * gk * h;
-          p.vy += eg.y * gk * h;
-        }
-        else p.vy -= C.G * gk * h;
-        const ns = p.s + p.vs * h, ny = p.y + p.vy * h, wp = P.to_world(S, ns, ny);
-        if (
-          (
-            w.dry
-            ? SP.arena_r(wp.x, wp.z) > DRY.FAR_R
-            : wp.x < -OOB_SEA || wp.z < -OOB_SEA || wp.x > w.SX + OOB_SEA || wp.z > w.SZ + OOB_SEA
-          )
-          || ny < 0.2
-        ) {
-          removeProj(S, p);
-          log(S, `${C.WEAPONS[p.type].name} left the battlefield.`);
-          done = true;
-          break;
-        }
-        // a force field's dome throws the shell off into a random 3D direction (it leaves the plane)
-        if (S.ffields && S.ffields.length && SS.ffield.proj_hit(S, p, P.to_world(S, p.s, p.y), wp, def)) {
-          removeProj(S, p);
-          done = true;
-          break;
-        }
-        // dry worlds (D4): beyond the lattice W.sample is the analytic far dunes, so shots bounce / hit there as inside
-        // sea ice over the water. The speed INTO the ice decides (punching work, SS.ice.impact): a fast,
-        // steep shell goes through (and goes off in the water under it), a gentle, shallow or vertical slow drop does
-        // not: a rocket's contact fuse fires on the ice, a grenade bounces and skids on (ice: next to no friction)
-        if (SS.ice && S.ice && !p.wet && !p.subm && !p.pierced && p.vy < 0) {
-          const it = SS.ice.top_at(S, wp.x, wp.z);
-          if (it > -1e8 && ny < it && p.y >= it - 0.08) {
-            if (SS.ice.impact(S, wp.x, wp.z, def.mass || 0.6, -p.vy)) p.pierced = true;
-            else if (imp) {
-              WP.detonate(S, p, { x: wp.x, y: it + 0.05, z: wp.z });
-              removeProj(S, p);
-              done = true;
-              break;
-            }
-            else {
-              // a real bounce, or (slow) it lies on the ice and skids on: next to no friction
-              if (-p.vy > 1.5) {
-                if (p.vy < -2) emit(S, EV.BOUNCE, { x: wp.x, y: it, z: wp.z, speed: -p.vy, mat: MAT.ICE });
-                p.vy = -p.vy * 0.45;
-                p.bounces++;
-              }
-              else p.vy = 0;
-              p.vs *= M.exp(-ICE_SKID * h);
-              if (Math.abs(p.vs) < 0.05) p.vs = 0;
-              p.y = it + 0.001; p.s = ns;
-              continue;
-            }
-          }
-        }
-        const surf = sim.surface_at(S, wp.x, wp.z);
-        if (p.subm && ny > surf) p.subm = false;
-        if (!p.wet && !p.subm && ny < surf && p.vy < 0) {
-          // water entry: the rocket's contact fuse fires on impact, a grenade plunges and keeps its fuse (homing
-          // flies on through the water, foam builds an island at the surface, fire fizzles)
-          emit(S, EV.SPLASH, { x: wp.x, y: surf, z: wp.z, size: M.min(1.6, 0.4 + M.len2(p.vs, p.vy) * 0.05), proj: 1 });
-          if (SS.water) SS.water.disturb(S, wp.x, wp.z, 0.6, -0.25 * M.min(1, M.len2(p.vs, p.vy) / 15));
-          const r = WP.water(S, p, def, wp, surf);
-          if (r === 'gone') {
-            removeProj(S, p);
-            done = true;
-            break;
-          }
-          // (a shell that punched through ice goes off in the water under it)
-          if (r === 'burst') {
-            WP.detonate(S, p, {
-              x: wp.x,
-              y: surf - (p.pierced ? M.clamp(SS.water ? SS.water.depth(S, wp.x, wp.z) * 0.6 : 0.6, 0.2, 0.8) : 0.15),
-              z: wp.z
-            });
-            removeProj(S, p);
-            done = true;
-            break;
-          }
-          if (def.impact) p.subm = true;
-          else {
-            p.wet = true;
-            p.vs *= 0.35;
-            p.vy *= 0.3;
-          }
-        }
-        // open lava (2.6 t/m3, very viscous): the rocket's fuse fires on contact, a grenade floats on it and cooks off
-        if (SS.lava && S.lava) {
-          const lp = sim.lava_contact(S, wp.x, ny, wp.z, lc);
-          if (lp.sub > 0 && !p.lava && p.vy < 0) {
-            emit(S, EV.LAVAPLOP, { x: wp.x, y: lp.surf, z: wp.z, speed: M.len2(p.vs, p.vy) });
-            if (def.foam || def.flame || def.homing) {
-              emit(S, EV.STEAM, { x: wp.x, y: lp.surf, z: wp.z, power: 0.4 });
-              removeProj(S, p);
-              done = true;
-              break;
-            }
-            if (imp) {
-              WP.detonate(S, p, { x: wp.x, y: lp.surf, z: wp.z });
-              removeProj(S, p);
-              done = true;
-              break;
-            }
-            p.lava = true; p.vs *= 0.15; p.vy = 0;
-          }
-          if (p.lava) {
-            if (lp.sub <= -0.3) p.lava = false;                                  // drifted off / lava gone
-            else {
-              const k = M.exp(-8 * h);
-              p.vs *= k;
-              if (lp.sub > 0) {
-                p.y = lp.surf;
-                p.vy = M.max(0, p.vy) * k;
-                p.hot += h * (0.4 + 1.6 * lp.heat);
-                if (!P.solid2(S, ns, lp.surf)) p.s = ns;
-                continue;
-              }
-            }
-          }
-        }
-        let bi = S.planeBodies.length ? P.body_at2(S, ns, ny, true) : -1;
-        if (bi >= 0 && S.planeBodies[bi].ice) bi = -1;            // Step I: the ice is handled above (before the water entry)
-        const solid = P.solid2(S, ns, ny);
-        if (imp && WP.crate_hit(S, p, wp)) {
-          removeProj(S, p);
-          done = true;
-          break;
-        }
-        if (imp) {
-          if (solid || bi >= 0 || hitWorm(S, wp, p)) {
-            WP.detonate(S, p, wp);
-            removeProj(S, p);
-            done = true;
-          }
-          else {
-            p.s = ns;
-            p.y = ny;
-          }
-        } else if (!def.foam && wormBounce(S, p, def, ns, ny)) {
-          continue;
-        } else if (solid || bi >= 0) {
-          const nn = bi >= 0 ? P.body_normal2(S, bi, ns, ny) : P.normal2(S, ns, ny), vn = p.vs * nn.s + p.vy * nn.y;
-          if (vn < 0) {
-            const mat = solid ? w.mat_at(wp.x, wp.y, wp.z) : 0;
-            const soft = mat === MAT.SNOW || mat === MAT.SAND || mat === MAT.ASH ? 0.55 : mat === MAT.ICE ? 1.15 : 1;
-            if (vn < -2) emit(S, EV.BOUNCE, { x: wp.x, y: wp.y, z: wp.z, speed: -vn, mat });
-            const rest = def.rest != null ? def.rest : 0.4, fric = def.fric != null ? def.fric : 0.9;
-            p.vs -= (1 + rest * soft) * vn * nn.s; p.vy -= (1 + rest * soft) * vn * nn.y;
-            const fr = mat === MAT.ICE ? 0.98 : fric * soft + 0.1 * (1 - soft);
-            // (hard bounces, the bank shot)
-            p.vs *= fr;
-            p.vy *= fr;
-            p.bounces++;
-            if (vn < -C.LAB.BANK_SPEED) p.bank++;
-            if (bi >= 0 && SS.bodies) {
-              const dd = P.dir(S);
-              SS.bodies.nudge(
-                S,
-                SS.bodies.by_id(S, S.planeBodies[bi].body),
-                { x: -dd.x * nn.s, y: -nn.y, z: -dd.z * nn.s },
-                -vn * (def.mass || 0.6) * 1.4
-              );
-            }
-            if (M.len2(p.vs, p.vy) < 0.8) {
-              p.vs = 0;
-              p.vy = 0;
-            }
-            if (mat === MAT.LAVA) p.hot += 0.35;
-          }
-          if (P.blocked2(S, p.s, p.y)) {
-            p.s += nn.s * 0.05;
-            p.y += nn.y * 0.05;
-          }
-        } else {
-          p.s = ns;
-          p.y = ny;
-        }
-      }
-      if (done) continue;
-      if (def.bouncy) {
-        p.fuse -= dt;
-        // resting in lava cooks the charge off
-        const wpp = P.to_world(S, p.s, p.y);
-        if (w.mat_at(wpp.x, p.y - 0.2, wpp.z) === MAT.LAVA) p.hot += dt;
-        if (p.fuse <= 0 || p.hot > 0.5) {
-          WP.detonate(S, p, P.to_world(S, p.s, p.y));
-          removeProj(S, p);
-        }
-      }
-    }
-  }
 
   /* Explosion entry point. wp: weapon def ({W} TNT-equivalent kg; legacy {R} accepted). */
   sim.explode = function (S, c, wp, ownerId) {
@@ -473,8 +183,6 @@
   /* on wet worlds a shot flies on over the open sea (beyond the lattice the world samples as air, the sea surface
    * is W.SEA) and splashes / blasts in the water like inside; it is dropped only this far out (it was 6 m: shells
    * vanished just off the coast without a splash) */
-  const OOB_SEA = 120;
-  const ICE_SKID = 0.25;
   const NOINPUT = ST.input_make();
   /* ---------- main fixed step ---------- */
   sim.step = function (S, inp, dt) {
@@ -584,7 +292,7 @@
         );
     }
     SS.game.step(S, dt);
-    stepProjectiles(S, dt);
+    FL.step(S, dt);
     if (SS.weapons) SS.weapons.step(S, dt);                       // holes, planes, lightning, moai, dig, bullets, devices, crates
     if (SS.shrapnel) SS.shrapnel.step(S, dt);
     if (SS.spatter) SS.spatter.step(S, dt);

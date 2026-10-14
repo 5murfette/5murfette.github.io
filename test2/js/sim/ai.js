@@ -2,11 +2,11 @@
  * produces an Input struct / calls sim.fire like a player would).
  * A CPU turn: THINK (AI_THINK s, for the eye) -> choose a target (enemies ordered by distance; up to TARGETS tried) ->
  * align the section with it (sim.align_to, wait until the rotation has arrived) -> SEARCH weapon x aim x power with a
- * lightweight copy of the 2D flight (gravity, the in-plane wind push of stepProjectiles with the weapon's windK, water
- * entry, terrain / body collisions, grenade bounces with the sim's restitution and its 3 s fuse, rocket contact with
- * worms), coarse grid then a fine grid around the best, spread over sim steps (EVAL_PER_STEP predictions per step)
- * -> score each burst point by the expected blast damage (blast.js worm_effect, capped by HP, +KILL bonus) to enemies
- * minus OWN_K x damage to the own team (the CPU itself included) -> aim noise by difficulty -> FIRE (sim.fire).
+ * lightweight copy of the 2D flight on the rules of sim/flight.js (gravity, the in-plane wind push with the weapon's
+ * windK, water entry, terrain / body collisions, grenade bounces with the sim's restitution and its 3 s fuse, rocket
+ * contact with worms), coarse grid then a fine grid around the best, spread over sim steps (EVAL_PER_STEP predictions
+ * per step) -> score each burst point by the expected blast damage (blast.js worm_effect, capped by HP, +KILL bonus) to
+ * enemies minus OWN_K x damage to the own team (the CPU itself included) -> aim noise by difficulty -> FIRE (sim.fire).
  * No positive shot: walk toward the target for WALK_T s and search again once, else end the turn.
  * Settings: S.settings.cpu = 'off' | 'easy' | 'normal' | 'hard' (team 1 is the CPU). Difficulty: search grid + noise.
  * API: is_cpu(S, team), control(S, a, dt) -> Input, stats(S). C layout: struct Ai { u8 phase; f32 t; Plan best;
@@ -14,6 +14,7 @@
 (function (SS) {
   'use strict';
   const C = SS.CFG, M = SS.math, P = SS.plane;
+  const FL = SS.flight;
   const PHASE = C.PHASE;
   const AI = SS.ai = {};
   const W = () => SS.world;
@@ -22,6 +23,10 @@
     WALK_T: 2.5, MAX_T: 7,
     // the share of a split shell's bomblets that bursts at its target (a worm at the pop: 1 to 2 of the 5)
     SPLIT_HIT: 0.2,
+    // End of the World: the HP-equivalent cost of a plan per unit of the chance that the shot really fired (with the
+    // difficulty's noise) leaves every gravity well (measured over 10 seeds: 9.9 % of the turns lost a shot without it,
+    // 0.6 % with 150, the matches shorter)
+    LOST_PEN: 150,
     // aim / power noise = the PoC's skills exactly (Rookie / Soldier / Sharpshooter, PoC aiStep: [0.1, 0.12], [0.04,
     // 0.045], [0.01, 0.012]); aim / pow = the search grid steps
     DIFF: {
@@ -47,7 +52,8 @@
   AI.is_cpu = (S, team) => SS.game.is_cpu(S, team);                     // P1: per-team control (sim/game.js)
 
   /* ---------- the flight copy ---------- */
-  const wv = { x: 0, y: 0, z: 0 }, wp0 = { x: 0, y: 0, z: 0 }, wp = { x: 0, y: 0, z: 0 };    // reused temporaries (C: static vec3)
+  const wp0 = { x: 0, y: 0, z: 0 }, wp = { x: 0, y: 0, z: 0 };                                // reused temporaries (C: static vec3)
+  const NW = { s: 0, y: 1 };                                       // (the normal out of a worm's body: flight.js worm_normal)
   /* P38-R4: the worms' plane coordinates, computed once per predict call (their positions do not change within it; the
    * same
    * arithmetic as plane.js to_plane, so the values are bit-identical). C: struct PlaneWorm { Worm *o; f32 s, t;
@@ -67,14 +73,16 @@
     }
     PW.length = n; return PW;
   }
-  const eg = { s: 0, y: 0 };                                  // (P68c: the chunk field's pull on a predicted shell)
+  // the predicted shell's flight (flight.js): its plane speed, whether it is under water, its gravity / wind factors
+  const F = { vs: 0, vy: 0, wet: false, gk: 1, wk: 1 };
   // the non-worm plane bodies of one predict call (worm discs are skipped anyway)
   const NB = [];
-  // P99: distance of the shooter to the first ground / body contact of the last predict (a shell that touches down next
-  // to the thrower rolls back on it; static f32)
-  let firstD = 1e9;
+  /* the predicted burst: where and when (s after the launch), under water or not, and firstD = the distance of the
+   * shooter to the shell's first ground / body contact (a shell that touches down next to the thrower rolls back on
+   * it; 1e9: none). C: struct Hit { f32 x, y, z, t; u8 wet; f32 firstD; } */
+  const hit_make = (x, y, z, t, wet, firstD) => ({ x, y, z, t, wet, firstD });
   function predict(S, weapon, aim, facing, power, tgt) {      // tgt { s, y }: the homing missile's target (plane coordinates)
-    // P11: any charged projectile of the arsenal (impact vs bouncy, its speed, restitution, friction, fuse, wind)
+    // P11: any charged projectile of the arsenal (impact F.vs bouncy, its speed, restitution, friction, fuse, wind)
     const a = S.active,
       def = C.WEAPONS[weapon],
       pd = C.PROJ[weapon] || def,
@@ -95,122 +103,76 @@
       speed = vmax * M.max(C.WORM_DYN.MIN_POWER, power),
       ds = facing * M.cos(aim),
       dy = M.sin(aim);
-    const rest = pd.rest != null ? pd.rest : 0.45, fric = pd.fric != null ? pd.fric : 0.9;
-    let s = ap.s + ds * 0.7, y = a.pos.y + dy * 0.7, vs = ds * speed, vy = dy * speed, t = 0, wet = false;
-    firstD = 1e9;
+    const rest = pd.rest != null ? pd.rest : FL.REST, fric = pd.fric != null ? pd.fric : FL.FRIC;
+    let s = ap.s + ds * 0.7, y = a.pos.y + dy * 0.7, t = 0;
+    F.vs = ds * speed;
+    F.vy = dy * speed;
+    F.wet = false;
+    let firstD = 1e9;
     const fuse = SS.weaponsA ? SS.weaponsA.fuse_of(S, weapon) : pd.fuseSet ? S.fuse : (pd.fuse || 99),
       dt = 1 / 60,
-      wk = pd.windK != null ? pd.windK : 1,
-      k = C.WIND_GAIN * wk;
-    // homing (= weapons.js pre): lock phase (low gravity, little wind), then steering toward the target at `turn` rad/s
-    // with the speed growing by `accel`, for `fuel` s, then a plain shell again
+      wk = pd.windK != null ? pd.windK : 1;
+    // a homing missile is guided as the real one (flight.js homing; the target is its point on the plane)
     const hm = pd.homing && tgt ? pd.homing : null, hd0 = hm ? M.len2(tgt.s - s, tgt.y - y) : 0, hv0 = speed;
-    let gk = 1, wkk = 1, esc = 0;
+    let esc = 0;
+    F.gk = 1;
+    F.wk = 1;
     while (t < K.MAX_T) {
-      if (hm && !wet) {
-        const age = t + dt, lock = M.clamp(hd0 / M.max(1, hv0) * 0.5, hm.lock0, hm.lock1);
-        if (age < lock) {
-          gk = hm.gLock;
-          wkk = hm.windLock;
-        }
-        else if (age < lock + hm.fuel) {
-          const blend = M.min(1, (age - lock) / hm.blend), want = M.atan2(tgt.y - y, tgt.s - s), cur = M.atan2(vy, vs);
-          const da = M.clamp(M.wrap_angle(want - cur), -hm.turn * blend * dt, hm.turn * blend * dt),
-            sp = M.min(hm.vmax, M.len2(vs, vy) + hm.accel * dt);
-          vs = M.cos(cur + da) * sp;
-          vy = M.sin(cur + da) * sp;
-          gk = hm.gFly;
-          wkk = 0;
-        } else {
-          gk = 1;
-          wkk = 1;
-        }
-      }
+      if (hm && !F.wet) FL.homing(F, hm, t + dt, s, y, tgt.s, tgt.y, hd0, hv0, dt);
       wp0.x = ox + s * co;
       wp0.y = y;
       wp0.z = oz + s * si;
-      const wke = wk * wkk;
+      const wke = wk * F.wk;
       // P68g: a shot that leaves every gravity well is lost (the sim's rule): never planned
-      if (S.eow && (esc = SS.eow.esc_step(S, wp0.x, y, wp0.z, vs, vy, d, esc, dt)) < 0) return null;
-      // = stepProjectiles
-      if (SS.weather && !wet && wke > 0) {
-        SS.weather.wind_at(S, wp0.x, y, wp0.z, wv);
-        const ws = wv.x * d.x + wv.z * d.z;
-        vs += ws / C.WIND_UNIT * C.WIND_ACC * wke * dt;
-        vy += (wv.y - vy) * C.WIND_GAIN * wke * dt * 0.04;
-      }
-      const n = M.max(1, Math.ceil(M.len2(vs, vy) * dt / 0.12)), h = dt / n;
+      if (S.eow && (esc = SS.eow.esc_step(S, wp0.x, y, wp0.z, F.vs, F.vy, d, esc, dt)) < 0) return null;
+      FL.wind(S, F, wp0.x, y, wp0.z, wke, dt);
+      const n = M.max(1, Math.ceil(M.len2(F.vs, F.vy) * dt / 0.12)), h = dt / n;
       for (let i = 0; i < n; i++) {
-        // P68c: the same fields as the real shell
-        if (wet) {
-          const dr = M.exp(-2.6 * h);
-          vs *= dr;
-          vy = vy * dr - C.G * 0.55 * h;
-        } else if (S.eow) {
-          SS.eow.proj_acc(S, wp0.x, y, wp0.z, d.x, d.z, eg);
-          vs += eg.s * gk * h;
-          vy += eg.y * gk * h;
-        } else vy -= C.G * gk * h;
-        const ns = s + vs * h, ny = y + vy * h;
+        FL.gravity(S, F, wp0.x, y, wp0.z, d.x, d.z, F.gk, h);
+        const ns = s + F.vs * h, ny = y + F.vy * h;
         wp.x = ox + ns * co;
         wp.y = ny;
         wp.z = oz + ns * si;
-        // (= sim.js OOB_SEA)
-        if (
-          (w.dry ? SS.sim.arena_r(wp.x, wp.z) > C.DRY.FAR_R : wp.x < -120 || wp.z < -120 || wp.x > w.SX + 120 || wp.z > w.SZ + 120)
-          || ny < 0.2
-        ) return null;
+        if (FL.out_of_field(S, wp.x, wp.z, ny, FL.OOB)) return null;
         // sea ice (as sim.js: before the water entry): a rocket bursts on it, a grenade bounces unless it punches
         // through
-        if (SS.ice && S.ice && !wet && vy < 0) {
+        if (SS.ice && S.ice && !F.wet && F.vy < 0) {
           const it = SS.ice.top_at(S, wp.x, wp.z);
           if (it > -1e8 && ny < it && y >= it - 0.08) {
-            const through = SS.ice.would_punch(S, wp.x, wp.z, def.mass || 0.6, -vy);       // (P30: the speed into the ice)
-            if (!through && imp) return { x: wp.x, y: it + 0.05, z: wp.z, t, wet: false };
+            const through = SS.ice.would_punch(S, wp.x, wp.z, def.mass || 0.6, -F.vy);       // (P30: the speed into the ice)
+            if (!through && imp) return hit_make(wp.x, it + 0.05, wp.z, t, false, firstD);
             // (= sim.js)
             if (!through) {
-              vy = -vy > 1.5 ? -vy * 0.45 : 0;
-              vs *= M.exp(-0.25 * h);
-              if (Math.abs(vs) < 0.05) vs = 0;
+              FL.ice_skid(F, h);
               y = it + 0.001;
               s = ns;
               continue;
             }
           }
         }
-        if (!wet && ny < SS.sim.surface_at(S, wp.x, wp.z) && vy < 0) {
-          if (imp) return { x: wp.x, y: ny, z: wp.z, t, wet: true };
-          wet = true; vs *= 0.35; vy *= 0.3;
+        if (!F.wet && ny < SS.sim.surface_at(S, wp.x, wp.z) && F.vy < 0) {
+          if (imp) return hit_make(wp.x, ny, wp.z, t, true, firstD);
+          FL.plunge(F);
         }
         if (imp && t > 0.2)
-          if (SS.worm.first_near(S, wp.x, ny, wp.z, C.WORM_R + 0.12, a.id, SS.worm.NEAR.ANY)) return { x: wp.x, y: ny, z: wp.z, t, wet };
-        // a bouncing shell bounces off a worm's body (= sim.js wormBounce, P32)
+          if (SS.worm.first_near(S, wp.x, ny, wp.z, C.WORM_R + 0.12, a.id, SS.worm.NEAR.ANY))
+            return hit_make(wp.x, ny, wp.z, t, F.wet, firstD);
+        // a bouncing shell bounces off a worm's soft body, as in the sim (flight.js worm_normal / worm_bounce; swimmers
+        // are not hit)
         if (!imp && !pd.foam) {
-          let hitO = null;
-          for (let wi = 0; wi < pw.length; wi++) {
+          const rr = C.WORM_R + (pd.r || 0.06);
+          let hit = -1;
+          for (let wi = 0; wi < pw.length && hit < 0; wi++) {
             const q = pw[wi], o = q.o;
-            if (o.drowning || o.swim || (o === a && t < 0.25)) continue;   /* (= sim.js wormBounce: no swimmers) */ if (
-              Math.abs(q.t) <= C.WORM_R && M.len2(ns - q.s, ny - o.pos.y) < C.WORM_R + (pd.r || 0.06)
-            ) {
-              hitO = { s: q.s, t: q.t, y: o.pos.y };
-              break;
-            }
+            if (o.drowning || o.swim || (o === a && t < 0.25)) continue;
+            if (Math.abs(q.t) <= C.WORM_R && FL.worm_normal(q.s, o.pos.y, ns, ny, rr, NW)) hit = wi;
           }
-          if (hitO) {
-            const rr = C.WORM_R + (pd.r || 0.06),
-              dd = M.len2(ns - hitO.s, ny - hitO.y),
-              ux = dd > 1e-4 ? (ns - hitO.s) / dd : 0,
-              uy = dd > 1e-4 ? (ny - hitO.y) / dd : 1,
-              vn = vs * ux + vy * uy;
-            if (vn < 0) {
-              vs -= 1.15 * vn * ux;
-              vy -= 1.15 * vn * uy;
-              vs *= 0.5;
-              vy *= 0.5;
-            }
-            if (!P.solid2(S, hitO.s + ux * rr, hitO.y + uy * rr)) {
-              s = hitO.s + ux * rr;
-              y = hitO.y + uy * rr;
+          if (hit >= 0) {
+            const q = pw[hit], wy = q.o.pos.y, vn = F.vs * NW.s + F.vy * NW.y;
+            if (vn < 0) FL.worm_bounce(F, NW, vn);
+            if (!P.solid2(S, q.s + NW.s * rr, wy + NW.y * rr)) {
+              s = q.s + NW.s * rr;
+              y = wy + NW.y * rr;
             }
             continue;
           }
@@ -219,32 +181,20 @@
         let hb = null;
         for (let bi = 0; bi < NB.length && !hb; bi++)
           if (P.pb_inside(NB[bi], ns, ny)) hb = NB[bi];
-        // (ice is handled above; a body turns the shell off its own face, as in sim.js stepProjectiles)
+        // (ice is handled above; a body turns the shell off its own face, as in the sim: flight.js contact)
         const body = hb !== null && !hb.ice, solid2 = w.sample(wp.x, ny, wp.z) > 0, solid = solid2 || body;
         if (solid) {
-          if (imp) return { x: wp.x, y: ny, z: wp.z, t, wet };
-          const nn = body ? P.pb_normal(hb, ns, ny) : P.normal2(S, ns, ny), vn = vs * nn.s + vy * nn.y;
+          if (imp) return hit_make(wp.x, ny, wp.z, t, F.wet, firstD);
+          const nn = body ? P.pb_normal(hb, ns, ny) : P.normal2(S, ns, ny), vn = F.vs * nn.s + F.vy * nn.y;
           if (firstD > 1e8) firstD = M.len2(ns - ap.s, ny - a.pos.y);
-          if (vn < 0) {                                          // (= sim.js stepProjectiles: sand / snow / ash are soft, ice is slick)
-            const mat = solid2 ? w.mat_at(wp.x, wp.y, wp.z) : 0,
-              soft = mat === C.MAT.SNOW || mat === C.MAT.SAND || mat === C.MAT.ASH ? 0.55 : mat === C.MAT.ICE ? 1.15 : 1;
-            const fr = mat === C.MAT.ICE ? 0.98 : fric * soft + 0.1 * (1 - soft);
-            vs -= (1 + rest * soft) * vn * nn.s;
-            vy -= (1 + rest * soft) * vn * nn.y;
-            vs *= fr;
-            vy *= fr;
-            if (M.len2(vs, vy) < 0.8) {
-              vs = 0;
-              vy = 0;
-            }
-          }
+          if (vn < 0) FL.bounce(F, nn, vn, solid2 ? w.mat_at(wp.x, wp.y, wp.z) : 0, rest, fric);
         } else {
           s = ns;
           y = ny;
         }
       }
       t += dt;
-      if (t >= fuse) { return { x: ox + s * co, y, z: oz + s * si, t, wet }; }
+      if (t >= fuse) return hit_make(ox + s * co, y, oz + s * si, t, F.wet, firstD);
     }
     return null;
   }
@@ -253,11 +203,11 @@
    * (A.HOLE.W_END, 44 HP), so what it pulls in takes the full blast (x 1.3) */
   const burstW = k => {
     const pj = C.PROJ[k];
-    return pj && pj.hole ? C.ARMS.HOLE.W_END : (pj || C.WEAPONS[k]).W;
+    return pj && pj.burst === C.BURST.HOLE ? C.ARMS.HOLE.W_END : (pj || C.WEAPONS[k]).W;
   };
   const burstDmg = k => {
     const pj = C.PROJ[k] || {};
-    return pj.hole ? 44 * 1.3 : pj.dmg;
+    return pj.burst === C.BURST.HOLE ? 44 * 1.3 : pj.dmg;
   };
   // value of a burst at c: blast damage (capped by HP) to enemies, + KILL per kill, - OWN_K x damage to the own team
   function score(S, c, W, split, dmg) {                              // dmg: the PoC damage of that blast (P24.1)
@@ -277,7 +227,7 @@
     }
     for (const o of S.worms) {
       if (o.dead) continue;
-      const e = SS.blast.worm_effect(c, W, o.pos, dmg), dm = M.min(o.hp, Math.round(e.dmg));
+      const dm = SS.blast.hp_loss(c, W, o.pos, o.hp, dmg);
       // PoC evalBoom: own team x 1.5 (here OWN_K), the shooter itself x 2.2, + 60 per own worm killed
       // (P38-R2: a nearly dead shooter must not risk its last HP)
       if (o.team === me) v -= (o === S.active ? 2.2 : K.OWN_K) * dm + (dm >= o.hp ? (o === S.active && o.hp <= 15 ? 120 : 60) : 0);
@@ -304,14 +254,14 @@
       dm2 = B.DMG;
     }
     else {
-      if (d - 0.2 >= Mi.HOLE_R * M.cbrt(W)) return 0;
+      if (d - 0.2 >= SS.blast.poc_R(W)) return 0;
       w2 = Mi.W;
       dm2 = Mi.DMG;
     }
     let v = 0;
     for (const o of S.worms) {
       if (o.dead) continue;
-      const e = SS.blast.worm_effect(pr, w2, o.pos, dm2), dm = M.min(o.hp, Math.round(e.dmg));
+      const dm = SS.blast.hp_loss(pr, w2, o.pos, o.hp, dm2);
       if (o.team === me) v -= (o === S.active ? 2.2 : K.OWN_K) * dm + (dm >= o.hp ? 60 : 0);
       else v += dm + (dm >= o.hp ? K.KILL : 0);
     }
@@ -369,6 +319,14 @@
   const foe = (S, pl, i) => foe_of(S, pl, pl.foes[i]);
   const foe_wid = id => (id >= 0 ? id : -1);                          // the worm id of a target id for pl.fired.target (-1: an alien)
   AI.foe = foe; AI.foe_of = foe_of; AI.foe_wid = foe_wid;
+  /* the CPU commits to candidate b with weapon wpn: selects it, faces the candidate's way, and the plan is done
+   * (pl.fired = what it fired, its value and the worm it was aimed at); the caller then aims and fires */
+  AI.commit = function (S, pl, a, b, wpn) {
+    S.weapon = wpn;
+    a.facing = b.facing;
+    pl.phase = 'done';
+    pl.fired = { wpn, v: b.v, target: pl.foes ? foe_wid(pl.foes[b.fi]) : -1 };
+  };
   function noteTarget(S, o) {
     const mem = S.aiMem;
     if (o && o.team >= 0) mem.recent[o.team] = (mem.recent[o.team] || 0) + 1;
@@ -523,9 +481,8 @@
   // safe). C: input struct, field move.
   const RETIN = {};
   // walking away pays only when something of the worm's own is about to go off near it: a fused / buried charge, fire,
-  // gas, acid, or a shot at a foe within 14 m (a retreat after every shot sent the CPU downhill into the rising sea:
-  // +40 % drowning in the matches)
-  const RETWALK = { dynamite: 1, mine: 1, spring: 1, napalm: 1, gas: 1, acid: 1, magnet: 1, flamethrower: 1, blackhole: 1 };
+  // gas, acid (the weapon's def has cpuRetreat), or a shot at a foe within 14 m (a retreat after every shot sent the
+  // CPU downhill into the rising sea: +40 % drowning in the matches)
   // is the blind walk along the section toward the target pointless: the ground on the way is not walkable (a wall, a
   // gap, a different chamber)? It is the plain case where a path leg helps
   function straightBlocked(S, pl, a) {
@@ -599,14 +556,14 @@
     // (a flamethrower / minigun burst follows the worm's facing: walking away turned it round and sprayed the other
     // way)
     if (S.wa && S.wa.stream) return false;
-    if (RETWALK[S.weapon]) return true;
+    if (C.WEAPONS[S.weapon].cpuRetreat === 1) return true;
     const t = pl && pl.fired ? S.worms[pl.fired.target] : null;
     return !!t && M.v3_dist(t.pos, a.pos) < 14;
   }
   AI.retreat = function (S, a, base) {
     SS.sim.input_copy(RETIN, base); RETIN.move = 0;
     if (SS.aic && SS.aic.retreat(S, a, RETIN)) return RETIN;       // P38-R5: the sheep next to its foe is set off
-    if (!a.air && !S.rope && SS.aib && !(S.weapon === 'ninja' || S.weapon === 'rope')) {
+    if (!a.air && !S.rope && SS.aib && S.weapon !== 'rope') {
       // (P38-R5: the direction is chosen once per turn: walking flips a.facing, and "-facing" evaluated every step made
       // the worm shuffle on the spot, so it never left its own blast: a dynamite 1.5 m ahead hit the thrower for 49 HP)
       const pl = S.aiPlan;
@@ -878,14 +835,12 @@
             }
           }
         }
-        S.weapon = b.wpn; a.facing = b.facing;
+        AI.commit(S, pl, a, b, b.wpn);
         // the skill noise must not point the muzzle into an adjacent wall (the shot spawns 0.7 m out and goes off in
         // the CPU's face: an easy CPU blew itself into the sea that way): keep the planned, predicted aim then
         const aimN = M.clamp(b.aim + gauss(S) * d.noiseA, -1.5, 1.5);
         S.aim = muzzleClear(S, P.to_plane(S, a.pos).s, a.pos.y, a.facing, aimN) ? aimN : b.aim;
-        const pw = M.clamp(b.pw + gauss(S) * d.noiseP, 0.05, 1);
-        pl.phase = 'done'; pl.fired = { wpn: b.wpn, aim: S.aim, pw, v: b.v, target: foe_wid(pl.foes[b.fi]) };
-        SS.sim.fire(S, pw);
+        SS.sim.fire(S, M.clamp(b.pw + gauss(S) * d.noiseP, 0.05, 1));
         break;
       }
     }
@@ -1027,7 +982,7 @@
     for (const o of S.worms) {
       if (o.dead || o.team !== me) continue;
       if (SCAT && M.len2(o.pos.x - c.x, o.pos.z - c.z) < SCAT) sum += 30;
-      sum += M.min(o.hp, Math.round(SS.blast.worm_effect(c, W, o.pos, dmg).dmg));
+      sum += SS.blast.hp_loss(c, W, o.pos, o.hp, dmg);
     }
     return sum;
   }
@@ -1039,20 +994,24 @@
   const FAR = [[2.5, 0], [-2.5, 0], [0, 2.5], [0, -2.5]];
   function expected(S, c, d) {
     // (the End of the World keeps the plain expectation: the tail rules pushed the planner toward flat full-power shots
-    // that leave every gravity well, 25 lost in 197 turns instead of 10)
+    // that leave every gravity well, 25 lost in 197 turns instead of 10; instead it pays LOST_PEN for the noise nodes
+    // that are lost to space)
     const pj = C.PROJ[c.wpn] || {},
       W3 = burstW(c.wpn),
       dm = burstDmg(c.wpn),
       bounce = !(pj.impact || (C.WEAPONS[c.wpn] || {}).impact),
       tails = !S.eow;
-    let ev = 0, worst = 0;
+    let ev = 0, worst = 0, lost = 0;
     for (const [za, wa] of GH)
       for (const [zp, wp] of GH) {
         const h = predict(S, c.wpn, c.aim + za * d.noiseA, c.facing, M.clamp(c.pw + zp * d.noiseP, 0.05, 1));
+        if (!h) lost += wa * wp;
         if (h) {
           ev += wa
             * wp
-            * (score(S, h, W3, pj.split, dm) - selfRisk(S, h, W3, pj.split, dm) - (tails && bounce && firstD < K.NEAR_D ? K.NEAR_PEN : 0));
+            * (
+              score(S, h, W3, pj.split, dm) - selfRisk(S, h, W3, pj.split, dm) - (tails && bounce && h.firstD < K.NEAR_D ? K.NEAR_PEN : 0)
+            );
           if (tails) worst = M.max(worst, ownDamage(S, h, W3, pj.split, dm));
         }
       }
@@ -1062,6 +1021,7 @@
         if (h) worst = M.max(worst, ownDamage(S, h, W3, pj.split, dm));
       }
     c.tail = worst;
+    if (S.eow) ev -= lost * K.LOST_PEN;
     return ev - K.TAIL_K * M.max(0, worst - K.TAIL_FREE);
   }
   /* P38 R9: the 3 x 3 rule weighs the +/- 1.7 sigma tails of the noise at 1/36 each, so a plan whose tail bursts on the
@@ -1161,16 +1121,15 @@
     if (SS.weaponsA && SS.weaponsA.ai_fire && SS.weaponsA.ai_fire(S, pl, a, b, d, gauss)) return;      // P37-W3
     if (SS.aib && SS.aib.fire(S, pl, a, b, d, gauss)) return;
     if (SS.aic && SS.aic.fire(S, pl, a, b, d, gauss)) return;
-    S.weapon = b.special; a.facing = b.facing;
-    pl.phase = 'done'; pl.fired = { wpn: b.special, v: b.v, target: foe_wid(pl.foes[b.fi]) };
-    if (SS.gadgets && SS.gadgets.KEYS[b.special]) {
+    AI.commit(S, pl, a, b, b.special);
+    if (C.WEAPONS[b.special].use === C.USE.GADGET) {
       SS.gadgets.ai_fire(S, a, b);
       return;
     }
-    if (b.special === 'shotgun' || b.special === 'bat') {
+    if (b.special === 'shotgun') {
       S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * (laserOn(a) ? 0.25 : 0.5), -1.5, 1.5);
       WP.use(S, 0);
-      if (b.special === 'shotgun' && S.phase === PHASE.PLAY) {
+      if (S.phase === PHASE.PLAY) {
         S.aim = M.clamp(b.aim + gauss(S) * d.noiseA * 0.5, -1.5, 1.5);
         WP.use(S, 0);
       }

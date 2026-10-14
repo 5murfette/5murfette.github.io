@@ -736,7 +736,7 @@
   // floors (desert), basalt with crust / ash (volcanic); loose floors (scree / soil / sand / ash) where air lies just
   // above
   function underMaterials(biome) {
-    const D = W.d, Mt = W.mat, SXY = NX * NY;
+    const D = W.d, Mt = W.mat;
     for (let k = 0; k < NZ; k++)
       for (let j = 0; j < NY; j++)
         for (let i = 0; i < NX; i++) {
@@ -882,7 +882,7 @@
    * chilled margin; so the section through the volcano shows magma rising in a rock channel, and a blast that opens
    * it breaches a walled lava body (lava.js breach) instead of a free column of the 2.5D layer */
   function stampConduit(v, vi) {
-    const D = W.d, Mt = W.mat, SXY = NX * NY, c0 = Math.round(v.z / H) * NX + Math.round(v.x / H);
+    const D = W.d, Mt = W.mat, c0 = Math.round(v.z / H) * NX + Math.round(v.x / H);
     const yTop = hgt[c0] - 1.0, R0 = M.max(0.7, v.Rc * 0.18), WALL = 1.2, MARGIN = 0.45, ext = R0 + WALL + 1;
     const i0 = M.max(2, Math.floor((v.x - ext - 1) / H)), i1 = M.min(NX - 3, Math.ceil((v.x + ext + 1) / H));
     const k0 = M.max(M.max(2, kLo), Math.floor((v.z - ext - 1) / H)), k1 = M.min(M.min(NZ - 3, kHi), Math.ceil((v.z + ext + 1) / H));
@@ -1304,7 +1304,7 @@
     return 'islands';
   };
   function applyShape(shape) {
-    const r = M.rng_make(((Math.imul(seed, 31) + 7) >>> 0) || 1), NC = NX * NZ;
+    const r = M.rng_make(((Math.imul(seed, 31) + 7) >>> 0) || 1);
     if (shape === 'hills') {
       const ph = M.rng_next(r) * 100;
       for (let k = 0; k < NZ; k++)
